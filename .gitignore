@@ -1,0 +1,22 @@
+# Entornos virtuales
+diabetes/
+venv/
+.venv/
+
+# Base de datos personal (Privacidad)
+*.db
+*.sqlite3
+
+# Archivos de datos brutos
+data/
+*.csv
+*.xlsx
+
+# Archivos temporales de Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Archivos del sistema (Mac/Windows)
+.DS_Store
+Thumbs.db
