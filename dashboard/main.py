@@ -1,45 +1,49 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
-from database.connection import init_db
-# Importamos la función que acabamos de completar en el componente
-import components.registro_comida as rc
-import components.configuracion as config
+from database.connection import get_db_manager
+
+# --- IMPORTACIONES MODULARIZADAS ---
+
+# 1. Diario: Importamos la función principal del nuevo archivo orquestador
+from components.diario.main_diario import render_diario
+
+# 2. Configuración: Importamos la función principal de configuración
+from components.configuracion.main_config import render_configuracion
 
 def main():
     # 1. Configuración de la página (Siempre lo primero)
     st.set_page_config(
-    page_title="Mi App Móvil",
-    layout="centered", # 'centered' suele ser mejor para móviles que 'wide'
-    initial_sidebar_state="collapsed" # Colapsa la barra lateral para ganar espacio
+        page_title="Gestión Diabetes TFG",
+        layout="centered", # 'centered' es ideal para simular vista móvil
+        initial_sidebar_state="collapsed"
     )
     
-    # 2. Inicializar DB (Crea tablas si no existen)
-    init_db()
+    # 2. Inicializar DB (Patrón Singleton)
+    db = get_db_manager()
+    db.init_db()
 
-    # 1. Configuración de la barra lateral
+    # 3. Configuración del menú lateral
     with st.sidebar:
         opcion = option_menu(
-            menu_title=None,       # Título del menú
-            options=["Imputación de Datos", "Visualización Histórica", "Configuración"], # Textos
-            icons=["box-arrow-in-down", "bar-chart-line", "gear"], # Iconos de Bootstrap
-            menu_icon="cast",                  # Icono del título
-            default_index=0,                   # Opción por defecto
-            orientation="vertical"             # Orientación del menú
+            menu_title=None,
+            options=["Diario", "Visualización", "Configuración"],
+            icons=["journal-medical", "bar-chart-line", "gear"], 
+            default_index=0,
+            orientation="vertical"
         )
 
-    # 2. Lógica de navegación
-    if opcion == "Imputación de Datos":
-        rc.render_seccion_principal_registro()
+    # 4. Lógica de navegación
+    if opcion == "Diario":
+        # Ahora llamamos a la nueva estructura modular
+        render_diario()
 
-    elif opcion == "Visualización Histórica":
-        st.header("📊 Visualización de los últimos días")
-        st.info("Esta sección está en desarrollo. Aquí conectaremos con los datos de LibreView.")
+    elif opcion == "Visualización":
+        st.header("📊 Visualización Histórica")
+        st.info("Conexión con datos de glucemia en desarrollo.")
 
     elif opcion == "Configuración":
-        config.render_configuracion()
-
-
-
+        # Llamamos al gestor de pestañas de configuración
+        render_configuracion()
 
 if __name__ == "__main__":
     main()
