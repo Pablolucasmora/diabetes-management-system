@@ -17,17 +17,6 @@ En cuanto a las fuentes de datos, me voy a basar en las siguientes:
 * **Apple Watch:** Haré uso del Apple Watch para tener en cuenta todas las variables de actividad y fisiológicas. Recolectaré a través de Apple Health datos de la frecuencia cardiaca, Heart Rate Variability (Estrés), Ejercicios (duración, tipo, intensidad…), sueño (calidad, fases, duración…).
 * **Página personal:** A través de un dashboard sencillo e intuitivo, haré un registro de las comidas, con los valores de Hidratos, Proteínas, Azúcares, Grasas y Fibra, además de algunas variables como `come_fuera` o `es_pesado` para evaluar la calidad y precisión de las medidas. Además me ayudaré de la API de Open Food Facts para sacar valores de comidas registradas (con valores específicos como categorización Nutriscore y NOVA), y otras funcionalidades para facilitar el registro. También incluiré valores de bebidas (refrescos, zumos, alcohol, cafeína…).
 
-## 📅 Fases del estudio
-
-| Fase Principal | Duración Estimada | Tareas Clave |
-| :--- | :--- | :--- |
-| **Fase preparación para el estudio** | 2 meses | Preparación de dashboard para registro de datos, y de todos los factores a controlar durante el estudio. |
-| **Estudio y recolección de datos** | 2 meses | Recolección de los datos. |
-| **Fase de análisis inicial** | 1 mes | Comenzamos la limpieza y análisis exploratorio de la base de datos. |
-| **Preparación modelo** | 3 meses | Investigación profunda de la base de datos y preparación del modelo a usar. |
-| **Control de calidad y precisión** | 3 meses | Pruebas de usabilidad de la aplicación y precisión del modelo. Recolección de feedback y ajustes finales. |
-| **Documentación y Presentación** | 3 meses | Redacción de la memoria del TFG. Preparación de la presentación. |
-
 ## 🛠️ Requisitos y Tecnología
 * **Tecnologías Clave:** Listado de las herramientas, lenguajes de programación (Python, R, JavaScript), bibliotecas (Pandas, Scikit-learn, TensorFlow), y frameworks que se utilizarán (p. ej., React, Flask, Flutter).
 * **Requisitos del Sistema:** Hardware o software necesario para el desarrollo y despliegue.

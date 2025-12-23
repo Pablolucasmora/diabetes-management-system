@@ -98,6 +98,15 @@ def init_db():
                 )
             """)
 
+            # Tabla de subtipos de alimentos y bebidas
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS catalogo_subtipos (
+                    id_subtipo INTEGER PRIMARY KEY AUTOINCREMENT,
+                    nombre TEXT UNIQUE NOT NULL,
+                    categoria_padre TEXT NOT NULL -- 'Alimento' o 'Bebida'
+                )
+            """)
+
             conn.commit()
             print("Base de datos inicializada correctamente.")
         except Error as e:

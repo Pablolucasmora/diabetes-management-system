@@ -3,7 +3,7 @@ from streamlit_option_menu import option_menu
 from database.connection import init_db
 # Importamos la función que acabamos de completar en el componente
 import components.registro_comida as rc
-
+import components.configuracion as config
 
 def main():
     # 1. Configuración de la página (Siempre lo primero)
@@ -36,8 +36,9 @@ def main():
         st.info("Esta sección está en desarrollo. Aquí conectaremos con los datos de LibreView.")
 
     elif opcion == "Configuración":
-        st.header("⚙️ Configuración")
-        st.write("Ajustes de la aplicación.")
+        config.render_configuracion()
+
+
 
 
 if __name__ == "__main__":
