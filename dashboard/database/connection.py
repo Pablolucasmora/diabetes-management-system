@@ -85,6 +85,19 @@ def init_db():
             );
             """)
 
+            # Tabla de Auditoría para ver historial de cambios
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS historial_cambios (
+                    id_log INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tabla_afectada TEXT NOT NULL,
+                    id_referencia INTEGER,
+                    accion TEXT NOT NULL,
+                    valor_anterior TEXT,
+                    valor_nuevo TEXT,
+                    fecha_accion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
             conn.commit()
             print("Base de datos inicializada correctamente.")
         except Error as e:

@@ -1,8 +1,21 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional
-
+import json
 from database.connection import create_connection
+
+
+def registrar_log(cursor, tabla, id_ref, accion, anterior=None, nuevo=None):
+    """
+    Función centralizada para auditar cambios.
+    """
+    cursor.execute("""
+        INSERT INTO historial_cambios (tabla_afectada, id_referencia, accion, valor_anterior, valor_nuevo)
+        VALUES (?, ?, ?, ?, ?)
+    """, (tabla, id_ref, accion, 
+          json.dumps(anterior) if anterior else None, 
+          json.dumps(nuevo) if nuevo else None))
+
 
 @dataclass
 class ProductoModel:
@@ -95,8 +108,20 @@ class CatalogoQueries:
         try:
             cursor = conn.cursor()
             cursor.execute(sql, valores)
-            conn.commit()
             producto_id = cursor.lastrowid # Recuperamos el ID autogenerado
+
+            # 2. Preparamos los datos para el log (convertimos el modelo a dict)
+            datos_nuevos = producto.__dict__.copy()
+            
+            # 3. Registramos la acción en la tabla de auditoría
+            registrar_log(
+                cursor=cursor,
+                tabla='catalogo_productos',
+                id_ref=producto_id,
+                accion='INSERT',
+                nuevo=datos_nuevos
+            )
+            conn.commit()            
             return producto_id
         except Exception as e:
             print(f"Error al insertar producto: {e}")
@@ -115,77 +140,6 @@ class CatalogoQueries:
             # Traemos todos los productos ordenados alfabéticamente
             cursor.execute("SELECT id_producto, nombre, marca FROM catalogo_productos ORDER BY nombre ASC")
             return [dict(row) for row in cursor.fetchall()]
-        finally:
-            conn.close()
-
-    @staticmethod
-    def buscar_producto_por_nombre(nombre: str) -> List[ProductoModel]:
-        """
-        Busca productos en el catálogo cuyo nombre contenga la cadena dada.
-        Devuelve una lista de objetos ProductoModel.
-        """
-        conn = create_connection()
-        if not conn:
-            return []
-        
-        sql = """
-            SELECT 
-                id_producto, nombre, marca, categoria, nutriscore, nova, subtipo,
-                graduacion_pct, hidratos_g, azucares_g, grasas_g, proteinas_g,
-                fibra_g, cafeina_mg, es_gas, notas
-            FROM catalogo_productos
-            WHERE nombre LIKE ?
-            LIMIT 20
-        """
-        
-        try:
-            cursor = conn.cursor()
-            cursor.execute(sql, (f"%{nombre}%",))
-            filas = cursor.fetchall()
-            
-            resultados = []
-            for fila in filas:
-                producto = ProductoModel(
-                    id_producto=fila[0],
-                    nombre=fila[1],
-                    marca=fila[2],
-                    categoria=fila[3],
-                    nutriscore=fila[4],
-                    nova=fila[5],
-                    subtipo=fila[6],
-                    graduacion_pct=fila[7],
-                    hidratos_g=fila[8],
-                    azucares_g=fila[9],
-                    grasas_g=fila[10],
-                    proteinas_g=fila[11],
-                    fibra_g=fila[12],
-                    cafeina_mg=fila[13],
-                    es_gas=bool(fila[14]),
-                    notas=fila[15]
-                )
-                resultados.append(producto)
-            
-            return resultados
-        except Exception as e:
-            print(f"Error al buscar productos: {e}")
-            return []
-        finally:
-            conn.close()
-
-    @staticmethod
-    def buscar_nombres_id(nombre_parcial: str) -> list:
-        """ Trae solo ID, Nombre y Marca (Optimizado para buscadores) """
-        conn = create_connection()
-        if not conn: return []
-        
-        # Solo pedimos 3 campos, no los 16 del ProductoModel
-        sql = "SELECT id_producto, nombre, marca FROM catalogo_productos WHERE nombre LIKE ? LIMIT 15"
-        
-        try:
-            cursor = conn.cursor()
-            cursor.execute(sql, (f"%{nombre_parcial}%",))
-            # Devolvemos una lista de tuplas ligeras
-            return cursor.fetchall() 
         finally:
             conn.close()
 
