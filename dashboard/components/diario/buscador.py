@@ -58,6 +58,7 @@ def render_buscador():
                             "hc": round(producto.hidratos_g * factor, 2),
                             "gr": round(producto.grasas_g * factor, 2),
                             "pr": round(producto.proteinas_g * factor, 2),
+                            "fb": round(producto.fibra_g * factor, 2),
                             "id_producto": producto.id_producto
                         })
                         st.toast(f"✅ Añadido: {producto.nombre}")
