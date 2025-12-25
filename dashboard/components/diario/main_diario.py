@@ -1,6 +1,6 @@
 import streamlit as st
 from .buscador import render_buscador
-from .nuevo_producto import render_nuevo_producto
+from .nuevo_producto import render_nuevo_producto, render_custom_food_entry
 from .carrito import render_carrito
 
 def render_diario():
@@ -21,6 +21,8 @@ def render_diario():
         render_buscador()
         st.divider()
         render_nuevo_producto()
+        st.divider()
+        render_custom_food_entry()
 
     with col_der:
         # Componente de resumen (sticky style visualmente)

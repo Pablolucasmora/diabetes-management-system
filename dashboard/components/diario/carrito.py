@@ -1,11 +1,41 @@
 import streamlit as st
 
+
+def calcular_calidad_registro(carrito):
+    """Calcula qué porcentaje de los hidratos vienen de alimentos pesados."""
+    if not carrito: return "N/A", "grey"
+    
+    total_hc = sum(item['hc'] for item in carrito)
+    if total_hc == 0: return "Sin Hidratos", "blue"
+    
+    hc_pesados = sum(item['hc'] for item in carrito if item.get('pesado_estricto', True))
+    
+    ratio = hc_pesados / total_hc
+    
+    if ratio == 1.0:
+        return "🥇 Registro Perfecto (100% Pesado)", "green"
+    elif ratio >= 0.8:
+        return "🥈 Registro Muy Fiable", "blue"
+    elif ratio >= 0.5:
+        return "⚠️ Registro Mixto (Estimado)", "orange"
+    else:
+        return "🎲 Registro 'A Ojo' (Poca fiabilidad)", "red"
+
+
 def render_carrito():
     st.subheader("🛒 Comida actual")
     
     if not st.session_state.carrito:
         st.info("Tu bandeja está vacía.")
         return
+
+    # 1. MOSTRAR CALIDAD DEL REGISTRO (Tu idea del semáforo)
+    mensaje_calidad, color_calidad = calcular_calidad_registro(st.session_state.carrito)
+    st.caption("Calidad de los datos:")
+    st.markdown(f":{color_calidad}[**{mensaje_calidad}**]")
+    st.progress(sum(item['hc'] for item in st.session_state.carrito if item.get('pesado_estricto', True)) / (sum(item['hc'] for item in st.session_state.carrito) + 0.001))
+    
+    st.divider()
 
     # 1. Listado de items
     total_hc = 0
@@ -16,6 +46,7 @@ def render_carrito():
     for i, item in enumerate(st.session_state.carrito):
         c_info, c_del = st.columns([5, 1])
         c_info.caption(f"{item['nombre']} ({item['cantidad']}g)")
+        c_info.caption(f"Offset: {item.get('offset', 0)} min")
         c_info.write(f"**{item['hc']}g HC** | {item['gr']}g GR | {item['pr']}g PR | {item['fb']}g FB")
         
         if c_del.button("❌", key=f"del_{i}"):

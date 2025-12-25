@@ -43,12 +43,42 @@ def render_buscador():
             color = "green" if st.session_state.id_recien_creado else "blue"
             st.markdown(f":{color}[**Seleccionado:** {producto.nombre} | {producto.hidratos_g}g HC / 100g]")
             
-            c1, c2 = st.columns([2, 1])
-            cantidad_str = c1.text_input("Cantidad (g/ml)", key=f"input_cant_{id_a_mostrar}")
+            # --- NUEVA LÓGICA DE CANTIDADES ---
             
-            if c2.button("Añadir ➕", key=f"btn_add_{id_a_mostrar}", use_container_width=True):
+            # 1. Definimos el valor por defecto
+            # Si tiene ración definida en BD, la usamos. Si no, ponemos 100g por defecto.
+            valor_base = float(producto.porcion_default_g) if (producto.porcion_default_g and producto.porcion_default_g > 0) else None
+            
+            # 2. Dividimos el espacio en 3 columnas: [Ración] [Multiplicador] [Botón]
+            c_cant, c_mult, c_btn = st.columns([1.5, 1, 1.2], gap="small")
+            
+            # Input A: Tamaño de la ración (Editable)
+            racion_input = c_cant.text_input(
+                "Ración (g/ml)", 
+                value=str(valor_base) if valor_base else None, 
+                key=f"input_base_{id_a_mostrar}"
+            )
+            
+            # Input B: Veces (Multiplicador)
+            veces_input = c_mult.text_input(
+                "Nº Veces", 
+                value="1",
+                key=f"input_mult_{id_a_mostrar}"
+            )
+            
+            # Cálculo final
+            cantidad_final = float(racion_input) * float(veces_input) if racion_input and veces_input else 0
+
+            # Botón con feedback visual de la cantidad total
+            texto_boton = f"Añadir ({int(cantidad_final)}g) ➕"
+
+            c1, c2 = st.columns([2, 1])
+            offset = c1.text_input("Offset (min)", key=f"input_offset_{id_a_mostrar}")
+            pesado_estricto = c2.checkbox("Pesado Estricto", value=True, key=f"chk_pesado_{id_a_mostrar}")
+
+            if c2.button(texto_boton, key=f"btn_add_{id_a_mostrar}", use_container_width=True):
                 try:
-                    cantidad = int(cantidad_str)
+                    cantidad = int(cantidad_final)
                     if cantidad > 0:
                         factor = cantidad / 100.0
                         # Añadimos al estado global 'carrito'
@@ -59,7 +89,10 @@ def render_buscador():
                             "gr": round(producto.grasas_g * factor, 2),
                             "pr": round(producto.proteinas_g * factor, 2),
                             "fb": round(producto.fibra_g * factor, 2),
-                            "id_producto": producto.id_producto
+                            "id_producto": producto.id_producto,
+                            "offset": int(offset) if offset else None,
+                            "pesado_estricto": pesado_estricto
+
                         })
                         st.toast(f"✅ Añadido: {producto.nombre}")
                         st.session_state.id_recien_creado = None

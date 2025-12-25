@@ -17,16 +17,16 @@ def registrar_log(cursor, tabla, id_ref, accion, anterior=None, nuevo=None):
           json.dumps(nuevo) if nuevo else None))
 
 # --- MODELOS DE DATOS (DATACLASSES) ---
-
 @dataclass
 class ProductoModel:
     id_producto: Optional[int] = None
     nombre: str = ""
-    marca: str = ""
-    categoria: str = "" 
-    nutriscore: str = "" 
+    marca: Optional[str] = None          
+    categoria: str = ""
+    nutriscore: str = ""
     nova: int = 0
-    subtipo: str = "" # Ahora es texto libre
+    subtipo: str = ""
+    porcion_default_g: Optional[int] = None 
     graduacion_pct: float = 0.0
     hidratos_g: float = 0.0
     azucares_g: float = 0.0
@@ -44,7 +44,7 @@ class ParteComidaModel:
     id_producto: Optional[int] = None 
     nombre_real: str = "" 
     cantidad: float = 0.0
-    offset: int = 0  
+    offset: Optional[int] = None  
     hidratos_totales: float = 0.0
     azucar_total: float = 0.0
     grasas_totales: float = 0.0
@@ -75,14 +75,14 @@ class CatalogoQueries:
         sql = """
             INSERT INTO catalogo_productos (
                 nombre, marca, categoria, nutriscore, nova, subtipo, 
-                graduacion_pct, hidratos_g, azucares_g, grasas_g, 
+                graduacion_pct, porcion_default_g, hidratos_g, azucares_g, grasas_g, 
                 proteinas_g, fibra_g, cafeina_mg, es_gas, notas
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         valores = (
             producto.nombre, producto.marca, producto.categoria, 
             producto.nutriscore, producto.nova, producto.subtipo,
-            producto.graduacion_pct, producto.hidratos_g, producto.azucares_g, 
+            producto.graduacion_pct, producto.porcion_default_g, producto.hidratos_g, producto.azucares_g, 
             producto.grasas_g, producto.proteinas_g, producto.fibra_g, 
             producto.cafeina_mg, int(producto.es_gas), producto.notas
         )

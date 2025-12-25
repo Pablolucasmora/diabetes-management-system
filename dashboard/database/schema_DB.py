@@ -16,6 +16,7 @@ class TABLES:
             nutriscore TEXT,
             nova INTEGER,
             subtipo TEXT,
+            porcion_default_g REAL,
             graduacion_pct REAL DEFAULT 0,
             hidratos_g REAL DEFAULT 0,
             azucares_g REAL DEFAULT 0,
