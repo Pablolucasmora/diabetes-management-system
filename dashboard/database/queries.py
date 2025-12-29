@@ -63,6 +63,19 @@ class ComidaModel:
     notas: str = ""
     partes: List[ParteComidaModel] = field(default_factory=list)
 
+@dataclass
+class ItemCarrito:
+    # Un dataclass simple para manejar los datos en la UI
+    id_item: int
+    nombre: str
+    cantidad: float
+    hc: float
+    gr: float
+    pr: float
+    fb: float
+    offset: int
+    es_pesado: bool
+
 # --- CONSULTAS AL CATÁLOGO ---
 
 class CatalogoQueries:
@@ -120,3 +133,50 @@ class CatalogoQueries:
             datos['es_gas'] = bool(datos['es_gas'])
             return ProductoModel(**datos)
         return None
+
+class CarritoQueries:
+    @staticmethod
+    def agregar_item(datos: dict):
+        """Recibe el diccionario que antes metías en session_state"""
+        conn = db._get_connection()
+        if not conn: return None
+        
+        sql = """
+            INSERT INTO carrito_temporal (
+                id_producto, nombre_display, cantidad, 
+                hc, gr, pr, fb, az,
+                offset, es_pesado_estricto, es_manual, fecha_agregado
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        # Asegúrate de extraer los valores correctamente del dict
+        valores = (
+            datos.get('id_producto'), datos.get('nombre'), datos.get('cantidad'),
+            datos.get('hc'), datos.get('gr'), datos.get('pr'), datos.get('fb'), datos.get('az', 0),
+            datos.get('offset'), int(datos.get('es_pesado_estricto', 1)), int(datos.get('es_manual', 0))
+        )
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute(sql, valores)
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"Error al añadir al carrito: {e}")
+            return False
+        finally:
+            conn.close()
+
+    @staticmethod
+    def obtener_carrito():
+        query = "SELECT * FROM carrito_temporal ORDER BY fecha_agregado ASC"
+        rows = db.execute_query(query)
+        # Convertimos rows a lista de dicts o dataclasses
+        return [dict(row) for row in rows] if rows else []
+
+    @staticmethod
+    def eliminar_item(id_item):
+        db.execute_query("DELETE FROM carrito_temporal WHERE id_item = ?", (id_item,), commit=True)
+
+    @staticmethod
+    def vaciar_carrito():
+        db.execute_query("DELETE FROM carrito_temporal", commit=True)

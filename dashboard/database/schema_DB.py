@@ -72,3 +72,25 @@ class TABLES:
             fecha_accion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """
+    CARRITO_TEMP = """
+            CREATE TABLE IF NOT EXISTS carrito_temporal (
+                id_item INTEGER PRIMARY KEY AUTOINCREMENT,
+                id_producto INTEGER, -- Puede ser NULL si es manual
+                nombre_display TEXT NOT NULL, -- El nombre que mostramos en la lista
+                cantidad REAL DEFAULT 1,
+                
+                -- Macros calculados para esa cantidad
+                hc REAL DEFAULT 0,
+                gr REAL DEFAULT 0,
+                pr REAL DEFAULT 0,
+                fb REAL DEFAULT 0,
+                az REAL DEFAULT 0,
+                
+                -- Metadatos del registro
+                offset INTEGER DEFAULT 0,
+                es_pesado_estricto INTEGER DEFAULT 1,
+                es_manual INTEGER DEFAULT 0,
+                
+                fecha_agregado TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                -- FOREIGN KEY (id_producto) ... (Opcional, cuidado con borrar productos del catálogo si están en un carrito)
+            );"""

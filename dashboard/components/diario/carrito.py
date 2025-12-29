@@ -1,4 +1,5 @@
 import streamlit as st
+import database.queries as dq
 
 
 def calcular_calidad_registro(carrito):
@@ -25,15 +26,17 @@ def calcular_calidad_registro(carrito):
 def render_carrito():
     st.subheader("🛒 Comida actual")
     
-    if not st.session_state.carrito:
+    carrito = dq.CarritoQueries.obtener_carrito()
+
+    if not carrito:
         st.info("Tu bandeja está vacía.")
         return
 
     # 1. MOSTRAR CALIDAD DEL REGISTRO (Tu idea del semáforo)
-    mensaje_calidad, color_calidad = calcular_calidad_registro(st.session_state.carrito)
+    mensaje_calidad, color_calidad = calcular_calidad_registro(carrito)
     st.caption("Calidad de los datos:")
     st.markdown(f":{color_calidad}[**{mensaje_calidad}**]")
-    st.progress(sum(item['hc'] for item in st.session_state.carrito if item.get('pesado_estricto', True)) / (sum(item['hc'] for item in st.session_state.carrito) + 0.001))
+    st.progress(sum(item['hc'] for item in carrito if item.get('pesado_estricto', True)) / (sum(item['hc'] for item in carrito) + 0.001))
     
     st.divider()
 
@@ -43,14 +46,14 @@ def render_carrito():
     total_pr = 0
     total_fb = 0
     
-    for i, item in enumerate(st.session_state.carrito):
+    for i, item in enumerate(carrito):
         c_info, c_del = st.columns([5, 1])
-        c_info.caption(f"{item['nombre']} ({item['cantidad']}g)")
+        c_info.caption(f"{item['nombre_display']} ({item['cantidad']}g)")
         c_info.caption(f"Offset: {item.get('offset', 0)} min")
         c_info.write(f"**{item['hc']}g HC** | {item['gr']}g GR | {item['pr']}g PR | {item['fb']}g FB")
         
         if c_del.button("❌", key=f"del_{i}"):
-            st.session_state.carrito.pop(i)
+            dq.CarritoQueries.eliminar_item(item['id_item'])
             st.rerun()
             
         total_hc += item['hc']
@@ -76,5 +79,5 @@ def render_carrito():
     if st.button("💾 Guardar Registro", type="primary", use_container_width=True):
         st.success("¡Guardado! (Aquí conectaremos la query de guardar comida)")
         # TODO: Implementar dq.RegistroQueries.guardar_comida(...)
-        st.session_state.carrito = [] 
+        dq.CarritoQueries.vaciar_carrito()
         st.rerun()

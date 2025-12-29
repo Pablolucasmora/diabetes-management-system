@@ -277,7 +277,6 @@ def render_custom_food_entry():
                 item_manual = {
                     "nombre": f"{nombre} (Manual)",
                     "cantidad": 1,
-                    "unidad": "ración",
                     "hc": macros['hidratos_g'],
                     "gr": macros['grasas_g'],
                     "pr": macros['proteinas_g'],
@@ -286,9 +285,8 @@ def render_custom_food_entry():
                     "id_producto": None,
                     "offset": int(offset) if offset else None,
                     "es_manual": True,
-                    "es_pesado": pesado_estricto
+                    "es_pesado": pesado_estricto,
                 }
-
-                st.session_state.carrito.append(item_manual)
+                dq.CarritoQueries.agregar_item(item_manual)
                 st.success(f"Añadido: {nombre}")
                 st.rerun()

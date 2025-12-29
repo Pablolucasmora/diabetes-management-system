@@ -1,5 +1,6 @@
 import streamlit as st
 import database.queries as dq
+from datetime import datetime
 
 def render_buscador():
     st.subheader("🔍 Añadir Alimentos")
@@ -76,13 +77,14 @@ def render_buscador():
             offset = c1.text_input("Offset (min)", key=f"input_offset_{id_a_mostrar}")
             pesado_estricto = c2.checkbox("Pesado Estricto", value=True, key=f"chk_pesado_{id_a_mostrar}")
 
+
             if c2.button(texto_boton, key=f"btn_add_{id_a_mostrar}", use_container_width=True):
                 try:
                     cantidad = int(cantidad_final)
                     if cantidad > 0:
                         factor = cantidad / 100.0
                         # Añadimos al estado global 'carrito'
-                        st.session_state.carrito.append({
+                        item_dict = {
                             "nombre": producto.nombre,
                             "cantidad": cantidad,
                             "hc": round(producto.hidratos_g * factor, 2),
@@ -91,9 +93,11 @@ def render_buscador():
                             "fb": round(producto.fibra_g * factor, 2),
                             "id_producto": producto.id_producto,
                             "offset": int(offset) if offset else None,
-                            "pesado_estricto": pesado_estricto
+                            "es_manual": False,
+                            "pesado_estricto": pesado_estricto,
 
-                        })
+                        }
+                        dq.CarritoQueries.agregar_item(item_dict) # <--- Llamada a BD
                         st.toast(f"✅ Añadido: {producto.nombre}")
                         st.session_state.id_recien_creado = None
                         st.rerun()

@@ -56,7 +56,8 @@ class DatabaseManager:
             TABLES.PRODUCTOS,
             TABLES.COMIDA,
             TABLES.PARTES_COMIDA,
-            TABLES.AUDITORIA
+            TABLES.AUDITORIA,
+            TABLES.CARRITO_TEMP
         ]
 
         conn = self._get_connection()
