@@ -9,7 +9,7 @@ def calcular_calidad_registro(carrito):
     total_hc = sum(item['hc'] for item in carrito)
     if total_hc == 0: return "Sin Hidratos", "blue"
     
-    hc_pesados = sum(item['hc'] for item in carrito if item.get('pesado_estricto', True))
+    hc_pesados = sum(item['hc'] for item in carrito if item.get('es_pesado_estricto', True))
     
     ratio = hc_pesados / total_hc
     
@@ -36,7 +36,7 @@ def render_carrito():
     mensaje_calidad, color_calidad = calcular_calidad_registro(carrito)
     st.caption("Calidad de los datos:")
     st.markdown(f":{color_calidad}[**{mensaje_calidad}**]")
-    st.progress(sum(item['hc'] for item in carrito if item.get('pesado_estricto', True)) / (sum(item['hc'] for item in carrito) + 0.001))
+    st.progress(sum(item['hc'] for item in carrito if item.get('es_pesado_estricto', True)) / (sum(item['hc'] for item in carrito) + 0.001))
     
     st.divider()
 
@@ -45,6 +45,8 @@ def render_carrito():
     total_gr = 0
     total_pr = 0
     total_fb = 0
+    total_az = 0
+    total_sat = 0
     
     for i, item in enumerate(carrito):
         c_info, c_del = st.columns([5, 1])
@@ -56,10 +58,12 @@ def render_carrito():
             dq.CarritoQueries.eliminar_item(item['id_item'])
             st.rerun()
             
-        total_hc += item['hc']
-        total_gr += item['gr']
-        total_pr += item['pr']
-        total_fb += item['fb']
+        total_hc += item.get('hc', 0)
+        total_gr += item.get('gr', 0)
+        total_pr += item.get('pr', 0)
+        total_fb += item.get('fb', 0)
+        total_az += item.get('az', 0)
+        total_sat += item.get('sat', 0)
         st.divider()
 
     # 2. Totales

@@ -33,6 +33,7 @@ class ProductoModel:
     grasas_g: float = 0.0
     proteinas_g: float = 0.0
     fibra_g: float = 0.0
+    grasas_saturadas_g: float = 0.0
     cafeina_mg: float = 0.0
     es_gas: bool = False
     notas: str = ""
@@ -144,15 +145,15 @@ class CarritoQueries:
         sql = """
             INSERT INTO carrito_temporal (
                 id_producto, nombre_display, cantidad, 
-                hc, gr, pr, fb, az,
+                hc, gr, pr, fb, az, sat,
                 offset, es_pesado_estricto, es_manual, fecha_agregado
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         # Asegúrate de extraer los valores correctamente del dict
         valores = (
             datos.get('id_producto'), datos.get('nombre'), datos.get('cantidad'),
-            datos.get('hc'), datos.get('gr'), datos.get('pr'), datos.get('fb'), datos.get('az', 0),
-            datos.get('offset'), int(datos.get('es_pesado_estricto', 1)), int(datos.get('es_manual', 0))
+            datos.get('hc'), datos.get('gr'), datos.get('pr'), datos.get('fb'), datos.get('az', 0), datos.get('sat', 0),
+            datos.get('offset'), int(datos.get('es_pesado_estricto', 1)), int(datos.get('es_manual', 0)), datetime.now()
         )
         
         try:
@@ -168,7 +169,7 @@ class CarritoQueries:
 
     @staticmethod
     def obtener_carrito():
-        query = "SELECT * FROM carrito_temporal ORDER BY fecha_agregado ASC"
+        query = "SELECT * FROM carrito_temporal ORDER BY offset ASC NULLS LAST, fecha_agregado ASC"
         rows = db.execute_query(query)
         # Convertimos rows a lista de dicts o dataclasses
         return [dict(row) for row in rows] if rows else []

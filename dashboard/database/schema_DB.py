@@ -23,6 +23,7 @@ class TABLES:
             grasas_g REAL DEFAULT 0,
             proteinas_g REAL DEFAULT 0,
             fibra_g REAL DEFAULT 0,
+            grasas_saturadas_g REAL DEFAULT 0,
             cafeina_mg REAL DEFAULT 0,
             es_gas INTEGER DEFAULT 0,
             notas TEXT
@@ -50,11 +51,12 @@ class TABLES:
             nombre_real TEXT,
             offset_minutos INTEGER DEFAULT 0,
             cantidad REAL NOT NULL,
-            hidratos_totales REAL,
-            azucar_total REAL,
-            grasas_totales REAL,
-            proteinas_totales REAL,
-            fibra_total REAL,
+            hidratos_totales REAL DEFAULT 0,
+            azucar_total REAL DEFAULT 0,
+            grasas_totales REAL DEFAULT 0,
+            proteinas_totales REAL DEFAULT 0,
+            fibra_total REAL DEFAULT 0,
+            grasas_saturadas_total REAL DEFAULT 0,
             es_pesado_detalle INTEGER, 
             FOREIGN KEY (id_comida) REFERENCES comida(id_comida) ON DELETE CASCADE,
             FOREIGN KEY (id_producto) REFERENCES catalogo_productos(id_producto)
@@ -85,11 +87,16 @@ class TABLES:
                 pr REAL DEFAULT 0,
                 fb REAL DEFAULT 0,
                 az REAL DEFAULT 0,
+                sat REAL DEFAULT 0,
                 
                 -- Metadatos del registro
                 offset INTEGER DEFAULT 0,
                 es_pesado_estricto INTEGER DEFAULT 1,
                 es_manual INTEGER DEFAULT 0,
+                
+                -- COLUMNAS DE AGRUPACIÓN
+                grupo_nombre TEXT DEFAULT 'Comida Actual', 
+                tipo_comida TEXT DEFAULT 'Comida',
                 
                 fecha_agregado TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 -- FOREIGN KEY (id_producto) ... (Opcional, cuidado con borrar productos del catálogo si están en un carrito)

@@ -1,6 +1,5 @@
 import streamlit as st
 import database.queries as dq
-from datetime import datetime
 
 def render_buscador():
     st.subheader("🔍 Añadir Alimentos")
@@ -94,10 +93,10 @@ def render_buscador():
                             "id_producto": producto.id_producto,
                             "offset": int(offset) if offset else None,
                             "es_manual": False,
-                            "pesado_estricto": pesado_estricto,
+                            "es_pesado_estricto": pesado_estricto,
 
                         }
-                        dq.CarritoQueries.agregar_item(item_dict) # <--- Llamada a BD
+                        dq.CarritoQueries.agregar_item(item_dict) 
                         st.toast(f"✅ Añadido: {producto.nombre}")
                         st.session_state.id_recien_creado = None
                         st.rerun()

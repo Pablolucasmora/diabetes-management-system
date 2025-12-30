@@ -16,12 +16,13 @@ def parsear_macros(texto):
         'azucar': 'azucares_g', 'azucares': 'azucares_g', 'az': 'azucares_g',
         'proteinas': 'proteinas_g', 'proteina': 'proteinas_g', 'pr': 'proteinas_g', 'pro': 'proteinas_g',
         'grasas': 'grasas_g', 'grasa': 'grasas_g', 'gr': 'grasas_g',
+        'saturadas': 'grasas_sat_g', 'sat': 'grasas_sat_g', 'st': 'grasas_sat_g', 'gs': 'grasas_sat_g', # <--- NUEVOS
         'fibra': 'fibra_g', 'fb': 'fibra_g'
     }
     
     valores = {
         'hidratos_g': 0.0, 'azucares_g': 0.0, 'proteinas_g': 0.0, 
-        'fibra_g': 0.0, 'grasas_g': 0.0
+        'fibra_g': 0.0, 'grasas_g': 0.0, 'grasas_sat_g': 0.0
     }
     
     if not texto:
@@ -89,6 +90,8 @@ def render_nuevo_producto():
                 partes.append(f":orange[**{macros['grasas_g']}g Grasas**]")
             if macros['fibra_g'] > 0:
                 partes.append(f":grey[{macros['fibra_g']}g Fibra]")
+            if macros['grasas_sat_g'] > 0:
+                partes.append(f":red[{macros['grasas_sat_g']}g Grasas Sat.]")
 
             if partes:
                 st.markdown("✅ **Detectado:** " + " | ".join(partes))
@@ -173,6 +176,7 @@ def render_nuevo_producto():
                         proteinas_g=macros['proteinas_g'],
                         fibra_g=macros['fibra_g'],
                         grasas_g=macros['grasas_g'],
+                        grasas_sat_g=macros['grasas_sat_g'],
 
                         graduacion_pct=float(grad or 0),
                         cafeina_mg=float(caf or 0),
@@ -224,6 +228,10 @@ def render_custom_food_entry():
                 partes.append(f":green[**{macros['proteinas_g']}g Pr**]")
             if macros['azucares_g'] > 0:
                 partes.append(f":violet[{macros['azucares_g']}g Az]")
+            if macros['fibra_g'] > 0:
+                partes.append(f":grey[{macros['fibra_g']}g Fb]")
+            if macros['grasas_sat_g'] > 0:
+                partes.append(f":red[{macros['grasas_sat_g']}g Sat]")
 
             if partes:
                 st.markdown("✅ " + " | ".join(partes))
@@ -267,7 +275,9 @@ def render_custom_food_entry():
                     macros['hidratos_g'] > 0 or
                     macros['grasas_g'] > 0 or
                     macros['proteinas_g'] > 0 or
-                    macros['azucares_g'] > 0
+                    macros['azucares_g'] > 0 or
+                    macros['fibra_g'] > 0 or
+                    macros['grasas_sat_g'] > 0
                 )
 
                 if not nombre or not tiene_macros:
@@ -282,10 +292,11 @@ def render_custom_food_entry():
                     "pr": macros['proteinas_g'],
                     "az": macros['azucares_g'],
                     "fb": macros['fibra_g'],
+                    "sat": macros['grasas_sat_g'],
                     "id_producto": None,
                     "offset": int(offset) if offset else None,
                     "es_manual": True,
-                    "es_pesado": pesado_estricto,
+                    "es_pesado_estricto": pesado_estricto,
                 }
                 dq.CarritoQueries.agregar_item(item_manual)
                 st.success(f"Añadido: {nombre}")
