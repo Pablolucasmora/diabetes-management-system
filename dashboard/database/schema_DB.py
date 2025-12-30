@@ -90,14 +90,12 @@ class TABLES:
                 sat REAL DEFAULT 0,
                 
                 -- Metadatos del registro
-                offset INTEGER DEFAULT 0,
+                offset INTEGER,
                 es_pesado_estricto INTEGER DEFAULT 1,
                 es_manual INTEGER DEFAULT 0,
-                
-                -- COLUMNAS DE AGRUPACIÓN
-                grupo_nombre TEXT DEFAULT 'Comida Actual', 
-                tipo_comida TEXT DEFAULT 'Comida',
-                
-                fecha_agregado TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+                -- Agrupacion
+                grupo_nombre TEXT NOT NULL DEFAULT 'Comida actual'
+
                 -- FOREIGN KEY (id_producto) ... (Opcional, cuidado con borrar productos del catálogo si están en un carrito)
             );"""

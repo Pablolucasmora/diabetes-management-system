@@ -200,104 +200,129 @@ def render_nuevo_producto():
 
 def render_custom_food_entry():
     """
-    Entrada manual con:
-    - Smart macros reactivos
-    - Formulario estable con autoreset
+    Entrada manual con Formulario Híbrido:
+    - FUERA del Form: Macros y Grupo (para ser reactivos)
+    - DENTRO del Form: Nombre, Offset, Submit (para agrupar y limpiar)
     """
-    with st.expander("🍽️ Entrada Manual"):
+    with st.expander("🍽️ Entrada Manual", expanded=False):
         st.info("Usa esto para comidas puntuales que no quieres guardar en el catálogo.")
 
         # ======================================================
-        # PASO 1 — SMART MACROS (REACTIVO, FUERA DEL FORM)
+        # ZONA REACTIVA (FUERA DEL FORM)
         # ======================================================
+        
+        # 1. MACROS INTELIGENTES
         input_macros = st.text_input(
             "Macros (Smart Text):",
             placeholder="Ej: 60hc 30gr 10pr...",
             key="manual_macros"
         )
-
         macros = parsear_macros(input_macros)
 
+        # Feedback visual inmediato
         if input_macros:
             partes = []
-            if macros['hidratos_g'] > 0:
-                partes.append(f":blue[**{macros['hidratos_g']}g HC**]")
-            if macros['grasas_g'] > 0:
-                partes.append(f":orange[**{macros['grasas_g']}g Gr**]")
-            if macros['proteinas_g'] > 0:
-                partes.append(f":green[**{macros['proteinas_g']}g Pr**]")
-            if macros['azucares_g'] > 0:
-                partes.append(f":violet[{macros['azucares_g']}g Az]")
-            if macros['fibra_g'] > 0:
-                partes.append(f":grey[{macros['fibra_g']}g Fb]")
-            if macros['grasas_sat_g'] > 0:
-                partes.append(f":red[{macros['grasas_sat_g']}g Sat]")
+            if macros['hidratos_g'] > 0: partes.append(f":blue[**{macros['hidratos_g']}g HC**]")
+            if macros['grasas_g'] > 0: partes.append(f":orange[**{macros['grasas_g']}g Gr**]")
+            if macros['grasas_sat_g'] > 0: partes.append(f":red[{macros['grasas_sat_g']}g Sat]")
+            if macros['proteinas_g'] > 0: partes.append(f":green[**{macros['proteinas_g']}g Pr**]")
+            if macros['azucares_g'] > 0: partes.append(f":violet[{macros['azucares_g']}g Az]")
 
             if partes:
                 st.markdown("✅ " + " | ".join(partes))
             else:
-                st.caption("Escribe cantidades, ej: `45hc`")
+                st.caption("Escribe cantidades...")
 
         st.divider()
 
-        # ======================================================
-        # PASO 2 — FORMULARIO (NO REACTIVO, AUTO RESET)
-        # ======================================================
-        with st.form("form_manual_food", clear_on_submit=True):
+        # 2. SELECCIÓN DE GRUPO (Tiene que ser reactiva para mostrar el input de texto)
+        c_grupo_sel, c_grupo_new = st.columns([1.5, 1.5])
+        
+        grupos_existentes = dq.CarritoQueries.obtener_grupos_activos()
+        opcion_nuevo = "➕ Nuevo Grupo..."
+        opciones = grupos_existentes + [opcion_nuevo]
+        
+        # Guardamos la selección en una variable temporal fuera del form
+        seleccion_grupo = c_grupo_sel.selectbox(
+            "Añadir a:", 
+            options=opciones, 
+            key="manual_grupo_select"
+        )
+        
+        nombre_grupo_final = seleccion_grupo
+        # Si elige nuevo, mostramos el input (esto NO funcionaría dentro de un st.form)
+        if seleccion_grupo == opcion_nuevo:
+            nombre_grupo_final = c_grupo_new.text_input(
+                "Nombre nuevo grupo:", 
+                value='Comida actual', 
+                key="manual_grupo_new"
+            )
 
+        # ======================================================
+        # ZONA FORMULARIO (DENTRO DEL FORM)
+        # ======================================================
+        # El form envuelve lo que queremos resetear y enviar junto
+        with st.form("form_manual_food", clear_on_submit=True):
+            
             nombre = st.text_input(
                 "Nombre del plato / comida*",
                 placeholder="Ej: Tarta de queso casera",
-                key="manual_nombre"
+                key="manual_nombre" # Al estar en form clear_on_submit=True, esto se borrará solo
             )
 
-            st.write("**Opciones Extra**")
             col_off, col_check = st.columns([2, 1])
-
             offset = col_off.text_input(
-                "Minutos espera (Offset):",
-                help="Positivo: esperas antes de comer. Negativo: comes antes.",
+                "Offset (min):",
+                value=None,
                 key="manual_offset"
             )
 
             pesado_estricto = col_check.checkbox(
                 "Pesado Estricto",
+                value=False,
                 key="manual_pesado"
             )
 
+            # Botón de envío
             submitted = st.form_submit_button(
                 "Añadir Manual al Carrito 🛒",
                 use_container_width=True
             )
 
             if submitted:
+                # Validaciones
                 tiene_macros = (
                     macros['hidratos_g'] > 0 or
                     macros['grasas_g'] > 0 or
                     macros['proteinas_g'] > 0 or
-                    macros['azucares_g'] > 0 or
-                    macros['fibra_g'] > 0 or
-                    macros['grasas_sat_g'] > 0
+                    macros['azucares_g'] > 0
                 )
 
-                if not nombre or not tiene_macros:
-                    st.error("Debes poner un nombre y algún valor nutricional.")
-                    st.stop()
+                if not nombre:
+                    st.error("⚠️ El nombre es obligatorio.")
+                elif not nombre_grupo_final: # Validación extra del grupo
+                    st.error("⚠️ Debes definir un nombre para el grupo.")
+                else:
+                    # Crear objeto
+                    item_manual = {
+                        "id_producto": None,
+                        "nombre_display": f"{nombre} (Manual)",
+                        "cantidad": 1,
+                        "hc": macros['hidratos_g'],
+                        "gr": macros['grasas_g'],
+                        "sat": macros['grasas_sat_g'],
+                        "pr": macros['proteinas_g'],
+                        "az": macros['azucares_g'],
+                        "fb": macros['fibra_g'],
+                        "offset": int(offset) if offset else None,
+                        "es_pesado_estricto": pesado_estricto,
+                        "es_manual": True,
+                        "grupo_nombre": nombre_grupo_final # Usamos la variable de fuera
+                    }
 
-                item_manual = {
-                    "nombre": f"{nombre} (Manual)",
-                    "cantidad": 1,
-                    "hc": macros['hidratos_g'],
-                    "gr": macros['grasas_g'],
-                    "pr": macros['proteinas_g'],
-                    "az": macros['azucares_g'],
-                    "fb": macros['fibra_g'],
-                    "sat": macros['grasas_sat_g'],
-                    "id_producto": None,
-                    "offset": int(offset) if offset else None,
-                    "es_manual": True,
-                    "es_pesado_estricto": pesado_estricto,
-                }
-                dq.CarritoQueries.agregar_item(item_manual)
-                st.success(f"Añadido: {nombre}")
-                st.rerun()
+                    # Guardar
+                    if dq.CarritoQueries.agregar_item(item_manual):
+                        st.toast(f"✅ Añadido: {nombre}")
+                        st.rerun() # Necesario para actualizar el carrito visualmente
+                    else:
+                        st.error("Error al guardar en BD.")

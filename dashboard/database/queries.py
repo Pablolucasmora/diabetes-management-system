@@ -65,17 +65,22 @@ class ComidaModel:
     partes: List[ParteComidaModel] = field(default_factory=list)
 
 @dataclass
-class ItemCarrito:
+class CarritoTemp:
     # Un dataclass simple para manejar los datos en la UI
     id_item: int
-    nombre: str
+    id_producto: Optional[int]
+    nombre_display: str
     cantidad: float
     hc: float
     gr: float
     pr: float
     fb: float
+    sat: float
+    az: float
     offset: int
-    es_pesado: bool
+    es_pesado_estricto: bool
+    es_manual: bool
+    grupo_nombre: str
 
 # --- CONSULTAS AL CATÁLOGO ---
 
@@ -146,14 +151,15 @@ class CarritoQueries:
             INSERT INTO carrito_temporal (
                 id_producto, nombre_display, cantidad, 
                 hc, gr, pr, fb, az, sat,
-                offset, es_pesado_estricto, es_manual, fecha_agregado
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                offset, es_pesado_estricto, es_manual, fecha_agregado, grupo_nombre
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         # Asegúrate de extraer los valores correctamente del dict
         valores = (
-            datos.get('id_producto'), datos.get('nombre'), datos.get('cantidad'),
+            datos.get('id_producto'), datos.get('nombre_display'), datos.get('cantidad'),
             datos.get('hc'), datos.get('gr'), datos.get('pr'), datos.get('fb'), datos.get('az', 0), datos.get('sat', 0),
-            datos.get('offset'), int(datos.get('es_pesado_estricto', 1)), int(datos.get('es_manual', 0)), datetime.now()
+            datos.get('offset'), int(datos.get('es_pesado_estricto', 1)), int(datos.get('es_manual', 0)), datetime.now(), 
+            datos.get('grupo_nombre', 'Comida Actual')
         )
         
         try:
@@ -179,5 +185,18 @@ class CarritoQueries:
         db.execute_query("DELETE FROM carrito_temporal WHERE id_item = ?", (id_item,), commit=True)
 
     @staticmethod
-    def vaciar_carrito():
-        db.execute_query("DELETE FROM carrito_temporal", commit=True)
+    def eliminar_grupo(grupo_nombre):
+        sql = "DELETE FROM carrito_temporal WHERE grupo_nombre = ?"
+        db.execute_query(sql, (grupo_nombre,), commit=True)
+
+    @staticmethod
+    def obtener_grupos_activos():
+        """Devuelve una lista de los nombres de grupos que existen actualmente en el carrito temp."""
+        # Usamos DISTINCT para que no salgan repetidos
+        query = "SELECT DISTINCT grupo_nombre FROM carrito_temporal ORDER BY fecha_agregado DESC"
+        rows = db.execute_query(query)
+        return [row['grupo_nombre'] for row in rows] if rows else []
+    
+
+
+

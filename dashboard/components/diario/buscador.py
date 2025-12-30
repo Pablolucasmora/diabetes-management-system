@@ -76,6 +76,36 @@ def render_buscador():
             offset = c1.text_input("Offset (min)", key=f"input_offset_{id_a_mostrar}")
             pesado_estricto = c2.checkbox("Pesado Estricto", value=True, key=f"chk_pesado_{id_a_mostrar}")
 
+            # --- SELECCIÓN DE GRUPO ---
+            st.write("**Opciones de Agrupación**")
+            c_grupo, c_botones = st.columns([2, 1])
+            
+            # 1. Recuperamos grupos existentes
+            grupos_existentes = dq.CarritoQueries.obtener_grupos_activos()
+            
+            # 2. Lógica del Widget: Selectbox + opción "Nuevo"
+            opcion_nuevo = "➕ Nuevo Grupo..."
+            opciones = grupos_existentes + [opcion_nuevo]
+            
+            # Si no hay grupos, seleccionamos "Nuevo" por defecto. Si hay, el primero (el más reciente).
+            idx_default = 0 if grupos_existentes else 0
+            
+            seleccion_grupo = c_grupo.selectbox(
+                "Añadir a:", 
+                options=opciones, 
+                index=idx_default,
+                key=f"sel_grupo_{id_a_mostrar}"
+            )
+            
+            nombre_grupo_final = seleccion_grupo
+            
+            # Si elige crear nuevo, mostramos el input de texto
+            if seleccion_grupo == opcion_nuevo:
+                nombre_grupo_final = c_grupo.text_input(
+                    "Nombre del nuevo grupo:", 
+                    value="Comida", 
+                    key=f"txt_grupo_{id_a_mostrar}"
+                )
 
             if c2.button(texto_boton, key=f"btn_add_{id_a_mostrar}", use_container_width=True):
                 try:
@@ -84,12 +114,14 @@ def render_buscador():
                         factor = cantidad / 100.0
                         # Añadimos al estado global 'carrito'
                         item_dict = {
-                            "nombre": producto.nombre,
+                            "nombre_display": producto.nombre,
                             "cantidad": cantidad,
+                            "grupo_nombre": nombre_grupo_final,
                             "hc": round(producto.hidratos_g * factor, 2),
                             "gr": round(producto.grasas_g * factor, 2),
                             "pr": round(producto.proteinas_g * factor, 2),
                             "fb": round(producto.fibra_g * factor, 2),
+                            "az": round(producto.azucares_g * factor, 2),
                             "id_producto": producto.id_producto,
                             "offset": int(offset) if offset else None,
                             "es_manual": False,
