@@ -12,7 +12,7 @@ def parsear_macros(texto):
     # 1. Diccionario de sinónimos (normalización)
     # La clave es lo que buscamos, el valor es el campo de la BD
     mapa_sinonimos = {
-        'hidratos': 'hidratos_g', 'hc': 'hidratos_g', 'carbos': 'hidratos_g',
+        'hidratos': 'hidratos_g', 'hc': 'hidratos_g', 'ch': 'hidratos_g', 'carbos': 'hidratos_g',
         'azucar': 'azucares_g', 'azucares': 'azucares_g', 'az': 'azucares_g',
         'proteinas': 'proteinas_g', 'proteina': 'proteinas_g', 'pr': 'proteinas_g', 'pro': 'proteinas_g',
         'grasas': 'grasas_g', 'grasa': 'grasas_g', 'gr': 'grasas_g',
@@ -270,14 +270,17 @@ def render_custom_food_entry():
                 key="manual_nombre" # Al estar en form clear_on_submit=True, esto se borrará solo
             )
 
-            col_off, col_check = st.columns([2, 1])
+            col_off, col_check = st.columns([1, 1])
+
             offset = col_off.text_input(
                 "Offset (min):",
                 value=None,
                 key="manual_offset"
             )
 
-            pesado_estricto = col_check.checkbox(
+            cantidad = col_check.text_input("Cantidad aprox (g)", value = None, key= "aprox_cantidad")
+
+            pesado_estricto = st.checkbox(
                 "Pesado Estricto",
                 value=False,
                 key="manual_pesado"
@@ -314,6 +317,7 @@ def render_custom_food_entry():
                         "pr": macros['proteinas_g'],
                         "az": macros['azucares_g'],
                         "fb": macros['fibra_g'],
+                        "cantidad": int(cantidad) if cantidad else None,
                         "offset": int(offset) if offset else None,
                         "es_pesado_estricto": pesado_estricto,
                         "es_manual": True,

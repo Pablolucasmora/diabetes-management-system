@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import List, Optional
 import json
 from .connection import get_db_manager
+import sqlite3
 
 # Instancia global del manager para este archivo
 db = get_db_manager()
@@ -33,7 +34,7 @@ class ProductoModel:
     grasas_g: float = 0.0
     proteinas_g: float = 0.0
     fibra_g: float = 0.0
-    grasas_saturadas_g: float = 0.0
+    grasas_sat_g: float = 0.0
     cafeina_mg: float = 0.0
     es_gas: bool = False
     notas: str = ""
@@ -94,15 +95,15 @@ class CatalogoQueries:
         sql = """
             INSERT INTO catalogo_productos (
                 nombre, marca, categoria, nutriscore, nova, subtipo, 
-                graduacion_pct, porcion_default_g, hidratos_g, azucares_g, grasas_g, 
+                graduacion_pct, porcion_default_g, hidratos_g, azucares_g, grasas_g, grasas_sat_g,
                 proteinas_g, fibra_g, cafeina_mg, es_gas, notas
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         valores = (
             producto.nombre, producto.marca, producto.categoria, 
             producto.nutriscore, producto.nova, producto.subtipo,
             producto.graduacion_pct, producto.porcion_default_g, producto.hidratos_g, producto.azucares_g, 
-            producto.grasas_g, producto.proteinas_g, producto.fibra_g, 
+            producto.grasas_g, producto.grasas_sat_g, producto.proteinas_g, producto.fibra_g, 
             producto.cafeina_mg, int(producto.es_gas), producto.notas
         )
         
@@ -120,6 +121,7 @@ class CatalogoQueries:
             return None
         finally:
             conn.close()
+
 
     @staticmethod
     def obtener_todos_nombres_id():
@@ -151,14 +153,14 @@ class CarritoQueries:
             INSERT INTO carrito_temporal (
                 id_producto, nombre_display, cantidad, 
                 hc, gr, pr, fb, az, sat,
-                offset, es_pesado_estricto, es_manual, fecha_agregado, grupo_nombre
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                offset, es_pesado_estricto, es_manual, grupo_nombre
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         # Asegúrate de extraer los valores correctamente del dict
         valores = (
-            datos.get('id_producto'), datos.get('nombre_display'), datos.get('cantidad'),
+            datos.get('id_producto'), datos.get('nombre_display'), datos.get('cantidad', None),
             datos.get('hc'), datos.get('gr'), datos.get('pr'), datos.get('fb'), datos.get('az', 0), datos.get('sat', 0),
-            datos.get('offset'), int(datos.get('es_pesado_estricto', 1)), int(datos.get('es_manual', 0)), datetime.now(), 
+            datos.get('offset'), int(datos.get('es_pesado_estricto', 1)), int(datos.get('es_manual', 0)), 
             datos.get('grupo_nombre', 'Comida Actual')
         )
         
@@ -197,6 +199,128 @@ class CarritoQueries:
         rows = db.execute_query(query)
         return [row['grupo_nombre'] for row in rows] if rows else []
     
+    @staticmethod
+    def actualizar_cabecera_grupo(grupo_nombre, hora_str=None, tipo=None, notas=None, es_restaurante=None):
+        """
+        Actualiza las preferencias visuales de todo un grupo en el carrito temporal.
+        Se usa para que los cambios persistan tras un F5.
+        """
+        conn = db._get_connection()
+        if not conn: return
+        
+        # Construimos la query dinámicamente según lo que nos llegue
+        campos = []
+        valores = []
+        
+        if hora_str is not None:
+            campos.append("hora_inicio_manual = ?")
+            valores.append(hora_str)
+        if tipo is not None:
+            campos.append("tipo_comida_manual = ?")
+            valores.append(tipo)
+        if notas is not None:
+            campos.append("notas_manual = ?")
+            valores.append(notas)
+        if es_restaurante is not None:
+            campos.append("es_restaurante_manual = ?")
+            valores.append(int(es_restaurante))
+            
+        if not campos: return
 
+        valores.append(grupo_nombre) # Para el WHERE
+        sql = f"UPDATE carrito_temporal SET {', '.join(campos)} WHERE grupo_nombre = ?"
+        
+        try:
+            conn.execute(sql, valores)
+            conn.commit()
+        except Exception as e:
+            print(f"Error actualizando cabecera: {e}")
+        finally:
+            conn.close()
+    
 
+class ComidaQueries:
+    def añadir_comida(datos: dict):
+        """
+        Guarda la comida y sus ingredientes.
+        Calcula automáticamente si el registro es 'Estricto' basándose en los HCs.
+        """
+        conn = db._get_connection()
+        if not conn: return False
 
+        try:
+            cursor = conn.cursor()
+            alimentos = datos.get('alimentos', [])
+            
+            total_hc = sum(item['hc'] for item in alimentos)
+            if total_hc == 0: hc_pesados = 0
+            
+            hc_pesados = sum(item['hc'] for item in alimentos if item.get('es_pesado_estricto', True))
+            
+            if total_hc != 0:
+                ratio = hc_pesados / total_hc
+            else:
+                ratio = 0
+                
+            # ---------------------------------------------------------
+            # 1. INSERTAR CABECERA (Tabla 'comida')
+            # ---------------------------------------------------------
+            sql_comida = """
+                INSERT INTO comida (
+                    inicio, tipo_comida, notas, 
+                    es_restaurante, es_pesado_estricto
+                ) VALUES (?, ?, ?, ?, ?)
+            """
+            
+            val_comida = (
+                datos.get('inicio'),               # Datetime del selector
+                datos.get('tipo_comida'),          # 'Desayuno', 'Cena'...
+                datos.get('notas', ''),
+                int(datos.get('es_restaurante', 0)), # Checkbox del UI
+                ratio                    # <--- ¡CALCULADO AUTOMÁTICAMENTE!
+            )
+            
+            cursor.execute(sql_comida, val_comida)
+            id_comida_generado = cursor.lastrowid
+
+            # ---------------------------------------------------------
+            # 2. INSERTAR INGREDIENTES (Tabla 'partes_comida')
+            # ---------------------------------------------------------
+            sql_detalle = """
+                INSERT INTO partes_comida (
+                    id_comida, id_producto, nombre_real, 
+                    offset_minutos, cantidad, es_pesado_detalle,
+                    hidratos_totales, azucar_total, 
+                    grasas_totales, grasas_saturadas_total,
+                    proteinas_totales, fibra_total
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+
+            for item in alimentos:
+                
+                valores_detalle = (
+                    id_comida_generado,
+                    item.get('id_producto'),          
+                    item.get('nombre_display'),       
+                    item.get('offset_minutos', 0),    
+                    item.get('cantidad', 0),
+                    int(item.get('es_pesado_estricto', 1)), # Guardamos también el detalle individual
+                    
+                    float(item.get('hc', 0)),
+                    float(item.get('az', 0)),
+                    float(item.get('gr', 0)),
+                    float(item.get('sat', 0)), 
+                    float(item.get('pr', 0)),
+                    float(item.get('fb', 0))
+                )
+                cursor.execute(sql_detalle, valores_detalle)
+
+            conn.commit()
+            return True
+
+        except sqlite3.Error as e:
+            conn.rollback()
+            print(f"❌ Error DB: {e}")
+            return False
+        finally:
+            conn.close()

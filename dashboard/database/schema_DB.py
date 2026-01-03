@@ -23,7 +23,7 @@ class TABLES:
             grasas_g REAL DEFAULT 0,
             proteinas_g REAL DEFAULT 0,
             fibra_g REAL DEFAULT 0,
-            grasas_saturadas_g REAL DEFAULT 0,
+            grasas_sat_g REAL DEFAULT 0,
             cafeina_mg REAL DEFAULT 0,
             es_gas INTEGER DEFAULT 0,
             notas TEXT
@@ -37,8 +37,7 @@ class TABLES:
             inicio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             tipo_comida TEXT CHECK(tipo_comida IN ('Desayuno', 'Almuerzo', 'Comida', 'Merienda', 'Cena', 'Snack', 'Rescate')),
             es_restaurante INTEGER DEFAULT 0,
-            tiempo_espera INTEGER DEFAULT 0,
-            es_pesado_estricto INTEGER DEFAULT 1,
+            es_pesado_estricto INTEGER NOT NULL CHECK (es_pesado_estricto BETWEEN 0 AND 1), -- Calculado en función de los alimentos que han sido pesados o no dentro de la comida.
             notas TEXT
         );
     """
@@ -79,7 +78,7 @@ class TABLES:
                 id_item INTEGER PRIMARY KEY AUTOINCREMENT,
                 id_producto INTEGER, -- Puede ser NULL si es manual
                 nombre_display TEXT NOT NULL, -- El nombre que mostramos en la lista
-                cantidad REAL DEFAULT 1,
+                cantidad REAL,
                 
                 -- Macros calculados para esa cantidad
                 hc REAL DEFAULT 0,
@@ -95,7 +94,14 @@ class TABLES:
                 es_manual INTEGER DEFAULT 0,
 
                 -- Agrupacion
-                grupo_nombre TEXT NOT NULL DEFAULT 'Comida actual'
+                grupo_nombre TEXT NOT NULL DEFAULT 'Comida actual',
+                fecha_agregado TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                tipo_comida_manual TEXT,       -- Guarda "Cena", "Desayuno", etc.
+                hora_inicio_manual TEXT,       -- Guarda la hora "14:30"
+                notas_manual TEXT,             -- Guarda el texto de las notas
+                es_restaurante_manual INTEGER DEFAULT 0 -- Guarda el checkbox
+
 
                 -- FOREIGN KEY (id_producto) ... (Opcional, cuidado con borrar productos del catálogo si están en un carrito)
             );"""

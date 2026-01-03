@@ -107,12 +107,12 @@ def render_buscador():
                     key=f"txt_grupo_{id_a_mostrar}"
                 )
 
-            if c2.button(texto_boton, key=f"btn_add_{id_a_mostrar}", use_container_width=True):
+            if st.button(texto_boton, key=f"btn_add_{id_a_mostrar}", use_container_width=True):
                 try:
                     cantidad = int(cantidad_final)
                     if cantidad > 0:
                         factor = cantidad / 100.0
-                        # Añadimos al estado global 'carrito'
+
                         item_dict = {
                             "nombre_display": producto.nombre,
                             "cantidad": cantidad,
@@ -122,6 +122,7 @@ def render_buscador():
                             "pr": round(producto.proteinas_g * factor, 2),
                             "fb": round(producto.fibra_g * factor, 2),
                             "az": round(producto.azucares_g * factor, 2),
+                            "sat": round(producto.grasas_sat_g * factor, 2),
                             "id_producto": producto.id_producto,
                             "offset": int(offset) if offset else None,
                             "es_manual": False,
