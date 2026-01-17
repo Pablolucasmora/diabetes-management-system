@@ -24,9 +24,6 @@ def actualizar_rest_grupo(grupo_key):
     dq.CarritoQueries.actualizar_cabecera_grupo(grupo_key, es_restaurante=nuevo_val)
 
 
-import streamlit as st
-import database.queries as dq
-from datetime import datetime, timedelta, time
 from dateutil import parser # Asegúrate de tener: pip install python-dateutil
 
 # --- 1. CALLBACKS: GUARDAN LOS CAMBIOS EN BD AL MOMENTO ---
@@ -116,6 +113,9 @@ def render_carrito():
 
             # --- LISTADO DE ITEMS ---
             t_hc, t_gr, t_pr, t_fb, t_az, t_sat = 0, 0, 0, 0, 0, 0
+            
+            # Bandera para saber si hay algún desconocido en este grupo
+            hay_fibra_null = False
 
             for i, item in enumerate(alimentos):
                 c_info, c_del = st.columns([5, 1])
@@ -134,16 +134,28 @@ def render_carrito():
                     except: pass
                 
                 # Visualización
-                val_sat = item.get('sat', 0) or item.get('sat', 0)
+                val_sat = item.get('sat', 0)
                 val_az = item.get('az', 0)
                 
+                val_fb = item.get('fb') # Puede ser float, 0 o None
+
+                if val_fb is None:
+                    # CASO NULL: No sabemos cuánto hay
+                    txt_fb = "--" 
+                    hay_fibra_null = True
+                    # No sumamos nada a t_fb (es como sumar 0 para evitar errores)
+                else:
+                    # CASO DATO REAL (incluido 0)
+                    txt_fb = f"{val_fb}g"
+                    t_fb += val_fb # Suma segura porque sabemos que es número
+
                 nombre_display = item.get('nombre_display', 'Desconocido')
                 c_info.markdown(f"**{nombre_display}** ({item['cantidad']}g)")
                 c_info.caption(txt_offset)
                 c_info.caption(
                     f"{item['hc']}g HC ({val_az:.1f}g Az) | "
                     f"{item['gr']}g GR ({val_sat:.1f}g sat) | "
-                    f"{item['pr']}g PR | {item['fb']}g FB "
+                    f"{item['pr']}g PR | {txt_fb} FB "
                 )
                 
                 if c_del.button("❌", key=f"del_{item['id_item']}"):
@@ -151,7 +163,7 @@ def render_carrito():
                     st.rerun()
 
                 t_hc += item.get('hc', 0); t_gr += item.get('gr', 0)
-                t_pr += item.get('pr', 0); t_fb += item.get('fb', 0)
+                t_pr += item.get('pr', 0); t_fb += val_fb if val_fb is not None else 0
                 t_az += val_az; t_sat += val_sat
                 st.divider()
 
@@ -162,8 +174,17 @@ def render_carrito():
             
             m3, m4 = st.columns(2)
             m3.metric("Proteína", f"{round(t_pr, 1)}")
-            m4.metric("Fibra", f"{round(t_fb, 1)}")
+            # --- LÓGICA DE VISUALIZACIÓN TOTAL FIBRA ---
+            label_fibra = f"{round(t_fb, 1)}"
+            
+            if hay_fibra_null:
+                # Si había algún NULL, añadimos un "+" o un aviso
+                label_fibra += "/+" 
+                help_fibra = "El valor es aproximado. Algunos alimentos no tienen dato de fibra (--)."
+            else:
+                help_fibra = None
 
+            m4.metric("Fibra", label_fibra, help=help_fibra)    
             # --- EXTRAS Y GUARDADO ---
             es_restaurante = st.checkbox("Comida fuera / Restaurante", value=val_rest, key=f"rest_{nombre_grupo}", on_change=actualizar_rest, args=(nombre_grupo,))
             notas = st.text_area("Notas:", value=val_notas, key=f"notes_{nombre_grupo}", height=1, on_change=actualizar_notas, args=(nombre_grupo,))

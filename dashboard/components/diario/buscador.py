@@ -112,7 +112,7 @@ def render_buscador():
                     cantidad = int(cantidad_final)
                     if cantidad > 0:
                         factor = cantidad / 100.0
-
+                        print(producto.fibra_g)
                         item_dict = {
                             "nombre_display": producto.nombre,
                             "cantidad": cantidad,
@@ -120,7 +120,7 @@ def render_buscador():
                             "hc": round(producto.hidratos_g * factor, 2),
                             "gr": round(producto.grasas_g * factor, 2),
                             "pr": round(producto.proteinas_g * factor, 2),
-                            "fb": round(producto.fibra_g * factor, 2),
+                            "fb": round(producto.fibra_g * factor, 2) if producto.fibra_g != '' else None,
                             "az": round(producto.azucares_g * factor, 2),
                             "sat": round(producto.grasas_sat_g * factor, 2),
                             "id_producto": producto.id_producto,

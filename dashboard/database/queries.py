@@ -167,7 +167,20 @@ class CarritoQueries:
         try:
             cursor = conn.cursor()
             cursor.execute(sql, valores)
+            id_generado = cursor.lastrowid
             conn.commit()
+            
+            # Necesitamos saber qué hemos guardado exactamente para el "Redo"
+            # Lo más fácil es leerlo
+            item_nuevo = cursor.execute("SELECT * FROM carrito_temporal WHERE id_item=?", (id_generado,)).fetchone()
+            
+            AuditoriaManager.registrar(
+                tabla='carrito_temporal',
+                id_ref=id_generado,
+                accion='INSERT',
+                anterior=None,
+                nuevo=dict(item_nuevo)
+            )
             return True
         except Exception as e:
             print(f"Error al añadir al carrito: {e}")
@@ -184,7 +197,30 @@ class CarritoQueries:
 
     @staticmethod
     def eliminar_item(id_item):
-        db.execute_query("DELETE FROM carrito_temporal WHERE id_item = ?", (id_item,), commit=True)
+        conn = db._get_connection()
+        cursor = conn.cursor()
+        
+        # 1. LEER ANTES DE BORRAR (Snapshot)
+        cursor.execute("SELECT * FROM carrito_temporal WHERE id_item = ?", (id_item,))
+        item = cursor.fetchone()
+        
+        if item:
+            datos_backup = dict(item) # Convertimos a dict
+            
+            # 2. BORRAR
+            cursor.execute("DELETE FROM carrito_temporal WHERE id_item = ?", (id_item,))
+            conn.commit()
+            conn.close() # Cerramos aquí para liberar antes de registrar log
+            
+            # 3. REGISTRAR EN AUDITORÍA
+            # DELETE: anterior=datos, nuevo=None
+            AuditoriaManager.registrar(
+                tabla='carrito_temporal', 
+                id_ref=id_item, 
+                accion='DELETE', 
+                anterior=datos_backup, 
+                nuevo=None
+            )
 
     @staticmethod
     def eliminar_grupo(grupo_nombre):
@@ -324,3 +360,133 @@ class ComidaQueries:
             return False
         finally:
             conn.close()
+
+
+class AuditoriaManager:
+    
+    # --- 1. REGISTRAR CUALQUIER CAMBIO ---
+    @staticmethod
+    def registrar(tabla, id_ref, accion, anterior=None, nuevo=None):
+        """
+        Registra un cambio universal.
+        - Para INSERT: anterior=None, nuevo={datos}
+        - Para DELETE: anterior={datos}, nuevo=None
+        - Para UPDATE: anterior={viejo}, nuevo={nuevo}
+        """
+        conn = db._get_connection()
+        try:
+            # Convertimos dicts a JSON string, gestionando fechas con default=str
+            json_ant = json.dumps(anterior, default=str) if anterior else None
+            json_nue = json.dumps(nuevo, default=str) if nuevo else None
+            
+            sql = """
+                INSERT INTO historial_cambios (tabla_afectada, id_registro, accion, valor_anterior, valor_nuevo, estado)
+                VALUES (?, ?, ?, ?, ?, 'ACTIVO')
+            """
+            conn.execute(sql, (tabla, id_ref, accion, json_ant, json_nue))
+            conn.commit()
+        except Exception as e:
+            print(f"Error auditoría: {e}")
+        finally:
+            conn.close()
+
+    # --- 2. DESHACER (UNDO) ---
+    @staticmethod
+    def deshacer(id_log):
+        conn = db._get_connection()
+        cursor = conn.cursor()
+        
+        # Leemos el log
+        log = cursor.execute("SELECT * FROM historial_cambios WHERE id_log = ?", (id_log,)).fetchone()
+        if not log or log['estado'] == 'DESHECHO': return False, "No se puede deshacer"
+
+        tabla = log['tabla_afectada']
+        id_ref = log['id_registro']
+        accion = log['accion']
+        
+        # Recuperamos los datos del pasado
+        data_ant = json.loads(log['valor_anterior']) if log['valor_anterior'] else {}
+        
+        # Obtenemos la PK (suponemos 'id_item' para carrito, 'id_comida' para comida, etc.)
+        # Truco: Si todas tus tablas tienen PK autoincremental, necesitamos saber el nombre de la columna.
+        pk_col = AuditoriaManager._obtener_pk_name(tabla)
+
+        try:
+            if accion == 'INSERT':
+                # Si CREAMOS algo, para deshacer hay que BORRARLO
+                cursor.execute(f"DELETE FROM {tabla} WHERE {pk_col} = ?", (id_ref,))
+            
+            elif accion == 'DELETE':
+                # Si BORRAMOS algo, para deshacer hay que CREARLO de nuevo (con el mismo ID)
+                cols = ", ".join(data_ant.keys())
+                placeholders = ", ".join(["?" for _ in data_ant])
+                vals = list(data_ant.values())
+                cursor.execute(f"INSERT INTO {tabla} ({cols}) VALUES ({placeholders})", vals)
+            
+            elif accion == 'UPDATE':
+                # Si CAMBIAMOS algo, restauramos el VALOR ANTERIOR
+                set_clause = ", ".join([f"{k}=?" for k in data_ant.keys()])
+                vals = list(data_ant.values())
+                vals.append(id_ref)
+                cursor.execute(f"UPDATE {tabla} SET {set_clause} WHERE {pk_col} = ?", vals)
+
+            # Marcamos como DESHECHO (para poder rehacer luego)
+            cursor.execute("UPDATE historial_cambios SET estado = 'DESHECHO' WHERE id_log = ?", (id_log,))
+            conn.commit()
+            return True, "Deshecho"
+        except Exception as e:
+            conn.rollback()
+            return False, str(e)
+
+    # --- 3. REHACER (REDO) ---
+    @staticmethod
+    def rehacer(id_log):
+        conn = db._get_connection()
+        cursor = conn.cursor()
+        
+        log = cursor.execute("SELECT * FROM historial_cambios WHERE id_log = ?", (id_log,)).fetchone()
+        if not log or log['estado'] == 'ACTIVO': return False, "No se puede rehacer"
+
+        tabla = log['tabla_afectada']
+        id_ref = log['id_registro']
+        accion = log['accion']
+        pk_col = AuditoriaManager._obtener_pk_name(tabla)
+        
+        # Recuperamos los datos "nuevos" (los que pusimos originalmente)
+        data_nue = json.loads(log['valor_nuevo']) if log['valor_nuevo'] else {}
+
+        try:
+            if accion == 'INSERT':
+                # Rehacer un Insert -> Volver a Insertar
+                cols = ", ".join(data_nue.keys())
+                placeholders = ", ".join(["?" for _ in data_nue])
+                vals = list(data_nue.values())
+                cursor.execute(f"INSERT INTO {tabla} ({cols}) VALUES ({placeholders})", vals)
+
+            elif accion == 'DELETE':
+                # Rehacer un Delete -> Volver a Borrar
+                cursor.execute(f"DELETE FROM {tabla} WHERE {pk_col} = ?", (id_ref,))
+                
+            elif accion == 'UPDATE':
+                # Rehacer un Update -> Volver a poner el valor NUEVO
+                set_clause = ", ".join([f"{k}=?" for k in data_nue.keys()])
+                vals = list(data_nue.values())
+                vals.append(id_ref)
+                cursor.execute(f"UPDATE {tabla} SET {set_clause} WHERE {pk_col} = ?", vals)
+
+            # Volvemos a marcar como ACTIVO
+            cursor.execute("UPDATE historial_cambios SET estado = 'ACTIVO' WHERE id_log = ?", (id_log,))
+            conn.commit()
+            return True, "Rehecho"
+        except Exception as e:
+            conn.rollback()
+            return False, str(e)
+
+    @staticmethod
+    def _obtener_pk_name(tabla):
+        # Mapeo simple de tus tablas a sus Primary Keys
+        if tabla == 'carrito_temporal': return 'id_item'
+        if tabla == 'partes_comida': return 'id_detalle'
+        if tabla == 'comida': return 'id_comida'
+        if tabla == 'catalogo_productos': return 'id_producto'
+        return 'id' # fallback

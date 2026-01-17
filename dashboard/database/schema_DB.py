@@ -22,7 +22,7 @@ class TABLES:
             azucares_g REAL DEFAULT 0,
             grasas_g REAL DEFAULT 0,
             proteinas_g REAL DEFAULT 0,
-            fibra_g REAL DEFAULT 0,
+            fibra_g REAL,
             grasas_sat_g REAL DEFAULT 0,
             cafeina_mg REAL DEFAULT 0,
             es_gas INTEGER DEFAULT 0,
@@ -66,13 +66,17 @@ class TABLES:
         CREATE TABLE IF NOT EXISTS historial_cambios (
             id_log INTEGER PRIMARY KEY AUTOINCREMENT,
             tabla_afectada TEXT NOT NULL,
-            id_referencia INTEGER,
-            accion TEXT NOT NULL,
-            valor_anterior TEXT,
-            valor_nuevo TEXT,
+            id_registro INTEGER NOT NULL,
+            accion TEXT NOT NULL, -- 'INSERT', 'UPDATE', 'DELETE'
+            
+            valor_anterior TEXT, -- JSON para DESHACER
+            valor_nuevo TEXT,    -- JSON para REHACER
+            
+            estado TEXT DEFAULT 'ACTIVO', -- 'ACTIVO' o 'DESHECHO'
             fecha_accion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """
+    
     CARRITO_TEMP = """
             CREATE TABLE IF NOT EXISTS carrito_temporal (
                 id_item INTEGER PRIMARY KEY AUTOINCREMENT,

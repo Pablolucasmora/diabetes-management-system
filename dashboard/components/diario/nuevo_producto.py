@@ -16,7 +16,7 @@ def parsear_macros(texto):
         'azucar': 'azucares_g', 'azucares': 'azucares_g', 'az': 'azucares_g',
         'proteinas': 'proteinas_g', 'proteina': 'proteinas_g', 'pr': 'proteinas_g', 'pro': 'proteinas_g',
         'grasas': 'grasas_g', 'grasa': 'grasas_g', 'gr': 'grasas_g',
-        'saturadas': 'grasas_sat_g', 'sat': 'grasas_sat_g', 'st': 'grasas_sat_g', 'gs': 'grasas_sat_g', # <--- NUEVOS
+        'saturadas': 'grasas_sat_g', 'sat': 'grasas_sat_g', 'st': 'grasas_sat_g', 'gs': 'grasas_sat_g', 
         'fibra': 'fibra_g', 'fb': 'fibra_g'
     }
     
@@ -227,6 +227,7 @@ def render_custom_food_entry():
             if macros['grasas_sat_g'] > 0: partes.append(f":red[{macros['grasas_sat_g']}g Sat]")
             if macros['proteinas_g'] > 0: partes.append(f":green[**{macros['proteinas_g']}g Pr**]")
             if macros['azucares_g'] > 0: partes.append(f":violet[{macros['azucares_g']}g Az]")
+            if macros['fibra_g'] > 0: partes.append(f":grey[{macros['fibra_g']}g Fb]")
 
             if partes:
                 st.markdown("✅ " + " | ".join(partes))
