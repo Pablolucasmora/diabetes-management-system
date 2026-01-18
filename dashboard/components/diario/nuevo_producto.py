@@ -22,7 +22,7 @@ def parsear_macros(texto):
     
     valores = {
         'hidratos_g': 0.0, 'azucares_g': 0.0, 'proteinas_g': 0.0, 
-        'fibra_g': 0.0, 'grasas_g': 0.0, 'grasas_sat_g': 0.0
+        'fibra_g': None, 'grasas_g': 0.0, 'grasas_sat_g': 0.0
     }
     
     if not texto:
@@ -62,36 +62,105 @@ def parsear_macros(texto):
     return valores
 
 def render_nuevo_producto():
+    
+    # --- CALLBACK: LÓGICA DE GUARDADO ---
+    def guardar_catalogo_callback():
+        # 1. Recuperamos datos del estado (necesitamos las keys definidas abajo)
+        macros_txt = st.session_state.get("input_smart_macros", "")
+        categoria = st.session_state.get("categoria_producto", "Alimento")
+        
+        # Datos del formulario (usando .get por seguridad)
+        nombre = st.session_state.get("cat_nombre", "")
+        marca = st.session_state.get("cat_marca", "")
+        subtipo = st.session_state.get("cat_subtipo", "")
+        nutriscore = st.session_state.get("cat_nutriscore", "Desconocido")
+        nova = st.session_state.get("cat_nova", 4)
+        
+        porcion_txt = st.session_state.get("cat_porcion", "")
+        notas_prod = st.session_state.get("cat_notas", "")
+        
+        # Dinámicos (solo existirán en state si se renderizaron, sino default)
+        grad_txt = st.session_state.get("cat_grad", "")
+        caf_txt = st.session_state.get("cat_caf", "")
+        gas = st.session_state.get("cat_gas", False)
 
+        # 2. Parseo y validación
+        macros = parsear_macros(macros_txt)
+        
+        if not nombre:
+            st.error("❌ El nombre es obligatorio")
+            return # Paramos aquí
+
+        try:
+            # Conversiones seguras
+            grad_val = float(grad_txt.replace(',', '.')) if grad_txt else 0.0
+            caf_val = float(caf_txt.replace(',', '.')) if caf_txt else 0.0
+            porcion_val = int(porcion_txt) if porcion_txt and porcion_txt.isdigit() else None
+            
+            # Parche para grasas_sat (por si tu parsear_macros antiguo no lo devuelve)
+            sat = macros.get('grasas_sat_g', 0.0)
+
+            # 3. Creación del modelo
+            nuevo = ProductoModel(
+                nombre=nombre,
+                marca=marca if marca else None,
+                categoria=categoria,
+                subtipo=subtipo,
+
+                hidratos_g=macros.get('hidratos_g', 0.0),
+                azucares_g=macros.get('azucares_g', 0.0),
+                proteinas_g=macros.get('proteinas_g', 0.0),
+                fibra_g=macros.get('fibra_g') if macros.get('fibra_g') else None,
+                grasas_g=macros.get('grasas_g', 0.0),
+                # ¡OJO! Asegúrate de que ProductoModel acepta este campo en tu queries.py local
+                grasas_sat_g=sat, 
+
+                graduacion_pct=grad_val,
+                cafeina_mg=caf_val,
+                es_gas=gas,
+                porcion_default_g=porcion_val,
+                notas=notas_prod,
+                nutriscore=nutriscore,
+                nova=nova
+            )
+
+            # 4. Insertar en BD
+            nuevo_id = dq.CatalogoQueries.insertar_producto(nuevo)
+
+            if nuevo_id:
+                st.toast(f"✅ Guardado: {nombre}")
+                st.session_state.id_recien_creado = nuevo_id
+                
+                # LIMPIEZA DEL INPUT EXTERNO (El objetivo de todo esto)
+                st.session_state.input_smart_macros = ""
+                st.cache_data.clear()
+                # El formulario se limpiará solo gracias a clear_on_submit=True
+        
+        except Exception as e:
+            st.error(f"🚨 Error al guardar: {e}")
+
+    # --- UI (INTERFAZ) ---
     with st.expander("➕ Crear producto nuevo", expanded=False):
 
-        # ======================================================
-        # PASO 1 — MACROS (REACTIVO)
-        # ======================================================
+        # PASO 1 — MACROS (REACTIVO - Input externo)
         st.info("💡 **Paso 1:** Escribe los macros y pulsa ENTER.")
 
         input_macros = st.text_input(
-            "Macros (Escritura inteligente)",
+            "Macros (Smart Text)",
             placeholder="Ej: 30hc, 12az, 20pr, 10 grasas...",
-            key="input_smart_macros"
+            key="input_smart_macros" # Key necesaria para limpiar desde callback
         )
 
         macros = parsear_macros(input_macros)
-
+    
         if input_macros:
             partes = []
-            if macros['hidratos_g'] > 0:
-                partes.append(f":blue[**{macros['hidratos_g']}g HC**]")
-            if macros['azucares_g'] > 0:
-                partes.append(f":violet[{macros['azucares_g']}g Azúcar]")
-            if macros['proteinas_g'] > 0:
-                partes.append(f":green[**{macros['proteinas_g']}g Prot**]")
-            if macros['grasas_g'] > 0:
-                partes.append(f":orange[**{macros['grasas_g']}g Grasas**]")
-            if macros['fibra_g'] > 0:
-                partes.append(f":grey[{macros['fibra_g']}g Fibra]")
-            if macros['grasas_sat_g'] > 0:
-                partes.append(f":red[{macros['grasas_sat_g']}g Grasas Sat.]")
+            if macros.get('hidratos_g', 0) > 0: partes.append(f":blue[**{macros['hidratos_g']}g HC**]")
+            if macros.get('azucares_g', 0) > 0: partes.append(f":violet[{macros['azucares_g']}g Azúcar]")
+            if macros.get('proteinas_g', 0) > 0: partes.append(f":green[**{macros['proteinas_g']}g Prot**]")
+            if macros.get('grasas_g', 0) > 0: partes.append(f":orange[**{macros['grasas_g']}g Grasas**]")
+            if macros.get('fibra_g') and macros['fibra_g'] > 0: partes.append(f":grey[{macros['fibra_g']}g Fibra]")
+            if macros.get('grasas_sat_g', 0) > 0: partes.append(f":red[{macros['grasas_sat_g']}g Sat.]")
 
             if partes:
                 st.markdown("✅ **Detectado:** " + " | ".join(partes))
@@ -100,9 +169,7 @@ def render_nuevo_producto():
 
         st.divider()
 
-        # ======================================================
-        # PASO 2 — CATEGORÍA (REACTIVO)
-        # ======================================================
+        # PASO 2 — CATEGORÍA (REACTIVO - Fuera del form para condicionales)
         st.write("**Paso 2:** Selecciona la categoría")
 
         categoria = st.selectbox(
@@ -113,97 +180,117 @@ def render_nuevo_producto():
 
         st.divider()
 
-        # ======================================================
         # PASO 3 — FORMULARIO (NO REACTIVO)
-        # ======================================================
         st.write("**Paso 3:** Completa los datos y guarda")
 
         with st.form("form_alta_completa", clear_on_submit=True):
 
             col1, col2 = st.columns(2)
-            nombre = col1.text_input("Nombre*")
-            marca = col2.text_input("Marca")
+            # AÑADIMOS KEYS A TODO PARA QUE EL CALLBACK LO LEA
+            col1.text_input("Nombre*", key="cat_nombre")
+            col2.text_input("Marca", key="cat_marca")
 
-            subtipo = st.text_input("Subtipo (ej: Pasta, Refresco...)")
+            st.text_input("Subtipo (ej: Pasta, Refresco...)", key="cat_subtipo")
 
             c1, c2 = st.columns(2)
-            nutriscore = c1.selectbox(
-                "NutriScore",
-                ["A", "B", "C", "D", "E", "Desconocido"],
-                index=5
-            )
-            nova = c2.selectbox(
-                "NOVA",
-                [1, 2, 3, 4, "Desconocido"],
-                index=4
-            )
+            c1.selectbox("NutriScore", ["A", "B", "C", "D", "E", "Desconocido"], index=5, key="cat_nutriscore")
+            c2.selectbox("NOVA", [1, 2, 3, 4, "Desconocido"], index=4, key="cat_nova")
 
-            # ----------------------------------------------
-            # CAMPOS DINÁMICOS SEGÚN CATEGORÍA
-            # ----------------------------------------------
-            grad, caf, gas = None, None, False
-
+            # CAMPOS DINÁMICOS
             if categoria == "Bebida":
                 b1, b2, b3 = st.columns(3)
-                grad = b1.text_input("Grad. %")
-                caf = b2.text_input("Cafeína (mg)")
-                gas = b3.checkbox("¿Gas?", value=False)
+                b1.text_input("Grad. %", key="cat_grad")
+                b2.text_input("Cafeína (mg)", key="cat_caf")
+                b3.checkbox("¿Gas?", value=False, key="cat_gas")
 
-            porcion_default_g = st.text_input("Porción por defecto (g/ml)", value="")
+            st.text_input("Porción por defecto (g/ml)", value="", key="cat_porcion")
+            st.text_area("Notas", key="cat_notas")
 
-            notas_prod = st.text_area("Notas")
-
-            submitted = st.form_submit_button(
+            # BOTÓN DISPARA EL CALLBACK
+            st.form_submit_button(
                 "💾 Guardar en Catálogo",
-                type="primary"
+                type="primary",
+                on_click=guardar_catalogo_callback # <--- AQUÍ LA MAGIA
             )
-
-            if submitted:
-
-                if not nombre:
-                    st.error("❌ El nombre es obligatorio")
-                    st.stop()
-
-                try:
-                    nuevo = ProductoModel(
-                        nombre=nombre,
-                        marca=marca if marca else None,
-                        categoria=categoria,
-                        subtipo=subtipo,
-
-                        hidratos_g=macros['hidratos_g'],
-                        azucares_g=macros['azucares_g'],
-                        proteinas_g=macros['proteinas_g'],
-                        fibra_g=macros['fibra_g'],
-                        grasas_g=macros['grasas_g'],
-                        grasas_sat_g=macros['grasas_sat_g'],
-
-                        graduacion_pct=float(grad or 0),
-                        cafeina_mg=float(caf or 0),
-                        es_gas=gas,
-                        porcion_default_g=int(porcion_default_g) if porcion_default_g else None,
-                        notas=notas_prod,
-                        nutriscore=nutriscore,
-                        nova=nova
-                    )
-
-                    nuevo_id = dq.CatalogoQueries.insertar_producto(nuevo)
-
-                    if nuevo_id:
-                        st.success(f"✅ **{nombre}** guardado correctamente")
-                        st.session_state.id_recien_creado = nuevo_id
-                        st.cache_data.clear()
-                        st.rerun()
-
-                except Exception as e:
-                    st.error(f"🚨 Error al guardar: {e}")
 
 def render_custom_food_entry():
     """
-    Entrada manual con Formulario Híbrido:
-    - FUERA del Form: Macros y Grupo (para ser reactivos)
-    - DENTRO del Form: Nombre, Offset, Submit (para agrupar y limpiar)
+    Entrada manual corregida por el Tutor:
+    - Usa Callback para permitir limpiar el input 'manual_macros' (que está fuera del form).
+    - Protege el acceso a claves de macros que quizás no existan (grasas_sat_g).
     """
+    
+    # --- CALLBACK: Lógica de guardado antes de recargar la página ---
+    def guardar_manual_callback():
+        # 1. Recuperar valores del estado (widgets)
+        macros_txt = st.session_state.get("manual_macros", "")
+        # Recuperamos el grupo: si es nuevo, usamos el input de texto; si no, el selectbox.
+        grupo_select = st.session_state.get("manual_grupo_select", "")
+        grupo_new = st.session_state.get("manual_grupo_new", "")
+        
+        # Lógica de nombre de grupo
+        nombre_grupo_final = grupo_new if grupo_select == "➕ Nuevo Grupo..." else grupo_select
+        
+        # Resto de campos
+        nombre = st.session_state.get("manual_nombre", "")
+        offset = st.session_state.get("manual_offset", "")
+        cantidad = st.session_state.get("aprox_cantidad", "")
+        pesado_estricto = st.session_state.get("manual_pesado", False)
+
+        # 2. Parseo y Validaciones
+        macros = parsear_macros(macros_txt)
+        
+        # Parche para evitar KeyError si parsear_macros no devuelve 'grasas_sat_g'
+        sat = macros.get('grasas_sat_g', 0.0) 
+
+        if not nombre:
+            st.error("⚠️ El nombre es obligatorio.")
+            return # Detenemos callback
+        if not nombre_grupo_final:
+            st.error("⚠️ Debes definir un nombre para el grupo.")
+            return
+        if cantidad and not cantidad.isdigit():
+            st.error("⚠️ La cantidad debe ser un número entero.")
+            return
+
+        # 3. Construir Objeto
+        item_manual = {
+            "id_producto": None,
+            "nombre_display": f"{nombre} (Manual)",
+            "hc": macros.get('hidratos_g', 0),
+            "gr": macros.get('grasas_g', 0),
+            "sat": sat,
+            "pr": macros.get('proteinas_g', 0),
+            "az": macros.get('azucares_g', 0),
+            "fb": macros.get('fibra_g', 0),
+            "cantidad": int(cantidad) if cantidad else 1, # Default 1 si no hay cantidad
+            "offset": int(offset) if offset else None,
+            "es_pesado_estricto": pesado_estricto,
+            "es_manual": True,
+            "grupo_nombre": nombre_grupo_final
+        }
+
+        # 4. Guardar (Adaptado a tu nueva lógica de DB o Session)
+        try:
+            # Intento usar tu nueva clase de Queries
+            if hasattr(dq, 'CarritoQueries'):
+                if dq.CarritoQueries.agregar_item(item_manual):
+                    st.toast(f"✅ Añadido: {nombre}")
+                    # LIMPIEZA CRÍTICA: Aquí sí podemos limpiar porque es un callback
+                    st.session_state.manual_macros = "" 
+                    st.cache_data.clear()
+                    # No hace falta rerun() aquí explícito, el callback fuerza recarga natural
+                else:
+                    st.error("Error al guardar en BD.")
+            else:
+                # FALLBACK: Si no existe la clase, guardamos en sesión como antes para que no falle
+                st.session_state.carrito.append(item_manual)
+                st.toast(f"✅ Añadido (Sesión): {nombre}")
+                st.session_state.manual_macros = ""
+        except Exception as e:
+            st.error(f"Error gestionando el guardado: {e}")
+
+    # --- UI ---
     with st.expander("🍽️ Entrada Manual", expanded=False):
         st.info("Usa esto para comidas puntuales que no quieres guardar en el catálogo.")
 
@@ -212,22 +299,26 @@ def render_custom_food_entry():
         # ======================================================
         
         # 1. MACROS INTELIGENTES
+        # El widget se dibuja con el valor que tenga session_state (vacío si el callback lo limpió)
         input_macros = st.text_input(
             "Macros (Smart Text):",
             placeholder="Ej: 60hc 30gr 10pr...",
             key="manual_macros"
         )
+        
+        # Visualización Reactiva
         macros = parsear_macros(input_macros)
-
-        # Feedback visual inmediato
+        if macros['fibra_g'] is None:
+            macros['fibra_g'] = 0.0  # Para evitar None en la visualización
         if input_macros:
             partes = []
-            if macros['hidratos_g'] > 0: partes.append(f":blue[**{macros['hidratos_g']}g HC**]")
-            if macros['grasas_g'] > 0: partes.append(f":orange[**{macros['grasas_g']}g Gr**]")
-            if macros['grasas_sat_g'] > 0: partes.append(f":red[{macros['grasas_sat_g']}g Sat]")
-            if macros['proteinas_g'] > 0: partes.append(f":green[**{macros['proteinas_g']}g Pr**]")
-            if macros['azucares_g'] > 0: partes.append(f":violet[{macros['azucares_g']}g Az]")
-            if macros['fibra_g'] > 0: partes.append(f":grey[{macros['fibra_g']}g Fb]")
+            if macros.get('hidratos_g', 0) > 0: partes.append(f":blue[**{macros['hidratos_g']}g HC**]")
+            if macros.get('grasas_g', 0) > 0: partes.append(f":orange[**{macros['grasas_g']}g Gr**]")
+            # Uso .get() para proteger el KeyError de grasas_sat_g
+            if macros.get('grasas_sat_g', 0) > 0: partes.append(f":red[{macros['grasas_sat_g']}g Sat]")
+            if macros.get('proteinas_g', 0) > 0: partes.append(f":green[**{macros['proteinas_g']}g Pr**]")
+            if macros.get('azucares_g', 0) > 0: partes.append(f":violet[{macros['azucares_g']}g Az]")
+            if macros.get('fibra_g', 0) > 0: partes.append(f":grey[{macros['fibra_g']}g Fb]")
 
             if partes:
                 st.markdown("✅ " + " | ".join(partes))
@@ -236,24 +327,26 @@ def render_custom_food_entry():
 
         st.divider()
 
-        # 2. SELECCIÓN DE GRUPO (Tiene que ser reactiva para mostrar el input de texto)
+        # 2. SELECCIÓN DE GRUPO
         c_grupo_sel, c_grupo_new = st.columns([1.5, 1.5])
         
-        grupos_existentes = dq.CarritoQueries.obtener_grupos_activos()
+        # PROTECCIÓN: Si no tienes CarritoQueries, ponemos lista vacía para que no rompa la UI
+        grupos_existentes = []
+        if hasattr(dq, 'CarritoQueries'):
+            grupos_existentes = dq.CarritoQueries.obtener_grupos_activos()
+        
         opcion_nuevo = "➕ Nuevo Grupo..."
         opciones = grupos_existentes + [opcion_nuevo]
         
-        # Guardamos la selección en una variable temporal fuera del form
         seleccion_grupo = c_grupo_sel.selectbox(
             "Añadir a:", 
             options=opciones, 
             key="manual_grupo_select"
         )
         
-        nombre_grupo_final = seleccion_grupo
-        # Si elige nuevo, mostramos el input (esto NO funcionaría dentro de un st.form)
+        # Reactividad del input de nombre de grupo
         if seleccion_grupo == opcion_nuevo:
-            nombre_grupo_final = c_grupo_new.text_input(
+            c_grupo_new.text_input(
                 "Nombre nuevo grupo:", 
                 value='Comida actual', 
                 key="manual_grupo_new"
@@ -262,72 +355,19 @@ def render_custom_food_entry():
         # ======================================================
         # ZONA FORMULARIO (DENTRO DEL FORM)
         # ======================================================
-        # El form envuelve lo que queremos resetear y enviar junto
         with st.form("form_manual_food", clear_on_submit=True):
             
-            nombre = st.text_input(
-                "Nombre del plato / comida*",
-                placeholder="Ej: Tarta de queso casera",
-                key="manual_nombre" # Al estar en form clear_on_submit=True, esto se borrará solo
-            )
-
+            st.text_input("Nombre del plato / comida*", placeholder="Ej: Tarta de queso casera", key="manual_nombre")
+            
             col_off, col_check = st.columns([1, 1])
+            col_off.text_input("Offset (min):", value=None, key="manual_offset")
+            col_check.text_input("Cantidad aprox (g)", value=None, key="aprox_cantidad")
+            
+            st.checkbox("Pesado Estricto", value=False, key="manual_pesado")
 
-            offset = col_off.text_input(
-                "Offset (min):",
-                value=None,
-                key="manual_offset"
-            )
-
-            cantidad = col_check.text_input("Cantidad aprox (g)", value = None, key= "aprox_cantidad")
-
-            pesado_estricto = st.checkbox(
-                "Pesado Estricto",
-                value=False,
-                key="manual_pesado"
-            )
-
-            # Botón de envío
-            submitted = st.form_submit_button(
+            # EL BOTÓN EJECUTA EL CALLBACK
+            st.form_submit_button(
                 "Añadir Manual al Carrito 🛒",
-                use_container_width=True
+                use_container_width=True,
+                on_click=guardar_manual_callback  # <--- AQUÍ OCURRE LA MAGIA
             )
-
-            if submitted:
-                # Validaciones
-                tiene_macros = (
-                    macros['hidratos_g'] > 0 or
-                    macros['grasas_g'] > 0 or
-                    macros['proteinas_g'] > 0 or
-                    macros['azucares_g'] > 0
-                )
-
-                if not nombre:
-                    st.error("⚠️ El nombre es obligatorio.")
-                elif not nombre_grupo_final: # Validación extra del grupo
-                    st.error("⚠️ Debes definir un nombre para el grupo.")
-                else:
-                    # Crear objeto
-                    item_manual = {
-                        "id_producto": None,
-                        "nombre_display": f"{nombre} (Manual)",
-                        "cantidad": 1,
-                        "hc": macros['hidratos_g'],
-                        "gr": macros['grasas_g'],
-                        "sat": macros['grasas_sat_g'],
-                        "pr": macros['proteinas_g'],
-                        "az": macros['azucares_g'],
-                        "fb": macros['fibra_g'],
-                        "cantidad": int(cantidad) if cantidad else None,
-                        "offset": int(offset) if offset else None,
-                        "es_pesado_estricto": pesado_estricto,
-                        "es_manual": True,
-                        "grupo_nombre": nombre_grupo_final # Usamos la variable de fuera
-                    }
-
-                    # Guardar
-                    if dq.CarritoQueries.agregar_item(item_manual):
-                        st.toast(f"✅ Añadido: {nombre}")
-                        st.rerun() # Necesario para actualizar el carrito visualmente
-                    else:
-                        st.error("Error al guardar en BD.")

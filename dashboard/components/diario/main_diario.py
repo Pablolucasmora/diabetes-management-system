@@ -5,14 +5,7 @@ from .carrito import render_carrito
 from .panel_control import render_panel_control_z
 
 def render_diario():
-    col1, col2, col3 = st.columns([2, 6, 1])
-    with col2:
-        st.header("📝 Diario de Alimentación")
-    
-    render_panel_control_z()
-
-    st.divider()
-    # Asegurar que existe el carrito en sesión
+        # Asegurar que existe el carrito en sesión
     if "carrito" not in st.session_state:
         st.session_state.carrito = []
     
@@ -23,11 +16,17 @@ def render_diario():
         # Apilamos los componentes de entrada
         render_buscador()
         st.divider()
-        render_nuevo_producto()
-        st.divider()
         render_custom_food_entry()
-
-    with col_der:
-        # Componente de resumen (sticky style visualmente)
-        with st.container(border=True):
+        st.divider()
+        with st.expander(label ="🛒 Tu Bandeja de Entrada", expanded=False):
             render_carrito()
+        st.divider()
+        render_nuevo_producto()
+
+    st.divider()
+
+    col1, col2, col3 = st.columns([3, 6, 3])
+    with col2:
+        st.header("📝 Diario de Alimentación")
+
+        render_panel_control_z()

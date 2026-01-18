@@ -8,15 +8,6 @@ import sqlite3
 # Instancia global del manager para este archivo
 db = get_db_manager()
 
-def registrar_log(cursor, tabla, id_ref, accion, anterior=None, nuevo=None):
-    """Auditoría centralizada: guarda cambios en formato JSON."""
-    cursor.execute("""
-        INSERT INTO historial_cambios (tabla_afectada, id_referencia, accion, valor_anterior, valor_nuevo)
-        VALUES (?, ?, ?, ?, ?)
-    """, (tabla, id_ref, accion, 
-          json.dumps(anterior) if anterior else None, 
-          json.dumps(nuevo) if nuevo else None))
-
 # --- MODELOS DE DATOS (DATACLASSES) ---
 @dataclass
 class ProductoModel:
@@ -79,9 +70,15 @@ class CarritoTemp:
     sat: float
     az: float
     offset: int
+    unidades: float
     es_pesado_estricto: bool
+    fecha_agregado: datetime
     es_manual: bool
     grupo_nombre: str
+    tipo_comida_manual: Optional[str] = None
+    hora_inicio_manual: Optional[str] = None
+    notas_manual: Optional[str] = None
+    es_restaurante_manual: Optional[bool] = None
 
 # --- CONSULTAS AL CATÁLOGO ---
 
@@ -111,8 +108,14 @@ class CatalogoQueries:
             cursor = conn.cursor()
             cursor.execute(sql, valores)
             producto_id = cursor.lastrowid 
-
-            registrar_log(cursor, 'catalogo_productos', producto_id, 'INSERT', nuevo=producto.__dict__)
+            
+            AuditoriaManager.registrar(
+                tabla='catalogo_productos',
+                id_ref=producto_id,
+                accion='INSERT',
+                anterior=None,
+                nuevo=dict(producto.__dict__)
+            )
             conn.commit()            
             return producto_id
         except Exception as e:
@@ -145,20 +148,20 @@ class CatalogoQueries:
 class CarritoQueries:
     @staticmethod
     def agregar_item(datos: dict):
-        """Recibe el diccionario que antes metías en session_state"""
+        """Recibe el diccionario"""
         conn = db._get_connection()
         if not conn: return None
         
         sql = """
             INSERT INTO carrito_temporal (
-                id_producto, nombre_display, cantidad, 
+                id_producto, nombre_display, cantidad, unidades,
                 hc, gr, pr, fb, az, sat,
                 offset, es_pesado_estricto, es_manual, grupo_nombre
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         # Asegúrate de extraer los valores correctamente del dict
         valores = (
-            datos.get('id_producto'), datos.get('nombre_display'), datos.get('cantidad', None),
+            datos.get('id_producto'), datos.get('nombre_display'), datos.get('cantidad', None), datos.get('unidades'),
             datos.get('hc'), datos.get('gr'), datos.get('pr'), datos.get('fb'), datos.get('az', 0), datos.get('sat', 0),
             datos.get('offset'), int(datos.get('es_pesado_estricto', 1)), int(datos.get('es_manual', 0)), 
             datos.get('grupo_nombre', 'Comida Actual')
@@ -221,6 +224,82 @@ class CarritoQueries:
                 anterior=datos_backup, 
                 nuevo=None
             )
+    @staticmethod
+    def actualizar_unidades_absoluto(id_item, nuevas_unidades):
+        conn = db._get_connection()
+        cursor = conn.cursor()
+        
+        # 1. Obtener estado actual
+        row = cursor.execute("SELECT * FROM carrito_temporal WHERE id_item = ?", (id_item,)).fetchone()
+        if not row: return
+
+        uni_actual = row['unidades'] if row['unidades'] else 1
+        
+        # Si el usuario pone 0 o menos, borramos el ítem
+        if nuevas_unidades <= 0:
+            CarritoQueries.eliminar_item(id_item)
+            return
+
+        # 2. Calcular factor (Nueva / Vieja)
+        # Ejemplo: Tenía 1, pongo 1.5 -> Factor 1.5. El peso se multiplica por 1.5
+        factor = nuevas_unidades / uni_actual
+        
+        # 3. Update masivo
+        # Nota: Actualizamos 'unidades' con el valor nuevo directo
+        sql = """
+            UPDATE carrito_temporal 
+            SET unidades = ?, 
+                cantidad = cantidad * ?, 
+                hc = hc * ?, 
+                gr = gr * ?, 
+                pr = pr * ?, 
+                fb = fb * ?, 
+                az = az * ?, 
+                sat = sat * ?
+            WHERE id_item = ?
+        """
+        cursor.execute(sql, (
+            nuevas_unidades, # Asignación directa
+            factor, factor, factor, factor, factor, factor, factor, # Multiplicadores
+            id_item
+        ))
+        conn.commit()
+        conn.close()
+
+
+    @staticmethod
+    def actualizar_peso_item(id_item, nuevo_peso):
+        conn = db._get_connection()
+        cursor = conn.cursor()
+        
+        # 1. Leemos el estado actual
+        row = cursor.execute("SELECT * FROM carrito_temporal WHERE id_item = ?", (id_item,)).fetchone()
+        if not row: return
+
+        peso_antiguo = row['cantidad']
+        if peso_antiguo == 0: return # Evitar división por cero
+
+        # 2. Calculamos el factor de cambio (Ej: 54g / 67g = 0.80)
+        factor = nuevo_peso / peso_antiguo
+        
+        # 3. Actualizamos macros
+        sql = """
+            UPDATE carrito_temporal 
+            SET cantidad = ?, 
+                hc = hc * ?, 
+                gr = gr * ?, 
+                pr = pr * ?, 
+                fb = fb * ?, 
+                az = az * ?, 
+                sat = sat * ?
+            WHERE id_item = ?
+        """
+        # Nota: SQLite permite multiplicar directamente en el UPDATE
+        cursor.execute(sql, (
+            nuevo_peso, factor, factor, factor, factor, factor, factor, id_item
+        ))
+        conn.commit()
+        conn.close()
 
     @staticmethod
     def eliminar_grupo(grupo_nombre):
@@ -288,6 +367,8 @@ class ComidaQueries:
             cursor = conn.cursor()
             alimentos = datos.get('alimentos', [])
             
+            # --- CÁLCULO AUTOMÁTICO DE 'ES_PESADO_ESTRICTO' ---
+
             total_hc = sum(item['hc'] for item in alimentos)
             if total_hc == 0: hc_pesados = 0
             
@@ -297,23 +378,25 @@ class ComidaQueries:
                 ratio = hc_pesados / total_hc
             else:
                 ratio = 0
-                
+            
+
             # ---------------------------------------------------------
             # 1. INSERTAR CABECERA (Tabla 'comida')
             # ---------------------------------------------------------
             sql_comida = """
                 INSERT INTO comida (
-                    inicio, tipo_comida, notas, 
+                    inicio, tipo_comida, notas, incertidumbre_fibra_pct,
                     es_restaurante, es_pesado_estricto
-                ) VALUES (?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?)
             """
             
             val_comida = (
                 datos.get('inicio'),               # Datetime del selector
                 datos.get('tipo_comida'),          # 'Desayuno', 'Cena'...
                 datos.get('notas', ''),
+                datos.get('incertidumbre_fibra_pct', 1),
                 int(datos.get('es_restaurante', 0)), # Checkbox del UI
-                ratio                    # <--- ¡CALCULADO AUTOMÁTICAMENTE!
+                ratio                    
             )
             
             cursor.execute(sql_comida, val_comida)
@@ -333,7 +416,6 @@ class ComidaQueries:
             """
 
             for item in alimentos:
-                
                 valores_detalle = (
                     id_comida_generado,
                     item.get('id_producto'),          
@@ -347,7 +429,7 @@ class ComidaQueries:
                     float(item.get('gr', 0)),
                     float(item.get('sat', 0)), 
                     float(item.get('pr', 0)),
-                    float(item.get('fb', 0))
+                    float(item.get('fb', 0) if item.get('fb') is not None else 0),
                 )
                 cursor.execute(sql_detalle, valores_detalle)
 

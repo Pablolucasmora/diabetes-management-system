@@ -36,8 +36,9 @@ class TABLES:
             id_comida INTEGER PRIMARY KEY AUTOINCREMENT,
             inicio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             tipo_comida TEXT CHECK(tipo_comida IN ('Desayuno', 'Almuerzo', 'Comida', 'Merienda', 'Cena', 'Snack', 'Rescate')),
-            es_restaurante INTEGER DEFAULT 0,
-            es_pesado_estricto INTEGER NOT NULL CHECK (es_pesado_estricto BETWEEN 0 AND 1), -- Calculado en función de los alimentos que han sido pesados o no dentro de la comida.
+            incertidumbre_fibra_pct REAL NOT NULL CHECK (incertidumbre_fibra_pct BETWEEN 0 AND 1),
+            es_restaurante INTEGER DEFAULT 0 CHECK (es_restaurante BETWEEN 0 AND 1),
+            es_pesado_estricto REAL NOT NULL CHECK (es_pesado_estricto BETWEEN 0 AND 1), -- Calculado en función de los alimentos que han sido pesados o no dentro de la comida.
             notas TEXT
         );
     """
@@ -54,7 +55,7 @@ class TABLES:
             azucar_total REAL DEFAULT 0,
             grasas_totales REAL DEFAULT 0,
             proteinas_totales REAL DEFAULT 0,
-            fibra_total REAL DEFAULT 0,
+            fibra_total REAL,
             grasas_saturadas_total REAL DEFAULT 0,
             es_pesado_detalle INTEGER, 
             FOREIGN KEY (id_comida) REFERENCES comida(id_comida) ON DELETE CASCADE,
@@ -88,7 +89,7 @@ class TABLES:
                 hc REAL DEFAULT 0,
                 gr REAL DEFAULT 0,
                 pr REAL DEFAULT 0,
-                fb REAL DEFAULT 0,
+                fb REAL,
                 az REAL DEFAULT 0,
                 sat REAL DEFAULT 0,
                 
@@ -96,6 +97,7 @@ class TABLES:
                 offset INTEGER,
                 es_pesado_estricto INTEGER DEFAULT 1,
                 es_manual INTEGER DEFAULT 0,
+                unidades INTEGER DEFAULT 1, 
 
                 -- Agrupacion
                 grupo_nombre TEXT NOT NULL DEFAULT 'Comida actual',
