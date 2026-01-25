@@ -20,3 +20,11 @@ __pycache__/
 # Archivos del sistema (Mac/Windows)
 .DS_Store
 Thumbs.db
+
+# Datos de Docker
+pgdata/
+.env
+
+# Archivos temporales de Python (ya los tienes, pero asegúrate)
+__pycache__/
+*.py[cod]

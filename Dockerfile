@@ -1,0 +1,25 @@
+# Usa una versión ligera de Python
+FROM python:3.11-slim
+
+# Evita que Python genere archivos .pyc y permite ver logs en tiempo real
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+
+# Directorio de trabajo dentro del contenedor
+WORKDIR /app
+
+# Instalamos dependencias del sistema necesarias para PostgreSQL (psycopg2)
+RUN apt-get update && apt-get install -y \
+    libpq-dev \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copiamos e instalamos las librerías de Python
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copiamos el resto del código
+COPY . .
+
+# Exponemos el puerto que usa FastHTML
+EXPOSE 8000
