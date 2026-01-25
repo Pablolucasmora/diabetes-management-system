@@ -3,8 +3,12 @@ import database.queries as dq
 import json
 
 def render_panel_control_z():
-    with st.expander("🕰️ Historial de Acciones (Deshacer/Rehacer) (Últimos 2 cambios)"):
-        
+    # with st.expander("🕰️ Historial de Acciones (Deshacer/Rehacer) (Últimos 2 cambios)"):
+    c1, c2, c3 = st.columns([2,4,2])
+
+    with c2:
+        st.subheader("🕰️ Historial de Acciones (Últimos 2 cambios)")
+        st.divider()
         # Obtenemos los últimos 2 logs
         logs = dq.db.execute_query("SELECT * FROM historial_cambios ORDER BY id_log DESC LIMIT 2")
 
