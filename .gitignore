@@ -28,3 +28,5 @@ pgdata/
 # Archivos temporales de Python (ya los tienes, pero asegúrate)
 __pycache__/
 *.py[cod]
+
+.geminiignore
