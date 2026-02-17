@@ -1,1 +1,3 @@
-python-fasthtml==0.12.39
+python-fasthtml==0.12.41
+psycopg==3.3.2
+

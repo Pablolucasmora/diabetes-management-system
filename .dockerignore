@@ -1,0 +1,11 @@
+docker-compose.yml
+Dockerfile
+.gitignore
+pgdata/
+__pycache__/
+*.pyc
+.env
+.git
+
+.sesskey
+

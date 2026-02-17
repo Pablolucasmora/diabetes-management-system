@@ -13,7 +13,9 @@ services:
       - "5432:5432"
 
   web:
-    build: .
+    build: 
+      context: .
+      dockerfile: Dockerfile.fasthtml
     container_name: diabetes_app
     volumes:
       - .:/app
@@ -22,5 +24,20 @@ services:
     # Usamos las mismas variables para construir la URL de conexión
     environment:
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}
+    command: uvicorn DayBetes_food.main:app --host 0.0.0.0 --port 8000 --reload
     depends_on:
-      - db
+      db:
+        condition: service_started
+
+
+  tailwind:
+
+    build:
+      context: .
+      dockerfile: Dockerfile.tailwind
+    container_name: diabetes_tailwind
+    volumes:
+      - .:/app
+    working_dir: /app
+    tty: true
+    command: tailwindcss -i DayBetes_food/static/input.css -o DayBetes_food/static/output.css --watch

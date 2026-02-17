@@ -1,0 +1,10 @@
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y \
+    curl \
+    && curl -L -o tailwindcss \
+    https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-arm64 \
+    && chmod +x tailwindcss \
+    && mv tailwindcss /usr/local/bin/ \
+    && rm -rf /var/lib/apt/lists/* 
+

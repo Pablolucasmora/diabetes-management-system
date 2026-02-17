@@ -1,30 +1,74 @@
-# TFG: Estudio de Diabetes Personalizado
+# Estudio y Asistente de Diabetes Personalizado
 
-Este proyecto consiste en un estudio de diabetes personalizado sobre mis datos personales, para en una fase posterior construir un modelo que te ayude en el día a día en función de tus características personales.
+> **Proyecto** centrado en la recolección, análisis y modelado de datos personales para la gestión de la diabetes tipo 1.
 
-## 🎯 Objetivo
-El objetivo principal es el de entender y estudiar cómo reacciona una persona a distintos factores en su control de la glucosa (El estudio va a consistir en estudiar los datos de un solo individuo). Una vez estudiado esto se pretende construir un modelo que aprenda de hábitos y patrones de esta persona, para poder acompañar y actuar como un acompañante en el día a día de la diabetes. 
+## Descripción del Proyecto
 
-Quiero además construir una página que acompañe en este proyecto en la recolección de datos, para poder facilitar y disminuir la carga de llevar un control diario de tantos factores de los que depende esta enfermedad. Por último me he propuesto tratar de adaptar este algoritmo y aplicación a más gente, para que más personas diabéticas se puedan beneficiar de los resultados de esta investigación (El algoritmo quiero que aprenda de cada usuario, para así hacer las mejores recomendaciones posibles). 
+Este proyecto nace con el objetivo de entender y modelar la reacción glucémica de un individuo frente a diversos factores (nutricionales, fisiológicos y de actividad). En una primera fase, el estudio se centra en mis propios datos personales para, posteriormente, construir un **Modelo de Machine Learning** capaz de predecir comportamientos y actuar como un asistente diario.
 
-## 🚀 Alcance
-El alcance como he mencionado es poder construir una aplicación que acompañe a personas diabéticas en su día a día, para así conseguir facilitar sus vidas. Esta funcionará con un algoritmo personalizado que aprenderá de los datos de cada individuo, para poder adaptarse mejor.
+El alcance final es desarrollar una aplicación web que facilite la recolección de datos, reduzca la carga mental del control de la enfermedad y ofrezca recomendaciones personalizadas basadas en patrones aprendidos.
 
-## 📊 Fuentes de datos
-En cuanto a las fuentes de datos, me voy a basar en las siguientes:
+## Objetivos
 
-* **LibreView:** Esta página contiene los datos de glucosa minuto a minuto (valor, tendencia y velocidad), además de los registros de insulina rápida y basal (En caso de tener dos bolis inteligentes) con zona de inyección, espera antes de la comida, si es corrección o no…, todos estos con la hora exacta de la medición o aplicación.
-* **Apple Watch:** Haré uso del Apple Watch para tener en cuenta todas las variables de actividad y fisiológicas. Recolectaré a través de Apple Health datos de la frecuencia cardiaca, Heart Rate Variability (Estrés), Ejercicios (duración, tipo, intensidad…), sueño (calidad, fases, duración…).
-* **Página personal:** A través de un dashboard sencillo e intuitivo, haré un registro de las comidas, con los valores de Hidratos, Proteínas, Azúcares, Grasas y Fibra, además de algunas variables como `come_fuera` o `es_pesado` para evaluar la calidad y precisión de las medidas. Además me ayudaré de la API de Open Food Facts para sacar valores de comidas registradas (con valores específicos como categorización Nutriscore y NOVA), y otras funcionalidades para facilitar el registro. También incluiré valores de bebidas (refrescos, zumos, alcohol, cafeína…).
+* **Análisis de Factores:** Estudiar cómo reacciona el organismo (glucosa) ante distintas variables (insulina, comida, deporte, estrés).
+* **Modelado Predictivo:** Crear un algoritmo que aprenda de los hábitos y patrones específicos del usuario.
+* **Desarrollo de Software:** Construir una **Web App** (Dashboard) que acompañe en el día a día y simplifique el registro de datos.
+* **Escalabilidad:** Adaptar el algoritmo para que pueda generalizarse y beneficiar a otros pacientes diabéticos en el futuro.
 
-## 🛠️ Requisitos y Tecnología
-* **Tecnologías Clave:** Listado de las herramientas, lenguajes de programación (Python, R, JavaScript), bibliotecas (Pandas, Scikit-learn, TensorFlow), y frameworks que se utilizarán (p. ej., React, Flask, Flutter).
-* **Requisitos del Sistema:** Hardware o software necesario para el desarrollo y despliegue.
+## Fuentes de Datos
 
-## 🏆 Resultados Esperados
-* **Científicos/Académicos:** La obtención de insights sobre la respuesta glucémica del individuo a diversos factores.
-* **Tecnológicos:** El modelo de machine learning personalizado y la aplicación funcional que actúe como acompañante.
+La arquitectura de datos integra tres fuentes principales para lograr una visión 360º del paciente:
 
-## ⚠️ Limitaciones y Retos
-* **Limitaciones Iniciales:** Reconozco que es un proyecto ambicioso, que contiene dificultades en cuanto a los datos, y la generalización.
-* **Retos Técnicos:** Problemas potenciales en la calidad de los datos, la complejidad de los modelos o la integración de sistemas.
+### 1. LibreView (CGM & Insulina)
+* **Monitorización:** Datos de glucosa minuto a minuto (valor, tendencia y velocidad de cambio).
+* **Tratamiento:** Registros de insulina rápida y basal (bolis inteligentes).
+* **Contexto:** Zona de inyección, tiempos de espera pre-comida, correcciones, etc.
+
+### 2. Apple Watch (Salud & Actividad)
+* **Fisiología:** Frecuencia cardíaca, HRV (Variabilidad de la frecuencia cardíaca como indicador de estrés)...
+* **Sueño:** Calidad, fases, duración...
+* **Ejercicio:** Duración, tipo de actividad, intensidad...
+
+### 3. Dashboard Personal (Nutrición)
+* **Registro de Comidas:** Macros (HC, Proteínas, Grasas, Fibra) y Micros (Saturadas, Azúcares).
+* **Contexto:** Variables cualitativas (`come_fuera`, `pesado_estricto`, `cocinado`...) para evaluar la precisión del dato.
+* **Enriquecimiento de Datos:** Integración con APIs (tipo **Open Food Facts**) para obtener Nutriscore y NOVA.
+* **Bebidas:** Registro de alcohol, cafeína, refrescos, etc.
+
+## Stack Tecnológico
+
+El proyecto utiliza un stack moderno enfocado en rendimiento y simplicidad:
+
+### Frontend & UI
+* **FastHTML:** Para la estructura y renderizado rápido.
+* **Tailwind CSS:** Diseño y estilos.
+* **Alpine.js:** Interactividad y animaciones ligeras.
+
+### Backend & Datos
+* **PostgreSQL:** Base de datos relacional principal.
+* **Python:** Lenguaje núcleo para el backend y análisis de datos.
+
+### Infraestructura & DevOps
+* **Docker:** Empaquetado y contenedorización de la aplicación.
+* **AWS:** (Fase futura) Despliegue en la nube.
+
+### Data Science (Fase Posterior)
+* **Scikit-learn / TensorFlow:** Para el entrenamiento de modelos predictivos y análisis de patrones.
+
+## Resultados Esperados
+
+1.  **Académicos:** Obtención de *insights* profundos sobre la respuesta glucémica individual ante combinaciones complejas de variables.
+2.  **Tecnológicos:** Un modelo de ML entrenado y una aplicación web funcional desplegada que actúe como "copiloto" en la gestión de la diabetes.
+
+## Limitaciones y Retos
+
+### Limitaciones Iniciales
+Soy consciente de la ambición del proyecto. Grandes corporaciones (Abbott, Dexcom) poseen recursos ilimitados. Sin embargo, este proyecto busca la **hiper-personalización** y la **integración total de fuentes** (Nutrición + Wearables + CGM) que a menudo se encuentran en ecosistemas cerrados y separados.
+
+### Retos Técnicos
+* **Calidad del Dato:** Asegurar la precisión de los registros manuales (comida) frente a los automáticos (sensores).
+* **Complejidad del Modelo:** Modelar un sistema biológico caótico con múltiples variables de confusión.
+* **Integración:** Unificar formatos de datos heterogéneos (series temporales de glucosa vs. eventos puntuales de comidas).
+
+---
+*Autor: Pablo Lucas Mora*
