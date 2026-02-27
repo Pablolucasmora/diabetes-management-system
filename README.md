@@ -22,7 +22,7 @@ El estado actual puede caracterizarse como **MVP (Minimum Viable Product) en con
 
 La aplicación cuenta con los siguientes componentes funcionales:
 
-- **Sistema de navegación**: Una isla flotante底部 que permite navegar entre las principales secciones de la aplicación (Menu, Stats, Food, Settings). El diseño es moderno y adaptativo, utilizando radio buttons ocultos para manejar el estado de navegación.
+- **Sistema de navegación**: Una isla flotante que permite navegar entre las principales secciones de la aplicación (Menu, Stats, Food, Settings). El diseño es moderno y adaptativo, utilizando radio buttons ocultos para manejar el estado de navegación.
 
 - **Sección de comida (Food)**: Un catálogo de alimentos funcional con búsqueda en tiempo real mediante HTMX. Los usuarios pueden buscar alimentos, filtrarlos por categoría, y añadirlos a eventos de ingesta planificados.
 
@@ -258,7 +258,7 @@ Almacena recetas guardadas por el usuario.
 | notas | TEXT | Notas de la receta |
 | favorito | BOOLEAN | Marcador de favorito |
 
-#### Tabla: никогда
+#### Tabla: nevera
 
 Gestiona los tuppers de comida preparada guardados en la neverita.
 
