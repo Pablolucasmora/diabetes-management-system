@@ -40,4 +40,13 @@ services:
       - .:/app
     working_dir: /app
     tty: true
-    command: tailwindcss -i DayBetes_food/static/input.css -o DayBetes_food/static/output.css --watch
+    command: tailwindcss -i DayBetes_food/static/css/input.css -o DayBetes_food/static/css/output.css --watch
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: diabetes_tunnel
+    # Le decimos al binario que cree un Quick Tunnel temporal apuntando a tu Python
+    command: tunnel --url http://web:8000
+    depends_on:
+      web:
+        condition: service_started

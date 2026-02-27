@@ -4,13 +4,13 @@ from psycopg.rows import dict_row
 
 
 def get_connection():
-    # 1. Recuperamos la URL de conexión que inyectó Docker
+    # 1. Retrieve the connection URL that Docker injected
     db_url = os.getenv("DATABASE_URL")
     
-    # 2. Medida de seguridad por si Docker falla al pasar la variable
+    # 2. Security measure in case Docker fails to pass the variable
     if not db_url:
-        raise ValueError("Error crítico: DATABASE_URL no encontrada en el entorno.")
+        raise ValueError("Critical error: DATABASE_URL not found in the environment.")
     
-    # 3. Psycopg se conecta usando la URL completa
+    # 3. Psycopg connects using full URL
     return psycopg.connect(db_url, row_factory=dict_row)
 

@@ -1,26 +1,23 @@
 from fasthtml.common import *
 from DayBetes_food.database.connection import get_connection
-from DayBetes_food.components.menu.layout import IslaFlotante, carrito
+from DayBetes_food.components.menu.layout import FloatingIsland, Cart
 
 # ============================================
-# COMPONENTES BASE
+# BASE COMPONENTS
 # ============================================
 
-
-
-def render_page(req, contenido_fn, mostrar_carrito=True):
+def render_page(request, content_fn, show_cart=True):
     """
-    Helper para renderizar páginas con estructura común.
+    Helper to render pages with a common structure.
     """
     
+    connection = get_connection()
     
-    conexion = get_connection()
-    
-    if "hx-request" in req.headers:
-        return contenido_fn(conexion)
+    if "hx-request" in request.headers:
+        return content_fn(connection)
     else:
         return Div(
-            Div(contenido_fn(conexion), id="main_content"), 
-            IslaFlotante(), 
-            carrito(display=mostrar_carrito)
+            Div(content_fn(connection), id="main_content"),
+            FloatingIsland(),
+            Cart(display=show_cart)
         )

@@ -1,22 +1,22 @@
 """
-Módulo de queries centralizadas para todas las tablas de DayBetes.
+Centralized queries module for all DayBetes tables.
 
-Este archivo contiene funciones CRUD (Create, Read, Update, Delete) para:
-- usuario
-- catalogo
-- ingesta_manual
-- nevera
-- etiquetas
-- recetas
-- etiquetas_vinculadas
-- evento_ingesta
-- porcion_detalle
+This file contains CRUD functions (Create, Read, Update, Delete) for:
+- users
+- catalog
+- manual_intake
+- fridge
+- tags
+- recipe
+- linked_tags
+- intake_event
+- portion_detail
 
-Todas las funciones siguen el mismo patrón:
-- Validaciones de entrada
-- Ejecución de query con parámetros
-- Manejo de transacciones (commit/rollback)
-- Retorno de ID o resultado, o None en caso de error
+All functions follow the same pattern:
+- Input validation
+- Query execution with parameters
+- Transaction handling (commit/rollback)
+- Return ID or result, or None on error
 """
 
 from typing import Optional, Any
@@ -24,52 +24,51 @@ from dataclasses import dataclass
 
 
 # ============================================
-# HELPERS GENÉRICOS
+# GENERIC HELPERS
 # ============================================
 
-def _execute_query(conexion, query: str, params: dict = None, commit: bool = True) -> Optional[Any]:
-    """Helper genérico para ejecutar queries."""
+def _execute_query(connection, query: str, params: dict = None, commit: bool = True) -> Optional[Any]:
+    """Generic helper to execute queries."""
     try:
-        with conexion.cursor() as cursor:
+        with connection.cursor() as cursor:
             cursor.execute(query, params or {})
             if commit:
-                conexion.commit()
+                connection.commit()
             return cursor.fetchone()
     except Exception as e:
-        conexion.rollback()
-        print(f"Error en query: {e}")
+        connection.rollback()
+        print(f"Error in query: {e}")
         return None
 
 
-def _execute_query_many(conexion, query: str, params: dict = None, commit: bool = True) -> list:
-    """Helper genérico para ejecutar queries que retornan múltiples filas."""
+def _execute_query_many(connection, query: str, params: dict = None, commit: bool = True) -> list:
+    """Generic helper to execute queries that return multiple rows."""
     try:
-        with conexion.cursor() as cursor:
+        with connection.cursor() as cursor:
             cursor.execute(query, params or {})
             if commit:
-                conexion.commit()
+                connection.commit()
             return cursor.fetchall()
     except Exception as e:
-        conexion.rollback()
-        print(f"Error en query: {e}")
+        connection.rollback()
+        print(f"Error in query: {e}")
         return []
 
 
 def _build_update_query(table: str, params: dict, where_field: str = "id") -> Optional[str]:
     """
-    Construye una query UPDATE genérica y segura.
-    Filtra automáticamente el campo WHERE para no actualizarlo en el SET
-    y descarta los valores None para evitar sobrescribir con NULL accidentalmente.
+    Builds a generic and safe UPDATE query.
+    Automatically filters the WHERE field to not update it in the SET
+    and discards None values to avoid accidentally overwriting with NULL.
     
     Args:
-        table: Nombre de la tabla
-        params: Diccionario con todos los campos y valores
-        where_field: Campo para el WHERE (default: "id")
+        table: Table name
+        params: Dictionary with all fields and values
+        where_field: Field for WHERE (default: "id")
     
     Returns:
-        Query SQL generada, o None si no hay campos válidos para actualizar.
+        Generated SQL query, or None if there are no valid fields to update.
     """
-    # Extraemos solo las keys que no son el ID y cuyo valor no es None
     fields = [k for k, v in params.items() if k != where_field and v is not None]
     
     if not fields:
@@ -80,689 +79,687 @@ def _build_update_query(table: str, params: dict, where_field: str = "id") -> Op
 
 
 # ============================================
-# USUARIO
+# users
 # ============================================
 
-def add_usuario(conexion, nombre: str, correo: str, clave: str) -> Optional[int]:
-    """Crea un nuevo usuario."""
+def add_users(connection, name: str, email: str, password: str) -> Optional[int]:
+    """Creates a new users."""
     query = """
-        INSERT INTO usuario (nombre, correo, clave)
-        VALUES (%(nombre)s, %(correo)s, %(clave)s)
+        INSERT INTO users (name, email, password)
+        VALUES (%(name)s, %(email)s, %(password)s)
         RETURNING id;
     """
-    result = _execute_query(conexion, query, {"nombre": nombre, "correo": correo, "clave": clave})
+    result = _execute_query(connection, query, {"name": name, "email": email, "password": password})
     return result[0] if result else None
 
 
-def get_usuario(conexion, usuario_id: int) -> Optional[dict]:
-    """Obtiene un usuario por ID."""
-    query = "SELECT * FROM usuario WHERE id = %(id)s;"
-    return _execute_query(conexion, query, {"id": usuario_id}, commit=False)
+def get_users(connection, users_id: int) -> Optional[dict]:
+    """Gets a users by ID."""
+    query = "SELECT * FROM users WHERE id = %(id)s;"
+    return _execute_query(connection, query, {"id": users_id}, commit=False)
 
 
-def get_usuario_por_correo(conexion, correo: str) -> Optional[dict]:
-    """Obtiene un usuario por correo."""
-    query = "SELECT * FROM usuario WHERE correo = %(correo)s;"
-    return _execute_query(conexion, query, {"correo": correo}, commit=False)
+def get_users_by_email(connection, email: str) -> Optional[dict]:
+    """Gets a users by email."""
+    query = "SELECT * FROM users WHERE email = %(email)s;"
+    return _execute_query(connection, query, {"email": email}, commit=False)
 
 
-def get_all_usuarios(conexion) -> list:
-    """Obtiene todos los usuarios."""
-    query = "SELECT * FROM usuario ORDER BY fecha_registro DESC;"
-    return _execute_query_many(conexion, query, commit=False)
+def get_all_users(connection) -> list:
+    """Gets all users."""
+    query = "SELECT * FROM users ORDER BY registration_date DESC;"
+    return _execute_query_many(connection, query, commit=False)
 
 
-def update_usuario(conexion, usuario_id: int, nombre: str = None, correo: str = None) -> bool:
-    """Actualiza un usuario. Solo actualiza los campos proporcionados."""
-    params = {"id": usuario_id, "nombre": nombre, "correo": correo}
-    query = _build_update_query("usuario", params)
+def update_users(connection, users_id: int, name: str = None, email: str = None) -> bool:
+    """Updates a users. Only updates the provided fields."""
+    params = {"id": users_id, "name": name, "email": email}
+    query = _build_update_query("users", params)
     
     if not query:
         return False
         
-    result = _execute_query(conexion, query, params)
+    result = _execute_query(connection, query, params)
     return result is not None
 
 
-def delete_usuario(conexion, usuario_id: int) -> bool:
-    """Elimina un usuario por ID."""
-    query = "DELETE FROM usuario WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(conexion, query, {"id": usuario_id})
+def delete_users(connection, users_id: int) -> bool:
+    """Deletes a users by ID."""
+    query = "DELETE FROM users WHERE id = %(id)s RETURNING id;"
+    result = _execute_query(connection, query, {"id": users_id})
     return result is not None
 
 
 # ============================================
-# CATALOGO
+# CATALOG
 # ============================================
 
-def add_catalogo(conexion, datos: dict) -> Optional[int]:
+def add_catalog_item(connection, data: dict) -> Optional[int]:
     """
-    Añade un nuevo alimento al catálogo.
-    datos: dict con los campos del alimento
+    Adds a new item to the catalog.
+    data: dict with the food item fields
     """
     query = """
-        INSERT INTO catalogo (
-            created_by, nombre, marca, categoria, subtipo, estado_inicial,
-            nutriscore, nova, yuka, porcion_default,
-            calorias_100g, hidratos_100g, azucares_100g, grasas_100g,
-            saturadas_100g, proteinas_100g, fibra_100g,
-            cafeina, alcohol, cod_barras, factor_cocinado, favorito
+        INSERT INTO catalog (
+            created_by, name, brand, category, subtype, initial_state,
+            nutriscore, nova, yuka, default_portion,
+            calories_100g, carbs_100g, sugars_100g, fats_100g,
+            saturated_100g, proteins_100g, fiber_100g,
+            caffeine, alcohol, barcode, cooking_factor, favorite
         )
         VALUES (
-            %(created_by)s, %(nombre)s, %(marca)s, %(categoria)s, %(subtipo)s, %(estado_inicial)s,
-            %(nutriscore)s, %(nova)s, %(yuka)s, %(porcion_default)s,
-            %(calorias_100g)s, %(hidratos_100g)s, %(azucares_100g)s, %(grasas_100g)s,
-            %(saturadas_100g)s, %(proteinas_100g)s, %(fibra_100g)s,
-            %(cafeina)s, %(alcohol)s, %(cod_barras)s, %(factor_cocinado)s, %(favorito)s
+            %(created_by)s, %(name)s, %(brand)s, %(category)s, %(subtype)s, %(initial_state)s,
+            %(nutriscore)s, %(nova)s, %(yuka)s, %(default_portion)s,
+            %(calories_100g)s, %(carbs_100g)s, %(sugars_100g)s, %(fats_100g)s,
+            %(saturated_100g)s, %(proteins_100g)s, %(fiber_100g)s,
+            %(caffeine)s, %(alcohol)s, %(barcode)s, %(cooking_factor)s, %(favorite)s
         )
         RETURNING id;
     """
-    result = _execute_query(conexion, query, datos)
+    result = _execute_query(connection, query, data)
     return result[0] if result else None
 
 
-def get_catalogo(conexion, catalogo_id: int) -> Optional[dict]:
-    """Obtiene un alimento del catálogo por ID."""
-    query = "SELECT * FROM catalogo WHERE id = %(id)s;"
-    return _execute_query(conexion, query, {"id": catalogo_id}, commit=False)
+def get_catalog_item(connection, catalog_id: int) -> Optional[dict]:
+    """Gets a catalog item by ID."""
+    query = "SELECT * FROM catalog WHERE id = %(id)s;"
+    return _execute_query(connection, query, {"id": catalog_id}, commit=False)
 
 
-def get_all_catalogo(conexion, search: str = None, categoria: str = None, favorito: bool = None) -> list:
-    """Obtiene todos los alimentos del catálogo con filtros opcionales."""
+def get_all_catalog(connection, search: str = None, category: str = None, favorite: bool = None) -> list:
+    """Gets all catalog items with optional filters."""
     conditions = []
     params = {}
     
     if search:
-        conditions.append("nombre ILIKE %(search)s")
+        conditions.append("name ILIKE %(search)s")
         params["search"] = f"%{search}%"
-    if categoria:
-        conditions.append("categoria = %(categoria)s")
-        params["categoria"] = categoria
-    if favorito is not None:
-        conditions.append("favorito = %(favorito)s")
-        params["favorito"] = favorito
+    if category:
+        conditions.append("category = %(category)s")
+        params["category"] = category
+    if favorite is not None:
+        conditions.append("favorite = %(favorite)s")
+        params["favorite"] = favorite
     
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-    query = f"SELECT * FROM catalogo {where_clause} ORDER BY nombre;"
+    query = f"SELECT * FROM catalog {where_clause} ORDER BY name;"
     
-    return _execute_query_many(conexion, query, params, commit=False)
+    return _execute_query_many(connection, query, params, commit=False)
 
 
-def update_catalogo(conexion, catalogo_id: int, datos: dict) -> bool:
-    """Actualiza un alimento del catálogo."""
-    if not datos:
+def update_catalog_item(connection, catalog_id: int, data: dict) -> bool:
+    """Updates a catalog item."""
+    if not data:
         return False
     
-    params = {**datos, "id": catalogo_id}
-    query = _build_update_query("catalogo", params)
+    params = {**data, "id": catalog_id}
+    query = _build_update_query("catalog", params)
     
     if not query:
         return False
         
-    result = _execute_query(conexion, query, params)
+    result = _execute_query(connection, query, params)
     return result is not None
 
 
-def update_favorito_catalogo(conexion, catalogo_id: int, favorito: bool) -> bool:
-    """Actualiza el estado de favorito de un alimento."""
-    query = "UPDATE catalogo SET favorito = %(favorito)s WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(conexion, query, {"id": catalogo_id, "favorito": favorito})
+def update_catalog_favorite(connection, catalog_id: int, favorite: bool) -> bool:
+    """Updates the favorite status of a catalog item."""
+    query = "UPDATE catalog SET favorite = %(favorite)s WHERE id = %(id)s RETURNING id;"
+    result = _execute_query(connection, query, {"id": catalog_id, "favorite": favorite})
     return result is not None
 
 
-def delete_catalogo(conexion, catalogo_id: int) -> bool:
-    """Elimina un alimento del catálogo."""
-    query = "DELETE FROM catalogo WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(conexion, query, {"id": catalogo_id})
+def delete_catalog_item(connection, catalog_id: int) -> bool:
+    """Deletes a catalog item."""
+    query = "DELETE FROM catalog WHERE id = %(id)s RETURNING id;"
+    result = _execute_query(connection, query, {"id": catalog_id})
     return result is not None
 
 
 # ============================================
-# INGESTA MANUAL
+# MANUAL INTAKE
 # ============================================
 
-def add_ingesta_manual(conexion, datos: dict) -> Optional[int]:
-    """Añade una nueva ingesta manual."""
+def add_manual_intake(connection, data: dict) -> Optional[int]:
+    """Adds a new manual intake."""
     query = """
-        INSERT INTO ingesta_manual (
-            created_by, nombre, descripcion, subtipo, procedencia,
-            cantidad_g, calorias_100g, hidratos_100g, azucares_100g,
-            grasas_100g, saturadas_100g, proteinas_100g, fibra_100g,
-            cafeina, alcohol, indice_glucemico, confianza_ig, favorito
+        INSERT INTO manual_intake (
+            created_by, name, description, subtype, origin,
+            amount_g, calories_100g, carbs_100g, sugars_100g,
+            fats_100g, saturated_100g, proteins_100g, fiber_100g,
+            caffeine, alcohol, glycemic_index, ig_confidence, favorite
         )
         VALUES (
-            %(created_by)s, %(nombre)s, %(descripcion)s, %(subtipo)s, %(procedencia)s,
-            %(cantidad_g)s, %(calorias_100g)s, %(hidratos_100g)s, %(azucares_100g)s,
-            %(grasas_100g)s, %(saturadas_100g)s, %(proteinas_100g)s, %(fibra_100g)s,
-            %(cafeina)s, %(alcohol)s, %(indice_glucemico)s, %(confianza_ig)s, %(favorito)s
+            %(created_by)s, %(name)s, %(description)s, %(subtype)s, %(origin)s,
+            %(amount_g)s, %(calories_100g)s, %(carbs_100g)s, %(sugars_100g)s,
+            %(fats_100g)s, %(saturated_100g)s, %(proteins_100g)s, %(fiber_100g)s,
+            %(caffeine)s, %(alcohol)s, %(glycemic_index)s, %(ig_confidence)s, %(favorite)s
         )
         RETURNING id;
     """
-    result = _execute_query(conexion, query, datos)
+    result = _execute_query(connection, query, data)
     return result[0] if result else None
 
 
-def get_ingesta_manual(conexion, ingesta_id: int) -> Optional[dict]:
-    """Obtiene una ingesta manual por ID."""
-    query = "SELECT * FROM ingesta_manual WHERE id = %(id)s;"
-    return _execute_query(conexion, query, {"id": ingesta_id}, commit=False)
+def get_manual_intake(connection, intake_id: int) -> Optional[dict]:
+    """Gets a manual intake by ID."""
+    query = "SELECT * FROM manual_intake WHERE id = %(id)s;"
+    return _execute_query(connection, query, {"id": intake_id}, commit=False)
 
 
-def get_all_ingesta_manual(conexion, user_id: int = None, search: str = None, favorito: bool = None) -> list:
-    """Obtiene todas las ingestas manuales con filtros opcionales."""
+def get_all_manual_intakes(connection, users_id: int = None, search: str = None, favorite: bool = None) -> list:
+    """Gets all manual intakes with optional filters."""
     conditions = []
     params = {}
     
-    if user_id:
-        conditions.append("created_by = %(user_id)s")
-        params["user_id"] = user_id
+    if users_id:
+        conditions.append("created_by = %(users_id)s")
+        params["users_id"] = users_id
     if search:
-        conditions.append("nombre ILIKE %(search)s")
+        conditions.append("name ILIKE %(search)s")
         params["search"] = f"%{search}%"
-    if favorito is not None:
-        conditions.append("favorito = %(favorito)s")
-        params["favorito"] = favorito
+    if favorite is not None:
+        conditions.append("favorite = %(favorite)s")
+        params["favorite"] = favorite
     
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-    query = f"SELECT * FROM ingesta_manual {where_clause} ORDER BY nombre;"
+    query = f"SELECT * FROM manual_intake {where_clause} ORDER BY name;"
     
-    return _execute_query_many(conexion, query, params, commit=False)
+    return _execute_query_many(connection, query, params, commit=False)
 
 
-def update_ingesta_manual(conexion, ingesta_id: int, datos: dict) -> bool:
-    """Actualiza una ingesta manual."""
-    if not datos:
+def update_manual_intake(connection, intake_id: int, data: dict) -> bool:
+    """Updates a manual intake."""
+    if not data:
         return False
     
-    params = {**datos, "id": ingesta_id}
-    query = _build_update_query("ingesta_manual", params)
+    params = {**data, "id": intake_id}
+    query = _build_update_query("manual_intake", params)
     
     if not query:
         return False
         
-    result = _execute_query(conexion, query, params)
+    result = _execute_query(connection, query, params)
     return result is not None
 
 
-def delete_ingesta_manual(conexion, ingesta_id: int) -> bool:
-    """Elimina una ingesta manual."""
-    query = "DELETE FROM ingesta_manual WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(conexion, query, {"id": ingesta_id})
+def delete_manual_intake(connection, intake_id: int) -> bool:
+    """Deletes a manual intake."""
+    query = "DELETE FROM manual_intake WHERE id = %(id)s RETURNING id;"
+    result = _execute_query(connection, query, {"id": intake_id})
     return result is not None
 
 
 # ============================================
-# NEVERA
+# FRIDGE
 # ============================================
 
-def add_nevera(conexion, user_id: int, nombre_tupper: str = None, es_compuesto: bool = False, peso_total: float = None) -> Optional[int]:
-    """Crea un nuevo registro en la nevera."""
+def add_fridge(connection, users_id: int, tupper_name: str = None, is_compound: bool = False, total_weight: float = None) -> Optional[int]:
+    """Creates a new fridge record."""
     query = """
-        INSERT INTO nevera (user_id, nombre_tupper, es_compuesto, peso_total_tupper)
-        VALUES (%(user_id)s, %(nombre_tupper)s, %(es_compuesto)s, %(peso_total)s)
+        INSERT INTO fridge (users_id, tupper_name, is_compound, total_tupper_weight)
+        VALUES (%(users_id)s, %(tupper_name)s, %(is_compound)s, %(total_weight)s)
         RETURNING id;
     """
-    result = _execute_query(conexion, query, {
-        "user_id": user_id,
-        "nombre_tupper": nombre_tupper,
-        "es_compuesto": es_compuesto,
-        "peso_total": peso_total
+    result = _execute_query(connection, query, {
+        "users_id": users_id,
+        "tupper_name": tupper_name,
+        "is_compound": is_compound,
+        "total_weight": total_weight
     })
     return result[0] if result else None
 
 
-def get_nevera(conexion, nevera_id: int) -> Optional[dict]:
-    """Obtiene un registro de la nevera por ID."""
-    query = "SELECT * FROM nevera WHERE id = %(id)s;"
-    return _execute_query(conexion, query, {"id": nevera_id}, commit=False)
+def get_fridge(connection, fridge_id: int) -> Optional[dict]:
+    """Gets a fridge record by ID."""
+    query = "SELECT * FROM fridge WHERE id = %(id)s;"
+    return _execute_query(connection, query, {"id": fridge_id}, commit=False)
 
 
-def get_all_nevera(conexion, user_id: int) -> list:
-    """Obtiene todos los tuppers de la nevera de un usuario."""
-    query = "SELECT * FROM nevera WHERE user_id = %(user_id)s ORDER BY fecha_entrada DESC;"
-    return _execute_query_many(conexion, query, {"user_id": user_id}, commit=False)
+def get_all_fridge(connection, users_id: int) -> list:
+    """Gets all fridge tuppers for a users."""
+    query = "SELECT * FROM fridge WHERE users_id = %(users_id)s ORDER BY entry_date DESC;"
+    return _execute_query_many(connection, query, {"users_id": users_id}, commit=False)
 
 
-def update_nevera(conexion, nevera_id: int, nombre_tupper: str = None, es_compuesto: bool = None, peso_total: float = None) -> bool:
-    """Actualiza un registro de la nevera."""
+def update_fridge(connection, fridge_id: int, tupper_name: str = None, is_compound: bool = None, total_weight: float = None) -> bool:
+    """Updates a fridge record."""
     params = {
-        "id": nevera_id, 
-        "nombre_tupper": nombre_tupper, 
-        "es_compuesto": es_compuesto, 
-        "peso_total_tupper": peso_total
+        "id": fridge_id, 
+        "tupper_name": tupper_name, 
+        "is_compound": is_compound, 
+        "total_tupper_weight": total_weight
     }
     
-    query = _build_update_query("nevera", params)
+    query = _build_update_query("fridge", params)
     
     if not query:
         return False
         
-    result = _execute_query(conexion, query, params)
+    result = _execute_query(connection, query, params)
     return result is not None
 
 
-def delete_nevera(conexion, nevera_id: int) -> bool:
-    """Elimina un registro de la nevera."""
-    query = "DELETE FROM nevera WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(conexion, query, {"id": nevera_id})
+def delete_fridge(connection, fridge_id: int) -> bool:
+    """Deletes a fridge record."""
+    query = "DELETE FROM fridge WHERE id = %(id)s RETURNING id;"
+    result = _execute_query(connection, query, {"id": fridge_id})
     return result is not None
 
 
 # ============================================
-# ETIQUETAS
+# TAGS
 # ============================================
 
-def add_etiqueta(conexion, nombre: str, descripcion: str = None) -> Optional[int]:
-    """Crea una nueva etiqueta."""
+def add_tag(connection, name: str, description: str = None) -> Optional[int]:
+    """Creates a new tag."""
     query = """
-        INSERT INTO etiquetas (nombre, descripcion)
-        VALUES (%(nombre)s, %(descripcion)s)
+        INSERT INTO tags (name, description)
+        VALUES (%(name)s, %(description)s)
         RETURNING id;
     """
-    result = _execute_query(conexion, query, {"nombre": nombre, "descripcion": descripcion})
+    result = _execute_query(connection, query, {"name": name, "description": description})
     return result[0] if result else None
 
 
-def get_etiqueta(conexion, etiqueta_id: int) -> Optional[dict]:
-    """Obtiene una etiqueta por ID."""
-    query = "SELECT * FROM etiquetas WHERE id = %(id)s;"
-    return _execute_query(conexion, query, {"id": etiqueta_id}, commit=False)
+def get_tag(connection, tag_id: int) -> Optional[dict]:
+    """Gets a tag by ID."""
+    query = "SELECT * FROM tags WHERE id = %(id)s;"
+    return _execute_query(connection, query, {"id": tag_id}, commit=False)
 
 
-def get_all_etiquetas(conexion) -> list:
-    """Obtiene todas las etiquetas."""
-    query = "SELECT * FROM etiquetas ORDER BY nombre;"
-    return _execute_query_many(conexion, query, commit=False)
+def get_all_tags(connection) -> list:
+    """Gets all tags."""
+    query = "SELECT * FROM tags ORDER BY name;"
+    return _execute_query_many(connection, query, commit=False)
 
 
-def get_etiqueta_por_nombre(conexion, nombre: str) -> Optional[dict]:
-    """Obtiene una etiqueta por nombre."""
-    query = "SELECT * FROM etiquetas WHERE nombre = %(nombre)s;"
-    return _execute_query(conexion, query, {"nombre": nombre}, commit=False)
+def get_tag_by_name(connection, name: str) -> Optional[dict]:
+    """Gets a tag by name."""
+    query = "SELECT * FROM tags WHERE name = %(name)s;"
+    return _execute_query(connection, query, {"name": name}, commit=False)
 
 
-def update_etiqueta(conexion, etiqueta_id: int, nombre: str = None, descripcion: str = None) -> bool:
-    """Actualiza una etiqueta."""
-    params = {"id": etiqueta_id, "nombre": nombre, "descripcion": descripcion}
-    query = _build_update_query("etiquetas", params)
+def update_tag(connection, tag_id: int, name: str = None, description: str = None) -> bool:
+    """Updates a tag."""
+    params = {"id": tag_id, "name": name, "description": description}
+    query = _build_update_query("tags", params)
     
     if not query:
         return False
         
-    result = _execute_query(conexion, query, params)
+    result = _execute_query(connection, query, params)
     return result is not None
 
 
-def delete_etiqueta(conexion, etiqueta_id: int) -> bool:
-    """Elimina una etiqueta."""
-    query = "DELETE FROM etiquetas WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(conexion, query, {"id": etiqueta_id})
+def delete_tag(connection, tag_id: int) -> bool:
+    """Deletes a tag."""
+    query = "DELETE FROM tags WHERE id = %(id)s RETURNING id;"
+    result = _execute_query(connection, query, {"id": tag_id})
     return result is not None
 
 
 # ============================================
-# RECETAS
+# RECIPES
 # ============================================
 
-def add_receta(conexion, user_id: int, nombre: str, tipo_comida: str = None, notas: str = None, favorito: bool = False) -> Optional[int]:
-    """Crea una nueva receta."""
+def add_recipe(connection, users_id: int, name: str, meal_type: str = None, notes: str = None, favorite: bool = False) -> Optional[int]:
+    """Creates a new recipe."""
     query = """
-        INSERT INTO recetas (user_id, tipo_comida, nombre, notas, favorito)
-        VALUES (%(user_id)s, %(tipo_comida)s, %(nombre)s, %(notas)s, %(favorito)s)
+        INSERT INTO recipe (users_id, meal_type, name, notes, favorite)
+        VALUES (%(users_id)s, %(meal_type)s, %(name)s, %(notes)s, %(favorite)s)
         RETURNING id;
     """
-    result = _execute_query(conexion, query, {
-        "user_id": user_id,
-        "tipo_comida": tipo_comida,
-        "nombre": nombre,
-        "notas": notas,
-        "favorito": favorito
+    result = _execute_query(connection, query, {
+        "users_id": users_id,
+        "meal_type": meal_type,
+        "name": name,
+        "notes": notes,
+        "favorite": favorite
     })
     return result[0] if result else None
 
 
-def get_receta(conexion, receta_id: int) -> Optional[dict]:
-    """Obtiene una receta por ID."""
-    query = "SELECT * FROM recetas WHERE id = %(id)s;"
-    return _execute_query(conexion, query, {"id": receta_id}, commit=False)
+def get_recipe(connection, recipe_id: int) -> Optional[dict]:
+    """Gets a recipe by ID."""
+    query = "SELECT * FROM recipe WHERE id = %(id)s;"
+    return _execute_query(connection, query, {"id": recipe_id}, commit=False)
 
 
-def get_all_recetas(conexion, user_id: int = None, tipo_comida: str = None, favorito: bool = None) -> list:
-    """Obtiene todas las recetas con filtros opcionales."""
+def get_all_recipes(connection, users_id: int = None, meal_type: str = None, favorite: bool = None) -> list:
+    """Gets all recipes with optional filters."""
     conditions = []
     params = {}
     
-    if user_id:
-        conditions.append("user_id = %(user_id)s")
-        params["user_id"] = user_id
-    if tipo_comida:
-        conditions.append("tipo_comida = %(tipo_comida)s")
-        params["tipo_comida"] = tipo_comida
-    if favorito is not None:
-        conditions.append("favorito = %(favorito)s")
-        params["favorito"] = favorito
+    if users_id:
+        conditions.append("users_id = %(users_id)s")
+        params["users_id"] = users_id
+    if meal_type:
+        conditions.append("meal_type = %(meal_type)s")
+        params["meal_type"] = meal_type
+    if favorite is not None:
+        conditions.append("favorite = %(favorite)s")
+        params["favorite"] = favorite
     
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-    query = f"SELECT * FROM recetas {where_clause} ORDER BY nombre;"
+    query = f"SELECT * FROM recipe {where_clause} ORDER BY name;"
     
-    return _execute_query_many(conexion, query, params, commit=False)
+    return _execute_query_many(connection, query, params, commit=False)
 
 
-def update_receta(conexion, receta_id: int, nombre: str = None, tipo_comida: str = None, notas: str = None, favorito: bool = None) -> bool:
-    """Actualiza una receta."""
+def update_recipe(connection, recipe_id: int, name: str = None, meal_type: str = None, notes: str = None, favorite: bool = None) -> bool:
+    """Updates a recipe."""
     params = {
-        "id": receta_id, 
-        "nombre": nombre, 
-        "tipo_comida": tipo_comida, 
-        "notas": notas, 
-        "favorito": favorito
+        "id": recipe_id, 
+        "name": name, 
+        "meal_type": meal_type, 
+        "notes": notes, 
+        "favorite": favorite
     }
     
-    query = _build_update_query("recetas", params)
+    query = _build_update_query("recipe", params)
     
     if not query:
         return False
         
-    result = _execute_query(conexion, query, params)
+    result = _execute_query(connection, query, params)
     return result is not None
 
 
-def delete_receta(conexion, receta_id: int) -> bool:
-    """Elimina una receta."""
-    query = "DELETE FROM recetas WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(conexion, query, {"id": receta_id})
+def delete_recipe(connection, recipe_id: int) -> bool:
+    """Deletes a recipe."""
+    query = "DELETE FROM recipe WHERE id = %(id)s RETURNING id;"
+    result = _execute_query(connection, query, {"id": recipe_id})
     return result is not None
 
 
 # ============================================
-# ETIQUETAS VINCULADAS
+# LINKED TAGS
 # ============================================
 
-def add_etiqueta_vinculada(conexion, etiqueta_id: int, entidad: str, entidad_id: int) -> Optional[int]:
-    """Vincula una etiqueta a una entidad."""
-    if entidad not in ("catalogo", "receta", "ingesta_manual"):
-        raise ValueError("Entidad inválida. Debe ser 'catalogo', 'receta' o 'ingesta_manual'")
+def add_linked_tag(connection, tag_id: int, entity: str, entity_id: int) -> Optional[int]:
+    """Links a tag to an entity."""
+    if entity not in ("catalog", "recipe", "manual_intake"):
+        raise ValueError("Invalid entity. Must be 'catalog', 'recipe' or 'manual_intake'")
     
-    datos = {"etiqueta_id": etiqueta_id}
-    datos[f"{entidad}_id"] = entidad_id
+    data = {"tag_id": tag_id}
+    data[f"{entity}_id"] = entity_id
     
     query = f"""
-        INSERT INTO etiquetas_vinculadas (etiqueta_id, {entidad}_id)
-        VALUES (%(etiqueta_id)s, %({entidad}_id)s)
+        INSERT INTO linked_tags (tag_id, {entity}_id)
+        VALUES (%(tag_id)s, %({entity}_id)s)
         RETURNING id;
     """
-    result = _execute_query(conexion, query, datos)
+    result = _execute_query(connection, query, data)
     return result[0] if result else None
 
 
-def get_etiquetas_vinculadas(conexion, entidad: str, entidad_id: int) -> list:
-    """Obtiene las etiquetas vinculadas a una entidad."""
-    if entidad not in ("catalogo", "receta", "ingesta_manual"):
-        raise ValueError("Entidad inválida")
+def get_linked_tags(connection, entity: str, entity_id: int) -> list:
+    """Gets the tags linked to an entity."""
+    if entity not in ("catalog", "recipe", "manual_intake"):
+        raise ValueError("Invalid entity")
     
     query = f"""
-        SELECT e.* FROM etiquetas e
-        JOIN etiquetas_vinculadas ev ON e.id = ev.etiqueta_id
-        WHERE ev.{entidad}_id = %(entidad_id)s
-        ORDER BY e.nombre;
+        SELECT t.* FROM tags t
+        JOIN linked_tags lt ON t.id = lt.tag_id
+        WHERE lt.{entity}_id = %(entity_id)s
+        ORDER BY t.name;
     """
-    return _execute_query_many(conexion, query, {"entidad_id": entidad_id}, commit=False)
+    return _execute_query_many(connection, query, {"entity_id": entity_id}, commit=False)
 
 
-def delete_etiqueta_vinculada(conexion, etiqueta_id: int, entidad: str, entidad_id: int) -> bool:
-    """Elimina una vinculación de etiqueta."""
-    if entidad not in ("catalogo", "receta", "ingesta_manual"):
-        raise ValueError("Entidad inválida")
+def delete_linked_tag(connection, tag_id: int, entity: str, entity_id: int) -> bool:
+    """Deletes a tag link."""
+    if entity not in ("catalog", "recipe", "manual_intake"):
+        raise ValueError("Invalid entity")
     
     query = f"""
-        DELETE FROM etiquetas_vinculadas 
-        WHERE etiqueta_id = %(etiqueta_id)s AND {entidad}_id = %(entidad_id)s
+        DELETE FROM linked_tags 
+        WHERE tag_id = %(tag_id)s AND {entity}_id = %(entity_id)s
         RETURNING id;
     """
-    result = _execute_query(conexion, query, {"etiqueta_id": etiqueta_id, "entidad_id": entidad_id})
+    result = _execute_query(connection, query, {"tag_id": tag_id, "entity_id": entity_id})
     return result is not None
 
 
-def delete_all_etiquetas_vinculadas(conexion, entidad: str, entidad_id: int) -> bool:
-    """Elimina todas las etiquetas vinculadas a una entidad."""
-    if entidad not in ("catalogo", "receta", "ingesta_manual"):
-        raise ValueError("Entidad inválida")
+def delete_all_linked_tags(connection, entity: str, entity_id: int) -> bool:
+    """Deletes all tags linked to an entity."""
+    if entity not in ("catalog", "recipe", "manual_intake"):
+        raise ValueError("Invalid entity")
     
-    query = f"DELETE FROM etiquetas_vinculadas WHERE {entidad}_id = %(entidad_id)s RETURNING id;"
-    result = _execute_query(conexion, query, {"entidad_id": entidad_id})
+    query = f"DELETE FROM linked_tags WHERE {entity}_id = %(entity_id)s RETURNING id;"
+    result = _execute_query(connection, query, {"entity_id": entity_id})
     return result is not None
 
 
 # ============================================
-# EVENTO INGESTA
+# INTAKE EVENT
 # ============================================
 
-def add_evento_ingesta(conexion, user_id: int, estado: str, tipo_comida: str = None, nombre: str = None,
-                       hora_comida=None, comida_fuera: bool = False, dosis_insulina: bool = True,
-                       cantidad_total: float = None, cantidad_ingerida: float = None,
-                       confianza_cantidad: float = None, confianza_calidad: float = None,
-                       notas: str = None, **kwargs) -> Optional[int]:
-    """Crea un nuevo evento de ingesta."""
+def add_intake_event(connection, users_id: int, state: str, meal_type: str = None, name: str = None,
+                       meal_time=None, eating_out: bool = False, insulin_dose: bool = True,
+                       total_amount: float = None, ingested_amount: float = None,
+                       amount_confidence: float = None, quality_confidence: float = None,
+                       notes: str = None, **kwargs) -> Optional[int]:
+    """Creates a new intake event."""
 
-    # Campos obligatorios siempre presentes
-    datos = {
-        "user_id": user_id,
-        "estado": estado,
-        "comida_fuera": comida_fuera,
-        "dosis_insulina": dosis_insulina,
+    data = {
+        "users_id": users_id,
+        "state": state,
+        "eating_out": eating_out,
+        "insulin_dose": insulin_dose,
     }
 
-    # Campos opcionales: solo se añaden si tienen valor
-    opcionales = {
-        "tipo_comida": tipo_comida,
-        "nombre": nombre,
-        "hora_comida": hora_comida,
-        "cantidad_total": cantidad_total,
-        "cantidad_ingerida": cantidad_ingerida,
-        "confianza_cantidad": confianza_cantidad,
-        "confianza_calidad": confianza_calidad,
-        "notas": notas,
-        "incertidumbre_hidratos": kwargs.get("incertidumbre_hidratos"),
-        "incertidumbre_azucares": kwargs.get("incertidumbre_azucares"),
-        "incertidumbre_grasas": kwargs.get("incertidumbre_grasas"),
-        "incertidumbre_saturadas": kwargs.get("incertidumbre_saturadas"),
-        "incertidumbre_proteinas": kwargs.get("incertidumbre_proteinas"),
-        "incertidumbre_fibra": kwargs.get("incertidumbre_fibra"),
+    optional = {
+        "meal_type": meal_type,
+        "name": name,
+        "meal_time": meal_time,
+        "total_amount": total_amount,
+        "ingested_amount": ingested_amount,
+        "amount_confidence": amount_confidence,
+        "quality_confidence": quality_confidence,
+        "notes": notes,
+        "carbs_uncertainty": kwargs.get("carbs_uncertainty"),
+        "sugars_uncertainty": kwargs.get("sugars_uncertainty"),
+        "fats_uncertainty": kwargs.get("fats_uncertainty"),
+        "saturated_uncertainty": kwargs.get("saturated_uncertainty"),
+        "proteins_uncertainty": kwargs.get("proteins_uncertainty"),
+        "fiber_uncertainty": kwargs.get("fiber_uncertainty"),
     }
 
-    datos.update({k: v for k, v in opcionales.items() if v is not None})
+    data.update({k: v for k, v in optional.items() if v is not None})
 
-    columnas = ", ".join(datos.keys())
-    valores = ", ".join(f"%({k})s" for k in datos.keys())
+    columns = ", ".join(data.keys())
+    values = ", ".join(f"%({k})s" for k in data.keys())
 
     query = f"""
-        INSERT INTO evento_ingesta ({columnas})
-        VALUES ({valores})
+        INSERT INTO intake_event ({columns})
+        VALUES ({values})
         RETURNING id;
     """
 
-    result = _execute_query(conexion, query, datos)
+    result = _execute_query(connection, query, data)
     return result["id"] if result else None
 
-def get_evento_ingesta(conexion, evento_id: int) -> Optional[dict]:
-    """Obtiene un evento de ingesta por ID."""
-    query = "SELECT * FROM evento_ingesta WHERE id = %(id)s;"
-    return _execute_query(conexion, query, {"id": evento_id}, commit=False)
+def get_intake_event(connection, event_id: int) -> Optional[dict]:
+    """Gets an intake event by ID."""
+    query = "SELECT * FROM intake_event WHERE id = %(id)s;"
+    return _execute_query(connection, query, {"id": event_id}, commit=False)
 
 
-def get_all_evento_ingesta(conexion, user_id: int = None, estado: str = None, tipo_comida: str = None) -> list:
-    """Obtiene todos los eventos de ingesta con filtros opcionales."""
+def get_all_intake_events(connection, users_id: int = None, state: str = None, meal_type: str = None) -> list:
+    """Gets all intake events with optional filters."""
     conditions = []
     params = {}
     
-    if user_id:
-        conditions.append("user_id = %(user_id)s")
-        params["user_id"] = user_id
-    if estado:
-        conditions.append("estado = %(estado)s")
-        params["estado"] = estado
-    if tipo_comida:
-        conditions.append("tipo_comida = %(tipo_comida)s")
-        params["tipo_comida"] = tipo_comida
+    if users_id:
+        conditions.append("users_id = %(users_id)s")
+        params["users_id"] = users_id
+    if state:
+        conditions.append("state = %(state)s")
+        params["state"] = state
+    if meal_type:
+        conditions.append("meal_type = %(meal_type)s")
+        params["meal_type"] = meal_type
     
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-    query = f"SELECT * FROM evento_ingesta {where_clause} ORDER BY hora_comida DESC;"
+    query = f"SELECT * FROM intake_event {where_clause} ORDER BY meal_time DESC;"
     
-    return _execute_query_many(conexion, query, params, commit=False)
+    return _execute_query_many(connection, query, params, commit=False)
 
 
-def get_eventos_carrito(conexion, user_id: int) -> list:
-    """Obtiene los eventos en estado 'planificado' (carrito) de un usuario."""
+def get_cart_events(connection, users_id: int) -> list:
+    """Gets the events in 'planned' state (cart) for a users."""
     query = """
-        SELECT * FROM evento_ingesta 
-        WHERE user_id = %(user_id)s AND estado = 'planificado' 
-        ORDER BY hora_comida;
+        SELECT * FROM intake_event 
+        WHERE users_id = %(users_id)s AND state = 'planned' 
+        ORDER BY meal_time;
     """
-    return _execute_query_many(conexion, query, {"user_id": user_id}, commit=False)
+    return _execute_query_many(connection, query, {"users_id": users_id}, commit=False)
 
 
-def update_evento_ingesta(conexion, evento_id: int, datos: dict) -> bool:
-    """Actualiza un evento de ingesta."""
-    if not datos:
+def update_intake_event(connection, event_id: int, data: dict) -> bool:
+    """Updates an intake event."""
+    if not data:
         return False
     
-    params = {**datos, "id": evento_id}
-    query = _build_update_query("evento_ingesta", params)
+    params = {**data, "id": event_id}
+    query = _build_update_query("intake_event", params)
     
     if not query:
         return False
         
-    result = _execute_query(conexion, query, params)
+    result = _execute_query(connection, query, params)
     return result is not None
 
 
-def cambiar_estado_evento(conexion, evento_id: int, nuevo_estado: str) -> bool:
-    """Cambia el estado de un evento de ingesta (planificado -> consumido)."""
-    if nuevo_estado not in ("planificado", "consumido"):
-        raise ValueError("Estado inválido. Debe ser 'planificado' o 'consumido'")
+def change_event_status(connection, event_id: int, new_state: str) -> bool:
+    """Changes the status of an intake event (planned -> consumed)."""
+    if new_state not in ("planned", "consumed"):
+        raise ValueError("Invalid state. Must be 'planned' or 'consumed'")
     
-    query = "UPDATE evento_ingesta SET estado = %(estado)s WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(conexion, query, {"id": evento_id, "estado": nuevo_estado})
+    query = "UPDATE intake_event SET state = %(state)s WHERE id = %(id)s RETURNING id;"
+    result = _execute_query(connection, query, {"id": event_id, "state": new_state})
     return result is not None
 
 
-def delete_evento_ingesta(conexion, evento_id: int) -> bool:
-    """Elimina un evento de ingesta."""
-    query = "DELETE FROM evento_ingesta WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(conexion, query, {"id": evento_id})
+def delete_intake_event(connection, event_id: int) -> bool:
+    """Deletes an intake event."""
+    query = "DELETE FROM intake_event WHERE id = %(id)s RETURNING id;"
+    result = _execute_query(connection, query, {"id": event_id})
     return result is not None
 
 
 # ============================================
-# PORCION DETALLE
+# PORTION DETAIL
 # ============================================
 
-def add_porcion_detalle(
-    conexion,
-    origen: str,
-    origen_id: int,
-    destino: str,
-    destino_id: int,
-    cantidad_g: float,
-    cocinado: str = None,
-    conservacion: str = None,
-    estado_final: str = None,
-    pesado_estricto: bool = None,
-    calidad_macros: bool = None,
-    cantidad_plato: float = None,
-    es_peso_cocinado: bool = False,
-    offset_minutos: int = None
+def add_portion_detail(
+    connection,
+    origin: str,
+    origin_id: int,
+    destination: str,
+    destination_id: int,
+    amount_g: float,
+    cooking: str = None,
+    conservation: str = None,
+    final_state: str = None,
+    strictly_weighed: bool = None,
+    macros_quality: bool = None,
+    plate_amount: float = None,
+    is_cooked_weight: bool = False,
+    offset_minutes: int = None
 ) -> Optional[int]:
-    """Añade un registro a porcion_detalle de forma centralizada."""
-    if origen not in ("catalogo", "ingesta_manual"):
-        raise ValueError("Origen inválido")
-    if destino not in ("evento_ingesta", "receta", "nevera"):
-        raise ValueError("Destino inválido")
-    if cantidad_g <= 0:
-        raise ValueError("cantidad_g debe ser positivo")
-    if offset_minutos is not None and destino != "evento_ingesta":
-        raise ValueError("offset_minutos solo para evento_ingesta")
+    """Adds a record to portion_detail in a centralized way."""
+    if origin not in ("catalog", "manual_intake"):
+        raise ValueError("Invalid origin")
+    if destination not in ("intake_event", "recipe", "fridge"):
+        raise ValueError("Invalid destination")
+    if amount_g <= 0:
+        raise ValueError("amount_g must be positive")
+    if offset_minutes is not None and destination != "intake_event":
+        raise ValueError("offset_minutes only for intake_event")
     
-    datos = {
-        "cantidad_g": cantidad_g,
-        "catalogo_id": origen_id if origen == "catalogo" else None,
-        "ingesta_manual_id": origen_id if origen == "ingesta_manual" else None,
-        "evento_ingesta_id": destino_id if destino == "evento_ingesta" else None,
-        "receta_id": destino_id if destino == "receta" else None,
-        "nevera_id": destino_id if destino == "nevera" else None,
-        "cocinado": cocinado,
-        "conservacion": conservacion,
-        "estado_final": estado_final,
-        "pesado_estricto": pesado_estricto,
-        "calidad_macros": calidad_macros,
-        "cantidad_plato": cantidad_plato,
-        "es_peso_cocinado": es_peso_cocinado,
-        "offset_minutos": offset_minutos
+    data = {
+        "amount_g": amount_g,
+        "catalog_id": origin_id if origin == "catalog" else None,
+        "manual_intake_id": origin_id if origin == "manual_intake" else None,
+        "intake_event_id": destination_id if destination == "intake_event" else None,
+        "recipe_id": destination_id if destination == "recipe" else None,
+        "fridge_id": destination_id if destination == "fridge" else None,
+        "cooking": cooking,
+        "conservation": conservation,
+        "final_state": final_state,
+        "strictly_weighed": strictly_weighed,
+        "macros_quality": macros_quality,
+        "plate_amount": plate_amount,
+        "is_cooked_weight": is_cooked_weight,
+        "offset_minutes": offset_minutes
     }
     
     query = """
-        INSERT INTO porcion_detalle (
-            cantidad_g, catalogo_id, ingesta_manual_id,
-            evento_ingesta_id, receta_id, nevera_id,
-            cocinado, conservacion, estado_final,
-            pesado_estricto, calidad_macros, cantidad_plato,
-            es_peso_cocinado, offset_minutos
+        INSERT INTO portion_detail (
+            amount_g, catalog_id, manual_intake_id,
+            intake_event_id, recipe_id, fridge_id,
+            cooking, conservation, final_state,
+            strictly_weighed, macros_quality, plate_amount,
+            is_cooked_weight, offset_minutes
         )
         VALUES (
-            %(cantidad_g)s, %(catalogo_id)s, %(ingesta_manual_id)s,
-            %(evento_ingesta_id)s, %(receta_id)s, %(nevera_id)s,
-            %(cocinado)s, %(conservacion)s, %(estado_final)s,
-            %(pesado_estricto)s, %(calidad_macros)s, %(cantidad_plato)s,
-            %(es_peso_cocinado)s, %(offset_minutos)s
+            %(amount_g)s, %(catalog_id)s, %(manual_intake_id)s,
+            %(intake_event_id)s, %(recipe_id)s, %(fridge_id)s,
+            %(cooking)s, %(conservation)s, %(final_state)s,
+            %(strictly_weighed)s, %(macros_quality)s, %(plate_amount)s,
+            %(is_cooked_weight)s, %(offset_minutes)s
         )
         RETURNING id;
     """
     
-    result = _execute_query(conexion, query, datos)
+    result = _execute_query(connection, query, data)
     return result[0] if result else None
 
 
-def get_porcion_detalle_por_evento(conexion, evento_ingesta_id: int) -> list:
-    """Obtiene todas las porciones de un evento de ingesta."""
+def get_portion_detail_by_event(connection, intake_event_id: int) -> list:
+    """Gets all portions for an intake event."""
     query = """
-        SELECT pd.*, c.nombre as nombre_catalogo, im.nombre as nombre_ingesta_manual
-        FROM porcion_detalle pd
-        LEFT JOIN catalogo c ON pd.catalogo_id = c.id
-        LEFT JOIN ingesta_manual im ON pd.ingesta_manual_id = im.id
-        WHERE pd.evento_ingesta_id = %(id)s
+        SELECT pd.*, c.name as catalog_name, im.name as manual_intake_name
+        FROM portion_detail pd
+        LEFT JOIN catalog c ON pd.catalog_id = c.id
+        LEFT JOIN manual_intake im ON pd.manual_intake_id = im.id
+        WHERE pd.intake_event_id = %(id)s
         ORDER BY pd.id;
     """
-    return _execute_query_many(conexion, query, {"id": evento_ingesta_id}, commit=False)
+    return _execute_query_many(connection, query, {"id": intake_event_id}, commit=False)
 
 
-def get_porcion_detalle_por_receta(conexion, receta_id: int) -> list:
-    """Obtiene todas las porciones de una receta."""
+def get_portion_detail_by_recipe(connection, recipe_id: int) -> list:
+    """Gets all portions for a recipe."""
     query = """
-        SELECT pd.*, c.nombre as nombre_catalogo, im.nombre as nombre_ingesta_manual
-        FROM porcion_detalle pd
-        LEFT JOIN catalogo c ON pd.catalogo_id = c.id
-        LEFT JOIN ingesta_manual im ON pd.ingesta_manual_id = im.id
-        WHERE pd.receta_id = %(id)s
+        SELECT pd.*, c.name as catalog_name, im.name as manual_intake_name
+        FROM portion_detail pd
+        LEFT JOIN catalog c ON pd.catalog_id = c.id
+        LEFT JOIN manual_intake im ON pd.manual_intake_id = im.id
+        WHERE pd.recipe_id = %(id)s
         ORDER BY pd.id;
     """
-    return _execute_query_many(conexion, query, {"id": receta_id}, commit=False)
+    return _execute_query_many(connection, query, {"id": recipe_id}, commit=False)
 
 
-def get_porcion_detalle_por_nevera(conexion, nevera_id: int) -> list:
-    """Obtiene todas las porciones de una nevera."""
+def get_portion_detail_by_fridge(connection, fridge_id: int) -> list:
+    """Gets all portions for a fridge."""
     query = """
-        SELECT pd.*, c.nombre as nombre_catalogo, im.nombre as nombre_ingesta_manual
-        FROM porcion_detalle pd
-        LEFT JOIN catalogo c ON pd.catalogo_id = c.id
-        LEFT JOIN ingesta_manual im ON pd.ingesta_manual_id = im.id
-        WHERE pd.nevera_id = %(id)s
+        SELECT pd.*, c.name as catalog_name, im.name as manual_intake_name
+        FROM portion_detail pd
+        LEFT JOIN catalog c ON pd.catalog_id = c.id
+        LEFT JOIN manual_intake im ON pd.manual_intake_id = im.id
+        WHERE pd.fridge_id = %(id)s
         ORDER BY pd.id;
     """
-    return _execute_query_many(conexion, query, {"id": nevera_id}, commit=False)
+    return _execute_query_many(connection, query, {"id": fridge_id}, commit=False)
 
 
-def delete_porcion_detalle(conexion, porcion_id: int) -> bool:
-    """Elimina una porción detalle."""
-    query = "DELETE FROM porcion_detalle WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(conexion, query, {"id": porcion_id})
+def delete_portion_detail(connection, portion_id: int) -> bool:
+    """Deletes a portion detail."""
+    query = "DELETE FROM portion_detail WHERE id = %(id)s RETURNING id;"
+    result = _execute_query(connection, query, {"id": portion_id})
     return result is not None

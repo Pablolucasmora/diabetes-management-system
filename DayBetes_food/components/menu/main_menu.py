@@ -1,10 +1,10 @@
 from fasthtml.common import *
-from DayBetes_food.components.menu.layout import isla_logo
+from DayBetes_food.components.menu.layout import IslandLogo
 from DayBetes_food.components.menu.sections import quick_actions
 
 
-def menu_principal(conexion):
-    return Header(isla_logo()
+def main_menu(conexion):
+    return Header(IslandLogo()
                   ,cls="""
                   flex items-center justify-center
                   """), Div(

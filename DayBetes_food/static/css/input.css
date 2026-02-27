@@ -4,13 +4,13 @@
 @layer theme, base, components, utilities;
 
 @layer components {
-    .contenedor_web {
+    .web_container {
         @apply bg-[#f6f2eb]/50
          rounded-3xl
          inset-shadow-[0_0_10px_0_rgba(0,0,0,0.1)]
          ;
     }
-    .boton_web {
+    .web_button {
         @apply 
                 border-[1px] border-white
                 rounded-lg md:rounded-xl lg:rounded-xl
@@ -30,7 +30,7 @@
         hover:scale-[101%]
         shadow-sm
     }
-    .input_web {
+    .web_input {
         @apply focus:shadow-lg focus:inset-shadow-none focus:outline-none focus:scale-[101%] 
         ;
     }

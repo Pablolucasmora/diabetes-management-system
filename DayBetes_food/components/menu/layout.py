@@ -1,6 +1,6 @@
 from fasthtml.common import *
 
-def BloqueIsla(texto, icono="images/ui/menu.svg", name="nav", value="inicio", **hx):
+def BlockIsland(text, icon="images/ui/menu.svg", name="nav", value="home", **hx):
     return Label(
         Input(
             type="radio",
@@ -9,14 +9,14 @@ def BloqueIsla(texto, icono="images/ui/menu.svg", name="nav", value="inicio", **
             cls="hidden peer",
         ),
 
-        Img(id=value,src=icono, cls="""
+        Img(id=value, src=icon, cls="""
             w-6 h-6
             text-lg md:text-xl 
             transition-all duration-300
             group-has-[:checked]:scale-110
         """),
 
-        P(texto, cls="""
+        P(text, cls="""
             hidden md:block mt-1
             text-[10px] font-bold uppercase tracking-tighter
         """),
@@ -43,12 +43,12 @@ def BloqueIsla(texto, icono="images/ui/menu.svg", name="nav", value="inicio", **
         **hx
     )
 
-def IslaFlotante():
+def FloatingIsland():
     return Div(
-        BloqueIsla("Menu", icono="images/ui/menu.svg", value="menu", hx_get="/menu", hx_target="#main_content", hx_swap="innerHTML", hx_push_url="true", **{"hx-on:click": "document.querySelector('#boton_carrito').classList.remove('hidden')"}),
-        BloqueIsla("Stats", icono="images/ui/stats.svg", value="stats", hx_get="/stats", hx_target="#main_content", hx_push_url="true"),
-        BloqueIsla("Food", icono="images/ui/food.svg", value="food", hx_get="/food", hx_target="#main_content", hx_push_url="true", **{"hx-on:click": "document.querySelector('#boton_carrito').classList.remove('hidden')"}),
-        BloqueIsla("Settings", icono="images/ui/settings.svg",value="settings", hx_get="/ajustes", hx_target="#main_content", hx_push_url="true"),
+        BlockIsland("Menu", icon="images/ui/menu.svg", value="menu", hx_get="/menu", hx_target="#main_content", hx_swap="innerHTML", hx_push_url="true", **{"hx-on:click": "document.querySelector('#cart_button').classList.remove('hidden')"}),
+        BlockIsland("Stats", icon="images/ui/stats.svg", value="stats", hx_get="/stats", hx_target="#main_content", hx_push_url="true"),
+        BlockIsland("Food", icon="images/ui/food.svg", value="food", hx_get="/food", hx_target="#main_content", hx_push_url="true", **{"hx-on:click": "document.querySelector('#cart_button').classList.remove('hidden')"}),
+        BlockIsland("Settings", icon="images/ui/settings.svg", value="settings", hx_get="/settings", hx_target="#main_content", hx_push_url="true"),
         cls="""
             fixed bottom-6 left-1/2 -translate-x-1/2
             z-50 
@@ -64,46 +64,47 @@ def IslaFlotante():
         """
     )
 
-def isla_logo():
-    return Div(Img(id= "logo",src="images/ui/Logo_DayBetes_food.svg",
-               cls="""
-                    lg:w-64 md:w-64
-                    w-48 
-                    transition-all 
-                    """),
-               cls="""
-                 bg-[#f6f2eb]/50 backdrop-blur-lg
-                 border-[1px] border-white/80
-                 rounded-4xl shadow-lg
-                 px-16 py-4 mt-4 m-8 z-50 
-                 fixed top-5
-               """)
+def IslandLogo():
+    return Div(
+        Img(id="logo", src="images/ui/Logo_DayBetes_food.svg",
+            cls="""
+                lg:w-64 md:w-64
+                w-48 
+                transition-all 
+            """
+        ),
+        cls="""
+            bg-[#f6f2eb]/50 backdrop-blur-lg
+            border-[1px] border-white/80
+            rounded-4xl shadow-lg
+            px-16 py-4 mt-4 m-8 z-50 
+            fixed top-5
+        """
+    )
 
-
-def carrito(display=True):
-
-    base_classes = """
-        fixed md:bottom-31 lg:bottom-31  bottom-24
-        left-1/2 -translate-x-1/2 md:translate-x-30
-        lg:translate-x-30 translate-x-20
+def Cart(display=True):
+    base_classes="""
+        fixed md:bottom-31 lg:bottom-31 bottom-24
+        left-1/2 -translate-x-1/2 md:translate-x-29
+        lg:translate-x-29 translate-x-20
         transition-all duration-200 ease-in-out
-        boton_web
-        md:p-5 lg:p-5 p-3
-        rounded-3xl md:rounded-4xl lg:rounded-4xl
+        web_button
+        md:p-4 lg:p-4 p-3
+        rounded-3xl md:rounded-4xl lg:rounded-4xl md:w-22 lg:w-22 
     """
 
     if not display:
         base_classes += " hidden"
 
     return Div(
-        Img(src="images/ui/carrito.svg", cls="w-6 h-6 justify-self-center"),
-        P("Carrito", cls="""
+        Img(src="images/ui/cart.svg", cls="w-6 h-6 justify-self-center"),
+        P("Cart", cls="""
             hidden md:block mt-1
-            text-[10px] font-bold uppercase tracking-tighter
+            text-[10px] text-center font-bold uppercase tracking-tighter
         """),
         cls=base_classes,
-        id="boton_carrito",
-        hx_get="/carrito",
+        id="cart_button",
+        hx_get="/cart",
         hx_target="#main_content",
         **{"hx-on:click": "this.classList.add('hidden')"},
         hx_push_url="true"

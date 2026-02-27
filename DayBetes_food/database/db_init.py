@@ -1,31 +1,30 @@
 from DayBetes_food.database.schema import DBSchema
-from DayBetes_food.database.connection import get_connection # Importamos la función, no el cursor estático
+from DayBetes_food.database.connection import get_connection
 
 def init_db():
     conn = get_connection()
     cur = conn.cursor()
     try:
-        # Definimos el orden lógico (de padres a hijos)
-        tablas = [
-            DBSchema.usuario, 
-            DBSchema.catalogo, 
-            DBSchema.ingesta_manual,
-            DBSchema.nevera,
-            DBSchema.etiquetas,
-            DBSchema.recetas,
-            DBSchema.etiquetas_vinculadas,
-            DBSchema.evento_ingesta,
-            DBSchema.porcion_detalle
+        tables = [
+            DBSchema.users, 
+            DBSchema.catalog, 
+            DBSchema.manual_intake,
+            DBSchema.fridge,
+            DBSchema.tags,
+            DBSchema.recipe,
+            DBSchema.linked_tags,
+            DBSchema.intake_event,
+            DBSchema.portion_detail
         ]
         
-        for tabla_sql in tablas:
-            cur.execute(tabla_sql)
+        for table_sql in tables:
+            cur.execute(table_sql)
             
         conn.commit()
-        print("✅ Base de datos inicializada con éxito.")
+        print("Database initialized successfully.")
     except Exception as e:
         conn.rollback()
-        print(f"❌ Error al inicializar la base de datos: {e}")
+        print(f"Error initializing database: {e}")
     finally:
         cur.close()
         conn.close()
