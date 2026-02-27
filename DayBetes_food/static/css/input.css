@@ -1,0 +1,37 @@
+@import "tailwindcss";
+@source "../../**/*.py";
+
+@layer theme, base, components, utilities;
+
+@layer components {
+    .contenedor_web {
+        @apply bg-[#f6f2eb]/50
+         rounded-3xl
+         inset-shadow-[0_0_10px_0_rgba(0,0,0,0.1)]
+         ;
+    }
+    .boton_web {
+        @apply 
+                border-[1px] border-white
+                rounded-lg md:rounded-xl lg:rounded-xl
+                cursor-pointer
+                shadow-md hover:scale-105
+                justify-self-center
+                transition-all
+        ;
+    }
+    .food_entry {
+        @apply border-[0.6px] border-gray-600/50
+        md:w-md lg:w-md
+        rounded-lg
+        w-xs
+        transition-all
+        px-4 py-3
+        hover:scale-[101%]
+        shadow-sm
+    }
+    .input_web {
+        @apply focus:shadow-lg focus:inset-shadow-none focus:outline-none focus:scale-[101%] 
+        ;
+    }
+}
