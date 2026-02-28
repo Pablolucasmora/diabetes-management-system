@@ -87,18 +87,20 @@ DayBetes_food/
 ├── components/                      # Componentes UI reutilizables
 │   ├── ui.py                        # Funciones helper de renderizado
 │   ├── menu/                        # Componentes del menú de navegación
-│   │   ├── menu_main.py             # Página principal del menú
+│   │   ├── main_menu.py             # Página principal del menú
 │   │   ├── layout.py                # Layout de la isla flotante
 │   │   └── sections.py              # Secciones del menú
 │   ├── food/                        # Componentes relacionados con alimentos
 │   │   ├── food_main.py            # Página principal de alimentos
-│   │   └── alimentos.py             # Tarjetas y elementos de food
-│   └── carrito/                     # Componentes del carrito
-│       └── carrito_main.py          # Página del carrito
+│   │   └── foods.py                 # Tarjetas y elementos de food
+│   └── cart/                        # Componentes del carrito
+│       └── cart_main.py             # Página del carrito
 ├── routes/                          # Definición de rutas de la aplicación
 │   ├── main_routes.py              # Rutas principales
 │   ├── food_routes.py              # Rutas de alimentos
-│   └── carrito_routes.py           # Rutas del carrito
+│   ├── cart_routes.py              # Rutas del carrito
+│   ├── stats_routes.py             # Rutas de estadísticas
+│   └── settings_routes.py          # Rutas de ajustes
 ├── database/                        # Capa de acceso a datos
 │   ├── connection.py               # Configuración de conexión a PostgreSQL
 │   ├── schema.py                   # Definición del esquema de base de datos
@@ -143,11 +145,11 @@ Esta tabla almacena la información de los usuarios del sistema.
 | Campo | Tipo | Descripción |
 |-------|------|-------------|
 | id | SERIAL | Identificador único |
-| nombre | VARCHAR(255) | Nombre del usuario |
-| correo | VARCHAR(255) | Correo electrónico único |
-| clave | TEXT | Contraseña (hasheada) |
-| fecha_registro | TIMESTAMP | Fecha de creación de la cuenta |
-| categoria | VARCHAR(255) | Tipo de usuario (admin/common) |
+| name | VARCHAR(255) | Nombre del usuario |
+| email | VARCHAR(255) | Correo electrónico único |
+| password | TEXT | Contraseña (hasheada) |
+| registration_date | TIMESTAMP | Fecha de creación de la cuenta |
+| category | VARCHAR(255) | Tipo de usuario (admin/common) |
 
 #### Tabla: catalogo
 

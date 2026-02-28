@@ -2,6 +2,17 @@ from fasthtml.common import *
 from DayBetes_food.database.queries.crud import get_cart_events
 from datetime import datetime
 
+def on_after(target="this"):
+    return {"hx-on:htmx:after-request": f"""
+    var btn = {target if target == "this" else f"document.getElementById('{target}')"};
+    if(event.detail.successful) {{
+        btn.style.backgroundColor = 'rgb(74, 222, 128)';
+    }} else {{
+        btn.style.backgroundColor = 'rgb(248, 113, 113)';
+    }}
+    setTimeout(function() {{ btn.style.backgroundColor = ''; }}, 300);
+    setTimeout(function() {{ location.reload(); }}, 600);
+"""}
 
 BTN_FILTER_CLS = """
     web_button md:text-[16px] md:p-1 lg:text-[16px] lg:p-1 
@@ -19,10 +30,12 @@ def MealSelector(connection, user_id: int, selected_id: int = None):
             selected=(event["id"] == selected_id)
         )
         for event in events
-    ] + [Option("New Meal", value="0", selected=(selected_id == 0))]
+    ]
 
     if not options:
-        options = [Option("No planned meals", value="", disabled=True)]
+        options = [Option("- No meals yet -", value="", cls="text-gray-500/50" )]
+
+    options.append(Option("New Meal", value="0", selected=(selected_id == 0)))
 
     return Div(
         Select(
@@ -33,15 +46,17 @@ def MealSelector(connection, user_id: int, selected_id: int = None):
             hx_target="#meal_name_input",
             hx_trigger="change",
             hx_include="this",
+            style="color: gray" if not events else "",
             cls="""
             border-[1px] px-2 py-1 
             md:text-sm lg:text-sm text-xs
             shadow-sm rounded-md focus:outline-none
+            lg:w-40 md:w-40 w-32
             border-white cursor-pointer
             """
         ),
-        Div(id="meal_name_input"),
-        cls="flex flex-col gap-2 justify-end md:w-md lg:w-md w-xs"
+        Div(id="meal_name_input", cls="lg:w-40 md:w-40 w-32 bg-transparent"),
+        cls="flex flex-col gap-2 items-end md:w-md lg:w-md w-xs"
     )
 
 
@@ -100,20 +115,7 @@ def FoodCard(food):
 
 def AddButton(**attrs):
     """Add food button"""
-    on_after = {"hx-on::after-request": """
-    var trigger = event.detail.xhr.getResponseHeader('HX-Trigger');
-    var btn = this;
-    if(trigger === 'addSuccess') {
-        btn.classList.add('bg-green-400');
-        setTimeout(function() { btn.classList.remove('bg-green-400'); }, 500);
-        setTimeout(function() { location.reload(); }, 2000);
-    } else {
-        btn.classList.add('bg-red-400');
-        setTimeout(function() { btn.classList.remove('bg-red-400'); }, 500);
-        setTimeout(function() { location.reload(); }, 2000);
-    }
-"""}
-
+    attrs.setdefault("hx_include", "#meal_selector")
     return Button(
         "+",
         cls="""
@@ -128,7 +130,7 @@ def AddButton(**attrs):
             transition-colors duration-300
         """,
         hx_swap="none",
-        **on_after,
+        **on_after(),
         **attrs
     )
 

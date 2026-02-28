@@ -19,8 +19,10 @@ All functions follow the same pattern:
 - Return ID or result, or None on error
 """
 
+import os
 from typing import Optional, Any
-from dataclasses import dataclass
+
+DEFAULT_USER_EMAIL = os.getenv("DEFAULT_USER_EMAIL", "default@daybetes.local")
 
 
 # ============================================
@@ -109,6 +111,19 @@ def get_all_users(connection) -> list:
     """Gets all users."""
     query = "SELECT * FROM users ORDER BY registration_date DESC;"
     return _execute_query_many(connection, query, commit=False)
+
+
+def get_default_user_id(connection) -> Optional[int]:
+    """Gets the default user id, falling back to the first user if needed."""
+    user = get_users_by_email(connection, DEFAULT_USER_EMAIL)
+    if user:
+        return user["id"]
+
+    users = get_all_users(connection)
+    if users:
+        return users[0]["id"]
+
+    return None
 
 
 def update_users(connection, users_id: int, name: str = None, email: str = None) -> bool:
@@ -613,7 +628,7 @@ def get_cart_events(connection, users_id: int) -> list:
     query = """
         SELECT * FROM intake_event 
         WHERE users_id = %(users_id)s AND state = 'planned' 
-        ORDER BY meal_time;
+        ORDER BY meal_time DESC;
     """
     return _execute_query_many(connection, query, {"users_id": users_id}, commit=False)
 
@@ -716,13 +731,32 @@ def add_portion_detail(
     """
     
     result = _execute_query(connection, query, data)
-    return result[0] if result else None
+    return result["id"] if result else None
 
 
 def get_portion_detail_by_event(connection, intake_event_id: int) -> list:
     """Gets all portions for an intake event."""
     query = """
-        SELECT pd.*, c.name as catalog_name, im.name as manual_intake_name
+        SELECT
+            pd.*,
+            c.name as catalog_name,
+            c.category as catalog_category,
+            c.default_portion as catalog_default_portion,
+            c.carbs_100g as catalog_carbs_100g,
+            c.sugars_100g as catalog_sugars_100g,
+            c.fats_100g as catalog_fats_100g,
+            c.saturated_100g as catalog_saturated_100g,
+            c.proteins_100g as catalog_proteins_100g,
+            c.fiber_100g as catalog_fiber_100g,
+            im.name as manual_intake_name,
+            im.subtype as manual_subtype,
+            im.amount_g as manual_amount_g,
+            im.carbs_100g as manual_carbs_100g,
+            im.sugars_100g as manual_sugars_100g,
+            im.fats_100g as manual_fats_100g,
+            im.saturated_100g as manual_saturated_100g,
+            im.proteins_100g as manual_proteins_100g,
+            im.fiber_100g as manual_fiber_100g
         FROM portion_detail pd
         LEFT JOIN catalog c ON pd.catalog_id = c.id
         LEFT JOIN manual_intake im ON pd.manual_intake_id = im.id
@@ -730,6 +764,41 @@ def get_portion_detail_by_event(connection, intake_event_id: int) -> list:
         ORDER BY pd.id;
     """
     return _execute_query_many(connection, query, {"id": intake_event_id}, commit=False)
+
+
+def get_portion_detail_by_events(connection, intake_event_ids: list[int]) -> list:
+    """Gets all portions for multiple intake events in one query."""
+    if not intake_event_ids:
+        return []
+
+    query = """
+        SELECT
+            pd.*,
+            c.name as catalog_name,
+            c.category as catalog_category,
+            c.default_portion as catalog_default_portion,
+            c.carbs_100g as catalog_carbs_100g,
+            c.sugars_100g as catalog_sugars_100g,
+            c.fats_100g as catalog_fats_100g,
+            c.saturated_100g as catalog_saturated_100g,
+            c.proteins_100g as catalog_proteins_100g,
+            c.fiber_100g as catalog_fiber_100g,
+            im.name as manual_intake_name,
+            im.subtype as manual_subtype,
+            im.amount_g as manual_amount_g,
+            im.carbs_100g as manual_carbs_100g,
+            im.sugars_100g as manual_sugars_100g,
+            im.fats_100g as manual_fats_100g,
+            im.saturated_100g as manual_saturated_100g,
+            im.proteins_100g as manual_proteins_100g,
+            im.fiber_100g as manual_fiber_100g
+        FROM portion_detail pd
+        LEFT JOIN catalog c ON pd.catalog_id = c.id
+        LEFT JOIN manual_intake im ON pd.manual_intake_id = im.id
+        WHERE pd.intake_event_id = ANY(%(event_ids)s)
+        ORDER BY pd.intake_event_id, pd.id;
+    """
+    return _execute_query_many(connection, query, {"event_ids": intake_event_ids}, commit=False)
 
 
 def get_portion_detail_by_recipe(connection, recipe_id: int) -> list:
@@ -762,4 +831,34 @@ def delete_portion_detail(connection, portion_id: int) -> bool:
     """Deletes a portion detail."""
     query = "DELETE FROM portion_detail WHERE id = %(id)s RETURNING id;"
     result = _execute_query(connection, query, {"id": portion_id})
+    return result is not None
+
+
+def get_portion_detail(connection, portion_id: int) -> Optional[dict]:
+    """Gets one portion detail by ID with source metadata."""
+    query = """
+        SELECT
+            pd.*,
+            c.default_portion as catalog_default_portion,
+            im.amount_g as manual_amount_g
+        FROM portion_detail pd
+        LEFT JOIN catalog c ON pd.catalog_id = c.id
+        LEFT JOIN manual_intake im ON pd.manual_intake_id = im.id
+        WHERE pd.id = %(id)s;
+    """
+    return _execute_query(connection, query, {"id": portion_id}, commit=False)
+
+
+def update_portion_detail(connection, portion_id: int, data: dict) -> bool:
+    """Updates a portion detail."""
+    if not data:
+        return False
+
+    params = {**data, "id": portion_id}
+    query = _build_update_query("portion_detail", params)
+
+    if not query:
+        return False
+
+    result = _execute_query(connection, query, params)
     return result is not None

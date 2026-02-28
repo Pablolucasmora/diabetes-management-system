@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @source "../../**/*.py";
+@source inline("bg-green-400 bg-red-400");
 
 @layer theme, base, components, utilities;
 
