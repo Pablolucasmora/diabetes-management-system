@@ -1,4 +1,6 @@
 (function () {
+  var pendingRequests = 0;
+
   function byId(id) {
     return document.getElementById(id);
   }
@@ -32,17 +34,26 @@
   }
 
   function bindListeners() {
-    document.body.addEventListener("htmx:beforeRequest", function (event) {
-      var target = event && event.detail ? event.detail.target : null;
-      if (target && target.id === "main_content") setLoading(true);
+    document.body.addEventListener("htmx:beforeRequest", function () {
+      pendingRequests += 1;
+      setLoading(true);
     });
 
-    document.body.addEventListener("htmx:afterSwap", function (event) {
-      var target = event && event.detail ? event.detail.target : null;
-      if (target && target.id === "main_content") setLoading(false);
+    function maybeStopLoading() {
+      pendingRequests = Math.max(0, pendingRequests - 1);
+      if (pendingRequests === 0) setLoading(false);
+    }
+
+    document.body.addEventListener("htmx:afterRequest", function () {
+      maybeStopLoading();
+    });
+
+    document.body.addEventListener("htmx:afterSwap", function () {
+      if (pendingRequests === 0) setLoading(false);
     });
 
     document.body.addEventListener("htmx:responseError", function () {
+      pendingRequests = 0;
       setLoading(false);
     });
   }

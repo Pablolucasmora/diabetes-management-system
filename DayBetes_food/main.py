@@ -12,6 +12,7 @@ from DayBetes_food.routes.settings_routes import setup_settings_routes
 css = Link(rel="stylesheet", href="css/output.css")
 loading_js = Script(src="js/page_loading.js")
 island_indicator_js = Script(src="js/island_indicator.js")
+cart_units_js = Script(src="js/cart_units.js")
 
 # 2. Application title
 title_tag = "DayBetes"
@@ -35,6 +36,7 @@ app, rt = fast_app(
         css,
         loading_js,
         island_indicator_js,
+        cart_units_js,
         favicon_tag,
         Style(css_background),
         Meta(name="viewport", content="width=device-width, initial-scale=1.0")

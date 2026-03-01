@@ -16,8 +16,33 @@ def cart_main(connection):
     events = get_cart_events(connection, user_id)
     if not events:
         return Div(
-            H1("Empty cart", cls="text-gray-500"),
-            P("Add foods from Food"),
+            Div(
+                Img(src="images/ui/cart.svg", cls="w-10 h-10 opacity-70"),
+                H1("Your cart is empty", cls="text-lg font-semibold text-gray-700"),
+                P("Add ingredients from Food to start planning your meal.", cls="text-sm text-gray-500 text-center"),
+                Button(
+                    "Go to Food",
+                    cls="web_button px-4 py-2 text-sm",
+                    hx_get="/food",
+                    hx_target="#main_content",
+                    hx_swap="innerHTML",
+                    hx_push_url="true",
+                    **{
+                        "hx-on:click": (
+                            "var b=document.querySelector('#cart_button');"
+                            "if(!b) return;"
+                            "b.classList.remove('invisible','opacity-0','pointer-events-none');"
+                            "requestAnimationFrame(function(){ b.classList.add('opacity-100'); });"
+                        )
+                    },
+                ),
+                cls="""
+                    web_container p-6 rounded-3xl
+                    md:w-md lg:w-md w-xs
+                    mt-5
+                    flex flex-col items-center gap-3
+                """
+            ),
             cls="""
                 flex flex-col items-center
                 justify-center gap-6
