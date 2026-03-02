@@ -1,4 +1,12 @@
 (function () {
+  if (window.__dbSmartMacrosBootstrapped) {
+    if (typeof window.dbSmartMacrosBindAll === "function") {
+      window.dbSmartMacrosBindAll();
+    }
+    return;
+  }
+  window.__dbSmartMacrosBootstrapped = true;
+
   function normalizeToken(token) {
     return String(token || "")
       .toLowerCase()
@@ -67,6 +75,9 @@
     saturated_100g: "#ef4444",
     fiber_100g: "#6b7280"
   };
+  var defaultKeys = Object.keys(defaultValues);
+  var regexNumberFirst = /(\d+(?:[.,]\d+)?)\s*(?:g|gr|gramos|ml)?\s*([a-z\u00e1\u00e9\u00ed\u00f3\u00fa\u00f1]+)/g;
+  var regexWordFirst = /([a-z\u00e1\u00e9\u00ed\u00f3\u00fa\u00f1]+)\s*(\d+(?:[.,]\d+)?)/g;
 
   function resolveField(rawToken) {
     var token = normalizeToken(rawToken);
@@ -97,8 +108,8 @@
     if (!text) return result;
 
     var raw = String(text).toLowerCase();
-    var regexNumberFirst = /(\d+(?:[.,]\d+)?)\s*(?:g|gr|gramos|ml)?\s*([a-z\u00e1\u00e9\u00ed\u00f3\u00fa\u00f1]+)/g;
-    var regexWordFirst = /([a-z\u00e1\u00e9\u00ed\u00f3\u00fa\u00f1]+)\s*(\d+(?:[.,]\d+)?)/g;
+    regexNumberFirst.lastIndex = 0;
+    regexWordFirst.lastIndex = 0;
 
     function applyMatch(amountRaw, macroRaw) {
       var field = resolveField(macroRaw);
@@ -120,9 +131,8 @@
   }
 
   function fillHidden(prefix, values) {
-    var keys = Object.keys(defaultValues);
-    for (var i = 0; i < keys.length; i += 1) {
-      var key = keys[i];
+    for (var i = 0; i < defaultKeys.length; i += 1) {
+      var key = defaultKeys[i];
       var hidden = document.getElementById(prefix + "_" + key);
       if (!hidden) continue;
       hidden.value = String(values[key] != null ? values[key] : defaultValues[key]);
@@ -196,6 +206,7 @@
       bindOne(nodes[i]);
     }
   }
+  window.dbSmartMacrosBindAll = bindAll;
 
   window.dbSmartMacrosSync = function (inputOrId) {
     if (!inputOrId) return;

@@ -1,4 +1,12 @@
 (function () {
+  if (window.__dbCartUnitsBootstrapped) {
+    if (typeof window.dbInitUnitSelects === "function") {
+      window.dbInitUnitSelects(document);
+    }
+    return;
+  }
+  window.__dbCartUnitsBootstrapped = true;
+
   function byId(id) {
     return document.getElementById(id);
   }
@@ -96,6 +104,7 @@
     var selects = scope.querySelectorAll("select[data-persist-key]");
     selects.forEach(initUnitSelect);
   }
+  window.dbInitUnitSelects = initAllUnitSelects;
 
   function bindInitEvents() {
     initAllUnitSelects(document);
