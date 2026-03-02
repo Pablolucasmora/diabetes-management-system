@@ -21,7 +21,8 @@ from DayBetes_food.database.queries.crud import (
     add_manual_intake,
     add_recipe,
 )
-from DayBetes_food.components.food.foods import FoodCard, FavoriteButton, on_after
+from DayBetes_food.components.food.foods import FoodSectionsContent, FavoriteButton, on_after
+from DayBetes_food.components.food.foods import CreateCatalogPage, CreateManualPage, CreateRecipePage
 from DayBetes_food.database.connection import get_connection
 
 
@@ -100,6 +101,18 @@ def setup_food_routes(rt):
     @rt("/food")
     def get(request):
         return render_page(request, food_main)
+
+    @rt("/food/create/catalog/form")
+    def get(request: Request):
+        return render_page(request, lambda _: CreateCatalogPage())
+
+    @rt("/food/create/manual/form")
+    def get(request: Request):
+        return render_page(request, lambda _: CreateManualPage())
+
+    @rt("/food/create/recipe/form")
+    def get(request: Request):
+        return render_page(request, lambda _: CreateRecipePage())
     
     @rt("/food/list")
     def get(request: Request, search: str = "", filter: str = "all"):
@@ -109,8 +122,8 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             entries = _filtered_entries(connection, search=search, filter_value=filter)
         if not entries:
-            return H2("No items", cls="text-gray-500/50")
-        return H2("Food", cls="text-gray-500/50"), *[FoodCard(item) for item in entries]
+            return H2("No items", cls="text-gray-600")
+        return tuple(FoodSectionsContent(entries))
 
     @rt("/search_food")
     def get(request: Request, search: str = ""):
@@ -119,8 +132,8 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             entries = _filtered_entries(connection, search=search, filter_value="all")
         if not entries:
-            return H2("No items", cls="text-gray-500/50")
-        return H2("Food", cls="text-gray-500/50"), *[FoodCard(item) for item in entries]
+            return H2("No items", cls="text-gray-600")
+        return tuple(FoodSectionsContent(entries))
 
     @rt("/add_food/{food_id}")
     def post(request: Request, food_id: int, intake_event_id: str = ""):
@@ -479,6 +492,7 @@ def setup_food_routes(rt):
                 name="meal_name",
                 id="meal_name_input_text",
                 autofocus=True,
+                data_skip_page_loading="true",
                 cls="""
                 border-[1px] px-2 py-1
                 md:text-sm lg:text-sm text-base
@@ -495,6 +509,7 @@ def setup_food_routes(rt):
             Button(
                 "Add",
                 id="add_meal_btn",
+                data_skip_page_loading="true",
                 cls="""
                 border-[1px] px-2 py-1
                 md:text-sm lg:text-sm text-xs

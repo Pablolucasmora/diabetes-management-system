@@ -28,8 +28,18 @@ CHECKBOX_CLS = """
 """
 
 
-def macro_color(uncertainty: float) -> str:
-    value = max(0.0, min(1.0, float(uncertainty or 0.0)))
+def _clamp_01(value) -> float:
+    return max(0.0, min(1.0, float(value or 0.0)))
+
+
+def macro_color(uncertainty: float, amount_confidence: float, quality_confidence: float) -> str:
+    # Blend 3 reliability signals into a single risk score.
+    # Higher score -> less trustworthy -> redder color.
+    risk_uncertainty = _clamp_01(uncertainty)
+    risk_amount = 1.0 - _clamp_01(amount_confidence)
+    risk_quality = 1.0 - _clamp_01(quality_confidence)
+    value = (risk_uncertainty + risk_amount + risk_quality) / 3.0
+
     red = int(34 + (239 - 34) * value)
     green = int(197 + (68 - 197) * value)
     blue = int(94 + (68 - 94) * value)

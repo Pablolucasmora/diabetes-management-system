@@ -35,10 +35,10 @@ def render_page(request, content_fn, show_cart=True):
             return content_fn(connection)
 
         return Div(
-            Div(
+            Main(
                 content_fn(connection),
                 id="main_content",
-                style="transition: opacity 280ms ease, filter 280ms ease;",
+                style="transition: opacity 220ms ease;",
             ),
             FloatingIsland(),
             Cart(display=show_cart),

@@ -9,16 +9,16 @@ from DayBetes_food.routes.settings_routes import setup_settings_routes
 
 
 # 1. Header configuration
-css = Link(rel="stylesheet", href="css/output.css")
-loading_js = Script(src="js/page_loading.js")
-island_indicator_js = Script(src="js/island_indicator.js")
-cart_units_js = Script(src="js/cart_units.js")
+css = Link(rel="stylesheet", href="/css/output.css")
+loading_js = Script(src="/js/page_loading.js", defer=True)
+island_indicator_js = Script(src="/js/island_indicator.js", defer=True)
+browser_tweaks_js = Script(src="/js/browser_tweaks.js", defer=True)
 
 # 2. Application title
 title_tag = "DayBetes"
 
 # 3. Favicon configuration (using an SVG file as favicon)
-favicon_tag = Link(rel="icon", href="images/ui/Clock_Page.svg")
+favicon_tag = Link(rel="icon", href="/images/ui/Clock_Page.svg")
 
 css_background = """
 body, html {
@@ -28,18 +28,41 @@ body, html {
 @keyframes dbspin {
     to { transform: rotate(360deg); }
 }
+
+/* iOS Safari compatibility mode */
+.ios-safari #food_top_bar {
+    -webkit-transform: translateZ(0);
+    transform: translateZ(0);
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+}
+.ios-safari #page_loading_overlay {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    background-color: rgba(246, 242, 235, 0.62) !important;
+}
+.ios-safari #island_active_indicator,
+.ios-safari label[data-nav-item],
+.ios-safari label[data-nav-item] img {
+    transition-duration: 250ms !important;
+}
 """
 
 app, rt = fast_app(
     title=title_tag,
+    htmlkw={"lang": "es"},
     hdrs=(
         css,
         loading_js,
         island_indicator_js,
-        cart_units_js,
+        browser_tweaks_js,
         favicon_tag,
         Style(css_background),
-        Meta(name="viewport", content="width=device-width, initial-scale=1.0")
+        Meta(name="viewport", content="width=device-width, initial-scale=1.0"),
+        Meta(
+            name="description",
+            content="DayBetes Food: plan meals, track ingredients, and manage macros for diabetes nutrition."
+        ),
     ),
     static_path='DayBetes_food/static',
     pico=False

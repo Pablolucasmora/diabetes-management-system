@@ -17,7 +17,7 @@ def cart_main(connection):
     if not events:
         return Div(
             Div(
-                Img(src="images/ui/cart.svg", cls="w-10 h-10 opacity-70"),
+                Img(src="/images/ui/cart.svg", alt="", cls="w-10 h-10 opacity-70"),
                 H1("Your cart is empty", cls="text-lg font-semibold text-gray-700"),
                 P("Add ingredients from Food to start planning your meal.", cls="text-sm text-gray-500 text-center"),
                 Button(
@@ -62,6 +62,7 @@ def cart_main(connection):
     return Div(
         H1("Food cart", cls="text-xl font-bold"),
         *event_cards,
+        Script(src="/js/cart_units.js", defer=True),
         cls="""
             flex flex-col items-center
             gap-6

@@ -53,6 +53,58 @@ def _checkbox(name: str, checked: bool, hx_post: str):
     )
 
 
+def _close_modal_js(modal_id: str) -> str:
+    return (
+        f"const m=document.getElementById('{modal_id}');"
+        "m.classList.remove('opacity-100');"
+        "m.classList.add('opacity-0','invisible','pointer-events-none');"
+    )
+
+
+def _open_modal_js(modal_id: str) -> str:
+    return (
+        f"const m=document.getElementById('{modal_id}');"
+        "m.classList.remove('invisible','opacity-0','pointer-events-none');"
+        "m.classList.add('opacity-100');"
+    )
+
+
+def ConfirmActionModal(modal_id: str, title: str, question: str, yes_button):
+    return Div(
+        Div(
+            Div(
+                Div(
+                    P(title, cls="text-lg font-semibold"),
+                    P(question, cls="text-sm md:text-base text-gray-700"),
+                    cls="flex flex-col gap-1",
+                ),
+                Div(
+                    yes_button,
+                    Button(
+                        "No",
+                        type="button",
+                        cls="web_button px-4 py-2 text-sm",
+                        onclick=_close_modal_js(modal_id),
+                    ),
+                    cls="flex items-center gap-2 justify-end",
+                ),
+                onclick="event.stopPropagation()",
+                cls="web_container p-5 md:p-6 rounded-3xl w-[92vw] max-w-md flex flex-col gap-4",
+            ),
+            id=modal_id,
+            onclick=_close_modal_js(modal_id),
+            cls="""
+                fixed inset-0 z-[70]
+                flex items-center justify-center
+                bg-black/35 backdrop-blur-xl
+                px-4
+                opacity-0 invisible pointer-events-none
+                transition-opacity duration-200
+            """,
+        ),
+    )
+
+
 def EventHeader(event):
     meal_time = event.get("meal_time") or datetime.now()
     return Div(
@@ -115,6 +167,21 @@ def EventHeader(event):
 
 def MacrosSummary(event, portions):
     total_amount = sum(float(p.get("amount_g") or 0.0) for p in portions)
+    inferred_amount_confidence_num = 0.0
+    inferred_quality_confidence_num = 0.0
+    for portion in portions:
+        amount = float(portion.get("amount_g") or 0.0)
+        inferred_amount_confidence_num += amount * float(bool(portion.get("strictly_weighed")))
+        inferred_quality_confidence_num += amount * float(bool(portion.get("macros_quality")))
+    inferred_amount_confidence = (inferred_amount_confidence_num / total_amount) if total_amount > 0 else 0.0
+    inferred_quality_confidence = (inferred_quality_confidence_num / total_amount) if total_amount > 0 else 0.0
+    amount_confidence = event.get("amount_confidence")
+    quality_confidence = event.get("quality_confidence")
+    if amount_confidence is None:
+        amount_confidence = inferred_amount_confidence
+    if quality_confidence is None:
+        quality_confidence = inferred_quality_confidence
+
     pills = []
     for macro_key, label, uncertainty_key in MACRO_KEYS:
         total = 0.0
@@ -153,10 +220,12 @@ def MacrosSummary(event, portions):
                     cls="flex items-center gap-1"
                 ),
                 Span(f"{total:.1f} g"),
-                style=f"background-color: {macro_color(uncertainty)}; color: white;",
+                style=f"background-color: {macro_color(uncertainty, amount_confidence, quality_confidence)}; color: white;",
                 title=(
                     f"Unknown {label.lower()} in "
-                    f"{inferred_uncertainty * 100:.1f}% of ingredient amount"
+                    f"{inferred_uncertainty * 100:.1f}% of ingredient amount | "
+                    f"Strictly weighted confidence: {float(amount_confidence) * 100:.1f}% | "
+                    f"Macros quality confidence: {float(quality_confidence) * 100:.1f}%"
                 ),
                 cls="""
                     rounded-md px-2 py-1 text-xs
@@ -211,6 +280,7 @@ def IngredientRow(event, grouped_item):
     unit_select_id = f"unit_select_{item_key}"
     side_unit_id = f"side_unit_{item_key}"
     default_display = f"{units_count:.2f}".replace(".", ",")
+    confirm_id = f"delete_food_confirm_{item_key}"
 
     return Div(
         Div(
@@ -220,13 +290,25 @@ def IngredientRow(event, grouped_item):
                     "Delete food",
                     type="button",
                     cls="web_button px-2 py-1 text-xs bg-red-500/85 text-white border-red-500",
-                    hx_post=f"/cart/event/{event['id']}/ingredient/{origin}/{origin_id}/amount",
-                    hx_include="closest form",
-                    hx_vals='{"amount_g":"0"}',
+                    onclick=_open_modal_js(confirm_id),
                 ),
                 cls="flex flex-col items-end gap-2"
             ),
             cls="flex items-center justify-between gap-2"
+        ),
+        ConfirmActionModal(
+            modal_id=confirm_id,
+            title="Delete food",
+            question="Are you sure you want to delete this food?",
+            yes_button=Button(
+                "Yes",
+                type="button",
+                cls="web_button px-4 py-2 text-sm bg-red-500/85 text-white border-red-500",
+                hx_post=f"/cart/event/{event['id']}/ingredient/{origin}/{origin_id}/amount",
+                hx_vals='{"amount_g":"0"}',
+                data_skip_page_loading="true",
+                onclick=_close_modal_js(confirm_id),
+            ),
         ),
         Form(
             Input(type="hidden", name="unit_g", value=f"{unit_g:.4f}"),
@@ -358,50 +440,17 @@ def ConfirmSection(event, portions):
 
 def DeleteMealModal(event):
     confirm_id = f"delete_meal_confirm_{event['id']}"
-    return Div(
-        Div(
-            Div(
-                Div(
-                    P("Delete meal", cls="text-lg font-semibold"),
-                    P("Are you sure you want to delete this meal?", cls="text-sm md:text-base text-gray-700"),
-                    cls="flex flex-col gap-1"
-                ),
-                Div(
-                    Button(
-                        "Yes",
-                        type="button",
-                        cls="web_button px-4 py-2 text-sm bg-red-500/85 text-white border-red-500",
-                        hx_post=f"/cart/event/{event['id']}/delete",
-                    ),
-                    Button(
-                        "No",
-                        type="button",
-                        cls="web_button px-4 py-2 text-sm",
-                        onclick=(
-                            f"const m=document.getElementById('{confirm_id}');"
-                            "m.classList.remove('opacity-100');"
-                            "m.classList.add('opacity-0','invisible','pointer-events-none');"
-                        ),
-                    ),
-                    cls="flex items-center gap-2 justify-end"
-                ),
-                onclick="event.stopPropagation()",
-                cls="web_container p-5 md:p-6 rounded-3xl w-[92vw] max-w-md flex flex-col gap-4"
-            ),
-            id=confirm_id,
-            onclick=(
-                f"const m=document.getElementById('{confirm_id}');"
-                "m.classList.remove('opacity-100');"
-                "m.classList.add('opacity-0','invisible','pointer-events-none');"
-            ),
-            cls="""
-                fixed inset-0 z-[70]
-                flex items-center justify-center
-                bg-black/35 backdrop-blur-xl
-                px-4
-                opacity-0 invisible pointer-events-none
-                transition-opacity duration-200
-            """
+    return ConfirmActionModal(
+        modal_id=confirm_id,
+        title="Delete meal",
+        question="Are you sure you want to delete this meal?",
+        yes_button=Button(
+            "Yes",
+            type="button",
+            cls="web_button px-4 py-2 text-sm bg-red-500/85 text-white border-red-500",
+            hx_post=f"/cart/event/{event['id']}/delete",
+            data_skip_page_loading="true",
+            onclick=_close_modal_js(confirm_id),
         ),
     )
 
@@ -425,11 +474,7 @@ def CartCard(event, portions):
                 "Delete meal",
                 type="button",
                 cls="web_button px-2 py-1 text-xs bg-red-500/85 text-white border-red-500",
-                onclick=(
-                    f"const m=document.getElementById('{confirm_id}');"
-                    "m.classList.remove('invisible','opacity-0','pointer-events-none');"
-                    "m.classList.add('opacity-100');"
-                ),
+                onclick=_open_modal_js(confirm_id),
             ),
             cls="flex items-center justify-between gap-2"
         ),

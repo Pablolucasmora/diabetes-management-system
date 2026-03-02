@@ -1,6 +1,6 @@
 from fasthtml.common import *
 
-def BlockIsland(text, icon="images/ui/menu.svg", name="nav", value="home", **hx):
+def BlockIsland(text, icon="/images/ui/menu.svg", name="nav", value="home", **hx):
     return Label(
         Input(
             type="radio",
@@ -9,7 +9,7 @@ def BlockIsland(text, icon="images/ui/menu.svg", name="nav", value="home", **hx)
             cls="hidden peer",
         ),
 
-        Img(id=value, src=icon, cls="""
+        Img(id=value, src=icon, alt="", cls="""
             w-6 h-6
             text-lg md:text-xl 
             transition-all duration-300
@@ -45,6 +45,7 @@ def FloatingIsland():
         b.classList.remove('invisible','opacity-0','pointer-events-none');
         requestAnimationFrame(function(){ b.classList.add('opacity-100'); });
     """
+    scroll_top_js = "window.scrollTo({ top: 0, behavior: 'auto' });"
 
     return Div(
         Div(
@@ -59,10 +60,10 @@ def FloatingIsland():
                     opacity-0
                 """,
             ),
-            BlockIsland("Menu", icon="images/ui/menu.svg", value="menu", hx_get="/menu", hx_target="#main_content", hx_swap="innerHTML", hx_push_url="true", **{"hx-on:click": show_cart_js}),
-            BlockIsland("Stats", icon="images/ui/stats.svg", value="stats", hx_get="/stats", hx_target="#main_content", hx_push_url="true"),
-            BlockIsland("Food", icon="images/ui/food.svg", value="food", hx_get="/food", hx_target="#main_content", hx_push_url="true", **{"hx-on:click": show_cart_js}),
-            BlockIsland("Settings", icon="images/ui/settings.svg", value="settings", hx_get="/settings", hx_target="#main_content", hx_push_url="true"),
+            BlockIsland("Menu", icon="/images/ui/menu.svg", value="menu", hx_get="/menu", hx_target="#main_content", hx_swap="innerHTML", hx_push_url="true", **{"hx-on:click": show_cart_js}),
+            BlockIsland("Stats", icon="/images/ui/stats.svg", value="stats", hx_get="/stats", hx_target="#main_content", hx_push_url="true", **{"hx-on:click": scroll_top_js}),
+            BlockIsland("Food", icon="/images/ui/food.svg", value="food", hx_get="/food", hx_target="#main_content", hx_push_url="true", **{"hx-on:click": show_cart_js}),
+            BlockIsland("Settings", icon="/images/ui/settings.svg", value="settings", hx_get="/settings", hx_target="#main_content", hx_push_url="true", **{"hx-on:click": scroll_top_js}),
             cls="""
                 relative
                 flex items-center justify-center
@@ -85,7 +86,7 @@ def FloatingIsland():
 
 def IslandLogo():
     return Div(
-        Img(id="logo", src="images/ui/Logo_DayBetes_food.svg",
+        Img(id="logo", src="/images/ui/Logo_DayBetes_food.svg", alt="DayBetes logo",
             cls="""
                 lg:w-64 md:w-64
                 w-48 
@@ -117,7 +118,7 @@ def Cart(display=True):
         base_classes += " invisible opacity-0 pointer-events-none"
 
     return Div(
-        Img(src="images/ui/cart.svg", cls="w-6 h-6 justify-self-center"),
+        Img(src="/images/ui/cart.svg", alt="", cls="w-6 h-6 justify-self-center"),
         P("Cart", cls="""
             hidden md:block mt-1
             text-[10px] text-center font-bold uppercase tracking-tighter

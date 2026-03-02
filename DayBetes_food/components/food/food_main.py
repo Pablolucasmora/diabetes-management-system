@@ -1,6 +1,5 @@
 from fasthtml.common import *
 from DayBetes_food.components.food.foods import (
-    CreatePanels,
     Filters,
     FoodList,
     MealSelector,
@@ -36,20 +35,29 @@ def food_main(connection):
     
     return Div(
         QuickCreateButtons(),
-        CreatePanels(),
         SearchInput(),
         Filters(),
         MealSelector(connection, user_id=user_id or 0),
+        id="food_top_bar",
         cls="""
             flex flex-col items-center
-            justify-between lg:gap-5 md:gap-5 gap-3 w-full
-            md:mt-7 lg:mt-7 mt-2 fixed left-1/2 -translate-x-1/2 bg-[#f6f2eb]
-        """
+            justify-between lg:gap-4 md:gap-4 gap-3 md:w-lg lg:w-lg w-sm
+            fixed inset-x-0 mx-auto
+            top-2 md:top-7 lg:top-7
+            z-30
+            bg-[#f6f2eb]/80 backdrop-blur-sm border-b-[1px] border-white
+        """,
+        style=(
+            "transform: translateZ(0);"
+            "-webkit-transform: translateZ(0);"
+            "backface-visibility: hidden;"
+            "-webkit-backface-visibility: hidden;"
+        ),
     ), Div(
     FoodList(foods),
     id="food_list_wrapper",
-    cls="""md:pt-[250px] lg:pt-[250px] 
-           pt-[180px] transition-all
+    cls="""md:pt-[250px] lg:pt-[250px]
+           pt-[180px]
            md:mb-50 lg:mb-50 mb-36
     """
 )
