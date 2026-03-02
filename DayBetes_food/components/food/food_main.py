@@ -45,7 +45,7 @@ def food_main(connection):
             fixed inset-x-0 mx-auto
             top-2 md:top-7 lg:top-7
             z-30
-            bg-[#f6f2eb]/80 backdrop-blur-sm border-b-[1px] border-white
+            bg-[#f6f2eb] border-b-[1px] border-white
         """,
         style=(
             "transform: translateZ(0);"
@@ -56,8 +56,8 @@ def food_main(connection):
     ), Div(
     FoodList(foods),
     id="food_list_wrapper",
-    cls="""md:pt-[250px] lg:pt-[250px]
-           pt-[180px]
+    cls="""md:pt-[240px] lg:pt-[240px]
+           pt-[170px]
            md:mb-50 lg:mb-50 mb-36
     """
 )
