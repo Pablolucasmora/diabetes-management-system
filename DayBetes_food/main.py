@@ -1,7 +1,21 @@
 from fasthtml.common import *
+from datetime import datetime
 from starlette.middleware.gzip import GZipMiddleware
+from starlette.responses import JSONResponse
 
+from DayBetes_food.auth.context import reset_current_user_id, set_current_user_id
+from DayBetes_food.auth.security import generate_token
+from DayBetes_food.auth.service import get_session_with_user, is_csrf_valid, refresh_session
+from DayBetes_food.config import (
+    CSRF_COOKIE_NAME,
+    SESSION_COOKIE_NAME,
+    SESSION_COOKIE_SAMESITE,
+    SESSION_COOKIE_SECURE,
+    SESSION_REFRESH_SECONDS,
+)
 from DayBetes_food.database.db_init import init_db
+from DayBetes_food.database.connection import get_connection
+from DayBetes_food.routes.auth_routes import setup_auth_routes
 from DayBetes_food.routes.food_routes import setup_food_routes
 from DayBetes_food.routes.main_routes import setup_main_routes
 from DayBetes_food.routes.cart_routes import setup_cart_routes
@@ -9,99 +23,88 @@ from DayBetes_food.routes.stats_routes import setup_stats_routes
 from DayBetes_food.routes.settings_routes import setup_settings_routes
 
 
-# 1. Header configuration
-css = Link(rel="stylesheet", href="/css/output.css")
-jsdelivr_preconnect = Link(rel="preconnect", href="https://cdn.jsdelivr.net", crossorigin="anonymous")
-jsdelivr_dns_prefetch = Link(rel="dns-prefetch", href="//cdn.jsdelivr.net")
-htmx_js = Script(src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.7/dist/htmx.min.js", defer=True)
-fasthtml_js = Script(src="https://cdn.jsdelivr.net/gh/answerdotai/fasthtml-js@1.0.12/fasthtml.js", defer=True)
-surreal_js = Script(src="https://cdn.jsdelivr.net/gh/answerdotai/surreal@main/surreal.js", defer=True)
-css_scope_inline_js = Script(src="https://cdn.jsdelivr.net/gh/gnat/css-scope-inline@main/script.js", defer=True)
-loading_js = Script(src="/js/page_loading.js", defer=True)
-island_indicator_js = Script(src="/js/island_indicator.js", defer=True)
-browser_tweaks_js = Script(src="/js/browser_tweaks.js", defer=True)
-
-# 2. Application title
-title_tag = "DayBetes"
-
-# 3. Favicon configuration (using an SVG file as favicon)
-favicon_tag = Link(rel="icon", href="/images/ui/Clock_Page.svg")
-
-css_background = """
-body, html {
-    background-color: #f6f2eb;
-    scrollbar-gutter: stable;
-}
-@keyframes dbspin {
-    to { transform: rotate(360deg); }
-}
-
-/* iOS Safari compatibility mode */
-.ios-safari #food_top_bar {
-    -webkit-transform: translateZ(0);
-    transform: translateZ(0);
-    -webkit-backface-visibility: hidden;
-    backface-visibility: hidden;
-}
-.ios-safari #page_loading_overlay {
-    -webkit-backdrop-filter: none !important;
-    backdrop-filter: none !important;
-    background-color: rgba(246, 242, 235, 0.62) !important;
-}
-.ios-safari #island_active_indicator,
-.ios-safari label[data-nav-item],
-.ios-safari label[data-nav-item] img {
-    transition-duration: 250ms !important;
-}
-"""
-
-shared_hdrs = (
-    css,
-    loading_js,
-    island_indicator_js,
-    browser_tweaks_js,
-    favicon_tag,
-    Style(css_background),
-    Meta(name="viewport", content="width=device-width, initial-scale=1.0"),
-    Meta(
-        name="description",
-        content="DayBetes Food: plan meals, track ingredients, and manage macros for diabetes nutrition."
-    ),
-)
-
-optimized_hdrs = (
-    jsdelivr_preconnect,
-    jsdelivr_dns_prefetch,
-    htmx_js,
-    fasthtml_js,
-    surreal_js,
-    css_scope_inline_js,
-    *shared_hdrs,
-)
-
-app_kwargs = dict(
-    title=title_tag,
+app, rt = fast_app(
+    title="DayBetes",
     htmlkw={"lang": "es"},
     static_path='DayBetes_food/static',
-    pico=False,
 )
-
-try:
-    app, rt = fast_app(
-        **app_kwargs,
-        default_hdrs=False,
-        hdrs=optimized_hdrs,
-    )
-except TypeError:
-    app, rt = fast_app(
-        **app_kwargs,
-        hdrs=shared_hdrs,
-    )
 
 app.add_middleware(GZipMiddleware, minimum_size=512)
 
 STATIC_CACHE_CONTROL = "public, max-age=604800"
 ASSET_PREFIXES = ("/css/", "/js/", "/images/")
+PUBLIC_PATH_PREFIXES = ("/auth", "/css", "/js", "/images", "/favicon", "/robots.txt")
+AUTH_POST_EXEMPT_PATHS = {"/auth/login/submit", "/auth/register/submit", "/auth/logout"}
+UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def _is_public_path(path: str) -> bool:
+    return path == "/" or path.startswith(PUBLIC_PATH_PREFIXES)
+
+
+def _is_htmx_request(request: Request) -> bool:
+    return request.headers.get("HX-Request") == "true"
+
+
+@app.middleware("http")
+async def auth_security_middleware(request: Request, call_next):
+    csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME) or generate_token()
+    request.state.csrf_token = csrf_cookie
+    request.state.user = None
+
+    session_cookie = request.cookies.get(SESSION_COOKIE_NAME, "")
+    session_row = None
+    if session_cookie:
+        with get_connection() as connection:
+            session_row = get_session_with_user(connection, session_cookie)
+            if session_row:
+                request.state.user = {
+                    "id": session_row["user_id"],
+                    "email": session_row["email"],
+                    "username": session_row["username"],
+                }
+                last_seen = session_row.get("last_seen_at")
+                if last_seen and (datetime.utcnow() - last_seen).total_seconds() >= SESSION_REFRESH_SECONDS:
+                    refresh_session(connection, int(session_row["id"]))
+
+    csrf_exempt = request.url.path in AUTH_POST_EXEMPT_PATHS
+    if request.method in UNSAFE_METHODS and not csrf_exempt:
+        supplied_token = request.headers.get("X-CSRF-Token", "")
+        if not supplied_token and request.headers.get("content-type", "").startswith("application/x-www-form-urlencoded"):
+            form = await request.form()
+            supplied_token = str(form.get("csrf_token", ""))
+
+        if not supplied_token or supplied_token != csrf_cookie or not is_csrf_valid(session_row, supplied_token):
+            return JSONResponse({"detail": "Forbidden"}, status_code=403)
+
+    if not request.state.user and not _is_public_path(request.url.path):
+        if _is_htmx_request(request):
+            return HTMLResponse("", status_code=401, headers={"HX-Redirect": "/auth/login"})
+        if request.method == "GET":
+            return RedirectResponse(url="/auth/login", status_code=302)
+        return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+
+    ctx_token = set_current_user_id(request.state.user["id"] if request.state.user else None)
+    try:
+        response = await call_next(request)
+    finally:
+        reset_current_user_id(ctx_token)
+
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+
+    if request.cookies.get(CSRF_COOKIE_NAME) != csrf_cookie:
+        response.set_cookie(
+            CSRF_COOKIE_NAME,
+            csrf_cookie,
+            httponly=False,
+            secure=SESSION_COOKIE_SECURE,
+            samesite=SESSION_COOKIE_SAMESITE,
+            path="/",
+        )
+    return response
 
 @app.middleware("http")
 async def add_asset_cache_headers(request, call_next):
@@ -122,6 +125,7 @@ else:
     _init_db_on_startup()
 
 setup_main_routes(rt)
+setup_auth_routes(rt)
 
 setup_food_routes(rt)
 

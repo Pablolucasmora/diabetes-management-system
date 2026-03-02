@@ -22,6 +22,8 @@ All functions follow the same pattern:
 import os
 from typing import Optional, Any
 
+from DayBetes_food.auth.context import get_current_user_id
+
 DEFAULT_USER_EMAIL = os.getenv("DEFAULT_USER_EMAIL", "default@daybetes.local")
 
 
@@ -84,15 +86,15 @@ def _build_update_query(table: str, params: dict, where_field: str = "id") -> Op
 # users
 # ============================================
 
-def add_users(connection, name: str, email: str, password: str) -> Optional[int]:
+def add_users(connection, username: str, email: str, password_hash: str) -> Optional[int]:
     """Creates a new users."""
     query = """
-        INSERT INTO users (name, email, password)
-        VALUES (%(name)s, %(email)s, %(password)s)
+        INSERT INTO users (username, email, password_hash, created_at, updated_at)
+        VALUES (%(username)s, %(email)s, %(password_hash)s, NOW(), NOW())
         RETURNING id;
     """
-    result = _execute_query(connection, query, {"name": name, "email": email, "password": password})
-    return result[0] if result else None
+    result = _execute_query(connection, query, {"username": username, "email": email, "password_hash": password_hash})
+    return result["id"] if result else None
 
 
 def get_users(connection, users_id: int) -> Optional[dict]:
@@ -109,12 +111,16 @@ def get_users_by_email(connection, email: str) -> Optional[dict]:
 
 def get_all_users(connection) -> list:
     """Gets all users."""
-    query = "SELECT * FROM users ORDER BY registration_date DESC;"
+    query = "SELECT * FROM users ORDER BY created_at DESC;"
     return _execute_query_many(connection, query, commit=False)
 
 
 def get_default_user_id(connection) -> Optional[int]:
-    """Gets the default user id, falling back to the first user if needed."""
+    """Gets current authenticated user id, falling back to default user for compatibility."""
+    current_user_id = get_current_user_id()
+    if current_user_id:
+        return current_user_id
+
     user = get_users_by_email(connection, DEFAULT_USER_EMAIL)
     if user:
         return user["id"]

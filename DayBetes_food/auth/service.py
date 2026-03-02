@@ -1,0 +1,242 @@
+from datetime import datetime, timedelta
+from typing import Optional
+
+from DayBetes_food.config import (
+    AUTH_RATE_LIMIT_ATTEMPTS,
+    AUTH_RATE_LIMIT_BLOCK_SECONDS,
+    AUTH_RATE_LIMIT_WINDOW_SECONDS,
+    SESSION_TTL_SECONDS,
+)
+from DayBetes_food.auth.security import hash_token, normalize_identifier
+
+
+GENERIC_AUTH_ERROR = "Credenciales no validas"
+
+
+def _utcnow() -> datetime:
+    return datetime.utcnow()
+
+
+def create_user(connection, email: str, username: str, password_hash: str) -> Optional[int]:
+    query = """
+        INSERT INTO users (email, username, password_hash, is_active, created_at, updated_at)
+        VALUES (%(email)s, %(username)s, %(password_hash)s, TRUE, NOW(), NOW())
+        RETURNING id;
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(query, {
+                "email": normalize_identifier(email),
+                "username": normalize_identifier(username),
+                "password_hash": password_hash,
+            })
+            user = cursor.fetchone()
+        connection.commit()
+        return int(user["id"]) if user else None
+    except Exception:
+        connection.rollback()
+        return None
+
+
+def get_user_by_identifier(connection, identifier: str) -> Optional[dict]:
+    normalized = normalize_identifier(identifier)
+    query = """
+        SELECT id, email, username, password_hash, is_active
+        FROM users
+        WHERE lower(email) = %(identifier)s OR lower(username) = %(identifier)s
+        LIMIT 1;
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(query, {"identifier": normalized})
+        return cursor.fetchone()
+
+
+def get_user_by_id(connection, user_id: int) -> Optional[dict]:
+    query = """
+        SELECT id, email, username, is_active
+        FROM users
+        WHERE id = %(id)s
+        LIMIT 1;
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(query, {"id": user_id})
+        return cursor.fetchone()
+
+
+def touch_user_login(connection, user_id: int) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = %(id)s;",
+            {"id": user_id},
+        )
+    connection.commit()
+
+
+def create_session(connection, user_id: int, session_token: str, csrf_token: str, ip_hash: str, user_agent_hash: str):
+    now = _utcnow()
+    expires_at = now + timedelta(seconds=SESSION_TTL_SECONDS)
+    query = """
+        INSERT INTO auth_sessions (
+            user_id, session_token_hash, csrf_token_hash,
+            ip_hash, user_agent_hash,
+            created_at, last_seen_at, expires_at
+        )
+        VALUES (
+            %(user_id)s, %(session_token_hash)s, %(csrf_token_hash)s,
+            %(ip_hash)s, %(user_agent_hash)s,
+            %(created_at)s, %(last_seen_at)s, %(expires_at)s
+        )
+        RETURNING id, expires_at;
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(
+            query,
+            {
+                "user_id": user_id,
+                "session_token_hash": hash_token(session_token),
+                "csrf_token_hash": hash_token(csrf_token),
+                "ip_hash": ip_hash,
+                "user_agent_hash": user_agent_hash,
+                "created_at": now,
+                "last_seen_at": now,
+                "expires_at": expires_at,
+            },
+        )
+        row = cursor.fetchone()
+    connection.commit()
+    return row
+
+
+def revoke_session(connection, session_token: str) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE auth_sessions
+            SET revoked_at = NOW()
+            WHERE session_token_hash = %(token_hash)s AND revoked_at IS NULL;
+            """,
+            {"token_hash": hash_token(session_token)},
+        )
+    connection.commit()
+
+
+def get_session_with_user(connection, session_token: str) -> Optional[dict]:
+    token_hash = hash_token(session_token)
+    query = """
+        SELECT
+            s.id,
+            s.user_id,
+            s.csrf_token_hash,
+            s.expires_at,
+            s.revoked_at,
+            s.last_seen_at,
+            u.email,
+            u.username,
+            u.is_active
+        FROM auth_sessions s
+        JOIN users u ON u.id = s.user_id
+        WHERE s.session_token_hash = %(token_hash)s
+        LIMIT 1;
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(query, {"token_hash": token_hash})
+        row = cursor.fetchone()
+    if not row:
+        return None
+    now = _utcnow()
+    if row["revoked_at"] is not None or row["expires_at"] <= now or not row["is_active"]:
+        return None
+    return row
+
+
+def refresh_session(connection, session_id: int) -> None:
+    now = _utcnow()
+    expires_at = now + timedelta(seconds=SESSION_TTL_SECONDS)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE auth_sessions
+            SET last_seen_at = %(now)s,
+                expires_at = %(expires_at)s
+            WHERE id = %(id)s;
+            """,
+            {"id": session_id, "now": now, "expires_at": expires_at},
+        )
+    connection.commit()
+
+
+def is_csrf_valid(session_row: Optional[dict], csrf_token: str) -> bool:
+    if not csrf_token:
+        return False
+    token_hash = hash_token(csrf_token)
+    if session_row is None:
+        return True
+    return token_hash == session_row["csrf_token_hash"]
+
+
+def _get_rate_limit(connection, key_hash: str) -> Optional[dict]:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT key_hash, attempts, first_attempt_at, blocked_until FROM auth_rate_limits WHERE key_hash = %(key)s FOR UPDATE;",
+            {"key": key_hash},
+        )
+        return cursor.fetchone()
+
+
+def _upsert_rate_limit(connection, key_hash: str, attempts: int, first_attempt_at: datetime, blocked_until: Optional[datetime]):
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO auth_rate_limits (key_hash, attempts, first_attempt_at, blocked_until)
+            VALUES (%(key_hash)s, %(attempts)s, %(first_attempt_at)s, %(blocked_until)s)
+            ON CONFLICT (key_hash)
+            DO UPDATE SET attempts = EXCLUDED.attempts,
+                          first_attempt_at = EXCLUDED.first_attempt_at,
+                          blocked_until = EXCLUDED.blocked_until;
+            """,
+            {
+                "key_hash": key_hash,
+                "attempts": attempts,
+                "first_attempt_at": first_attempt_at,
+                "blocked_until": blocked_until,
+            },
+        )
+
+
+def rate_limit_login_allowed(connection, limiter_key_hash: str) -> bool:
+    now = _utcnow()
+    row = _get_rate_limit(connection, limiter_key_hash)
+    if row and row["blocked_until"] and row["blocked_until"] > now:
+        connection.commit()
+        return False
+    connection.commit()
+    return True
+
+
+def register_login_failure(connection, limiter_key_hash: str) -> None:
+    now = _utcnow()
+    row = _get_rate_limit(connection, limiter_key_hash)
+    if not row:
+        _upsert_rate_limit(connection, limiter_key_hash, 1, now, None)
+        connection.commit()
+        return
+
+    first_attempt_at = row["first_attempt_at"]
+    attempts = int(row["attempts"] or 0)
+    if (now - first_attempt_at).total_seconds() > AUTH_RATE_LIMIT_WINDOW_SECONDS:
+        first_attempt_at = now
+        attempts = 0
+
+    attempts += 1
+    blocked_until = None
+    if attempts >= AUTH_RATE_LIMIT_ATTEMPTS:
+        blocked_until = now + timedelta(seconds=AUTH_RATE_LIMIT_BLOCK_SECONDS)
+
+    _upsert_rate_limit(connection, limiter_key_hash, attempts, first_attempt_at, blocked_until)
+    connection.commit()
+
+
+def clear_login_failures(connection, limiter_key_hash: str) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute("DELETE FROM auth_rate_limits WHERE key_hash = %(key)s;", {"key": limiter_key_hash})
+    connection.commit()

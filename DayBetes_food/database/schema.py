@@ -3,13 +3,42 @@ class DBSchema:
     users = """
     CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
-        name VARCHAR(255),
         email VARCHAR(255) UNIQUE NOT NULL,
-        password TEXT NOT NULL,
-        registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        category VARCHAR(255) CHECK (category IN ('admin', 'common'))
+        username VARCHAR(50) UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        last_login_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     """
+
+    auth_sessions = """
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+        id BIGSERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        session_token_hash CHAR(64) UNIQUE NOT NULL,
+        csrf_token_hash CHAR(64) NOT NULL,
+        ip_hash CHAR(64),
+        user_agent_hash CHAR(64),
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP NOT NULL,
+        revoked_at TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions(expires_at);
+    """
+
+    auth_rate_limits = """
+    CREATE TABLE IF NOT EXISTS auth_rate_limits (
+        key_hash CHAR(64) PRIMARY KEY,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        first_attempt_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        blocked_until TIMESTAMP
+    );
+    """
+
 
     catalog = """
     CREATE TABLE IF NOT EXISTS catalog (

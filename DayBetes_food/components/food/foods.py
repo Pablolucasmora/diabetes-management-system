@@ -122,7 +122,7 @@ def MealSelector(connection, user_id: int, selected_id: int = None):
             """,
         ),
         Div(id="meal_name_input", cls="lg:w-40 md:w-40 w-32 bg-transparent"),
-        cls="flex flex-col gap-2 items-end md:w-md lg:w-md w-xs",
+        cls="flex items-center justify-center gap-2  md:w-md lg:w-md w-xs mb-3",
     )
 
 
@@ -320,7 +320,7 @@ def QuickCreateButtons():
         Button(
             "Add catalog",
             type="button",
-            cls="web_button px-2 py-1 text-[10px] md:text-xs",
+            cls="web_button px-2 py-1 text-[10px] md:text-xs w-full",
             hx_get="/food/create/catalog/form",
             hx_target="#main_content",
             hx_swap="innerHTML",
@@ -329,7 +329,7 @@ def QuickCreateButtons():
         Button(
             "Add manual",
             type="button",
-            cls="web_button px-2 py-1 text-[10px] md:text-xs",
+            cls="web_button px-2 py-1 text-[10px] md:text-xs w-full",
             hx_get="/food/create/manual/form",
             hx_target="#main_content",
             hx_swap="innerHTML",
@@ -338,13 +338,13 @@ def QuickCreateButtons():
         Button(
             "Add recipe",
             type="button",
-            cls="web_button px-2 py-1 text-[10px] md:text-xs",
+            cls="web_button px-2 py-1 text-[10px] md:text-xs w-full",
             hx_get="/food/create/recipe/form",
             hx_target="#main_content",
             hx_swap="innerHTML",
             hx_push_url="true",
         ),
-        cls="flex items-center justify-center gap-2 md:w-md lg:w-md w-xs",
+        cls="flex items-center justify-between gap-2 md:w-md lg:w-md w-xs",
     )
 
 
@@ -482,7 +482,7 @@ def _create_page_shell(title: str, form, result_id: str):
         ),
         Div(form, cls="w-full"),
         Div(id=result_id, cls="text-xs w-full"),
-        Script(src="/js/smart_macros.js", defer=True),
+        Script(src="/js/smart_macros.js", defer="defer"),
         cls="""
             flex flex-col items-center
             gap-4

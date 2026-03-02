@@ -62,7 +62,7 @@ def cart_main(connection):
     return Div(
         H1("Food cart", cls="text-xl font-bold"),
         *event_cards,
-        Script(src="/js/cart_units.js", defer=True),
+        Script(src="/js/cart_units.js", defer="defer"),
         cls="""
             flex flex-col items-center
             gap-6
