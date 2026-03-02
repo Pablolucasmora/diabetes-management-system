@@ -1,5 +1,6 @@
 from fasthtml.common import *
 from DayBetes_food.components.cart.cart_main import cart_main
+from DayBetes_food.components.cart.cart_components import MacrosSummary
 from DayBetes_food.components.ui import render_page
 from datetime import datetime
 from DayBetes_food.database.connection import get_connection
@@ -7,6 +8,7 @@ from DayBetes_food.database.queries.crud import (
     change_event_status,
     delete_intake_event,
     get_intake_event,
+    get_portion_detail_by_event,
     update_intake_event,
 )
 
@@ -169,6 +171,20 @@ def setup_cart_routes(rt):
         with get_connection() as connection:
             ok = update_intake_event(connection, event_id, {"meal_type": meal_type})
             return _cart_response(connection, status=200 if ok else 400)
+
+    @rt("/cart/event/{event_id}/macros_summary")
+    def get(request: Request, event_id: int):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        with get_connection() as connection:
+            event = get_intake_event(connection, event_id)
+            if not event:
+                return HTMLResponse(status_code=404)
+            portions = get_portion_detail_by_event(connection, event_id)
+            return Div(
+                MacrosSummary(event, portions),
+                id=f"macros_summary_event_{event_id}",
+            )
 
     @rt("/cart/event/{event_id}/delete")
     def post(request: Request, event_id: int):

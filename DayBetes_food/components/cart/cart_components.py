@@ -8,6 +8,7 @@ from DayBetes_food.components.cart.cart_shared import (
     display_unit,
     group_portions,
     macro_color,
+    macro_text_color,
     parse_source_macro,
     portion_name,
     unit_amount,
@@ -37,16 +38,28 @@ def _check_icon():
     )
 
 
-def _checkbox(name: str, checked: bool, hx_post: str):
+def _checkbox(
+    name: str,
+    checked: bool,
+    hx_post: str,
+    input_id: str = "",
+    aria_label: str = "",
+    hx_swap: str = "",
+    after_request_js: str = "",
+):
     return Label(
         Input(
             type="checkbox",
             name=name,
             value="true",
             checked=checked,
+            aria_label=aria_label or name.replace("_", " ").title(),
             cls=CHECKBOX_CLS,
             hx_post=hx_post,
             hx_trigger="change",
+            **({"id": input_id} if input_id else {}),
+            **({"hx_swap": hx_swap} if hx_swap else {}),
+            **({"hx-on:htmx:after-request": after_request_js} if after_request_js else {}),
         ),
         _check_icon(),
         cls="flex items-center cursor-pointer relative h-5 w-5",
@@ -107,6 +120,9 @@ def ConfirmActionModal(modal_id: str, title: str, question: str, yes_button):
 
 def EventHeader(event):
     meal_time = event.get("meal_time") or datetime.now()
+    meal_hour_id = f"meal_hour_{event['id']}"
+    meal_date_id = f"meal_date_{event['id']}"
+    meal_type_id = f"meal_type_{event['id']}"
     return Div(
         Div(
             H2(event.get("name") or f"Intake event #{event['id']}", cls="font-bold text-lg"),
@@ -114,8 +130,10 @@ def EventHeader(event):
                 Div(
                     Input(
                         type="time",
+                        id=meal_hour_id,
                         value=meal_time.strftime("%H:%M"),
                         name="meal_hour",
+                        aria_label="Meal time",
                         cls="web_input border border-white rounded-lg px-2 py-1 text-sm",
                         hx_post=f"/cart/event/{event['id']}/meal_hour",
                         hx_trigger="change",
@@ -133,11 +151,13 @@ def EventHeader(event):
                     cls="flex items-center justify-end gap-2 w-full"
                 ),
                 Div(
-                    Label("Meal date", cls="text-xs text-gray-600"),
+                    Label("Meal date", cls="text-xs text-gray-600", **{"for": meal_date_id}),
                     Input(
                         type="date",
+                        id=meal_date_id,
                         value=meal_time.strftime("%Y-%m-%d"),
                         name="meal_date",
+                        aria_label="Meal date",
                         cls="web_input border border-white rounded-lg px-2 py-1 text-sm self-end",
                         hx_post=f"/cart/event/{event['id']}/meal_hour",
                         hx_trigger="change",
@@ -151,10 +171,12 @@ def EventHeader(event):
             cls="flex items-start justify-between gap-3 w-full"
         ),
         Form(
-            Label("Meal type", cls="text-xs text-gray-600"),
+            Label("Meal type", cls="text-xs text-gray-600", **{"for": meal_type_id}),
             Select(
                 *[Option(m, value=m, selected=(event.get("meal_type") == m)) for m in MEAL_TYPES],
+                id=meal_type_id,
                 name="meal_type",
+                aria_label="Meal type",
                 cls="web_input border border-white rounded-lg px-2 py-1 text-sm",
                 hx_post=f"/cart/event/{event['id']}/meal_type",
                 hx_trigger="change",
@@ -209,7 +231,7 @@ def MacrosSummary(event, portions):
                         title=f"Uncertainty: {inferred_uncertainty * 100:.1f}%",
                         onclick=f"alert('Uncertainty: {inferred_uncertainty * 100:.1f}%');",
                         cls="""
-                            web_button rounded-full
+                            web_button rounded-full border-[1px] border-black/50
                             h-4 w-4 md:h-5 md:w-5
                             text-[10px] md:text-xs
                             p-0 leading-none
@@ -220,7 +242,10 @@ def MacrosSummary(event, portions):
                     cls="flex items-center gap-1"
                 ),
                 Span(f"{total:.1f} g"),
-                style=f"background-color: {macro_color(uncertainty, amount_confidence, quality_confidence)}; color: white;",
+                style=(
+                    f"background-color: {macro_color(uncertainty, amount_confidence, quality_confidence)}; "
+                    f"color: {macro_text_color(uncertainty, amount_confidence, quality_confidence)};"
+                ),
                 title=(
                     f"Unknown {label.lower()} in "
                     f"{inferred_uncertainty * 100:.1f}% of ingredient amount | "
@@ -281,15 +306,22 @@ def IngredientRow(event, grouped_item):
     side_unit_id = f"side_unit_{item_key}"
     default_display = f"{units_count:.2f}".replace(".", ",")
     confirm_id = f"delete_food_confirm_{item_key}"
+    ingredient_name = portion_name(sample)
+    refresh_macros_js = (
+        f"htmx.ajax('GET','/cart/event/{event['id']}/macros_summary',"
+        f"{{target:'#macros_summary_event_{event['id']}',swap:'outerHTML'}});"
+    )
+    offset_input_id = f"offset_input_{item_key}"
 
     return Div(
         Div(
-            Div(portion_name(sample), cls="font-semibold"),
+            Div(ingredient_name, cls="font-semibold"),
             Form(
                 Button(
                     "Delete food",
                     type="button",
-                    cls="web_button px-2 py-1 text-xs bg-red-500/85 text-white border-red-500",
+                    cls="web_button px-2 py-1 text-xs text-white",
+                    style="background-color:#b91c1c;border-color:#b91c1c;",
                     onclick=_open_modal_js(confirm_id),
                 ),
                 cls="flex flex-col items-end gap-2"
@@ -303,7 +335,8 @@ def IngredientRow(event, grouped_item):
             yes_button=Button(
                 "Yes",
                 type="button",
-                cls="web_button px-4 py-2 text-sm bg-red-500/85 text-white border-red-500",
+                cls="web_button px-4 py-2 text-sm text-white",
+                style="background-color:#b91c1c;border-color:#b91c1c;",
                 hx_post=f"/cart/event/{event['id']}/ingredient/{origin}/{origin_id}/amount",
                 hx_vals='{"amount_g":"0"}',
                 data_skip_page_loading="true",
@@ -318,6 +351,7 @@ def IngredientRow(event, grouped_item):
                     inputmode="decimal",
                     id=display_input_id,
                     value=default_display,
+                    aria_label=f"Amount for {ingredient_name}",
                     cls="web_input border border-white rounded-lg px-2 py-1 w-24 text-base",
                     oninput=f"dbRecalcGrams('{display_input_id}','{unit_select_id}','{grams_input_id}')",
                     onchange=f"dbRecalcGrams('{display_input_id}','{unit_select_id}','{grams_input_id}', true)",
@@ -338,6 +372,7 @@ def IngredientRow(event, grouped_item):
                     data_grams_id=grams_input_id,
                     data_side_unit_id=side_unit_id,
                     data_persist_key=f"cart_unit_{item_key}",
+                    aria_label=f"Unit selector for {ingredient_name}",
                     cls="web_input border border-white rounded-lg px-2 py-1 text-xs md:text-sm justify-self-end",
                     onchange=f"dbRecalcDisplayFromGrams('{display_input_id}','{unit_select_id}','{grams_input_id}','{side_unit_id}')",
                 ),
@@ -346,13 +381,15 @@ def IngredientRow(event, grouped_item):
             cls="flex flex-col gap-2"
         ),
         Div(
-            Label("Offset (min)", cls="text-xs text-gray-600"),
+            Label("Offset (min)", cls="text-xs text-gray-600", **{"for": offset_input_id}),
             Input(
                 type="text",
+                id=offset_input_id,
                 name="offset_minutes",
                 inputmode="numeric",
                 pattern="[0-9]*",
                 value=str(offset_value),
+                aria_label=f"Offset minutes for {ingredient_name}",
                 cls="web_input border border-white rounded-lg px-2 py-1 w-24 text-base",
                 hx_post=f"/cart/event/{event['id']}/ingredient/{origin}/{origin_id}/offset",
                 hx_trigger="change",
@@ -366,6 +403,9 @@ def IngredientRow(event, grouped_item):
                 name="strictly_weighed",
                 checked=bool(sample.get("strictly_weighed")),
                 hx_post=f"/cart/event/{event['id']}/ingredient/{origin}/{origin_id}/strictly_weighed",
+                aria_label=f"Strictly weighted for {ingredient_name}",
+                hx_swap="none",
+                after_request_js=refresh_macros_js,
             ),
             cls="flex items-center gap-2"
         ),
@@ -375,6 +415,9 @@ def IngredientRow(event, grouped_item):
                 name="macros_quality",
                 checked=bool(sample.get("macros_quality")),
                 hx_post=f"/cart/event/{event['id']}/ingredient/{origin}/{origin_id}/macros_quality",
+                aria_label=f"Macros quality for {ingredient_name}",
+                hx_swap="none",
+                after_request_js=refresh_macros_js,
             ),
             cls="flex items-center gap-2"
         ),
@@ -384,6 +427,9 @@ def IngredientRow(event, grouped_item):
                 name="is_cooked_weight",
                 checked=bool(sample.get("is_cooked_weight")),
                 hx_post=f"/cart/event/{event['id']}/ingredient/{origin}/{origin_id}/is_cooked_weight",
+                aria_label=f"Cooked weight for {ingredient_name}",
+                hx_swap="none",
+                after_request_js=refresh_macros_js,
             ),
             cls="flex items-center gap-2"
         ),
@@ -393,17 +439,20 @@ def IngredientRow(event, grouped_item):
 
 def ConfirmSection(event, portions):
     total_amount = sum(float(p.get("amount_g") or 0.0) for p in portions)
+    ingested_value_id = f"ingested_value_{event['id']}"
     return Form(
         Input(type="hidden", name="total_amount", value=f"{total_amount:.4f}"),
         Input(type="hidden", name="ingested_unit", value="g", id=f"ingested_unit_{event['id']}"),
         Input(
             type="number",
+            id=ingested_value_id,
             inputmode="number",
             step="0.1",
             min="0",
             pattern="[0-9]*",
             name="ingested_value",
             value=f"{float(event.get('ingested_amount') or 0.0):.1f}" if event.get("ingested_amount") is not None else "",
+            aria_label="Ingested amount",
             placeholder="Ingested amount",
             cls="""
                 web_input border border-white rounded-lg
@@ -419,6 +468,7 @@ def ConfirmSection(event, portions):
                 "hidden.value = hidden.value === 'g' ? '%' : 'g';"
                 "this.innerText = hidden.value;"
             ),
+            aria_label="Toggle ingested amount unit",
             cls="""
                 web_button px-2 py-1 text-base min-w-10
                 md:px-2 md:py-2 md:text-sm md:min-w-12
@@ -447,7 +497,8 @@ def DeleteMealModal(event):
         yes_button=Button(
             "Yes",
             type="button",
-            cls="web_button px-4 py-2 text-sm bg-red-500/85 text-white border-red-500",
+            cls="web_button px-4 py-2 text-sm text-white",
+            style="background-color:#b91c1c;border-color:#b91c1c;",
             hx_post=f"/cart/event/{event['id']}/delete",
             data_skip_page_loading="true",
             onclick=_close_modal_js(confirm_id),
@@ -458,28 +509,35 @@ def DeleteMealModal(event):
 def CartCard(event, portions):
     grouped_portions = group_portions(portions)
     confirm_id = f"delete_meal_confirm_{event['id']}"
+    eating_out_id = f"eating_out_{event['id']}"
     return Div(
         EventHeader(event),
         Div(
             Div(
-                Label("Eating out", cls="text-xs text-gray-600"),
+                Label("Eating out", cls="text-xs text-gray-600", **{"for": eating_out_id}),
                 _checkbox(
                     name="eating_out",
                     checked=bool(event.get("eating_out")),
                     hx_post=f"/cart/event/{event['id']}/eating_out",
+                    input_id=eating_out_id,
+                    aria_label="Eating out",
                 ),
                 cls="flex items-center gap-2"
             ),
             Button(
                 "Delete meal",
                 type="button",
-                cls="web_button px-2 py-1 text-xs bg-red-500/85 text-white border-red-500",
+                cls="web_button px-2 py-1 text-xs text-white",
+                style="background-color:#b91c1c;border-color:#b91c1c;",
                 onclick=_open_modal_js(confirm_id),
             ),
             cls="flex items-center justify-between gap-2"
         ),
         DeleteMealModal(event),
-        MacrosSummary(event, portions),
+        Div(
+            MacrosSummary(event, portions),
+            id=f"macros_summary_event_{event['id']}",
+        ),
         Div(
             H3("Ingredients", cls="font-semibold"),
             *[IngredientRow(event, item) for item in grouped_portions],
