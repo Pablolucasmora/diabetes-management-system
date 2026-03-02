@@ -34,3 +34,5 @@ __pycache__/
 
 .sesskey
 
+lighthouse.json
+error.txt
