@@ -28,7 +28,21 @@ def PageLoadingOverlay():
         """
     )
 
+def _clean_fragment(fragment):
+    if fragment is None or isinstance(fragment, bool):
+        return None
+    if isinstance(fragment, tuple):
+        cleaned = tuple(item for item in (_clean_fragment(x) for x in fragment) if item is not None)
+        return cleaned
+    if isinstance(fragment, list):
+        cleaned = [item for item in (_clean_fragment(x) for x in fragment) if item is not None]
+        return cleaned
+    return fragment
+
 def _safe_fragment_to_html(fragment) -> str:
+    fragment = _clean_fragment(fragment)
+    if fragment is None:
+        return ""
     try:
         return str(to_xml(fragment))
     except TypeError:
@@ -36,6 +50,9 @@ def _safe_fragment_to_html(fragment) -> str:
             cleaned = tuple(item for item in fragment if not isinstance(item, bool))
             return str(to_xml(cleaned))
         raise
+
+def render_fragment(fragment):
+    return HTMLResponse(_safe_fragment_to_html(fragment))
 
 def _base_html_shell(content_html: str) -> str:
     return f"""<!doctype html>
@@ -77,7 +94,7 @@ def render_page(request, content_fn, show_cart=True):
     with get_connection() as connection:
         if request.headers.get("HX-Request") == "true":
             fragment = content_fn(connection)
-            return HTMLResponse(_safe_fragment_to_html(fragment))
+            return render_fragment(fragment)
 
         page_fragment = Div(
             Main(

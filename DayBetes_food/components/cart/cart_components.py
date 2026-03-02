@@ -311,6 +311,7 @@ def IngredientRow(event, grouped_item):
         f"htmx.ajax('GET','/cart/event/{event['id']}/macros_summary',"
         f"{{target:'#macros_summary_event_{event['id']}',swap:'outerHTML'}});"
     )
+    refresh_cart_js = "htmx.ajax('GET','/cart',{target:'#main_content',swap:'innerHTML'});"
     offset_input_id = f"offset_input_{item_key}"
 
     return Div(
@@ -339,6 +340,8 @@ def IngredientRow(event, grouped_item):
                 style="background-color:#b91c1c;border-color:#b91c1c;",
                 hx_post=f"/cart/event/{event['id']}/ingredient/{origin}/{origin_id}/amount",
                 hx_vals='{"amount_g":"0"}',
+                hx_swap="none",
+                **{"hx-on:htmx:after-request": refresh_cart_js},
                 data_skip_page_loading="true",
                 onclick=_close_modal_js(confirm_id),
             ),
@@ -365,6 +368,9 @@ def IngredientRow(event, grouped_item):
                     value=f"{amount:.6f}",
                     hx_post=f"/cart/event/{event['id']}/ingredient/{origin}/{origin_id}/amount",
                     hx_trigger="change",
+                    hx_include="closest form",
+                    hx_swap="none",
+                    **{"hx-on:htmx:after-request": refresh_cart_js},
                 ),Select(
                     *_unit_options(unit_g, unit_label),
                     id=unit_select_id,
@@ -490,6 +496,7 @@ def ConfirmSection(event, portions):
 
 def DeleteMealModal(event):
     confirm_id = f"delete_meal_confirm_{event['id']}"
+    refresh_cart_js = "htmx.ajax('GET','/cart',{target:'#main_content',swap:'innerHTML'});"
     return ConfirmActionModal(
         modal_id=confirm_id,
         title="Delete meal",
@@ -500,6 +507,8 @@ def DeleteMealModal(event):
             cls="web_button px-4 py-2 text-sm text-white",
             style="background-color:#b91c1c;border-color:#b91c1c;",
             hx_post=f"/cart/event/{event['id']}/delete",
+            hx_swap="none",
+            **{"hx-on:htmx:after-request": refresh_cart_js},
             data_skip_page_loading="true",
             onclick=_close_modal_js(confirm_id),
         ),

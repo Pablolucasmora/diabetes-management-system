@@ -1,7 +1,7 @@
 from fasthtml.common import *
 from datetime import datetime
 from DayBetes_food.components.food.food_main import food_main
-from DayBetes_food.components.ui import render_page
+from DayBetes_food.components.ui import render_fragment, render_page
 from DayBetes_food.database.queries.crud import (
     add_catalog_item,
     get_all_catalog,
@@ -122,8 +122,8 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             entries = _filtered_entries(connection, search=search, filter_value=filter)
         if not entries:
-            return H2("No items", cls="text-gray-600")
-        return tuple(FoodSectionsContent(entries))
+            return render_fragment(H2("No items", cls="text-gray-600"))
+        return render_fragment(tuple(FoodSectionsContent(entries)))
 
     @rt("/search_food")
     def get(request: Request, search: str = ""):
@@ -132,8 +132,8 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             entries = _filtered_entries(connection, search=search, filter_value="all")
         if not entries:
-            return H2("No items", cls="text-gray-600")
-        return tuple(FoodSectionsContent(entries))
+            return render_fragment(H2("No items", cls="text-gray-600"))
+        return render_fragment(tuple(FoodSectionsContent(entries)))
 
     @rt("/add_food/{food_id}")
     def post(request: Request, food_id: int, intake_event_id: str = ""):
@@ -326,7 +326,7 @@ def setup_food_routes(rt):
             if not current or not updated:
                 return HTMLResponse(status_code=400)
 
-            return FavoriteButton(entry_type, entry_id, bool(current.get("favorite")))
+            return render_fragment(FavoriteButton(entry_type, entry_id, bool(current.get("favorite"))))
 
     @rt("/food/create/catalog")
     def post(
@@ -484,14 +484,14 @@ def setup_food_routes(rt):
     @rt("/meal_selector_input")
     def get(request: Request, intake_event_id: str):
         if intake_event_id != "0":
-            return ""
+            return render_fragment("")
         
-        return Div(
+        return render_fragment(Div(
             Input(
                 placeholder="Meal name",
                 name="meal_name",
                 id="meal_name_input_text",
-                autofocus=True,
+                autofocus="autofocus",
                 data_skip_page_loading="true",
                 cls="""
                 border-[1px] px-2 py-1
@@ -524,7 +524,7 @@ def setup_food_routes(rt):
                 **on_after()
             ),
             cls="flex gap-2 w-full"        
-            )
+            ))
 
     @rt("/create_named_event")
     def post(request: Request, meal_name: str = ""):

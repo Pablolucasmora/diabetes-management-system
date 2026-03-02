@@ -63,6 +63,7 @@ def _form_shell(title: str, action: str, csrf_token: str, fields_html: str, subm
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>{safe_title}</title>
+        <link rel="icon" type="image/svg+xml" href="/images/ui/Clock_Page.svg">
         <link rel="stylesheet" href="/css/output.css">
       </head>
       <body style="background-color:#f6f2eb;">
