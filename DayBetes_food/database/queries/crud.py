@@ -20,11 +20,14 @@ All functions follow the same pattern:
 """
 
 import os
+import re
 from typing import Optional, Any
 
 from DayBetes_food.auth.context import get_current_user_id
 
 DEFAULT_USER_EMAIL = os.getenv("DEFAULT_USER_EMAIL", "default@daybetes.local")
+TRGM_SIMILARITY_THRESHOLD = 0.25
+_HAS_PG_TRGM = None
 
 
 # ============================================
@@ -80,6 +83,44 @@ def _build_update_query(table: str, params: dict, where_field: str = "id") -> Op
         
     set_clause = ", ".join([f"{field} = %({field})s" for field in fields])
     return f"UPDATE {table} SET {set_clause} WHERE {where_field} = %({where_field})s RETURNING {where_field};"
+
+
+def _pg_trgm_enabled(connection) -> bool:
+    global _HAS_PG_TRGM
+    if _HAS_PG_TRGM is not None:
+        return _HAS_PG_TRGM
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') AS enabled;")
+            row = cursor.fetchone()
+            _HAS_PG_TRGM = bool(row and row.get("enabled"))
+    except Exception:
+        _HAS_PG_TRGM = False
+    return _HAS_PG_TRGM
+
+
+def _add_fuzzy_name_condition(connection, conditions: list, params: dict, column: str, search: Optional[str]) -> None:
+    normalized = (search or "").strip()
+    if not normalized:
+        return
+    normalized_lower = normalized.lower()
+    compact_search = re.sub(r"(.)\1+", r"\1", normalized_lower)
+    if _pg_trgm_enabled(connection):
+        conditions.append(
+            f"({column} ILIKE %(search_like)s "
+            f"OR lower({column}) %% %(search_norm)s "
+            f"OR similarity(lower({column}), %(search_norm)s) >= %(search_threshold)s "
+            f"OR regexp_replace(lower({column}), '(.)\\1+', '\\1', 'g') ILIKE %(search_compact_like)s)"
+        )
+        params["search_norm"] = normalized_lower
+        params["search_threshold"] = TRGM_SIMILARITY_THRESHOLD
+    else:
+        conditions.append(
+            f"({column} ILIKE %(search_like)s "
+            f"OR regexp_replace(lower({column}), '(.)\\1+', '\\1', 'g') ILIKE %(search_compact_like)s)"
+        )
+    params["search_like"] = f"%{normalized}%"
+    params["search_compact_like"] = f"%{compact_search}%"
 
 
 # ============================================
@@ -155,6 +196,98 @@ def delete_users(connection, users_id: int) -> bool:
 # CATALOG
 # ============================================
 
+def add_food_brand(connection, brand_name: str) -> bool:
+    clean_name = (brand_name or "").strip()
+    if not clean_name:
+        return False
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO food_brands (name)
+                VALUES (%(name)s)
+                ON CONFLICT (name) DO NOTHING;
+                """,
+                {"name": clean_name},
+            )
+        connection.commit()
+        return True
+    except Exception as e:
+        connection.rollback()
+        print(f"Error in query: {e}")
+        return False
+
+
+def get_food_brand_suggestions(connection, search: str = "", limit: int = 8) -> list[str]:
+    normalized = (search or "").strip()
+    params = {
+        "q": normalized,
+        "q_like": f"%{normalized}%",
+        "q_prefix": f"{normalized.lower()}%",
+        "q_lower": normalized.lower(),
+        "limit": max(1, min(int(limit or 8), 25)),
+    }
+    query = """
+        WITH source AS (
+            SELECT DISTINCT trim(brand) AS name
+            FROM catalog
+            WHERE brand IS NOT NULL AND trim(brand) <> ''
+            UNION
+            SELECT DISTINCT trim(name) AS name
+            FROM food_brands
+            WHERE name IS NOT NULL AND trim(name) <> ''
+        )
+        SELECT name
+        FROM source
+        WHERE (%(q)s = '' OR name ILIKE %(q_like)s)
+        ORDER BY
+            CASE
+                WHEN lower(name) = %(q_lower)s THEN 0
+                WHEN lower(name) LIKE %(q_prefix)s THEN 1
+                ELSE 2
+            END,
+            name
+        LIMIT %(limit)s;
+    """
+    rows = _execute_query_many(connection, query, params, commit=False)
+    return [str(row["name"]) for row in rows if row and row.get("name")]
+
+
+def get_subtype_suggestions(connection, search: str = "", limit: int = 50) -> list[str]:
+    normalized = (search or "").strip()
+    params = {
+        "q": normalized,
+        "q_like": f"%{normalized}%",
+        "q_prefix": f"{normalized.lower()}%",
+        "q_lower": normalized.lower(),
+        "limit": max(1, min(int(limit or 50), 500)),
+    }
+    query = """
+        WITH source AS (
+            SELECT DISTINCT trim(subtype) AS name
+            FROM catalog
+            WHERE subtype IS NOT NULL AND trim(subtype) <> ''
+            UNION
+            SELECT DISTINCT trim(subtype) AS name
+            FROM manual_intake
+            WHERE subtype IS NOT NULL AND trim(subtype) <> ''
+        )
+        SELECT name
+        FROM source
+        WHERE (%(q)s = '' OR name ILIKE %(q_like)s)
+        ORDER BY
+            CASE
+                WHEN lower(name) = %(q_lower)s THEN 0
+                WHEN lower(name) LIKE %(q_prefix)s THEN 1
+                ELSE 2
+            END,
+            name
+        LIMIT %(limit)s;
+    """
+    rows = _execute_query_many(connection, query, params, commit=False)
+    return [str(row["name"]) for row in rows if row and row.get("name")]
+
+
 def add_catalog_item(connection, data: dict) -> Optional[int]:
     """
     Adds a new item to the catalog.
@@ -178,7 +311,7 @@ def add_catalog_item(connection, data: dict) -> Optional[int]:
         RETURNING id;
     """
     result = _execute_query(connection, query, data)
-    return result[0] if result else None
+    return result["id"] if result else None
 
 
 def get_catalog_item(connection, catalog_id: int) -> Optional[dict]:
@@ -192,9 +325,7 @@ def get_all_catalog(connection, search: str = None, category: str = None, favori
     conditions = []
     params = {}
     
-    if search:
-        conditions.append("name ILIKE %(search)s")
-        params["search"] = f"%{search}%"
+    _add_fuzzy_name_condition(connection, conditions, params, "name", search)
     if category:
         conditions.append("category = %(category)s")
         params["category"] = category
@@ -259,7 +390,7 @@ def add_manual_intake(connection, data: dict) -> Optional[int]:
         RETURNING id;
     """
     result = _execute_query(connection, query, data)
-    return result[0] if result else None
+    return result["id"] if result else None
 
 
 def get_manual_intake(connection, intake_id: int) -> Optional[dict]:
@@ -276,9 +407,7 @@ def get_all_manual_intakes(connection, users_id: int = None, search: str = None,
     if users_id:
         conditions.append("created_by = %(users_id)s")
         params["users_id"] = users_id
-    if search:
-        conditions.append("name ILIKE %(search)s")
-        params["search"] = f"%{search}%"
+    _add_fuzzy_name_condition(connection, conditions, params, "name", search)
     if favorite is not None:
         conditions.append("favorite = %(favorite)s")
         params["favorite"] = favorite
@@ -438,7 +567,7 @@ def add_recipe(connection, users_id: int, name: str, meal_type: str = None, note
         "notes": notes,
         "favorite": favorite
     })
-    return result[0] if result else None
+    return result["id"] if result else None
 
 
 def get_recipe(connection, recipe_id: int) -> Optional[dict]:
@@ -447,7 +576,7 @@ def get_recipe(connection, recipe_id: int) -> Optional[dict]:
     return _execute_query(connection, query, {"id": recipe_id}, commit=False)
 
 
-def get_all_recipes(connection, users_id: int = None, meal_type: str = None, favorite: bool = None) -> list:
+def get_all_recipes(connection, users_id: int = None, meal_type: str = None, favorite: bool = None, search: str = None) -> list:
     """Gets all recipes with optional filters."""
     conditions = []
     params = {}
@@ -458,6 +587,7 @@ def get_all_recipes(connection, users_id: int = None, meal_type: str = None, fav
     if meal_type:
         conditions.append("meal_type = %(meal_type)s")
         params["meal_type"] = meal_type
+    _add_fuzzy_name_condition(connection, conditions, params, "name", search)
     if favorite is not None:
         conditions.append("favorite = %(favorite)s")
         params["favorite"] = favorite

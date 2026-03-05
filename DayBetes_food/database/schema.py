@@ -39,6 +39,14 @@ class DBSchema:
     );
     """
 
+    food_brands = """
+    CREATE TABLE IF NOT EXISTS food_brands (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) UNIQUE NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    """
+
 
     catalog = """
     CREATE TABLE IF NOT EXISTS catalog (
@@ -63,7 +71,7 @@ class DBSchema:
         NOVA INTEGER CHECK (NOVA BETWEEN 1 AND 4),
         yuka INTEGER CHECK (yuka BETWEEN 0 AND 100),
         
-        default_portion INTEGER DEFAULT 100, -- Default portion size for the food, which will be used as the default amount added to the cart when no other quantity is specified
+        default_portion REAL DEFAULT 100, -- Default portion size for the food, which will be used as the default amount added to the cart when no other quantity is specified
         
         calories_100g REAL,
         carbs_100g REAL,

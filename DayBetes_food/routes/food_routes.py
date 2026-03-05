@@ -20,6 +20,9 @@ from DayBetes_food.database.queries.crud import (
     update_recipe,
     add_manual_intake,
     add_recipe,
+    add_food_brand,
+    get_food_brand_suggestions,
+    get_subtype_suggestions,
 )
 from DayBetes_food.components.food.foods import FoodSectionsContent, FavoriteButton, on_after
 from DayBetes_food.components.food.foods import CreateCatalogPage, CreateManualPage, CreateRecipePage
@@ -64,13 +67,10 @@ def _sorted_food_entries(catalog_items, manual_items, recipes):
 
 def _filtered_entries(connection, search: str = "", filter_value: str = "all"):
     user_id = get_default_user_id(connection)
-    query = (search or "").strip().lower()
 
     catalog_items = get_all_catalog(connection, search=search or None)
     manual_items = get_all_manual_intakes(connection, users_id=user_id, search=search or None) if user_id else []
-    recipes = get_all_recipes(connection, users_id=user_id) if user_id else []
-    if query:
-        recipes = [recipe for recipe in recipes if query in (recipe.get("name") or "").lower()]
+    recipes = get_all_recipes(connection, users_id=user_id, search=search or None) if user_id else []
 
     if filter_value == "food":
         entries = _sorted_food_entries(catalog_items, manual_items, [])
@@ -89,11 +89,23 @@ def _filtered_entries(connection, search: str = "", filter_value: str = "all"):
 
 
 def _success_msg(text: str):
-    return P(text, cls="text-xs text-green-700")
+    return render_fragment(
+        Div(
+            P("Success", cls="text-[11px] font-semibold text-green-800"),
+            P(text, cls="text-xs text-green-700"),
+            cls="web_container p-2 rounded-lg border border-green-200/70 bg-green-50/60",
+        )
+    )
 
 
 def _error_msg(text: str):
-    return P(text, cls="text-xs text-red-700")
+    return render_fragment(
+        Div(
+            P("Error", cls="text-[11px] font-semibold text-red-800"),
+            P(text, cls="text-xs text-red-700"),
+            cls="web_container p-2 rounded-lg border border-red-200/70 bg-red-50/60",
+        )
+    )
 
 
 def setup_food_routes(rt):
@@ -104,7 +116,10 @@ def setup_food_routes(rt):
 
     @rt("/food/create/catalog/form")
     def get(request: Request):
-        return render_page(request, lambda _: CreateCatalogPage())
+        with get_connection() as connection:
+            brands = get_food_brand_suggestions(connection, search="", limit=500)
+            subtypes = get_subtype_suggestions(connection, search="", limit=500)
+        return render_page(request, lambda _: CreateCatalogPage(brand_options=brands, subtype_options=subtypes))
 
     @rt("/food/create/manual/form")
     def get(request: Request):
@@ -113,7 +128,7 @@ def setup_food_routes(rt):
     @rt("/food/create/recipe/form")
     def get(request: Request):
         return render_page(request, lambda _: CreateRecipePage())
-    
+
     @rt("/food/list")
     def get(request: Request, search: str = "", filter: str = "all"):
         if request.headers.get("HX-Request") != "true":
@@ -355,22 +370,30 @@ def setup_food_routes(rt):
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
-        if not name or not category or not subtype:
+        clean_name = (name or "").strip()
+        clean_category = (category or "").strip()
+        clean_subtype = (subtype or "").strip()
+        if not clean_name or not clean_category or not clean_subtype:
             return _error_msg("Name, category and subtype are required.")
 
         with get_connection() as connection:
+            existing = get_all_catalog(connection, search=clean_name)
+            if any(((item.get("name") or "").strip().lower() == clean_name.lower()) for item in existing):
+                return _error_msg("A catalog item with that name already exists.")
+
             user_id = get_default_user_id(connection)
+            clean_brand = (brand or "").strip()
             payload = {
                 "created_by": user_id,
-                "name": name.strip(),
-                "brand": brand.strip() or None,
-                "category": category.strip(),
-                "subtype": subtype.strip(),
+                "name": clean_name,
+                "brand": clean_brand or None,
+                "category": clean_category,
+                "subtype": clean_subtype,
                 "initial_state": initial_state.strip() or None,
                 "nutriscore": nutriscore.strip() or None,
                 "nova": _to_int(nova),
                 "yuka": _to_int(yuka),
-                "default_portion": _to_int(default_portion),
+                "default_portion": _to_float(default_portion),
                 "calories_100g": _to_float(calories_100g),
                 "carbs_100g": _to_float(carbs_100g),
                 "sugars_100g": _to_float(sugars_100g),
@@ -386,8 +409,10 @@ def setup_food_routes(rt):
             }
             created_id = add_catalog_item(connection, payload)
             if not created_id:
-                return _error_msg("Catalog item could not be created.")
-            return _success_msg("Catalog item created.")
+                return _error_msg("Catalog item could not be created. Check required fields and uniqueness constraints.")
+            if clean_brand:
+                add_food_brand(connection, clean_brand)
+            return HTMLResponse("", headers={"HX-Redirect": "/food"})
 
     @rt("/food/create/manual")
     def post(
@@ -395,7 +420,7 @@ def setup_food_routes(rt):
         name: str = "",
         description: str = "",
         subtype: str = "",
-        origin: str = "",
+        source_origin: str = "",
         amount_g: str = "",
         calories_100g: str = "",
         carbs_100g: str = "",
@@ -412,7 +437,9 @@ def setup_food_routes(rt):
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
-        if not name or not subtype or not amount_g:
+        clean_name = (name or "").strip()
+        clean_subtype = (subtype or "").strip()
+        if not clean_name or not clean_subtype or not amount_g:
             return _error_msg("Name, subtype and amount are required.")
 
         try:
@@ -427,12 +454,16 @@ def setup_food_routes(rt):
             if not user_id:
                 return _error_msg("No users found.")
 
+            existing = get_all_manual_intakes(connection, users_id=user_id, search=clean_name)
+            if any(((item.get("name") or "").strip().lower() == clean_name.lower()) for item in existing):
+                return _error_msg("A manual intake with that name already exists for this user.")
+
             payload = {
                 "created_by": user_id,
-                "name": name.strip(),
+                "name": clean_name,
                 "description": description.strip() or None,
-                "subtype": subtype.strip(),
-                "origin": origin.strip() or None,
+                "subtype": clean_subtype,
+                "origin": source_origin.strip() or None,
                 "amount_g": amount_value,
                 "calories_100g": _to_float(calories_100g),
                 "carbs_100g": _to_float(carbs_100g),
@@ -449,8 +480,8 @@ def setup_food_routes(rt):
             }
             created_id = add_manual_intake(connection, payload)
             if not created_id:
-                return _error_msg("Manual intake could not be created.")
-            return _success_msg("Manual intake created.")
+                return _error_msg("Manual intake could not be created. Check required fields and constraints.")
+            return HTMLResponse("", headers={"HX-Redirect": "/food"})
 
     @rt("/food/create/recipe")
     def post(
@@ -462,7 +493,8 @@ def setup_food_routes(rt):
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
-        if not name:
+        clean_name = (name or "").strip()
+        if not clean_name:
             return _error_msg("Recipe name is required.")
 
         with get_connection() as connection:
@@ -472,14 +504,14 @@ def setup_food_routes(rt):
             created_id = add_recipe(
                 connection,
                 users_id=user_id,
-                name=name.strip(),
+                name=clean_name,
                 meal_type=meal_type.strip() or None,
                 notes=notes.strip() or None,
                 favorite=_to_bool(favorite),
             )
             if not created_id:
-                return _error_msg("Recipe could not be created.")
-            return _success_msg("Recipe created.")
+                return _error_msg("Recipe could not be created. Check required fields and constraints.")
+            return HTMLResponse("", headers={"HX-Redirect": "/food"})
     
     @rt("/meal_selector_input")
     def get(request: Request, intake_event_id: str):

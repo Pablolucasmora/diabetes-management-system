@@ -1,4 +1,5 @@
 from datetime import datetime
+import json
 from fasthtml.common import *
 
 from DayBetes_food.database.queries.crud import get_cart_events
@@ -198,7 +199,14 @@ def SearchInput():
     )
 
 
-def _labeled_input(label: str, name: str, typ: str = "text", placeholder: str = "", help_text: str = ""):
+def _labeled_input(
+    label: str,
+    name: str,
+    typ: str = "text",
+    placeholder: str = "",
+    help_text: str = "",
+    step: str = "",
+):
     help_value = help_text or f"What to enter in {label}"
     return Div(
         _label_with_help(label, help_value),
@@ -207,8 +215,219 @@ def _labeled_input(label: str, name: str, typ: str = "text", placeholder: str = 
             name=name,
             placeholder=placeholder,
             cls="web_input border border-white rounded-lg px-2 py-1 text-base",
+            **({"step": step} if step else {}),
         ),
         cls="flex flex-col gap-1",
+    )
+
+
+def _searchable_autocomplete_input(
+    label: str,
+    name: str,
+    options: list[str] | None = None,
+    help_text: str = "",
+    placeholder: str = "",
+    allow_add: bool = True,
+):
+    normalized_options = sorted({(opt or "").strip() for opt in (options or []) if (opt or "").strip()})
+    options_json = json.dumps(normalized_options)
+    placeholder_value = placeholder or f"Type {label.lower()}"
+    help_value = help_text or f"Search and select {label.lower()}."
+    return Div(
+        _label_with_help(label, help_value),
+        Div(
+            Input(
+                type="text",
+                name=name,
+                data_searchable_input="true",
+                placeholder=placeholder_value,
+                autocomplete="off",
+                cls="web_input border border-white rounded-lg px-2 py-1 text-base",
+            ),
+            Div(
+                data_searchable_suggestions="true",
+                cls="""
+                    absolute left-0 right-0 top-full mt-1 z-[70]
+                    rounded-md border border-gray-200
+                    bg-white opacity-100 shadow-lg
+                    overflow-hidden
+                """,
+                style="display:none;background:#fff;backdrop-filter:none;z-index:70;",
+            ),
+            data_searchable_autocomplete="true",
+            data_searchable_options=options_json,
+            data_searchable_allow_add="1" if allow_add else "0",
+            cls="relative",
+        ),
+        cls="flex flex-col gap-1",
+    )
+
+
+def _brand_autocomplete_input(brand_options: list[str] | None = None):
+    return _searchable_autocomplete_input(
+        label="Brand",
+        name="brand",
+        options=brand_options,
+        help_text="Brand or manufacturer name.",
+        placeholder="Type brand",
+        allow_add=True,
+    )
+
+
+def _searchable_autocomplete_bootstrap_script():
+    return Script(
+        """
+        (function () {
+          if (window.__dbSearchableAutocompleteBootstrapped) return;
+          window.__dbSearchableAutocompleteBootstrapped = true;
+
+          function normalize(v) { return String(v || "").trim(); }
+          function escapeHtml(v) {
+            return String(v || "")
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;")
+              .replace(/"/g, "&quot;")
+              .replace(/'/g, "&#39;");
+          }
+
+          function bindOne(root) {
+            if (!root || root.dataset.searchableBound === "1") return;
+            root.dataset.searchableBound = "1";
+
+            var input = root.querySelector("[data-searchable-input='true']");
+            var box = root.querySelector("[data-searchable-suggestions='true']");
+            if (!input || !box) return;
+
+            var options = [];
+            try { options = JSON.parse(root.dataset.searchableOptions || "[]"); }
+            catch (_) { options = []; }
+            var allowAdd = root.dataset.searchableAllowAdd === "1";
+
+            function closeBox() {
+              box.style.display = "none";
+              box.innerHTML = "";
+              root.style.zIndex = "";
+            }
+
+            function similarityScore(nameLower, qLower) {
+              if (!qLower) return 0;
+              if (nameLower === qLower) return 1000;
+              if (nameLower.indexOf(qLower) === 0) return 800;
+              if (nameLower.indexOf(qLower) !== -1) return 600;
+
+              var qSet = new Set(qLower.split(""));
+              var nSet = new Set(nameLower.split(""));
+              var inter = 0;
+              qSet.forEach(function (ch) { if (nSet.has(ch)) inter += 1; });
+              var union = new Set([].concat(Array.from(qSet), Array.from(nSet))).size || 1;
+              return Math.floor((inter / union) * 300);
+            }
+
+            function render() {
+              var q = normalize(input.value);
+              var qLower = q.toLowerCase();
+              var matches = [];
+
+              for (var i = 0; i < options.length; i += 1) {
+                var name = normalize(options[i]);
+                if (!name) continue;
+                var lower = name.toLowerCase();
+                var score = similarityScore(lower, qLower);
+                if (!q || score > 0) matches.push({ name: name, score: score });
+              }
+
+              matches.sort(function (a, b) {
+                if (b.score !== a.score) return b.score - a.score;
+                return a.name.localeCompare(b.name);
+              });
+
+              var rows = [];
+              for (var j = 0; j < matches.length; j += 1) {
+                var label = matches[j].name;
+                var safe = escapeHtml(label);
+                rows.push(
+                  "<li class='border-b border-gray-200'>" +
+                  "<button type='button' data-searchable-pick='" +
+                  safe +
+                  "' class='w-full text-left px-3 py-2 bg-white hover:bg-gray-200 text-sm text-gray-800 transition-colors'>" +
+                  safe +
+                  "</button></li>"
+                );
+              }
+
+              if (allowAdd && q) {
+                rows.push(
+                  "<li class='border-b border-gray-200'>" +
+                  "<button type='button' data-searchable-add='true' class='w-full text-left px-3 py-2 bg-white hover:bg-gray-200 text-sm font-semibold text-gray-800 transition-colors'>Add: '" +
+                  escapeHtml(q) +
+                  "'</button></li>"
+                );
+              }
+
+              if (rows.length) {
+                box.innerHTML = (
+                  "<div data-searchable-scroll='true' class='p-0 max-h-44 overflow-y-auto' " +
+                  "style='-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y;'>" +
+                  "<ul>" + rows.join("") + "</ul></div>"
+                );
+                var items = box.querySelectorAll("li");
+                if (items.length > 0) items[items.length - 1].classList.remove("border-b", "border-gray-200");
+                var scrollArea = box.querySelector("[data-searchable-scroll='true']");
+                if (scrollArea) {
+                  scrollArea.addEventListener("wheel", function (ev) { ev.stopPropagation(); }, { passive: true });
+                  scrollArea.addEventListener("touchmove", function (ev) { ev.stopPropagation(); }, { passive: true });
+                }
+                root.style.zIndex = "80";
+              } else {
+                box.innerHTML = "";
+                root.style.zIndex = "";
+              }
+              box.style.display = rows.length ? "block" : "none";
+            }
+
+            box.addEventListener("click", function (ev) {
+              var target = ev.target;
+              if (!target) return;
+              if (target.dataset && target.dataset.searchableAdd === "true") {
+                var q = normalize(input.value);
+                if (!q) return;
+                var exists = options.some(function (x) { return normalize(x).toLowerCase() === q.toLowerCase(); });
+                if (!exists) options.push(q);
+                input.value = q;
+                closeBox();
+                return;
+              }
+              var pick = target.dataset ? target.dataset.searchablePick : "";
+              if (pick) {
+                input.value = pick;
+                closeBox();
+              }
+            });
+
+            input.addEventListener("focus", render);
+            input.addEventListener("input", render);
+            input.addEventListener("keydown", function (ev) {
+              if (ev.key === "Escape") closeBox();
+            });
+            document.addEventListener("click", function (ev) {
+              if (!root.contains(ev.target)) closeBox();
+            });
+          }
+
+          function bindAll() {
+            var roots = document.querySelectorAll("[data-searchable-autocomplete='true']");
+            for (var i = 0; i < roots.length; i += 1) bindOne(roots[i]);
+          }
+
+          if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", bindAll);
+          } else {
+            bindAll();
+          }
+          document.body.addEventListener("htmx:afterSwap", bindAll);
+        })();
+        """
     )
 
 
@@ -233,6 +452,7 @@ def _favorite_checkbox(name: str = "favorite"):
                 type="checkbox",
                 name=name,
                 value="true",
+                checked=True,
                 cls=CHECKBOX_CLS,
             ),
             Span(
@@ -348,19 +568,19 @@ def QuickCreateButtons():
     )
 
 
-def CreateCatalogPanel():
+def CreateCatalogPanel(brand_options: list[str] | None = None, subtype_options: list[str] | None = None):
     return Div(
         Form(
             Div(
                 _labeled_input("Name*", "name"),
-                _labeled_input("Brand", "brand"),
-                _labeled_select("Category*", "category", CATEGORY_OPTIONS),
-                _labeled_input("Subtype*", "subtype"),
-                _labeled_select("Initial state", "initial_state", INITIAL_STATE_OPTIONS),
-                _labeled_select("Nutriscore", "nutriscore", ["A", "B", "C", "D", "E"]),
+                _brand_autocomplete_input(brand_options=brand_options),
+                _searchable_autocomplete_input("Category*", "category", CATEGORY_OPTIONS, allow_add=True),
+                _searchable_autocomplete_input("Subtype*", "subtype", subtype_options or [], allow_add=True),
+                _searchable_autocomplete_input("Initial state", "initial_state", INITIAL_STATE_OPTIONS, allow_add=False),
+                _searchable_autocomplete_input("Nutriscore", "nutriscore", ["A", "B", "C", "D", "E"], allow_add=False),
                 _labeled_input("NOVA (1-4)", "nova", "number"),
                 _labeled_input("Yuka (0-100)", "yuka", "number"),
-                _labeled_input("Default portion", "default_portion", "number"),
+                _labeled_input("Default portion", "default_portion", "number", step="any"),
                 _labeled_input("Calories/100g", "calories_100g", "number"),
                 _labeled_input("Carbs/100g", "carbs_100g", "number"),
                 _labeled_input("Sugars/100g", "sugars_100g", "number"),
@@ -398,7 +618,7 @@ def CreateManualPanel():
                 _labeled_input("Name*", "name"),
                 _labeled_input("Description", "description"),
                 _labeled_input("Subtype*", "subtype"),
-                _labeled_input("Origin", "origin"),
+                _labeled_input("Origin", "source_origin"),
                 _labeled_input("Amount g*", "amount_g", "number"),
                 _labeled_input("Calories/100g", "calories_100g", "number"),
                 _labeled_input("Carbs/100g", "carbs_100g", "number"),
@@ -470,6 +690,7 @@ def CreatePanels():
         CreateCatalogPanel(),
         CreateManualPanel(),
         CreateRecipePanel(),
+        _searchable_autocomplete_bootstrap_script(),
         cls="flex flex-col gap-2 items-center",
     )
 
@@ -482,6 +703,7 @@ def _create_page_shell(title: str, form, result_id: str):
         ),
         Div(form, cls="w-full"),
         Div(id=result_id, cls="text-xs w-full"),
+        _searchable_autocomplete_bootstrap_script(),
         Script(src="/js/smart_macros.js", defer="defer"),
         cls="""
             flex flex-col items-center
@@ -494,21 +716,45 @@ def _create_page_shell(title: str, form, result_id: str):
     )
 
 
-def CreateCatalogPage():
+def CreateCatalogPage(brand_options: list[str] | None = None, subtype_options: list[str] | None = None):
     result_id = "create_catalog_result_page"
     form = Form(
         Div(
             _labeled_input("Name*", "name", help_text="Product name. Required."),
-            _labeled_input("Brand", "brand", help_text="Brand or manufacturer name."),
-            _labeled_select("Category*", "category", CATEGORY_OPTIONS, help_text="Main category. Required."),
-            _labeled_input("Subtype*", "subtype", help_text="Specific subtype, e.g. yogurt, pasta, soda. Required."),
+            _brand_autocomplete_input(brand_options=brand_options),
+            _searchable_autocomplete_input(
+                "Category*",
+                "category",
+                CATEGORY_OPTIONS,
+                help_text="Main category. Required.",
+                allow_add=True,
+            ),
+            _searchable_autocomplete_input(
+                "Subtype*",
+                "subtype",
+                subtype_options or [],
+                help_text="Specific subtype, e.g. yogurt, pasta, soda. Required.",
+                allow_add=True,
+            ),
             _smart_macros_block("catalog"),
-            _labeled_input("Default portion", "default_portion", "number", help_text="Default serving size in g/ml."),
+            _labeled_input("Default portion", "default_portion", "number", help_text="Default serving size in g/ml.", step="any"),
             _favorite_checkbox(),
             _advanced_toggle("catalog_advanced"),
             Div(
-                _labeled_select("Initial state", "initial_state", INITIAL_STATE_OPTIONS, help_text="Physical state before preparation."),
-                _labeled_select("Nutriscore", "nutriscore", ["A", "B", "C", "D", "E"], help_text="Nutrition quality score from A to E."),
+                _searchable_autocomplete_input(
+                    "Initial state",
+                    "initial_state",
+                    INITIAL_STATE_OPTIONS,
+                    help_text="Physical state before preparation.",
+                    allow_add=False,
+                ),
+                _searchable_autocomplete_input(
+                    "Nutriscore",
+                    "nutriscore",
+                    ["A", "B", "C", "D", "E"],
+                    help_text="Nutrition quality score from A to E.",
+                    allow_add=False,
+                ),
                 _labeled_input("NOVA (1-4)", "nova", "number", help_text="Food processing level from 1 to 4."),
                 _labeled_input("Yuka (0-100)", "yuka", "number", help_text="Optional Yuka-style score from 0 to 100."),
                 _labeled_input("Caffeine", "caffeine", "number", help_text="Caffeine content in mg per 100g/ml."),
@@ -536,7 +782,7 @@ def CreateManualPage():
             _labeled_input("Name*", "name", help_text="Manual intake name. Required."),
             _labeled_input("Description", "description", help_text="Optional short description."),
             _labeled_input("Subtype*", "subtype", help_text="Specific subtype. Required."),
-            _labeled_input("Origin", "origin", help_text="Where it came from (home, restaurant, etc.)."),
+            _labeled_input("Origin", "source_origin", help_text="Where it came from (home, restaurant, etc.)."),
             _labeled_input("Amount g*", "amount_g", "number", help_text="Consumed amount in grams/ml. Required."),
             _smart_macros_block("manual"),
             _favorite_checkbox(),

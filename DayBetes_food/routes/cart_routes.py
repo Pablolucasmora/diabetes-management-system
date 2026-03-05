@@ -1,7 +1,7 @@
 from fasthtml.common import *
 from DayBetes_food.components.cart.cart_main import cart_main
 from DayBetes_food.components.cart.cart_components import MacrosSummary
-from DayBetes_food.components.ui import render_page
+from DayBetes_food.components.ui import render_fragment, render_page
 from datetime import datetime
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.database.queries.crud import (
@@ -181,9 +181,11 @@ def setup_cart_routes(rt):
             if not event:
                 return HTMLResponse(status_code=404)
             portions = get_portion_detail_by_event(connection, event_id)
-            return Div(
-                MacrosSummary(event, portions),
-                id=f"macros_summary_event_{event_id}",
+            return render_fragment(
+                Div(
+                    MacrosSummary(event, portions),
+                    id=f"macros_summary_event_{event_id}",
+                )
             )
 
     @rt("/cart/event/{event_id}/delete")
@@ -239,7 +241,13 @@ def setup_cart_routes(rt):
         value = (strictly_weighed or "").strip().lower() == "true"
         with get_connection() as connection:
             ok = _update_group_field(connection, event_id, origin, origin_id, "strictly_weighed", value)
-            return _cart_response(connection, status=200 if ok else 400)
+            if not ok:
+                return HTMLResponse("", status_code=400)
+            event = get_intake_event(connection, event_id)
+            if not event:
+                return HTMLResponse("", status_code=404)
+            portions = get_portion_detail_by_event(connection, event_id)
+            return render_fragment(Div(MacrosSummary(event, portions), id=f"macros_summary_event_{event_id}"))
 
     @rt("/cart/event/{event_id}/ingredient/{origin}/{origin_id}/macros_quality")
     def post(request: Request, event_id: int, origin: str, origin_id: int, macros_quality: str = ""):
@@ -248,7 +256,13 @@ def setup_cart_routes(rt):
         value = (macros_quality or "").strip().lower() == "true"
         with get_connection() as connection:
             ok = _update_group_field(connection, event_id, origin, origin_id, "macros_quality", value)
-            return _cart_response(connection, status=200 if ok else 400)
+            if not ok:
+                return HTMLResponse("", status_code=400)
+            event = get_intake_event(connection, event_id)
+            if not event:
+                return HTMLResponse("", status_code=404)
+            portions = get_portion_detail_by_event(connection, event_id)
+            return render_fragment(Div(MacrosSummary(event, portions), id=f"macros_summary_event_{event_id}"))
 
     @rt("/cart/event/{event_id}/ingredient/{origin}/{origin_id}/is_cooked_weight")
     def post(request: Request, event_id: int, origin: str, origin_id: int, is_cooked_weight: str = ""):
@@ -257,7 +271,13 @@ def setup_cart_routes(rt):
         value = (is_cooked_weight or "").strip().lower() == "true"
         with get_connection() as connection:
             ok = _update_group_field(connection, event_id, origin, origin_id, "is_cooked_weight", value)
-            return _cart_response(connection, status=200 if ok else 400)
+            if not ok:
+                return HTMLResponse("", status_code=400)
+            event = get_intake_event(connection, event_id)
+            if not event:
+                return HTMLResponse("", status_code=404)
+            portions = get_portion_detail_by_event(connection, event_id)
+            return render_fragment(Div(MacrosSummary(event, portions), id=f"macros_summary_event_{event_id}"))
 
     @rt("/cart/event/{event_id}/confirm")
     def post(

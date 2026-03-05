@@ -21,6 +21,20 @@ def _has_column(cursor, table: str, column: str) -> bool:
     return cursor.fetchone() is not None
 
 
+def _column_data_type(cursor, table: str, column: str):
+    cursor.execute(
+        """
+        SELECT data_type
+        FROM information_schema.columns
+        WHERE table_name = %(table)s AND column_name = %(column)s
+        LIMIT 1;
+        """,
+        {"table": table, "column": column},
+    )
+    row = cursor.fetchone()
+    return row["data_type"] if row else None
+
+
 def _ensure_users_schema(cursor):
     if _has_column(cursor, "users", "mail") and not _has_column(cursor, "users", "email"):
         cursor.execute("ALTER TABLE users RENAME COLUMN mail TO email;")
@@ -137,6 +151,40 @@ def _ensure_default_user(cursor):
     )
 
 
+def _ensure_catalog_schema(cursor):
+    if not _has_column(cursor, "catalog", "default_portion"):
+        return
+    dtype = (_column_data_type(cursor, "catalog", "default_portion") or "").lower()
+    if dtype in {"smallint", "integer", "bigint"}:
+        cursor.execute(
+            "ALTER TABLE catalog ALTER COLUMN default_portion TYPE DOUBLE PRECISION USING default_portion::double precision;"
+        )
+
+
+def _ensure_trgm_search(cursor):
+    # Best-effort: if extension/index creation is not permitted, keep app running.
+    cursor.execute("SAVEPOINT trgm_setup;")
+    try:
+        cursor.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_catalog_name_trgm "
+            "ON catalog USING gin (lower(name) gin_trgm_ops);"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_manual_intake_name_trgm "
+            "ON manual_intake USING gin (lower(name) gin_trgm_ops);"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_recipe_name_trgm "
+            "ON recipe USING gin (lower(name) gin_trgm_ops);"
+        )
+        cursor.execute("RELEASE SAVEPOINT trgm_setup;")
+    except Exception as exc:
+        cursor.execute("ROLLBACK TO SAVEPOINT trgm_setup;")
+        cursor.execute("RELEASE SAVEPOINT trgm_setup;")
+        print(f"Warning: pg_trgm setup skipped: {exc}")
+
+
 def init_db():
     conn = get_connection()
     cur = conn.cursor()
@@ -145,6 +193,7 @@ def init_db():
             DBSchema.users,
             DBSchema.auth_sessions,
             DBSchema.auth_rate_limits,
+            DBSchema.food_brands,
             DBSchema.catalog,
             DBSchema.manual_intake,
             DBSchema.fridge,
@@ -158,6 +207,8 @@ def init_db():
         for table_sql in tables:
             cur.execute(table_sql)
 
+        _ensure_trgm_search(cur)
+        _ensure_catalog_schema(cur)
         _ensure_users_schema(cur)
         _ensure_default_user(cur)
 

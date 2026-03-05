@@ -44,6 +44,7 @@ def _checkbox(
     hx_post: str,
     input_id: str = "",
     aria_label: str = "",
+    hx_target: str = "",
     hx_swap: str = "",
     after_request_js: str = "",
 ):
@@ -58,6 +59,7 @@ def _checkbox(
             hx_post=hx_post,
             hx_trigger="change",
             **({"id": input_id} if input_id else {}),
+            **({"hx_target": hx_target} if hx_target else {}),
             **({"hx_swap": hx_swap} if hx_swap else {}),
             **({"hx-on:htmx:after-request": after_request_js} if after_request_js else {}),
         ),
@@ -307,10 +309,6 @@ def IngredientRow(event, grouped_item):
     default_display = f"{units_count:.2f}".replace(".", ",")
     confirm_id = f"delete_food_confirm_{item_key}"
     ingredient_name = portion_name(sample)
-    refresh_macros_js = (
-        f"htmx.ajax('GET','/cart/event/{event['id']}/macros_summary',"
-        f"{{target:'#macros_summary_event_{event['id']}',swap:'outerHTML'}});"
-    )
     refresh_cart_js = "htmx.ajax('GET','/cart',{target:'#main_content',swap:'innerHTML'});"
     offset_input_id = f"offset_input_{item_key}"
 
@@ -410,8 +408,8 @@ def IngredientRow(event, grouped_item):
                 checked=bool(sample.get("strictly_weighed")),
                 hx_post=f"/cart/event/{event['id']}/ingredient/{origin}/{origin_id}/strictly_weighed",
                 aria_label=f"Strictly weighted for {ingredient_name}",
-                hx_swap="none",
-                after_request_js=refresh_macros_js,
+                hx_swap="outerHTML",
+                hx_target=f"#macros_summary_event_{event['id']}",
             ),
             cls="flex items-center gap-2"
         ),
@@ -422,8 +420,8 @@ def IngredientRow(event, grouped_item):
                 checked=bool(sample.get("macros_quality")),
                 hx_post=f"/cart/event/{event['id']}/ingredient/{origin}/{origin_id}/macros_quality",
                 aria_label=f"Macros quality for {ingredient_name}",
-                hx_swap="none",
-                after_request_js=refresh_macros_js,
+                hx_swap="outerHTML",
+                hx_target=f"#macros_summary_event_{event['id']}",
             ),
             cls="flex items-center gap-2"
         ),
@@ -434,8 +432,8 @@ def IngredientRow(event, grouped_item):
                 checked=bool(sample.get("is_cooked_weight")),
                 hx_post=f"/cart/event/{event['id']}/ingredient/{origin}/{origin_id}/is_cooked_weight",
                 aria_label=f"Cooked weight for {ingredient_name}",
-                hx_swap="none",
-                after_request_js=refresh_macros_js,
+                hx_swap="outerHTML",
+                hx_target=f"#macros_summary_event_{event['id']}",
             ),
             cls="flex items-center gap-2"
         ),
