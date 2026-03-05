@@ -1,12 +1,22 @@
 from fasthtml.common import *
 
 def BlockIsland(text, icon="/images/ui/menu.svg", name="nav", value="home", **hx):
+    # Put network-triggering htmx attrs on the radio input to avoid
+    # duplicate requests caused by label click forwarding to its control.
+    input_hx = {}
+    for key in ("hx_get", "hx_target", "hx_swap", "hx_push_url", "hx_trigger"):
+        if key in hx:
+            input_hx[key] = hx.pop(key)
+    input_hx.setdefault("hx_trigger", "click")
+    input_hx.setdefault("hx_params", "none")
+
     return Label(
         Input(
             type="radio",
             name=name,
             value=value,
             cls="hidden peer",
+            **input_hx,
         ),
 
         Img(id=value, src=icon, alt="", cls="""

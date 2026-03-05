@@ -114,6 +114,12 @@ def _clear_auth_cookies(response):
     response.delete_cookie(CSRF_COOKIE_NAME, path="/")
 
 
+def _require_post(request: Request):
+    if request.method != "POST":
+        return HTMLResponse("Method Not Allowed", status_code=405)
+    return None
+
+
 def setup_auth_routes(rt):
     @rt("/auth/login")
     def get(req: Request):
@@ -177,6 +183,9 @@ def setup_auth_routes(rt):
         password: str = "",
         password_confirm: str = "",
     ):
+        method_error = _require_post(request)
+        if method_error is not None:
+            return method_error
         if getattr(request.state, "user", None):
             return RedirectResponse(url="/menu", status_code=303)
 
@@ -204,6 +213,9 @@ def setup_auth_routes(rt):
 
     @rt("/auth/login/submit")
     def post(request: Request, identifier: str = "", password: str = ""):
+        method_error = _require_post(request)
+        if method_error is not None:
+            return method_error
         if getattr(request.state, "user", None):
             return RedirectResponse(url="/menu", status_code=303)
 
@@ -241,6 +253,9 @@ def setup_auth_routes(rt):
 
     @rt("/auth/logout")
     def post(request: Request):
+        method_error = _require_post(request)
+        if method_error is not None:
+            return method_error
         session_token = request.cookies.get(SESSION_COOKIE_NAME, "")
         if session_token:
             with get_connection() as connection:
