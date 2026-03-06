@@ -1,4 +1,3 @@
-from datetime import datetime
 import json
 from fasthtml.common import *
 
@@ -214,7 +213,7 @@ def _labeled_input(
             type=typ,
             name=name,
             placeholder=placeholder,
-            cls="web_input border border-white rounded-lg px-2 py-1 text-base",
+            cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-base",
             **({"step": step} if step else {}),
         ),
         cls="flex flex-col gap-1",
@@ -242,7 +241,7 @@ def _searchable_autocomplete_input(
                 data_searchable_input="true",
                 placeholder=placeholder_value,
                 autocomplete="off",
-                cls="web_input border border-white rounded-lg px-2 py-1 text-base",
+                cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-base",
             ),
             Div(
                 data_searchable_suggestions="true",
@@ -356,7 +355,11 @@ def _searchable_autocomplete_bootstrap_script():
                 );
               }
 
-              if (allowAdd && q) {
+              var exactExists = options.some(function (x) {
+                return normalize(x).toLowerCase() === qLower;
+              });
+
+              if (allowAdd && q && !exactExists) {
                 rows.push(
                   "<li class='border-b border-gray-200'>" +
                   "<button type='button' data-searchable-add='true' class='w-full text-left px-3 py-2 bg-white hover:bg-gray-200 text-sm font-semibold text-gray-800 transition-colors'>Add: '" +
@@ -439,7 +442,7 @@ def _labeled_select(label: str, name: str, options: list[str], help_text: str = 
             Option("-", value=""),
             *[Option(opt, value=opt) for opt in options],
             name=name,
-            cls="web_input border border-white rounded-lg px-2 py-1 text-xs",
+            cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-xs",
         ),
         cls="flex flex-col gap-1",
     )
@@ -504,7 +507,7 @@ def _smart_macros_block(prefix: str):
             data_smart_macros_prefix=prefix,
             oninput="dbSmartMacrosSync(this)",
             onchange="dbSmartMacrosSync(this)",
-            cls="web_input border border-white rounded-lg px-2 py-1 text-base",
+            cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-base",
         ),
         Div("Escribe macros para ver la deteccion.", id=output_id, cls="text-xs text-gray-700 min-h-5"),
         # Hidden fields populated by Smart Macros parser
@@ -611,14 +614,14 @@ def CreateCatalogPanel(brand_options: list[str] | None = None, subtype_options: 
     )
 
 
-def CreateManualPanel():
+def CreateManualPanel(subtype_options: list[str] | None = None, origin_options: list[str] | None = None):
     return Div(
         Form(
             Div(
                 _labeled_input("Name*", "name"),
                 _labeled_input("Description", "description"),
-                _labeled_input("Subtype*", "subtype"),
-                _labeled_input("Origin", "source_origin"),
+                _searchable_autocomplete_input("Subtype*", "subtype", subtype_options or [], allow_add=True),
+                _searchable_autocomplete_input("Origin", "source_origin", origin_options or [], allow_add=True),
                 _labeled_input("Amount g*", "amount_g", "number"),
                 _labeled_input("Calories/100g", "calories_100g", "number"),
                 _labeled_input("Carbs/100g", "carbs_100g", "number"),
@@ -629,7 +632,7 @@ def CreateManualPanel():
                 _labeled_input("Fiber/100g", "fiber_100g", "number"),
                 _labeled_input("Caffeine", "caffeine", "number"),
                 _labeled_input("Alcohol", "alcohol", "number"),
-                _labeled_select("Glycemic index", "glycemic_index", GLYCEMIC_INDEX_OPTIONS),
+                _searchable_autocomplete_input("Glycemic index", "glycemic_index", GLYCEMIC_INDEX_OPTIONS, help_text="Estimated glycemic index level."),
                 _labeled_input("IG confidence 1-5", "ig_confidence", "number"),
                 _favorite_checkbox(),
                 cls="grid grid-cols-2 gap-2",
@@ -682,16 +685,6 @@ def CreateRecipePanel():
         Div(id="create_recipe_result", cls="text-xs"),
         id="create_recipe_panel",
         cls="hidden md:w-md lg:w-md w-xs flex flex-col gap-2",
-    )
-
-
-def CreatePanels():
-    return Div(
-        CreateCatalogPanel(),
-        CreateManualPanel(),
-        CreateRecipePanel(),
-        _searchable_autocomplete_bootstrap_script(),
-        cls="flex flex-col gap-2 items-center",
     )
 
 
@@ -775,14 +768,26 @@ def CreateCatalogPage(brand_options: list[str] | None = None, subtype_options: l
     return _create_page_shell("Create Catalog", form, result_id)
 
 
-def CreateManualPage():
+def CreateManualPage(subtype_options: list[str] | None = None, origin_options: list[str] | None = None):
     result_id = "create_manual_result_page"
     form = Form(
         Div(
             _labeled_input("Name*", "name", help_text="Manual intake name. Required."),
             _labeled_input("Description", "description", help_text="Optional short description."),
-            _labeled_input("Subtype*", "subtype", help_text="Specific subtype. Required."),
-            _labeled_input("Origin", "source_origin", help_text="Where it came from (home, restaurant, etc.)."),
+            _searchable_autocomplete_input(
+                "Subtype*",
+                "subtype",
+                subtype_options or [],
+                help_text="Specific subtype. Required.",
+                allow_add=True,
+            ),
+            _searchable_autocomplete_input(
+                "Origin",
+                "source_origin",
+                origin_options or [],
+                help_text="Where it came from (home, restaurant, etc.).",
+                allow_add=True,
+            ),
             _labeled_input("Amount g*", "amount_g", "number", help_text="Consumed amount in grams/ml. Required."),
             _smart_macros_block("manual"),
             _favorite_checkbox(),
@@ -790,7 +795,7 @@ def CreateManualPage():
             Div(
                 _labeled_input("Caffeine", "caffeine", "number", help_text="Caffeine content in mg per 100g/ml."),
                 _labeled_input("Alcohol", "alcohol", "number", help_text="Alcohol content in grams per 100g/ml."),
-                _labeled_select("Glycemic index", "glycemic_index", GLYCEMIC_INDEX_OPTIONS, help_text="Estimated glycemic index level."),
+                _searchable_autocomplete_input("Glycemic index", "glycemic_index", GLYCEMIC_INDEX_OPTIONS, help_text="Estimated glycemic index level."),
                 _labeled_input("IG confidence 1-5", "ig_confidence", "number", help_text="Confidence in glycemic index estimate (1 low, 5 high)."),
                 id="manual_advanced",
                 cls="hidden grid grid-cols-1 md:grid-cols-2 gap-2 col-span-1 md:col-span-2",

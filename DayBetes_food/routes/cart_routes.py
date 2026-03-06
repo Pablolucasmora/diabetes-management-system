@@ -16,7 +16,7 @@ from DayBetes_food.database.queries.crud import (
 def _cart_response(connection, status: int = 200):
     if status >= 400:
         return HTMLResponse("", status_code=status)
-    return cart_main(connection)
+    return render_fragment(cart_main(connection))
 
 
 def _to_float(value: str):

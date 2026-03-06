@@ -32,7 +32,7 @@
         shadow-sm
     }
     .web_input {
-        @apply focus:shadow-lg focus:inset-shadow-none focus:outline-none focus:scale-[101%] 
+        @apply focus:shadow-lg focus:inset-shadow-none focus:outline-none focus:scale-[101%]
         ;
     }
 }

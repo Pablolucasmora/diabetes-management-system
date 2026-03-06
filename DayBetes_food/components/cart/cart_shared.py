@@ -1,7 +1,3 @@
-from datetime import datetime
-from fasthtml.common import Option
-
-
 MEAL_TYPES = [
     "breakfast",
     "brunch",
@@ -112,20 +108,6 @@ def group_portions(portions):
         grouped[key]["portion_ids"].append(int(portion["id"]))
         grouped[key]["total_amount_g"] += float(portion.get("amount_g") or 0.0)
     return [grouped[k] for k in order]
-
-
-def time_options(selected_time: datetime):
-    options = []
-    for hour in range(24):
-        for minute in (0, 15, 30, 45):
-            hhmm = f"{hour:02d}:{minute:02d}"
-            selected = selected_time.strftime("%H:%M") == hhmm
-            options.append(Option(hhmm, value=hhmm, selected=selected))
-    return options
-
-
-def datetime_local_value(value: datetime) -> str:
-    return value.strftime("%Y-%m-%dT%H:%M")
 
 
 def display_unit(portion) -> str:

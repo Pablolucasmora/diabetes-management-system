@@ -127,22 +127,6 @@ def _add_fuzzy_name_condition(connection, conditions: list, params: dict, column
 # users
 # ============================================
 
-def add_users(connection, username: str, email: str, password_hash: str) -> Optional[int]:
-    """Creates a new users."""
-    query = """
-        INSERT INTO users (username, email, password_hash, created_at, updated_at)
-        VALUES (%(username)s, %(email)s, %(password_hash)s, NOW(), NOW())
-        RETURNING id;
-    """
-    result = _execute_query(connection, query, {"username": username, "email": email, "password_hash": password_hash})
-    return result["id"] if result else None
-
-
-def get_users(connection, users_id: int) -> Optional[dict]:
-    """Gets a users by ID."""
-    query = "SELECT * FROM users WHERE id = %(id)s;"
-    return _execute_query(connection, query, {"id": users_id}, commit=False)
-
 
 def get_users_by_email(connection, email: str) -> Optional[dict]:
     """Gets a users by email."""
@@ -171,25 +155,6 @@ def get_default_user_id(connection) -> Optional[int]:
         return users[0]["id"]
 
     return None
-
-
-def update_users(connection, users_id: int, name: str = None, email: str = None) -> bool:
-    """Updates a users. Only updates the provided fields."""
-    params = {"id": users_id, "name": name, "email": email}
-    query = _build_update_query("users", params)
-    
-    if not query:
-        return False
-        
-    result = _execute_query(connection, query, params)
-    return result is not None
-
-
-def delete_users(connection, users_id: int) -> bool:
-    """Deletes a users by ID."""
-    query = "DELETE FROM users WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(connection, query, {"id": users_id})
-    return result is not None
 
 
 # ============================================
@@ -288,6 +253,34 @@ def get_subtype_suggestions(connection, search: str = "", limit: int = 50) -> li
     return [str(row["name"]) for row in rows if row and row.get("name")]
 
 
+def get_manual_origin_suggestions(connection, search: str = "", limit: int = 50) -> list[str]:
+    normalized = (search or "").strip()
+    params = {
+        "q": normalized,
+        "q_like": f"%{normalized}%",
+        "q_prefix": f"{normalized.lower()}%",
+        "q_lower": normalized.lower(),
+        "limit": max(1, min(int(limit or 50), 500)),
+    }
+    query = """
+        SELECT DISTINCT trim(origin) AS name
+        FROM manual_intake
+        WHERE origin IS NOT NULL
+          AND trim(origin) <> ''
+          AND (%(q)s = '' OR origin ILIKE %(q_like)s)
+        ORDER BY
+            CASE
+                WHEN lower(trim(origin)) = %(q_lower)s THEN 0
+                WHEN lower(trim(origin)) LIKE %(q_prefix)s THEN 1
+                ELSE 2
+            END,
+            trim(origin)
+        LIMIT %(limit)s;
+    """
+    rows = _execute_query_many(connection, query, params, commit=False)
+    return [str(row["name"]) for row in rows if row and row.get("name")]
+
+
 def add_catalog_item(connection, data: dict) -> Optional[int]:
     """
     Adds a new item to the catalog.
@@ -339,32 +332,10 @@ def get_all_catalog(connection, search: str = None, category: str = None, favori
     return _execute_query_many(connection, query, params, commit=False)
 
 
-def update_catalog_item(connection, catalog_id: int, data: dict) -> bool:
-    """Updates a catalog item."""
-    if not data:
-        return False
-    
-    params = {**data, "id": catalog_id}
-    query = _build_update_query("catalog", params)
-    
-    if not query:
-        return False
-        
-    result = _execute_query(connection, query, params)
-    return result is not None
-
-
 def update_catalog_favorite(connection, catalog_id: int, favorite: bool) -> bool:
     """Updates the favorite status of a catalog item."""
     query = "UPDATE catalog SET favorite = %(favorite)s WHERE id = %(id)s RETURNING id;"
     result = _execute_query(connection, query, {"id": catalog_id, "favorite": favorite})
-    return result is not None
-
-
-def delete_catalog_item(connection, catalog_id: int) -> bool:
-    """Deletes a catalog item."""
-    query = "DELETE FROM catalog WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(connection, query, {"id": catalog_id})
     return result is not None
 
 
@@ -430,122 +401,6 @@ def update_manual_intake(connection, intake_id: int, data: dict) -> bool:
         return False
         
     result = _execute_query(connection, query, params)
-    return result is not None
-
-
-def delete_manual_intake(connection, intake_id: int) -> bool:
-    """Deletes a manual intake."""
-    query = "DELETE FROM manual_intake WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(connection, query, {"id": intake_id})
-    return result is not None
-
-
-# ============================================
-# FRIDGE
-# ============================================
-
-def add_fridge(connection, users_id: int, tupper_name: str = None, is_compound: bool = False, total_weight: float = None) -> Optional[int]:
-    """Creates a new fridge record."""
-    query = """
-        INSERT INTO fridge (users_id, tupper_name, is_compound, total_tupper_weight)
-        VALUES (%(users_id)s, %(tupper_name)s, %(is_compound)s, %(total_weight)s)
-        RETURNING id;
-    """
-    result = _execute_query(connection, query, {
-        "users_id": users_id,
-        "tupper_name": tupper_name,
-        "is_compound": is_compound,
-        "total_weight": total_weight
-    })
-    return result[0] if result else None
-
-
-def get_fridge(connection, fridge_id: int) -> Optional[dict]:
-    """Gets a fridge record by ID."""
-    query = "SELECT * FROM fridge WHERE id = %(id)s;"
-    return _execute_query(connection, query, {"id": fridge_id}, commit=False)
-
-
-def get_all_fridge(connection, users_id: int) -> list:
-    """Gets all fridge tuppers for a users."""
-    query = "SELECT * FROM fridge WHERE users_id = %(users_id)s ORDER BY entry_date DESC;"
-    return _execute_query_many(connection, query, {"users_id": users_id}, commit=False)
-
-
-def update_fridge(connection, fridge_id: int, tupper_name: str = None, is_compound: bool = None, total_weight: float = None) -> bool:
-    """Updates a fridge record."""
-    params = {
-        "id": fridge_id, 
-        "tupper_name": tupper_name, 
-        "is_compound": is_compound, 
-        "total_tupper_weight": total_weight
-    }
-    
-    query = _build_update_query("fridge", params)
-    
-    if not query:
-        return False
-        
-    result = _execute_query(connection, query, params)
-    return result is not None
-
-
-def delete_fridge(connection, fridge_id: int) -> bool:
-    """Deletes a fridge record."""
-    query = "DELETE FROM fridge WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(connection, query, {"id": fridge_id})
-    return result is not None
-
-
-# ============================================
-# TAGS
-# ============================================
-
-def add_tag(connection, name: str, description: str = None) -> Optional[int]:
-    """Creates a new tag."""
-    query = """
-        INSERT INTO tags (name, description)
-        VALUES (%(name)s, %(description)s)
-        RETURNING id;
-    """
-    result = _execute_query(connection, query, {"name": name, "description": description})
-    return result[0] if result else None
-
-
-def get_tag(connection, tag_id: int) -> Optional[dict]:
-    """Gets a tag by ID."""
-    query = "SELECT * FROM tags WHERE id = %(id)s;"
-    return _execute_query(connection, query, {"id": tag_id}, commit=False)
-
-
-def get_all_tags(connection) -> list:
-    """Gets all tags."""
-    query = "SELECT * FROM tags ORDER BY name;"
-    return _execute_query_many(connection, query, commit=False)
-
-
-def get_tag_by_name(connection, name: str) -> Optional[dict]:
-    """Gets a tag by name."""
-    query = "SELECT * FROM tags WHERE name = %(name)s;"
-    return _execute_query(connection, query, {"name": name}, commit=False)
-
-
-def update_tag(connection, tag_id: int, name: str = None, description: str = None) -> bool:
-    """Updates a tag."""
-    params = {"id": tag_id, "name": name, "description": description}
-    query = _build_update_query("tags", params)
-    
-    if not query:
-        return False
-        
-    result = _execute_query(connection, query, params)
-    return result is not None
-
-
-def delete_tag(connection, tag_id: int) -> bool:
-    """Deletes a tag."""
-    query = "DELETE FROM tags WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(connection, query, {"id": tag_id})
     return result is not None
 
 
@@ -617,72 +472,6 @@ def update_recipe(connection, recipe_id: int, name: str = None, meal_type: str =
     return result is not None
 
 
-def delete_recipe(connection, recipe_id: int) -> bool:
-    """Deletes a recipe."""
-    query = "DELETE FROM recipe WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(connection, query, {"id": recipe_id})
-    return result is not None
-
-
-# ============================================
-# LINKED TAGS
-# ============================================
-
-def add_linked_tag(connection, tag_id: int, entity: str, entity_id: int) -> Optional[int]:
-    """Links a tag to an entity."""
-    if entity not in ("catalog", "recipe", "manual_intake"):
-        raise ValueError("Invalid entity. Must be 'catalog', 'recipe' or 'manual_intake'")
-    
-    data = {"tag_id": tag_id}
-    data[f"{entity}_id"] = entity_id
-    
-    query = f"""
-        INSERT INTO linked_tags (tag_id, {entity}_id)
-        VALUES (%(tag_id)s, %({entity}_id)s)
-        RETURNING id;
-    """
-    result = _execute_query(connection, query, data)
-    return result[0] if result else None
-
-
-def get_linked_tags(connection, entity: str, entity_id: int) -> list:
-    """Gets the tags linked to an entity."""
-    if entity not in ("catalog", "recipe", "manual_intake"):
-        raise ValueError("Invalid entity")
-    
-    query = f"""
-        SELECT t.* FROM tags t
-        JOIN linked_tags lt ON t.id = lt.tag_id
-        WHERE lt.{entity}_id = %(entity_id)s
-        ORDER BY t.name;
-    """
-    return _execute_query_many(connection, query, {"entity_id": entity_id}, commit=False)
-
-
-def delete_linked_tag(connection, tag_id: int, entity: str, entity_id: int) -> bool:
-    """Deletes a tag link."""
-    if entity not in ("catalog", "recipe", "manual_intake"):
-        raise ValueError("Invalid entity")
-    
-    query = f"""
-        DELETE FROM linked_tags 
-        WHERE tag_id = %(tag_id)s AND {entity}_id = %(entity_id)s
-        RETURNING id;
-    """
-    result = _execute_query(connection, query, {"tag_id": tag_id, "entity_id": entity_id})
-    return result is not None
-
-
-def delete_all_linked_tags(connection, entity: str, entity_id: int) -> bool:
-    """Deletes all tags linked to an entity."""
-    if entity not in ("catalog", "recipe", "manual_intake"):
-        raise ValueError("Invalid entity")
-    
-    query = f"DELETE FROM linked_tags WHERE {entity}_id = %(entity_id)s RETURNING id;"
-    result = _execute_query(connection, query, {"entity_id": entity_id})
-    return result is not None
-
-
 # ============================================
 # INTAKE EVENT
 # ============================================
@@ -736,27 +525,6 @@ def get_intake_event(connection, event_id: int) -> Optional[dict]:
     """Gets an intake event by ID."""
     query = "SELECT * FROM intake_event WHERE id = %(id)s;"
     return _execute_query(connection, query, {"id": event_id}, commit=False)
-
-
-def get_all_intake_events(connection, users_id: int = None, state: str = None, meal_type: str = None) -> list:
-    """Gets all intake events with optional filters."""
-    conditions = []
-    params = {}
-    
-    if users_id:
-        conditions.append("users_id = %(users_id)s")
-        params["users_id"] = users_id
-    if state:
-        conditions.append("state = %(state)s")
-        params["state"] = state
-    if meal_type:
-        conditions.append("meal_type = %(meal_type)s")
-        params["meal_type"] = meal_type
-    
-    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-    query = f"SELECT * FROM intake_event {where_clause} ORDER BY meal_time DESC;"
-    
-    return _execute_query_many(connection, query, params, commit=False)
 
 
 def get_cart_events(connection, users_id: int) -> list:
@@ -950,26 +718,6 @@ def get_portion_detail_by_recipe(connection, recipe_id: int) -> list:
     return _execute_query_many(connection, query, {"id": recipe_id}, commit=False)
 
 
-def get_portion_detail_by_fridge(connection, fridge_id: int) -> list:
-    """Gets all portions for a fridge."""
-    query = """
-        SELECT pd.*, c.name as catalog_name, im.name as manual_intake_name
-        FROM portion_detail pd
-        LEFT JOIN catalog c ON pd.catalog_id = c.id
-        LEFT JOIN manual_intake im ON pd.manual_intake_id = im.id
-        WHERE pd.fridge_id = %(id)s
-        ORDER BY pd.id;
-    """
-    return _execute_query_many(connection, query, {"id": fridge_id}, commit=False)
-
-
-def delete_portion_detail(connection, portion_id: int) -> bool:
-    """Deletes a portion detail."""
-    query = "DELETE FROM portion_detail WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(connection, query, {"id": portion_id})
-    return result is not None
-
-
 def get_portion_detail(connection, portion_id: int) -> Optional[dict]:
     """Gets one portion detail by ID with source metadata."""
     query = """
@@ -984,17 +732,3 @@ def get_portion_detail(connection, portion_id: int) -> Optional[dict]:
     """
     return _execute_query(connection, query, {"id": portion_id}, commit=False)
 
-
-def update_portion_detail(connection, portion_id: int, data: dict) -> bool:
-    """Updates a portion detail."""
-    if not data:
-        return False
-
-    params = {**data, "id": portion_id}
-    query = _build_update_query("portion_detail", params)
-
-    if not query:
-        return False
-
-    result = _execute_query(connection, query, params)
-    return result is not None

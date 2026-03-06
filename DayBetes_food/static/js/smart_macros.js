@@ -76,8 +76,9 @@
     fiber_100g: "#6b7280"
   };
   var defaultKeys = Object.keys(defaultValues);
-  var regexNumberFirst = /(\d+(?:[.,]\d+)?)\s*(?:g|gr|gramos|ml)?\s*([a-z\u00e1\u00e9\u00ed\u00f3\u00fa\u00f1]+)/g;
-  var regexWordFirst = /([a-z\u00e1\u00e9\u00ed\u00f3\u00fa\u00f1]+)\s*(\d+(?:[.,]\d+)?)/g;
+  var regexNumberFirst =
+    /(\d+(?:[.,]\d+)?)\s*(?:(?:g|gr|gramos|ml)(?![a-z\u00e1\u00e9\u00ed\u00f3\u00fa\u00f1])\s*)?([a-z\u00e1\u00e9\u00ed\u00f3\u00fa\u00f1]+)/g;
+  var regexWordFirst = /([a-z\u00e1\u00e9\u00ed\u00f3\u00fa\u00f1]+)\s*[:=-]?\s*(\d+(?:[.,]\d+)?)\s*(?:g|gr|gramos|ml)?/g;
 
   function resolveField(rawToken) {
     var token = normalizeToken(rawToken);

@@ -23,6 +23,7 @@ from DayBetes_food.database.queries.crud import (
     add_food_brand,
     get_food_brand_suggestions,
     get_subtype_suggestions,
+    get_manual_origin_suggestions,
 )
 from DayBetes_food.components.food.foods import FoodSectionsContent, FavoriteButton, on_after
 from DayBetes_food.components.food.foods import CreateCatalogPage, CreateManualPage, CreateRecipePage
@@ -88,15 +89,6 @@ def _filtered_entries(connection, search: str = "", filter_value: str = "all"):
     return entries
 
 
-def _success_msg(text: str):
-    return render_fragment(
-        Div(
-            P("Success", cls="text-[11px] font-semibold text-green-800"),
-            P(text, cls="text-xs text-green-700"),
-            cls="web_container p-2 rounded-lg border border-green-200/70 bg-green-50/60",
-        )
-    )
-
 
 def _error_msg(text: str):
     return render_fragment(
@@ -123,7 +115,10 @@ def setup_food_routes(rt):
 
     @rt("/food/create/manual/form")
     def get(request: Request):
-        return render_page(request, lambda _: CreateManualPage())
+        with get_connection() as connection:
+            subtypes = get_subtype_suggestions(connection, search="", limit=500)
+            origins = get_manual_origin_suggestions(connection, search="", limit=500)
+        return render_page(request, lambda _: CreateManualPage(subtype_options=subtypes, origin_options=origins))
 
     @rt("/food/create/recipe/form")
     def get(request: Request):
