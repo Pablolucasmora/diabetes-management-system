@@ -1,5 +1,6 @@
 from fasthtml.common import *
 from datetime import datetime
+import json
 from DayBetes_food.components.food.food_main import food_main
 from DayBetes_food.components.ui import render_fragment, render_page
 from DayBetes_food.database.queries.crud import (
@@ -13,6 +14,8 @@ from DayBetes_food.database.queries.crud import (
     get_manual_intake,
     get_recipe,
     get_portion_detail_by_recipe,
+    get_portion_detail,
+    get_recipe_portions_by_origin,
     get_default_user_id,
     get_intake_event,
     update_catalog_item,
@@ -25,6 +28,9 @@ from DayBetes_food.database.queries.crud import (
     get_food_brand_suggestions,
     get_subtype_suggestions,
     get_manual_origin_suggestions,
+    update_portion_detail_amount,
+    update_portion_detail_fields,
+    delete_portion_detail,
 )
 from DayBetes_food.components.food.foods import FoodSectionsContent, FavoriteButton, on_after
 from DayBetes_food.components.food.foods import (
@@ -35,6 +41,9 @@ from DayBetes_food.components.food.foods import (
     EditManualPage,
     EditRecipePage,
     FoodDetailPage,
+    RecipeIngredientPickerList,
+    RecipeIngredientPickerPage,
+    RecipeMacrosGrid,
 )
 from DayBetes_food.database.connection import get_connection
 
@@ -170,12 +179,12 @@ def _sorted_food_entries(catalog_items, manual_items, recipes):
     return entries
 
 
-def _filtered_entries(connection, search: str = "", filter_value: str = "all"):
+def _filtered_entries(connection, search: str = "", filter_value: str = "all", include_recipes: bool = True):
     user_id = get_default_user_id(connection)
 
     catalog_items = get_all_catalog(connection, search=search or None)
     manual_items = get_all_manual_intakes(connection, users_id=user_id, search=search or None) if user_id else []
-    recipes = get_all_recipes(connection, users_id=user_id, search=search or None) if user_id else []
+    recipes = get_all_recipes(connection, users_id=user_id, search=search or None) if user_id and include_recipes else []
 
     if filter_value == "food":
         entries = _sorted_food_entries(catalog_items, manual_items, [])
@@ -246,9 +255,175 @@ def setup_food_routes(rt):
             summary = _build_detail_summary(entry_type, entry, recipe_portions=recipe_portions)
         return render_page(
             request,
-            lambda conn: FoodDetailPage(conn, user_id=user_id or 0, entry_type=entry_type, entry=entry, summary=summary),
+            lambda conn: FoodDetailPage(
+                conn,
+                user_id=user_id or 0,
+                entry_type=entry_type,
+                entry=entry,
+                summary=summary,
+                recipe_portions=recipe_portions,
+            ),
             show_cart=False,
         )
+
+    @rt("/food/recipe/{recipe_id}/ingredients/form")
+    def get(request: Request, recipe_id: int):
+        with get_connection() as connection:
+            recipe = get_recipe(connection, recipe_id)
+            if not recipe:
+                return HTMLResponse(status_code=404)
+            entries = _filtered_entries(connection, search="", filter_value="food", include_recipes=False)
+        return render_page(request, lambda _: RecipeIngredientPickerPage(recipe_entry=recipe, foods=entries), show_cart=False)
+
+    @rt("/food/recipe/{recipe_id}/ingredients/list")
+    def get(request: Request, recipe_id: int, search: str = ""):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        with get_connection() as connection:
+            recipe = get_recipe(connection, recipe_id)
+            if not recipe:
+                return HTMLResponse(status_code=404)
+            entries = _filtered_entries(connection, search=search, filter_value="food", include_recipes=False)
+        return render_fragment(RecipeIngredientPickerList(recipe_id=recipe_id, foods=entries))
+
+    @rt("/food/recipe/{recipe_id}/ingredients/add/{entry_type}/{entry_id}")
+    def post(request: Request, recipe_id: int, entry_type: str, entry_id: int):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        if entry_type not in ("catalog", "manual_intake"):
+            return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=400)
+
+        with get_connection() as connection:
+            recipe = get_recipe(connection, recipe_id)
+            if not recipe:
+                return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
+
+            amount_g = 100.0
+            if entry_type == "catalog":
+                item = get_catalog_item(connection, entry_id)
+                if not item:
+                    return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
+                amount_g = max(1.0, float(item.get("default_portion") or 100.0))
+            else:
+                item = get_manual_intake(connection, entry_id)
+                if not item:
+                    return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
+                amount_g = max(1.0, float(item.get("amount_g") or 100.0))
+
+            existing = get_recipe_portions_by_origin(connection, recipe_id=recipe_id, origin=entry_type, origin_id=entry_id)
+            if existing:
+                keep = existing[0]
+                total_amount = sum(float(row.get("amount_g") or 0.0) for row in existing) + amount_g
+                updated = update_portion_detail_amount(connection, portion_id=int(keep["id"]), amount_g=total_amount)
+                deleted_ok = True
+                for duplicate in existing[1:]:
+                    deleted_ok = delete_portion_detail(connection, int(duplicate["id"])) and deleted_ok
+                ok = bool(updated and deleted_ok)
+            else:
+                created = add_portion_detail(
+                    connection,
+                    origin=entry_type,
+                    origin_id=entry_id,
+                    destination="recipe",
+                    destination_id=recipe_id,
+                    amount_g=amount_g,
+                )
+                ok = bool(created)
+
+        return HTMLResponse("", headers={"HX-Trigger": "addSuccess" if ok else "addError"})
+
+    @rt("/food/recipe/{recipe_id}/ingredient/{portion_id}/amount")
+    def post(request: Request, recipe_id: int, portion_id: int, amount_g: str = ""):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        parsed_amount = _to_float(amount_g)
+        if parsed_amount is None or parsed_amount <= 0:
+            return render_fragment(P("Invalid amount.", cls="text-red-700"))
+
+        with get_connection() as connection:
+            recipe = get_recipe(connection, recipe_id)
+            if not recipe:
+                return render_fragment(P("Recipe not found.", cls="text-red-700"))
+            portion = get_portion_detail(connection, portion_id)
+            if not portion or int(portion.get("recipe_id") or 0) != recipe_id:
+                return render_fragment(P("Ingredient not found.", cls="text-red-700"))
+            updated = update_portion_detail_amount(connection, portion_id=portion_id, amount_g=parsed_amount)
+            recipe_portions = get_portion_detail_by_recipe(connection, recipe_id) if updated else []
+            recipe_total_amount = sum(float(row.get("amount_g") or 0.0) for row in recipe_portions)
+
+        if not updated:
+            return render_fragment(P("Could not update ingredient.", cls="text-red-700"))
+        response = render_fragment(P("Saved", cls="text-green-700"))
+        response.headers["HX-Trigger"] = json.dumps(
+            {
+                "recipe-amount-updated": {
+                    "recipe_id": recipe_id,
+                    "total_amount": recipe_total_amount,
+                }
+            }
+        )
+        return response
+
+    @rt("/food/recipe/{recipe_id}/macros")
+    def get(request: Request, recipe_id: int):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        with get_connection() as connection:
+            recipe = get_recipe(connection, recipe_id)
+            if not recipe:
+                return HTMLResponse(status_code=404)
+            portions = get_portion_detail_by_recipe(connection, recipe_id)
+            summary = _build_detail_summary("recipe", recipe, recipe_portions=portions)
+            per100 = summary.get("per100") or {}
+            total_amount = max(1.0, _to_float(str(summary.get("default_amount_g") or 0.0)) or 1.0)
+        return render_fragment(RecipeMacrosGrid(recipe_id=recipe_id, per100=per100, total_amount=total_amount))
+
+    @rt("/food/recipe/{recipe_id}/ingredient/{portion_id}/advanced")
+    def post(
+        request: Request,
+        recipe_id: int,
+        portion_id: int,
+        cooking: str = "",
+        final_state: str = "",
+        conservation: str = "",
+    ):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+
+        with get_connection() as connection:
+            recipe = get_recipe(connection, recipe_id)
+            if not recipe:
+                return render_fragment(P("Recipe not found.", cls="text-red-700"))
+            portion = get_portion_detail(connection, portion_id)
+            if not portion or int(portion.get("recipe_id") or 0) != recipe_id:
+                return render_fragment(P("Ingredient not found.", cls="text-red-700"))
+                updated = update_portion_detail_fields(
+                    connection,
+                    portion_id=portion_id,
+                    cooking=(cooking or "").strip() or None,
+                    final_state=(final_state or "").strip() or None,
+                    conservation=((conservation or "").strip() or None),
+                )
+
+        if not updated:
+            return render_fragment(P("Could not save advanced fields.", cls="text-red-700"))
+        return render_fragment(P("Advanced saved", cls="text-green-700"))
+
+    @rt("/food/recipe/{recipe_id}/ingredient/{portion_id}/delete")
+    def post(request: Request, recipe_id: int, portion_id: int):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+
+        with get_connection() as connection:
+            recipe = get_recipe(connection, recipe_id)
+            if not recipe:
+                return HTMLResponse(status_code=404)
+            portion = get_portion_detail(connection, portion_id)
+            if not portion or int(portion.get("recipe_id") or 0) != recipe_id:
+                return HTMLResponse(status_code=404)
+            ok = delete_portion_detail(connection, portion_id)
+
+        return HTMLResponse("", status_code=200 if ok else 400)
 
     @rt("/food/edit/{entry_type}/{entry_id}/form")
     def get(request: Request, entry_type: str, entry_id: int):
@@ -291,6 +466,9 @@ def setup_food_routes(rt):
         amount_g: str = "",
         total_amount_g: str = "",
         intake_event_id: str = "",
+        cooking: str = "",
+        final_state: str = "",
+        conservation: str = "",
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -331,6 +509,9 @@ def setup_food_routes(rt):
                         destination="intake_event",
                         destination_id=event_id,
                         amount_g=parsed_amount,
+                        cooking=(cooking or "").strip() or None,
+                        final_state=(final_state or "").strip() or None,
+                        conservation=((conservation or "").strip() or None),
                         plate_amount=parsed_amount,
                         offset_minutes=offset_minutes,
                     )
@@ -344,6 +525,9 @@ def setup_food_routes(rt):
                         destination="intake_event",
                         destination_id=event_id,
                         amount_g=parsed_amount,
+                        cooking=(cooking or "").strip() or None,
+                        final_state=(final_state or "").strip() or None,
+                        conservation=((conservation or "").strip() or None),
                         plate_amount=parsed_amount,
                         offset_minutes=offset_minutes,
                     )
@@ -370,8 +554,8 @@ def setup_food_routes(rt):
                                 cooking=row.get("cooking"),
                                 conservation=row.get("conservation"),
                                 final_state=row.get("final_state"),
-                                strictly_weighed=row.get("strictly_weighed"),
-                                macros_quality=row.get("macros_quality"),
+                                strictly_weighed=True,
+                                macros_quality=True,
                                 plate_amount=row_amount,
                                 is_cooked_weight=bool(row.get("is_cooked_weight")),
                                 offset_minutes=offset_minutes,
@@ -389,8 +573,8 @@ def setup_food_routes(rt):
                                 cooking=row.get("cooking"),
                                 conservation=row.get("conservation"),
                                 final_state=row.get("final_state"),
-                                strictly_weighed=row.get("strictly_weighed"),
-                                macros_quality=row.get("macros_quality"),
+                                strictly_weighed=True,
+                                macros_quality=True,
                                 plate_amount=row_amount,
                                 is_cooked_weight=bool(row.get("is_cooked_weight")),
                                 offset_minutes=offset_minutes,
@@ -556,8 +740,8 @@ def setup_food_routes(rt):
                             cooking=row.get("cooking"),
                             conservation=row.get("conservation"),
                             final_state=row.get("final_state"),
-                            strictly_weighed=row.get("strictly_weighed"),
-                            macros_quality=row.get("macros_quality"),
+                            strictly_weighed=True,
+                            macros_quality=True,
                             plate_amount=row.get("plate_amount"),
                             is_cooked_weight=bool(row.get("is_cooked_weight")),
                             offset_minutes=offset_minutes,
@@ -575,8 +759,8 @@ def setup_food_routes(rt):
                             cooking=row.get("cooking"),
                             conservation=row.get("conservation"),
                             final_state=row.get("final_state"),
-                            strictly_weighed=row.get("strictly_weighed"),
-                            macros_quality=row.get("macros_quality"),
+                            strictly_weighed=True,
+                            macros_quality=True,
                             plate_amount=row.get("plate_amount"),
                             is_cooked_weight=bool(row.get("is_cooked_weight")),
                             offset_minutes=offset_minutes,
@@ -666,6 +850,7 @@ def setup_food_routes(rt):
                 return _error_msg("A catalog item with that name already exists.")
 
             clean_brand = (brand or "").strip()
+            favorite_value = None if (favorite or "").strip() == "" else _to_bool(favorite)
             payload = {
                 "name": clean_name,
                 "brand": clean_brand or None,
@@ -687,7 +872,7 @@ def setup_food_routes(rt):
                 "alcohol": _to_float(alcohol),
                 "barcode": barcode.strip() or None,
                 "cooking_factor": _to_float(cooking_factor),
-                "favorite": _to_bool(favorite),
+                "favorite": favorite_value,
             }
             updated = update_catalog_item(connection, entry_id, payload)
             if not updated:
@@ -762,7 +947,7 @@ def setup_food_routes(rt):
                 "alcohol": _to_float(alcohol),
                 "glycemic_index": glycemic_index.strip() or None,
                 "ig_confidence": _to_int(ig_confidence),
-                "favorite": _to_bool(favorite),
+                "favorite": (None if (favorite or "").strip() == "" else _to_bool(favorite)),
             }
             updated = update_manual_intake(connection, entry_id, payload)
             if not updated:
@@ -793,7 +978,7 @@ def setup_food_routes(rt):
                 name=clean_name,
                 meal_type=meal_type.strip() or None,
                 notes=notes.strip() or None,
-                favorite=_to_bool(favorite),
+                favorite=(None if (favorite or "").strip() == "" else _to_bool(favorite)),
             )
             if not updated:
                 return _error_msg("Recipe could not be updated.")
@@ -967,7 +1152,7 @@ def setup_food_routes(rt):
             )
             if not created_id:
                 return _error_msg("Recipe could not be created. Check required fields and constraints.")
-            return HTMLResponse("", headers={"HX-Redirect": "/food"})
+            return HTMLResponse("", headers={"HX-Redirect": f"/food/item/recipe/{created_id}"})
     
     @rt("/meal_selector_input")
     def get(request: Request, intake_event_id: str):

@@ -31,6 +31,9 @@ def cart_main(connection):
                         "hx-on:click": (
                             "var b=document.querySelector('#cart_button');"
                             "if(!b) return;"
+                            "b.style.visibility='';"
+                            "b.style.opacity='';"
+                            "b.style.pointerEvents='';"
                             "b.classList.remove('invisible','opacity-0','pointer-events-none');"
                             "requestAnimationFrame(function(){ b.classList.add('opacity-100'); });"
                         )
@@ -48,7 +51,8 @@ def cart_main(connection):
                 justify-center gap-6
                 md:mt-7 lg:mt-7 mt-2
                 transition-[width,margin,padding] duration-150
-            """
+            """,
+            data_hide_cart="true",
         )
 
     event_ids = [event["id"] for event in events]
@@ -63,6 +67,7 @@ def cart_main(connection):
         H1("Food cart", cls="text-xl font-bold"),
         *event_cards,
         Script(src="/js/cart_units.js", defer="defer"),
+        data_hide_cart="true",
         cls="""
             flex flex-col items-center
             gap-6

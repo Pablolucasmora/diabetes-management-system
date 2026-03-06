@@ -52,6 +52,9 @@ def FloatingIsland():
     show_cart_js = """
         var b = document.querySelector('#cart_button');
         if(!b) return;
+        b.style.visibility = '';
+        b.style.opacity = '';
+        b.style.pointerEvents = '';
         b.classList.remove('invisible','opacity-0','pointer-events-none');
         requestAnimationFrame(function(){ b.classList.add('opacity-100'); });
     """
@@ -117,7 +120,7 @@ def Cart(display=True):
         fixed md:bottom-31 lg:bottom-31 bottom-24
         left-1/2 -translate-x-1/2 md:translate-x-29
         lg:translate-x-29 translate-x-20
-        transition-all duration-250 ease-in-out
+        transition-opacity duration-[100ms] ease-out
         web_button
         md:p-4 lg:p-4 p-3 bg-[#f6f2eb]/50 backdrop-blur-lg
         rounded-3xl md:rounded-4xl lg:rounded-4xl md:w-22 lg:w-22
@@ -139,9 +142,9 @@ def Cart(display=True):
         hx_target="#main_content",
         **{
             "hx-on:click": (
-                "this.classList.remove('opacity-100');"
-                "this.classList.add('opacity-0','pointer-events-none');"
-                "setTimeout(() => this.classList.add('invisible'), 260);"
+                "this.style.pointerEvents='none';"
+                "this.style.opacity='0';"
+                "setTimeout(() => { this.style.visibility='hidden'; this.classList.add('invisible'); }, 100);"
             )
         },
         hx_push_url="true"

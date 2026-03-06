@@ -30,6 +30,8 @@ MEAL_TYPES = ["breakfast", "brunch", "lunch", "afternoon_snack", "dinner", "snac
 GLYCEMIC_INDEX_OPTIONS = ["high", "medium", "low"]
 
 INITIAL_STATE_OPTIONS = ["solid", "mashed/creamy", "liquid", "gel"]
+COOKING_OPTIONS = ["steam", "boiled-al-dente", "boiled-soft", "fried", "raw", "oven", "airfryer", "toaster", "griddle"]
+CONSERVATION_OPTIONS = ["freshly-made", "fridge", "freezer", "pre-cooked"]
 
 FILTER_ITEM_CLS = """
     px-3 py-1.5
@@ -60,9 +62,9 @@ def _help_icon(help_text: str):
     )
 
 
-def _label_with_help(text: str, help_text: str):
+def _label_with_help(text: str, help_text: str, for_id: str = ""):
     return Div(
-        Label(text, cls="text-xs text-gray-700"),
+        Label(text, cls="text-xs text-gray-700", **({"for": for_id} if for_id else {})),
         _help_icon(help_text),
         cls="flex items-center gap-1",
     )
@@ -198,6 +200,30 @@ def SearchInput():
     )
 
 
+def RecipeIngredientSearchInput(recipe_id: int):
+    return Input(
+        inputmode="text",
+        placeholder="Search food to add",
+        name="search",
+        id="recipe_ingredient_search_input",
+        data_skip_page_loading="true",
+        cls="""
+            web_input
+            border-[0.6px] border-white inset-shadow-none
+            rounded-2xl
+            bg-gray-200/50
+            md:w-md lg:w-md
+            w-xs
+            transition-all
+            p-4
+        """,
+        hx_get=f"/food/recipe/{recipe_id}/ingredients/list",
+        hx_target="#recipe-ingredient-list",
+        hx_trigger="keyup changed delay:300ms",
+        hx_swap="innerHTML",
+    )
+
+
 def _labeled_input(
     label: str,
     name: str,
@@ -208,10 +234,12 @@ def _labeled_input(
     value: str | None = None,
 ):
     help_value = help_text or f"What to enter in {label}"
+    input_id = f"field_{name}"
     return Div(
-        _label_with_help(label, help_value),
+        _label_with_help(label, help_value, for_id=input_id),
         Input(
             type=typ,
+            id=input_id,
             name=name,
             placeholder=placeholder,
             cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-base mr-1",
@@ -236,11 +264,13 @@ def _searchable_autocomplete_input(
     options_json = json.dumps(normalized_options)
     placeholder_value = placeholder or f"Type {label.lower()}"
     help_value = help_text or f"Search and select {label.lower()}."
+    input_id = f"field_{name}"
     return Div(
-        _label_with_help(label, help_value),
+        _label_with_help(label, help_value, for_id=input_id),
         Div(
             Input(
                 type="text",
+                id=input_id,
                 name=name,
                 data_searchable_input="true",
                 placeholder=placeholder_value,
@@ -268,6 +298,56 @@ def _searchable_autocomplete_input(
     )
 
 
+def _searchable_compact_input(
+    name: str,
+    options: list[str] | None = None,
+    value: str | None = None,
+    placeholder: str = "",
+    allow_add: bool = False,
+    autosave: bool = False,
+):
+    normalized_options = sorted({(opt or "").strip() for opt in (options or []) if (opt or "").strip()})
+    options_json = json.dumps(normalized_options)
+    return Div(
+        Input(
+            type="text",
+            name=name,
+            data_searchable_input="true",
+            placeholder=placeholder or "Search",
+            autocomplete="off",
+            cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-base w-full min-w-0",
+            **(
+                {
+                    "oninput": (
+                        "if(!this.form) return;"
+                        "clearTimeout(this._dbAutoSaveTimer);"
+                        "this._dbAutoSaveTimer=setTimeout(()=>{if(this.form) htmx.trigger(this.form,'submit');},350);"
+                    ),
+                    "onblur": "if(this.form) htmx.trigger(this.form,'submit');",
+                    "onchange": "if(this.form) htmx.trigger(this.form,'submit');",
+                }
+                if autosave
+                else {}
+            ),
+            **({"value": value} if value is not None else {}),
+        ),
+        Div(
+            data_searchable_suggestions="true",
+            cls="""
+                absolute left-0 right-0 top-full mt-1 z-[200]
+                rounded-md border border-gray-200
+                bg-white opacity-100 shadow-lg
+                overflow-hidden
+            """,
+            style="display:none;background:#fff;backdrop-filter:none;z-index:200;",
+        ),
+        data_searchable_autocomplete="true",
+        data_searchable_options=options_json,
+        data_searchable_allow_add="1" if allow_add else "0",
+        cls="relative w-full min-w-0",
+    )
+
+
 def _brand_autocomplete_input(brand_options: list[str] | None = None, value: str | None = None):
     return _searchable_autocomplete_input(
         label="Brand",
@@ -288,6 +368,28 @@ def _searchable_autocomplete_bootstrap_script():
           window.__dbSearchableAutocompleteBootstrapped = true;
 
           function normalize(v) { return String(v || "").trim(); }
+          function storageKeyFor(input) {
+            if (!input) return "";
+            var form = input.form;
+            var action = form && form.getAttribute ? (form.getAttribute("hx-post") || form.getAttribute("action") || "") : "";
+            return "dbSearchableValue::" + window.location.pathname + "::" + (input.name || "") + "::" + action;
+          }
+          function persistValue(input) {
+            if (!input || !window.localStorage) return;
+            var key = storageKeyFor(input);
+            if (!key) return;
+            window.localStorage.setItem(key, String(input.value || ""));
+          }
+          function restoreValue(input) {
+            if (!input || !window.localStorage) return;
+            var key = storageKeyFor(input);
+            if (!key) return;
+            var saved = window.localStorage.getItem(key);
+            if (saved == null) return;
+            if (!normalize(input.value)) {
+              input.value = saved;
+            }
+          }
           function escapeHtml(v) {
             return String(v || "")
               .replace(/&/g, "&amp;")
@@ -309,6 +411,7 @@ def _searchable_autocomplete_bootstrap_script():
             try { options = JSON.parse(root.dataset.searchableOptions || "[]"); }
             catch (_) { options = []; }
             var allowAdd = root.dataset.searchableAllowAdd === "1";
+            restoreValue(input);
 
             function closeBox() {
               box.style.display = "none";
@@ -405,18 +508,30 @@ def _searchable_autocomplete_bootstrap_script():
                 var exists = options.some(function (x) { return normalize(x).toLowerCase() === q.toLowerCase(); });
                 if (!exists) options.push(q);
                 input.value = q;
+                persistValue(input);
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+                input.dispatchEvent(new Event("change", { bubbles: true }));
+                input.dispatchEvent(new CustomEvent("db-searchable-commit", { bubbles: true }));
                 closeBox();
                 return;
               }
               var pick = target.dataset ? target.dataset.searchablePick : "";
               if (pick) {
                 input.value = pick;
+                persistValue(input);
+                input.dispatchEvent(new Event("input", { bubbles: true }));
+                input.dispatchEvent(new Event("change", { bubbles: true }));
+                input.dispatchEvent(new CustomEvent("db-searchable-commit", { bubbles: true }));
                 closeBox();
               }
             });
 
             input.addEventListener("focus", render);
-            input.addEventListener("input", render);
+            input.addEventListener("input", function () {
+              persistValue(input);
+              render();
+            });
+            input.addEventListener("change", function () { persistValue(input); });
             input.addEventListener("keydown", function (ev) {
               if (ev.key === "Escape") closeBox();
             });
@@ -448,13 +563,23 @@ def _searchable_autocomplete_bootstrap_script():
     )
 
 
+def RecipeMacrosGrid(recipe_id: int, per100: dict, total_amount: float):
+    return Div(
+        *_detail_macro_tiles(per100, total_amount),
+        id=f"food_detail_recipe_{recipe_id}_macros",
+        cls="grid grid-cols-2 md:grid-cols-3 gap-2",
+    )
+
+
 def _labeled_select(label: str, name: str, options: list[str], help_text: str = "", selected_value: str = ""):
     help_value = help_text or f"What to select in {label}"
+    select_id = f"field_{name}"
     return Div(
-        _label_with_help(label, help_value),
+        _label_with_help(label, help_value, for_id=select_id),
         Select(
             Option("-", value="", selected=(selected_value == "")),
             *[Option(opt, value=opt, selected=(opt == selected_value)) for opt in options],
+            id=select_id,
             name=name,
             cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-xs mr-1",
         ),
@@ -463,10 +588,12 @@ def _labeled_select(label: str, name: str, options: list[str], help_text: str = 
 
 
 def _favorite_checkbox(name: str = "favorite", checked: bool = True, centered: bool = False):
+    checkbox_id = f"field_{name}"
     return Div(
         Label(
             Input(
                 type="checkbox",
+                id=checkbox_id,
                 name=name,
                 value="true",
                 checked=checked,
@@ -494,7 +621,7 @@ def _favorite_checkbox(name: str = "favorite", checked: bool = True, centered: b
             ),
             cls="flex items-center cursor-pointer relative h-5 w-5",
         ),
-        Span("Favorite", cls="text-xs text-gray-700"),
+        Label("Favorite", cls="text-xs text-gray-700 cursor-pointer", **{"for": checkbox_id}),
         _help_icon("Mark as favorite so it appears highlighted and in Favs filter."),
         cls=(
             "flex items-center justify-center gap-2 col-span-1 md:col-span-2"
@@ -515,6 +642,7 @@ def _smart_macros_block(prefix: str):
                 "'carbs 30g proteins 20g'. Synonyms accepted: hc/ch/hidratos/carbos, "
                 "prote/prot/proteina, grasas/gr/grasa, sat/saturadas/st/gs, fibra/fb, az/azucar, kcal/cal."
             ),
+            for_id=input_id,
         ),
         Input(
             type="text",
@@ -840,9 +968,10 @@ def CreateRecipePage():
             _advanced_toggle("recipe_advanced"),
             Div(
                 Div(
-                    _label_with_help("Notes", "Optional instructions, comments, or context about this recipe."),
+                    _label_with_help("Notes", "Optional instructions, comments, or context about this recipe.", for_id="create_recipe_notes"),
                     Textarea(
                         "",
+                        id="create_recipe_notes",
                         name="notes",
                         rows="3",
                         cls="web_input border border-white rounded-lg px-2 py-1 text-xs",
@@ -892,17 +1021,26 @@ def _edit_tile(content, cls: str = ""):
 
 
 def _edit_name_input(value: str):
-    return Textarea(
-        value,
-        name="name",
-        rows="2",
-        cls="""
-            w-full text-2xl font-bold text-black text-center
-            px-0 py-0 border-0 rounded-none
-            bg-transparent shadow-none
-            focus:outline-none resize-none mr-1
-        """,
-        style="background:transparent;border-color:transparent;box-shadow:none;",
+    name_id = "edit_name"
+    return Div(
+        Label(
+            "Name",
+            **{"for": name_id},
+            style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;",
+        ),
+        Textarea(
+            value,
+            id=name_id,
+            name="name",
+            rows="2",
+            cls="""
+                w-full text-2xl font-bold text-black text-center
+                px-0 py-0 border-0 rounded-none
+                bg-transparent shadow-none
+                focus:outline-none resize-none mr-1
+            """,
+            style="background:transparent;border-color:transparent;box-shadow:none;",
+        ),
     )
 
 
@@ -939,12 +1077,6 @@ def EditCatalogPage(entry: dict, brand_options: list[str] | None = None, subtype
                 _edit_tile(_labeled_input("Alcohol", "alcohol", "number", value=_input_value(entry.get("alcohol")))),
                 _edit_tile(_labeled_input("Barcode", "barcode", value=_input_value(entry.get("barcode")))),
                 _edit_tile(_labeled_input("Cooking factor", "cooking_factor", "number", value=_input_value(entry.get("cooking_factor")))),
-                _edit_tile(
-                    Div(
-                        _favorite_checkbox(checked=bool(entry.get("favorite")), centered=True),
-                        cls="h-full min-h-20 flex items-center justify-center",
-                    )
-                ),
                 cls="grid grid-cols-1 md:grid-cols-2 gap-2",
             ),
             cls="flex flex-col gap-2 w-full",
@@ -998,9 +1130,10 @@ def EditManualPage(entry: dict, subtype_options: list[str] | None = None, origin
             Div(
                 _edit_tile(
                     Div(
-                        _label_with_help("Description", "Optional short description."),
+                        _label_with_help("Description", "Optional short description.", for_id="edit_manual_description"),
                         Textarea(
                             _input_value(entry.get("description")),
+                            id="edit_manual_description",
                             name="description",
                             rows="4",
                             cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-base mr-1 w-full",
@@ -1015,12 +1148,6 @@ def EditManualPage(entry: dict, subtype_options: list[str] | None = None, origin
                 _edit_tile(_labeled_input("Alcohol", "alcohol", "number", value=_input_value(entry.get("alcohol")))),
                 _edit_tile(_searchable_autocomplete_input("Glycemic index", "glycemic_index", GLYCEMIC_INDEX_OPTIONS, allow_add=False, value=_input_value(entry.get("glycemic_index")))),
                 _edit_tile(_labeled_input("IG confidence 1-5", "ig_confidence", "number", value=_input_value(entry.get("ig_confidence")))),
-                _edit_tile(
-                    Div(
-                        _favorite_checkbox(checked=bool(entry.get("favorite")), centered=True),
-                        cls="h-full min-h-20 flex items-center justify-center",
-                    )
-                ),
                 cls="grid grid-cols-1 md:grid-cols-2 gap-2",
             ),
             cls="flex flex-col gap-2 w-full",
@@ -1060,15 +1187,10 @@ def EditRecipePage(entry: dict):
                 _edit_tile(_labeled_select("Meal type", "meal_type", MEAL_TYPES, selected_value=_input_value(entry.get("meal_type")))),
                 _edit_tile(
                     Div(
-                        _favorite_checkbox(checked=bool(entry.get("favorite")), centered=True),
-                        cls="h-full min-h-20 flex items-center justify-center",
-                    )
-                ),
-                _edit_tile(
-                    Div(
-                        _label_with_help("Notes", "Optional instructions, comments, or context about this recipe."),
+                        _label_with_help("Notes", "Optional instructions, comments, or context about this recipe.", for_id="edit_recipe_notes"),
                         Textarea(
                             _input_value(entry.get("notes")),
+                            id="edit_recipe_notes",
                             name="notes",
                             rows="3",
                             onclick="this.select()",
@@ -1129,15 +1251,18 @@ def FavoriteButton(entry_type: str, entry_id: int, favorite: bool):
     )
 
 
-def AddButton(**attrs):
-    attrs.setdefault("hx_include", "#meal_selector")
+def AddButton(label: str = "+", include_meal_selector: bool = True, **attrs):
+    if include_meal_selector:
+        attrs.setdefault("hx_include", "#meal_selector")
+    else:
+        attrs.pop("hx_include", None)
     attrs.setdefault("data_skip_page_loading", "true")
     attrs.setdefault("hx_target", "this")
     attrs.setdefault("hx_trigger", "click consume")
     attrs.setdefault("data_no_open", "true")
-    return Button(
-        "+",
-        cls="""
+    button_cls = attrs.pop(
+        "cls",
+        """
             web_button
             rounded-lg
             border-gray-500/30 shadow-none
@@ -1147,6 +1272,10 @@ def AddButton(**attrs):
             transition-colors duration-300
             text-base
         """,
+    )
+    return Button(
+        label,
+        cls=button_cls,
         hx_swap="none",
         **on_after(reload_page=False),
         **attrs,
@@ -1247,7 +1376,226 @@ def _detail_info_rows(rows: list[tuple[str, str]]):
     return Div(*blocks, cls="grid grid-cols-1 md:grid-cols-2 gap-2")
 
 
-def FoodDetailPage(connection, user_id: int, entry_type: str, entry: dict, summary: dict):
+def _recipe_portion_name(portion: dict) -> str:
+    return portion.get("catalog_name") or portion.get("manual_intake_name") or f"Ingredient #{portion.get('id')}"
+
+
+def _recipe_portion_entry_type(portion: dict) -> str:
+    return "catalog" if portion.get("catalog_id") else "manual_intake"
+
+
+def _recipe_portion_meta(portion: dict) -> str:
+    carbs = portion.get("catalog_carbs_100g")
+    if carbs is None:
+        carbs = portion.get("manual_carbs_100g")
+    entry_label = "Food" if portion.get("catalog_id") else "Manual"
+    return f"{entry_label} · {carbs if carbs is not None else '-'} CH"
+
+
+def _recipe_portion_base_amount(portion: dict) -> float:
+    if portion.get("catalog_id"):
+        return max(1.0, _float_or_zero(portion.get("catalog_default_portion")) or 100.0)
+    return max(1.0, _float_or_zero(portion.get("manual_amount_g")) or 100.0)
+
+
+def _recipe_portion_base_unit(portion: dict) -> str:
+    if portion.get("catalog_id"):
+        item = {"category": portion.get("catalog_category")}
+        return _display_base_unit("catalog", item)
+    item = {"subtype": portion.get("manual_subtype")}
+    return _display_base_unit("manual_intake", item)
+
+
+def RecipeIngredientRow(recipe_id: int, portion: dict):
+    portion_id = int(portion.get("id") or 0)
+    base_amount = _recipe_portion_base_amount(portion)
+    base_unit = _recipe_portion_base_unit(portion)
+    grams_value = max(0.0, _float_or_zero(portion.get("amount_g")))
+    display_value = (grams_value / base_amount) if base_amount > 0 else grams_value
+    display_id = f"recipe_portion_display_{portion_id}"
+    select_id = f"recipe_portion_select_{portion_id}"
+    grams_id = f"recipe_portion_grams_{portion_id}"
+    side_unit_id = f"recipe_portion_side_{portion_id}"
+    msg_id = f"recipe_portion_msg_{portion_id}"
+    advanced_id = f"recipe_portion_advanced_{portion_id}"
+    advanced_msg_id = f"recipe_portion_advanced_msg_{portion_id}"
+    advanced_inner_id = f"recipe_portion_advanced_inner_{portion_id}"
+    advanced_content_id = f"recipe_portion_advanced_content_{portion_id}"
+    persist_key = f"recipe_portion_unit_{portion_id}"
+    macros_grid_id = f"food_detail_recipe_{recipe_id}_macros"
+
+    return Div(
+        Div(
+            Div(
+                H3(_recipe_portion_name(portion), cls="text-left font-semibold"),
+                P(_recipe_portion_meta(portion), cls="text-sm text-gray-700"),
+                cls="flex flex-col gap-0.5 min-w-0",
+            ),
+            Div(
+                Form(
+                    Div(
+                        Div(
+                            Input(
+                                type="text",
+                                id=display_id,
+                                inputmode="decimal",
+                                value=f"{display_value:.2f}".replace(".", ","),
+                                cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 w-16 text-base",
+                                onclick="this.select()",
+                                onchange=f"dbRecalcGrams('{display_id}','{select_id}','{grams_id}', true)",
+                                onblur=f"dbRecalcGrams('{display_id}','{select_id}','{grams_id}', true)",
+                            ),
+                            Span("serving", id=side_unit_id, cls="text-xs text-gray-600 min-w-12 text-right"),
+                            cls="flex items-center justify-end gap-2 w-full md:w-auto",
+                        ),
+                        Select(
+                            *_detail_unit_options(base_amount, base_unit),
+                            id=select_id,
+                            data_display_id=display_id,
+                            data_grams_id=grams_id,
+                            data_side_unit_id=side_unit_id,
+                            data_persist_key=persist_key,
+                            cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-xs w-full md:w-auto",
+                            onchange=f"dbRecalcGrams('{display_id}','{select_id}','{grams_id}', true)",
+                        ),
+                        Input(type="hidden", id=grams_id, name="amount_g", value=f"{grams_value:.6f}"),
+                        cls="flex flex-col items-end gap-2 md:flex-row md:items-center md:justify-end",
+                    ),
+                    Div(id=msg_id, cls="min-h-4 text-[10px] text-right text-gray-600"),
+                    hx_post=f"/food/recipe/{recipe_id}/ingredient/{portion_id}/amount",
+                    hx_trigger=f"change from:#{grams_id}",
+                    hx_target=f"#{msg_id}",
+                    hx_swap="innerHTML",
+                    data_skip_page_loading="true",
+                    **{
+                        "hx-on:htmx:after-request": (
+                            f"if(event.detail.successful){{htmx.ajax('GET','/food/recipe/{recipe_id}/macros',"
+                            f"{{target:'#{macros_grid_id}',swap:'outerHTML'}});}}"
+                        )
+                    },
+                        cls="flex flex-col items-end gap-1",
+                    ),
+                    Div(
+                        Button(
+                            "Advanced",
+                            type="button",
+                            cls="web_button px-2 py-1 text-[11px]",
+                            onclick=(
+                                f"const el=document.getElementById('{advanced_id}');"
+                                f"const inner=document.getElementById('{advanced_inner_id}');"
+                                f"const content=document.getElementById('{advanced_content_id}');"
+                                "if(!el) return;"
+                                "const isOpen = el.getAttribute('data-open') === '1';"
+                                "if(!isOpen){"
+                                "el.setAttribute('data-open','1');"
+                                "el.style.overflow='hidden';"
+                                "var h = content ? content.scrollHeight : (inner ? inner.scrollHeight + 16 : 240);"
+                                "el.style.maxHeight = (h + 2) + 'px';"
+                                "el.style.opacity = '1';"
+                                "setTimeout(function(){ if(el.getAttribute('data-open')==='1'){ el.style.overflow='visible'; } }, 320);"
+                                "} else {"
+                                "el.setAttribute('data-open','0');"
+                                "el.style.overflow='hidden';"
+                                "el.style.maxHeight = '0px';"
+                                "el.style.opacity = '0';"
+                                "}"
+                            ),
+                        ),
+                    Button(
+                        "Delete",
+                        type="button",
+                        cls="web_button px-2 py-1 text-[11px] border-red-300 text-red-700 hover:bg-red-50",
+                        hx_post=f"/food/recipe/{recipe_id}/ingredient/{portion_id}/delete",
+                        hx_target="closest .food_entry",
+                        hx_swap="outerHTML",
+                        data_skip_page_loading="true",
+                        data_no_open="true",
+                    ),
+                    cls="flex items-center justify-end gap-2",
+                ),
+                cls="ml-3 flex flex-col items-end gap-1",
+            ),
+            cls="flex items-start justify-between",
+        ),
+        Div(
+            Form(
+                Div(
+                    Div(
+                        _searchable_compact_input(
+                            name="cooking",
+                            options=COOKING_OPTIONS,
+                            value=(portion.get("cooking") or ""),
+                            placeholder="Cooking",
+                            allow_add=False,
+                            autosave=True,
+                        ),
+                        cls="flex flex-col gap-1 min-w-0",
+                    ),
+                    Div(
+                        _searchable_compact_input(
+                            name="final_state",
+                            options=INITIAL_STATE_OPTIONS,
+                            value=(portion.get("final_state") or ""),
+                            placeholder="Final state",
+                            allow_add=False,
+                            autosave=True,
+                        ),
+                        cls="flex flex-col gap-1 min-w-0",
+                    ),
+                    Div(
+                        _searchable_compact_input(
+                            name="conservation",
+                            options=CONSERVATION_OPTIONS,
+                            value=(portion.get("conservation") or ""),
+                            placeholder="Conservation",
+                            allow_add=False,
+                            autosave=True,
+                            ),
+                            cls="flex flex-col gap-1 min-w-0 col-span-2 xl:col-span-1",
+                        ),
+                    id=advanced_inner_id,
+                    cls="grid grid-cols-2 xl:grid-cols-3 gap-2",
+                ),
+                Div(id=advanced_msg_id, cls="text-[10px] text-right text-gray-600"),
+                hx_post=f"/food/recipe/{recipe_id}/ingredient/{portion_id}/advanced",
+                hx_trigger="submit",
+                hx_target=f"#{advanced_msg_id}",
+                hx_swap="innerHTML",
+                data_skip_page_loading="true",
+                id=advanced_content_id,
+                cls="flex flex-col gap-0 w-full max-w-full min-w-0",
+            ),
+            id=advanced_id,
+            data_open="0",
+            cls="w-full max-w-full relative z-30 transition-all duration-300 ease-out overflow-hidden",
+            style="max-height:0px;opacity:0;",
+        ),
+        cls="web_container food_entry flex flex-col gap-1",
+    )
+
+
+def RecipeIngredientsBlock(recipe_id: int, portions: list[dict]):
+    content = [RecipeIngredientRow(recipe_id, portion) for portion in portions] if portions else [P("No ingredients yet.", cls="text-sm text-gray-500")]
+    return Div(
+        Div(
+            H2("Ingredients", cls="font-semibold text-gray-900"),
+            Button(
+                "Add ingredient",
+                type="button",
+                cls="web_button px-3 py-2 text-xs",
+                hx_get=f"/food/recipe/{recipe_id}/ingredients/form",
+                hx_target="#main_content",
+                hx_swap="innerHTML",
+                hx_push_url="true",
+            ),
+            cls="flex items-center justify-between gap-3",
+        ),
+        Div(*content, cls="flex flex-col gap-2"),
+        cls="flex flex-col gap-2 w-full",
+    )
+
+
+def FoodDetailPage(connection, user_id: int, entry_type: str, entry: dict, summary: dict, recipe_portions: list[dict] | None = None):
     base_unit = _display_base_unit(entry_type, entry)
     default_amount = max(1.0, _float_or_zero(summary.get("default_amount_g")) or 100.0)
     amount_display = f"{default_amount:.2f}".replace(".", ",")
@@ -1273,7 +1621,15 @@ def FoodDetailPage(connection, user_id: int, entry_type: str, entry: dict, summa
     plate_equivalent_id = f"{root_id}_plate_equivalent"
     leftovers_id = f"{root_id}_leftovers"
     msg_id = f"{root_id}_msg"
+    advanced_id = f"{root_id}_advanced"
+    advanced_inner_id = f"{root_id}_advanced_inner"
+    form_id = f"{root_id}_form"
     persist_key = f"food_detail_amount_{entry_type}_{entry['id']}"
+
+    recipe_mode = entry_type == "recipe"
+    action_button_label = "Log recipe" if recipe_mode else "Log food"
+    meal_selector = MealSelector(connection, user_id=user_id or 0) if not recipe_mode else ""
+    recipe_ingredients = RecipeIngredientsBlock(int(entry.get("id") or 0), recipe_portions or []) if recipe_mode else ""
 
     return Div(
         Div(
@@ -1281,10 +1637,15 @@ def FoodDetailPage(connection, user_id: int, entry_type: str, entry: dict, summa
             P(subtitle, cls="text-sm text-gray-600"),
             cls="flex flex-col gap-1",
         ),
-        MealSelector(connection, user_id=user_id or 0),
+        meal_selector,
         Div(
             Form(
                 Div(
+                    Label(
+                        "Food amount",
+                        **{"for": display_id},
+                        style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;",
+                    ),
                     Input(
                         type="text",
                         id=display_id,
@@ -1296,6 +1657,11 @@ def FoodDetailPage(connection, user_id: int, entry_type: str, entry: dict, summa
                         onclick="this.select()",
                     ),
                     Span("serving", id=side_unit_id, cls="text-xs text-gray-600"),
+                    Label(
+                        "Food unit selector",
+                        **{"for": select_id},
+                        style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;",
+                    ),
                     Select(
                         *_detail_unit_options(default_amount, base_unit),
                         id=select_id,
@@ -1312,13 +1678,18 @@ def FoodDetailPage(connection, user_id: int, entry_type: str, entry: dict, summa
                 ),
                 Div(
                     Span("To plate", cls="text-xs text-gray-600"),
+                    Label(
+                        "Amount to plate",
+                        **{"for": plate_value_id},
+                        style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;",
+                    ),
                     Input(
                         type="text",
                         id=plate_value_id,
                         inputmode="decimal",
                         value="100",
                         aria_label="Amount to plate",
-                        cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 w-20 text-base",
+                        cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 w-16 md:w-20 text-base",
                         oninput=f"dbFoodDetailPlateRefresh('{root_id}')",
                         onchange=f"dbFoodDetailPlateRefresh('{root_id}')",
                         onclick="this.select()",
@@ -1350,13 +1721,84 @@ def FoodDetailPage(connection, user_id: int, entry_type: str, entry: dict, summa
                     data_detail_leftovers="true",
                     cls="text-xs text-gray-600",
                 ),
+                Div(
+                    Button(
+                        "Advanced",
+                        type="button",
+                        cls="web_button px-2 py-1 text-[11px] w-fit",
+                        onclick=(
+                            f"const el=document.getElementById('{advanced_id}');"
+                            f"const inner=document.getElementById('{advanced_inner_id}');"
+                            "if(!el) return;"
+                            "const isOpen = el.getAttribute('data-open') === '1';"
+                            "if(!isOpen){"
+                            "el.setAttribute('data-open','1');"
+                            "el.style.overflow='hidden';"
+                            "el.style.maxHeight = (inner ? (inner.scrollHeight + 8) : 220) + 'px';"
+                            "el.style.opacity = '1';"
+                            "setTimeout(function(){ if(el.getAttribute('data-open')==='1'){ el.style.overflow='visible'; } }, 320);"
+                            "} else {"
+                            "el.setAttribute('data-open','0');"
+                            "el.style.overflow='hidden';"
+                            "el.style.maxHeight = '0px';"
+                            "el.style.opacity = '0';"
+                            "}"
+                        ),
+                    ),
+                    cls=f"{'hidden ' if recipe_mode else ''}flex justify-end",
+                ),
+                Div(
+                    Div(
+                        Div(
+                            _searchable_compact_input(
+                                name="cooking",
+                                options=COOKING_OPTIONS,
+                                value="",
+                                placeholder="Cooking",
+                                allow_add=False,
+                            ),
+                            cls="flex flex-col gap-1",
+                        ),
+                        Div(
+                            _searchable_compact_input(
+                                name="final_state",
+                                options=INITIAL_STATE_OPTIONS,
+                                value="",
+                                placeholder="Final state",
+                                allow_add=False,
+                            ),
+                            cls="flex flex-col gap-1",
+                        ),
+                        Div(
+                            _searchable_compact_input(
+                                name="conservation",
+                                options=CONSERVATION_OPTIONS,
+                                value="",
+                                placeholder="Conservation",
+                                allow_add=False,
+                            ),
+                            cls="flex flex-col gap-1",
+                        ),
+                        id=advanced_inner_id,
+                        cls="grid grid-cols-2 md:grid-cols-3 gap-2",
+                    ),
+                    id=advanced_id,
+                    data_open="0",
+                    cls=f"{'hidden ' if recipe_mode else ''}w-full relative z-30 transition-all duration-300 ease-out overflow-hidden",
+                    style="max-height:0px;opacity:0;",
+                ),
+                id=form_id,
                 cls="web_container p-3 rounded-2xl flex flex-col gap-2",
             ),
             cls="w-full",
         ),
         Div(
             H2("Macros Summary", cls="font-semibold text-gray-900"),
-            Div(*_detail_macro_tiles(per100, default_amount), id=f"{root_id}_macros", cls="grid grid-cols-2 md:grid-cols-3 gap-2"),
+            (
+                RecipeMacrosGrid(int(entry.get("id") or 0), per100, default_amount)
+                if recipe_mode
+                else Div(*_detail_macro_tiles(per100, default_amount), id=f"{root_id}_macros", cls="grid grid-cols-2 md:grid-cols-3 gap-2")
+            ),
             cls="flex flex-col gap-2 w-full",
         ),
         Div(
@@ -1364,6 +1806,7 @@ def FoodDetailPage(connection, user_id: int, entry_type: str, entry: dict, summa
             _detail_info_rows(info_rows),
             cls="flex flex-col gap-2 w-full",
         ),
+        recipe_ingredients,
         Div(
             Button(
                 edit_label,
@@ -1379,18 +1822,19 @@ def FoodDetailPage(connection, user_id: int, entry_type: str, entry: dict, summa
                 hx_push_url="true",
             ),
             Button(
-                "Log food",
+                action_button_label,
                 type="button",
                 cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-black text-white border-black",
                 hx_post=f"/food/log/{entry_type}/{entry['id']}",
                 hx_target=f"#{msg_id}",
                 hx_swap="innerHTML",
-                hx_include=f"#meal_selector, #{plate_grams_id}, #{grams_id}",
+                hx_include=f"{'#meal_selector, ' if not recipe_mode else ''}#{form_id}",
                 data_skip_page_loading="true",
             ),
             cls="w-full grid grid-cols-2 gap-3",
         ),
         Div(id=msg_id, cls="min-h-6 text-xs"),
+        _searchable_autocomplete_bootstrap_script(),
         Script(src="/js/cart_units.js", defer="defer"),
         Script(src="/js/food_detail.js", defer="defer"),
         data_food_detail="true",
@@ -1408,6 +1852,93 @@ def FoodDetailPage(connection, user_id: int, entry_type: str, entry: dict, summa
         data_detail_persist_key=persist_key,
         data_hide_cart="true",
         id=root_id,
+        cls="""
+            flex flex-col items-center
+            gap-4
+            md:mt-7 lg:mt-7 mt-2
+            md:w-md lg:w-md w-xs
+            w-full mx-auto
+            md:mb-28 lg:mb-28 mb-24
+        """,
+    )
+
+
+def RecipeIngredientPickerCard(food: dict, recipe_id: int):
+    add_path = f"/food/recipe/{recipe_id}/ingredients/add/{food['entry_type']}/{food['id']}"
+    return Div(
+        Div(
+            H1(food["name"], cls="text-left font-semibold"),
+            Div(_entry_meta(food), cls="text-sm text-gray-700"),
+            cls="flex flex-col gap-0.5 min-w-0",
+        ),
+        Div(
+            AddButton(
+                label="Add food",
+                include_meal_selector=False,
+                hx_post=add_path,
+                cls="""
+                    web_button
+                    rounded-lg
+                    border-gray-500/30 shadow-none
+                    hover:bg-gray-500/20
+                    px-3 h-8
+                    flex items-center justify-center
+                    transition-colors duration-300
+                    text-xs
+                """,
+            ),
+            cls="flex items-center gap-2 ml-3",
+        ),
+        cls="web_container food_entry flex items-center justify-between",
+    )
+
+
+def RecipeIngredientPickerList(recipe_id: int, foods: list[dict]):
+    grouped = {"catalog": [], "manual_intake": []}
+    for food in foods:
+        entry_type = food.get("entry_type")
+        if entry_type in grouped:
+            grouped[entry_type].append(food)
+
+    nodes = []
+    for entry_type, title in (("catalog", "Food"), ("manual_intake", "Manual intake")):
+        if not grouped[entry_type]:
+            continue
+        nodes.append(H2(title, cls="text-gray-700"))
+        nodes.extend(RecipeIngredientPickerCard(item, recipe_id) for item in grouped[entry_type])
+
+    if not nodes:
+        return Div(H2("No items", cls="text-gray-600"), cls="flex flex-col items-center")
+    return Div(*nodes, cls="flex flex-col items-center md:gap-3 lg:gap-3 gap-2 mt-4")
+
+
+def RecipeIngredientPickerPage(recipe_entry: dict, foods: list[dict]):
+    recipe_id = int(recipe_entry.get("id") or 0)
+    return Div(
+        Div(
+            H1(f"Add ingredient to {recipe_entry.get('name') or 'recipe'}", cls="text-xl font-bold text-gray-900"),
+            P("Search in your Food and Manual intake lists.", cls="text-sm text-gray-600"),
+            cls="flex flex-col gap-1 w-full",
+        ),
+        RecipeIngredientSearchInput(recipe_id),
+        Div(
+            RecipeIngredientPickerList(recipe_id, foods),
+            id="recipe-ingredient-list",
+            cls="w-full",
+        ),
+        Div(
+            Button(
+                "Back to recipe",
+                type="button",
+                cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-white/85 text-gray-800 border border-gray-300",
+                hx_get=f"/food/item/recipe/{recipe_id}",
+                hx_target="#main_content",
+                hx_swap="innerHTML",
+                hx_push_url="true",
+            ),
+            cls="w-full",
+        ),
+        data_hide_cart="true",
         cls="""
             flex flex-col items-center
             gap-4

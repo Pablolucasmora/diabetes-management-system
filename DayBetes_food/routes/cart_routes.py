@@ -205,6 +205,15 @@ def setup_cart_routes(rt):
             ok = update_intake_event(connection, event_id, {"eating_out": value})
             return _cart_response(connection, status=200 if ok else 400)
 
+    @rt("/cart/event/{event_id}/insulin_dose")
+    def post(request: Request, event_id: int, insulin_dose: str = ""):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        value = (insulin_dose or "").strip().lower() == "true"
+        with get_connection() as connection:
+            ok = update_intake_event(connection, event_id, {"insulin_dose": value})
+            return _cart_response(connection, status=200 if ok else 400)
+
     @rt("/cart/event/{event_id}/ingredient/{origin}/{origin_id}/amount")
     def post(request: Request, event_id: int, origin: str, origin_id: int, amount_g: str = ""):
         if request.headers.get("HX-Request") != "true":

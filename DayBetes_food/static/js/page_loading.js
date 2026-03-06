@@ -158,6 +158,19 @@
     window.addEventListener("resize", function () {
       syncFoodTopSpacing(true);
     });
+
+    // Safari BFCache can restore the page with overlay visible.
+    window.addEventListener("pageshow", function () {
+      pendingRequests = 0;
+      var overlay = byId("page_loading_overlay");
+      if (!overlay) return;
+      if (hideTimer) {
+        window.clearTimeout(hideTimer);
+        hideTimer = null;
+      }
+      overlay.classList.remove("opacity-100");
+      overlay.classList.add("opacity-0", "invisible");
+    });
   }
 
   if (document.readyState === "loading") {

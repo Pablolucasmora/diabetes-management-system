@@ -517,6 +517,7 @@ def CartCard(event, portions):
     grouped_portions = group_portions(portions)
     confirm_id = f"delete_meal_confirm_{event['id']}"
     eating_out_id = f"eating_out_{event['id']}"
+    insulin_dose_id = f"insulin_dose_{event['id']}"
     return Div(
         EventHeader(event),
         Div(
@@ -528,6 +529,17 @@ def CartCard(event, portions):
                     hx_post=f"/cart/event/{event['id']}/eating_out",
                     input_id=eating_out_id,
                     aria_label="Eating out",
+                ),
+                cls="flex items-center gap-2"
+            ),
+            Div(
+                Label("Insulin", cls="text-xs text-gray-600", **{"for": insulin_dose_id}),
+                _checkbox(
+                    name="insulin_dose",
+                    checked=bool(event.get("insulin_dose")),
+                    hx_post=f"/cart/event/{event['id']}/insulin_dose",
+                    input_id=insulin_dose_id,
+                    aria_label="Insulin",
                 ),
                 cls="flex items-center gap-2"
             ),

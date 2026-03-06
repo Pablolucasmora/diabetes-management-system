@@ -766,3 +766,73 @@ def get_portion_detail(connection, portion_id: int) -> Optional[dict]:
         WHERE pd.id = %(id)s;
     """
     return _execute_query(connection, query, {"id": portion_id}, commit=False)
+
+
+def update_portion_detail_amount(connection, portion_id: int, amount_g: float) -> bool:
+    """Updates amount_g for a portion_detail row."""
+    if amount_g <= 0:
+        raise ValueError("amount_g must be positive")
+    query = "UPDATE portion_detail SET amount_g = %(amount_g)s WHERE id = %(id)s RETURNING id;"
+    result = _execute_query(connection, query, {"id": portion_id, "amount_g": amount_g})
+    return result is not None
+
+
+def update_portion_detail_fields(
+    connection,
+    portion_id: int,
+    cooking: str = None,
+    conservation: str = None,
+    final_state: str = None,
+    strictly_weighed: bool = None,
+    macros_quality: bool = None,
+) -> bool:
+    """Updates editable metadata fields for a portion_detail row."""
+    params = {
+        "id": portion_id,
+        "cooking": cooking,
+        "conservation": conservation,
+        "final_state": final_state,
+        "strictly_weighed": strictly_weighed,
+        "macros_quality": macros_quality,
+    }
+    query = _build_update_query("portion_detail", params)
+    if not query:
+        return False
+    result = _execute_query(connection, query, params)
+    return result is not None
+
+
+def delete_portion_detail(connection, portion_id: int) -> bool:
+    """Deletes one portion_detail row by id."""
+    query = "DELETE FROM portion_detail WHERE id = %(id)s RETURNING id;"
+    result = _execute_query(connection, query, {"id": portion_id})
+    return result is not None
+
+
+def get_recipe_portion_by_origin(connection, recipe_id: int, origin: str, origin_id: int) -> Optional[dict]:
+    """Gets first portion_detail row in recipe matching origin and origin_id."""
+    if origin not in ("catalog", "manual_intake"):
+        raise ValueError("Invalid origin")
+    origin_field = "catalog_id" if origin == "catalog" else "manual_intake_id"
+    query = f"""
+        SELECT *
+        FROM portion_detail
+        WHERE recipe_id = %(recipe_id)s AND {origin_field} = %(origin_id)s
+        ORDER BY id
+        LIMIT 1;
+    """
+    return _execute_query(connection, query, {"recipe_id": recipe_id, "origin_id": origin_id}, commit=False)
+
+
+def get_recipe_portions_by_origin(connection, recipe_id: int, origin: str, origin_id: int) -> list:
+    """Gets all portion_detail rows in recipe matching origin and origin_id."""
+    if origin not in ("catalog", "manual_intake"):
+        raise ValueError("Invalid origin")
+    origin_field = "catalog_id" if origin == "catalog" else "manual_intake_id"
+    query = f"""
+        SELECT *
+        FROM portion_detail
+        WHERE recipe_id = %(recipe_id)s AND {origin_field} = %(origin_id)s
+        ORDER BY id;
+    """
+    return _execute_query_many(connection, query, {"recipe_id": recipe_id, "origin_id": origin_id}, commit=False)
