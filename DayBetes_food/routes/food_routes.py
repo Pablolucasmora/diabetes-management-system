@@ -15,6 +15,7 @@ from DayBetes_food.database.queries.crud import (
     get_portion_detail_by_recipe,
     get_default_user_id,
     get_intake_event,
+    update_catalog_item,
     update_catalog_favorite,
     update_manual_intake,
     update_recipe,
@@ -26,7 +27,15 @@ from DayBetes_food.database.queries.crud import (
     get_manual_origin_suggestions,
 )
 from DayBetes_food.components.food.foods import FoodSectionsContent, FavoriteButton, on_after
-from DayBetes_food.components.food.foods import CreateCatalogPage, CreateManualPage, CreateRecipePage
+from DayBetes_food.components.food.foods import (
+    CreateCatalogPage,
+    CreateManualPage,
+    CreateRecipePage,
+    EditCatalogPage,
+    EditManualPage,
+    EditRecipePage,
+    FoodDetailPage,
+)
 from DayBetes_food.database.connection import get_connection
 
 
@@ -52,6 +61,101 @@ def _to_int(value: str):
 
 def _to_bool(value: str):
     return (value or "").strip().lower() in ("1", "true", "on", "yes")
+
+
+def _macro_value(row: dict, macro_key: str):
+    catalog_value = row.get(f"catalog_{macro_key}_100g")
+    manual_value = row.get(f"manual_{macro_key}_100g")
+    return catalog_value if catalog_value is not None else manual_value
+
+
+def _build_detail_summary(entry_type: str, entry: dict, recipe_portions: list | None = None) -> dict:
+    if entry_type == "catalog":
+        return {
+            "subtitle": entry.get("brand") or "No brand",
+            "default_amount_g": float(entry.get("default_portion") or 100.0),
+            "per100": {
+                "calories_100g": float(entry.get("calories_100g") or 0.0),
+                "carbs_100g": float(entry.get("carbs_100g") or 0.0),
+                "sugars_100g": float(entry.get("sugars_100g") or 0.0),
+                "fats_100g": float(entry.get("fats_100g") or 0.0),
+                "saturated_100g": float(entry.get("saturated_100g") or 0.0),
+                "proteins_100g": float(entry.get("proteins_100g") or 0.0),
+                "fiber_100g": float(entry.get("fiber_100g") or 0.0),
+            },
+            "info_rows": [
+                ("Category", str(entry.get("category") or "")),
+                ("Subtype", str(entry.get("subtype") or "")),
+                ("Initial state", str(entry.get("initial_state") or "")),
+                ("Nutriscore", str(entry.get("nutriscore") or "")),
+                ("NOVA", str(entry.get("nova") or "")),
+                ("Yuka", str(entry.get("yuka") or "")),
+                ("Caffeine", str(entry.get("caffeine") or "")),
+                ("Alcohol", str(entry.get("alcohol") or "")),
+                ("Barcode", str(entry.get("barcode") or "")),
+                ("Cooking factor", str(entry.get("cooking_factor") or "")),
+            ],
+        }
+
+    if entry_type == "manual_intake":
+        return {
+            "subtitle": entry.get("origin") or "Manual intake",
+            "default_amount_g": float(entry.get("amount_g") or 100.0),
+            "per100": {
+                "calories_100g": float(entry.get("calories_100g") or 0.0),
+                "carbs_100g": float(entry.get("carbs_100g") or 0.0),
+                "sugars_100g": float(entry.get("sugars_100g") or 0.0),
+                "fats_100g": float(entry.get("fats_100g") or 0.0),
+                "saturated_100g": float(entry.get("saturated_100g") or 0.0),
+                "proteins_100g": float(entry.get("proteins_100g") or 0.0),
+                "fiber_100g": float(entry.get("fiber_100g") or 0.0),
+            },
+            "info_rows": [
+                ("Description", str(entry.get("description") or "")),
+                ("Subtype", str(entry.get("subtype") or "")),
+                ("Origin", str(entry.get("origin") or "")),
+                ("Stored amount", str(entry.get("amount_g") or "")),
+                ("Glycemic index", str(entry.get("glycemic_index") or "")),
+                ("IG confidence", str(entry.get("ig_confidence") or "")),
+                ("Caffeine", str(entry.get("caffeine") or "")),
+                ("Alcohol", str(entry.get("alcohol") or "")),
+            ],
+        }
+
+    portions = recipe_portions or []
+    total_amount = sum(float(row.get("amount_g") or 0.0) for row in portions)
+    totals = {
+        "calories_100g": 0.0,
+        "carbs_100g": 0.0,
+        "sugars_100g": 0.0,
+        "fats_100g": 0.0,
+        "saturated_100g": 0.0,
+        "proteins_100g": 0.0,
+        "fiber_100g": 0.0,
+    }
+    for row in portions:
+        amount = float(row.get("amount_g") or 0.0)
+        for key in list(totals.keys()):
+            macro = _macro_value(row, key.replace("_100g", ""))
+            if macro is None:
+                continue
+            totals[key] += amount * float(macro) / 100.0
+
+    per100 = {}
+    for key, total in totals.items():
+        per100[key] = (total * 100.0 / total_amount) if total_amount > 0 else 0.0
+
+    return {
+        "subtitle": "Recipe",
+        "default_amount_g": total_amount or 100.0,
+        "per100": per100,
+        "info_rows": [
+            ("Meal type", str(entry.get("meal_type") or "")),
+            ("Notes", str(entry.get("notes") or "")),
+            ("Ingredients", str(len(portions))),
+            ("Recipe amount", f"{total_amount:.1f}" if total_amount > 0 else ""),
+        ],
+    }
 
 
 def _sorted_food_entries(catalog_items, manual_items, recipes):
@@ -111,18 +215,194 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             brands = get_food_brand_suggestions(connection, search="", limit=500)
             subtypes = get_subtype_suggestions(connection, search="", limit=500)
-        return render_page(request, lambda _: CreateCatalogPage(brand_options=brands, subtype_options=subtypes))
+        return render_page(request, lambda _: CreateCatalogPage(brand_options=brands, subtype_options=subtypes), show_cart=False)
 
     @rt("/food/create/manual/form")
     def get(request: Request):
         with get_connection() as connection:
             subtypes = get_subtype_suggestions(connection, search="", limit=500)
             origins = get_manual_origin_suggestions(connection, search="", limit=500)
-        return render_page(request, lambda _: CreateManualPage(subtype_options=subtypes, origin_options=origins))
+        return render_page(request, lambda _: CreateManualPage(subtype_options=subtypes, origin_options=origins), show_cart=False)
 
     @rt("/food/create/recipe/form")
     def get(request: Request):
-        return render_page(request, lambda _: CreateRecipePage())
+        return render_page(request, lambda _: CreateRecipePage(), show_cart=False)
+
+    @rt("/food/item/{entry_type}/{entry_id}")
+    def get(request: Request, entry_type: str, entry_id: int):
+        with get_connection() as connection:
+            user_id = get_default_user_id(connection)
+            entry = None
+            recipe_portions = None
+            if entry_type == "catalog":
+                entry = get_catalog_item(connection, entry_id)
+            elif entry_type == "manual_intake":
+                entry = get_manual_intake(connection, entry_id)
+            elif entry_type == "recipe":
+                entry = get_recipe(connection, entry_id)
+                recipe_portions = get_portion_detail_by_recipe(connection, entry_id) if entry else []
+            if not entry:
+                return HTMLResponse(status_code=404)
+            summary = _build_detail_summary(entry_type, entry, recipe_portions=recipe_portions)
+        return render_page(
+            request,
+            lambda conn: FoodDetailPage(conn, user_id=user_id or 0, entry_type=entry_type, entry=entry, summary=summary),
+            show_cart=False,
+        )
+
+    @rt("/food/edit/{entry_type}/{entry_id}/form")
+    def get(request: Request, entry_type: str, entry_id: int):
+        with get_connection() as connection:
+            entry = None
+            if entry_type == "catalog":
+                entry = get_catalog_item(connection, entry_id)
+                if not entry:
+                    return HTMLResponse(status_code=404)
+                brands = get_food_brand_suggestions(connection, search="", limit=500)
+                subtypes = get_subtype_suggestions(connection, search="", limit=500)
+                return render_page(
+                    request,
+                    lambda _: EditCatalogPage(entry=entry, brand_options=brands, subtype_options=subtypes),
+                    show_cart=False,
+                )
+            if entry_type == "manual_intake":
+                entry = get_manual_intake(connection, entry_id)
+                if not entry:
+                    return HTMLResponse(status_code=404)
+                subtypes = get_subtype_suggestions(connection, search="", limit=500)
+                origins = get_manual_origin_suggestions(connection, search="", limit=500)
+                return render_page(
+                    request,
+                    lambda _: EditManualPage(entry=entry, subtype_options=subtypes, origin_options=origins),
+                    show_cart=False,
+                )
+            if entry_type == "recipe":
+                entry = get_recipe(connection, entry_id)
+                if not entry:
+                    return HTMLResponse(status_code=404)
+                return render_page(request, lambda _: EditRecipePage(entry=entry), show_cart=False)
+        return HTMLResponse(status_code=404)
+
+    @rt("/food/log/{entry_type}/{entry_id}")
+    def post(
+        request: Request,
+        entry_type: str,
+        entry_id: int,
+        amount_g: str = "",
+        total_amount_g: str = "",
+        intake_event_id: str = "",
+    ):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+
+        parsed_amount = _to_float(amount_g)
+        parsed_total = _to_float(total_amount_g)
+        if parsed_amount is None or parsed_amount <= 0:
+            return render_fragment(P("Amount must be greater than 0.", cls="text-red-700"))
+        if parsed_total is not None and parsed_total > 0:
+            parsed_amount = min(parsed_amount, parsed_total)
+
+        with get_connection() as connection:
+            user_id = get_default_user_id(connection)
+            if not user_id:
+                return render_fragment(P("No users available.", cls="text-red-700"))
+
+            if intake_event_id and intake_event_id.isdigit() and int(intake_event_id) != 0:
+                event_id = int(intake_event_id)
+            else:
+                event_id = add_intake_event(connection, users_id=user_id, state="planned")
+
+            if not event_id:
+                return render_fragment(P("Could not create meal event.", cls="text-red-700"))
+
+            event_data = get_intake_event(connection, event_id)
+            offset_minutes = 0
+            if event_data and event_data.get("meal_time"):
+                delta = datetime.now() - event_data["meal_time"]
+                offset_minutes = int(delta.total_seconds() // 60)
+
+            created = []
+            if entry_type == "catalog":
+                created.append(
+                    add_portion_detail(
+                        connection,
+                        origin="catalog",
+                        origin_id=entry_id,
+                        destination="intake_event",
+                        destination_id=event_id,
+                        amount_g=parsed_amount,
+                        plate_amount=parsed_amount,
+                        offset_minutes=offset_minutes,
+                    )
+                )
+            elif entry_type == "manual_intake":
+                created.append(
+                    add_portion_detail(
+                        connection,
+                        origin="manual_intake",
+                        origin_id=entry_id,
+                        destination="intake_event",
+                        destination_id=event_id,
+                        amount_g=parsed_amount,
+                        plate_amount=parsed_amount,
+                        offset_minutes=offset_minutes,
+                    )
+                )
+            elif entry_type == "recipe":
+                recipe_rows = get_portion_detail_by_recipe(connection, entry_id)
+                total_recipe_amount = sum(float(row.get("amount_g") or 0.0) for row in recipe_rows)
+                if total_recipe_amount <= 0:
+                    return render_fragment(P("Recipe has no ingredients to log.", cls="text-red-700"))
+                factor = parsed_amount / total_recipe_amount
+                for row in recipe_rows:
+                    row_amount = float(row.get("amount_g") or 0.0) * factor
+                    if row_amount <= 0:
+                        continue
+                    if row.get("catalog_id"):
+                        created.append(
+                            add_portion_detail(
+                                connection,
+                                origin="catalog",
+                                origin_id=int(row["catalog_id"]),
+                                destination="intake_event",
+                                destination_id=event_id,
+                                amount_g=row_amount,
+                                cooking=row.get("cooking"),
+                                conservation=row.get("conservation"),
+                                final_state=row.get("final_state"),
+                                strictly_weighed=row.get("strictly_weighed"),
+                                macros_quality=row.get("macros_quality"),
+                                plate_amount=row_amount,
+                                is_cooked_weight=bool(row.get("is_cooked_weight")),
+                                offset_minutes=offset_minutes,
+                            )
+                        )
+                    elif row.get("manual_intake_id"):
+                        created.append(
+                            add_portion_detail(
+                                connection,
+                                origin="manual_intake",
+                                origin_id=int(row["manual_intake_id"]),
+                                destination="intake_event",
+                                destination_id=event_id,
+                                amount_g=row_amount,
+                                cooking=row.get("cooking"),
+                                conservation=row.get("conservation"),
+                                final_state=row.get("final_state"),
+                                strictly_weighed=row.get("strictly_weighed"),
+                                macros_quality=row.get("macros_quality"),
+                                plate_amount=row_amount,
+                                is_cooked_weight=bool(row.get("is_cooked_weight")),
+                                offset_minutes=offset_minutes,
+                            )
+                        )
+            else:
+                return render_fragment(P("Unsupported entry type.", cls="text-red-700"))
+
+            ok = bool(created) and all(created)
+            if ok:
+                return HTMLResponse("", headers={"HX-Redirect": "/food"})
+            return render_fragment(P("Could not log food.", cls="text-red-700"))
 
     @rt("/food/list")
     def get(request: Request, search: str = "", filter: str = "all"):
@@ -337,6 +617,187 @@ def setup_food_routes(rt):
                 return HTMLResponse(status_code=400)
 
             return render_fragment(FavoriteButton(entry_type, entry_id, bool(current.get("favorite"))))
+
+    @rt("/food/edit/catalog/{entry_id}")
+    def post(
+        request: Request,
+        entry_id: int,
+        name: str = "",
+        brand: str = "",
+        category: str = "",
+        subtype: str = "",
+        initial_state: str = "",
+        nutriscore: str = "",
+        nova: str = "",
+        yuka: str = "",
+        default_portion: str = "",
+        calories_100g: str = "",
+        carbs_100g: str = "",
+        sugars_100g: str = "",
+        fats_100g: str = "",
+        saturated_100g: str = "",
+        proteins_100g: str = "",
+        fiber_100g: str = "",
+        caffeine: str = "",
+        alcohol: str = "",
+        barcode: str = "",
+        cooking_factor: str = "",
+        favorite: str = "",
+    ):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        clean_name = (name or "").strip()
+        clean_category = (category or "").strip()
+        clean_subtype = (subtype or "").strip()
+        if not clean_name or not clean_category or not clean_subtype:
+            return _error_msg("Name, category and subtype are required.")
+
+        with get_connection() as connection:
+            current = get_catalog_item(connection, entry_id)
+            if not current:
+                return _error_msg("Catalog item not found.")
+
+            existing = get_all_catalog(connection, search=clean_name)
+            duplicated = any(
+                ((item.get("name") or "").strip().lower() == clean_name.lower()) and int(item.get("id") or 0) != entry_id
+                for item in existing
+            )
+            if duplicated:
+                return _error_msg("A catalog item with that name already exists.")
+
+            clean_brand = (brand or "").strip()
+            payload = {
+                "name": clean_name,
+                "brand": clean_brand or None,
+                "category": clean_category,
+                "subtype": clean_subtype,
+                "initial_state": initial_state.strip() or None,
+                "nutriscore": nutriscore.strip() or None,
+                "nova": _to_int(nova),
+                "yuka": _to_int(yuka),
+                "default_portion": _to_float(default_portion),
+                "calories_100g": _to_float(calories_100g),
+                "carbs_100g": _to_float(carbs_100g),
+                "sugars_100g": _to_float(sugars_100g),
+                "fats_100g": _to_float(fats_100g),
+                "saturated_100g": _to_float(saturated_100g),
+                "proteins_100g": _to_float(proteins_100g),
+                "fiber_100g": _to_float(fiber_100g),
+                "caffeine": _to_float(caffeine),
+                "alcohol": _to_float(alcohol),
+                "barcode": barcode.strip() or None,
+                "cooking_factor": _to_float(cooking_factor),
+                "favorite": _to_bool(favorite),
+            }
+            updated = update_catalog_item(connection, entry_id, payload)
+            if not updated:
+                return _error_msg("Catalog item could not be updated.")
+            if clean_brand:
+                add_food_brand(connection, clean_brand)
+            return HTMLResponse("", headers={"HX-Redirect": f"/food/item/catalog/{entry_id}"})
+
+    @rt("/food/edit/manual/{entry_id}")
+    def post(
+        request: Request,
+        entry_id: int,
+        name: str = "",
+        description: str = "",
+        subtype: str = "",
+        source_origin: str = "",
+        amount_g: str = "",
+        calories_100g: str = "",
+        carbs_100g: str = "",
+        sugars_100g: str = "",
+        fats_100g: str = "",
+        saturated_100g: str = "",
+        proteins_100g: str = "",
+        fiber_100g: str = "",
+        caffeine: str = "",
+        alcohol: str = "",
+        glycemic_index: str = "",
+        ig_confidence: str = "",
+        favorite: str = "",
+    ):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        clean_name = (name or "").strip()
+        clean_subtype = (subtype or "").strip()
+        if not clean_name or not clean_subtype or not amount_g:
+            return _error_msg("Name, subtype and amount are required.")
+
+        try:
+            amount_value = float(amount_g)
+            if amount_value <= 0:
+                return _error_msg("Amount must be greater than zero.")
+        except (TypeError, ValueError):
+            return _error_msg("Amount must be numeric.")
+
+        with get_connection() as connection:
+            current = get_manual_intake(connection, entry_id)
+            if not current:
+                return _error_msg("Manual intake not found.")
+            user_id = get_default_user_id(connection)
+            existing = get_all_manual_intakes(connection, users_id=user_id, search=clean_name)
+            duplicated = any(
+                ((item.get("name") or "").strip().lower() == clean_name.lower()) and int(item.get("id") or 0) != entry_id
+                for item in existing
+            )
+            if duplicated:
+                return _error_msg("A manual intake with that name already exists for this user.")
+
+            payload = {
+                "name": clean_name,
+                "description": description.strip() or None,
+                "subtype": clean_subtype,
+                "origin": source_origin.strip() or None,
+                "amount_g": amount_value,
+                "calories_100g": _to_float(calories_100g),
+                "carbs_100g": _to_float(carbs_100g),
+                "sugars_100g": _to_float(sugars_100g),
+                "fats_100g": _to_float(fats_100g),
+                "saturated_100g": _to_float(saturated_100g),
+                "proteins_100g": _to_float(proteins_100g),
+                "fiber_100g": _to_float(fiber_100g),
+                "caffeine": _to_float(caffeine),
+                "alcohol": _to_float(alcohol),
+                "glycemic_index": glycemic_index.strip() or None,
+                "ig_confidence": _to_int(ig_confidence),
+                "favorite": _to_bool(favorite),
+            }
+            updated = update_manual_intake(connection, entry_id, payload)
+            if not updated:
+                return _error_msg("Manual intake could not be updated.")
+            return HTMLResponse("", headers={"HX-Redirect": f"/food/item/manual_intake/{entry_id}"})
+
+    @rt("/food/edit/recipe/{entry_id}")
+    def post(
+        request: Request,
+        entry_id: int,
+        name: str = "",
+        meal_type: str = "",
+        notes: str = "",
+        favorite: str = "",
+    ):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        clean_name = (name or "").strip()
+        if not clean_name:
+            return _error_msg("Recipe name is required.")
+        with get_connection() as connection:
+            current = get_recipe(connection, entry_id)
+            if not current:
+                return _error_msg("Recipe not found.")
+            updated = update_recipe(
+                connection,
+                entry_id,
+                name=clean_name,
+                meal_type=meal_type.strip() or None,
+                notes=notes.strip() or None,
+                favorite=_to_bool(favorite),
+            )
+            if not updated:
+                return _error_msg("Recipe could not be updated.")
+            return HTMLResponse("", headers={"HX-Redirect": f"/food/item/recipe/{entry_id}"})
 
     @rt("/food/create/catalog")
     def post(

@@ -339,6 +339,20 @@ def update_catalog_favorite(connection, catalog_id: int, favorite: bool) -> bool
     return result is not None
 
 
+def update_catalog_item(connection, catalog_id: int, data: dict) -> bool:
+    """Updates a catalog item."""
+    if not data:
+        return False
+
+    params = {**data, "id": catalog_id}
+    query = _build_update_query("catalog", params)
+    if not query:
+        return False
+
+    result = _execute_query(connection, query, params)
+    return result is not None
+
+
 # ============================================
 # MANUAL INTAKE
 # ============================================
@@ -708,7 +722,28 @@ def get_portion_detail_by_events(connection, intake_event_ids: list[int]) -> lis
 def get_portion_detail_by_recipe(connection, recipe_id: int) -> list:
     """Gets all portions for a recipe."""
     query = """
-        SELECT pd.*, c.name as catalog_name, im.name as manual_intake_name
+        SELECT
+            pd.*,
+            c.name as catalog_name,
+            c.category as catalog_category,
+            c.default_portion as catalog_default_portion,
+            c.calories_100g as catalog_calories_100g,
+            c.carbs_100g as catalog_carbs_100g,
+            c.sugars_100g as catalog_sugars_100g,
+            c.fats_100g as catalog_fats_100g,
+            c.saturated_100g as catalog_saturated_100g,
+            c.proteins_100g as catalog_proteins_100g,
+            c.fiber_100g as catalog_fiber_100g,
+            im.name as manual_intake_name,
+            im.subtype as manual_subtype,
+            im.amount_g as manual_amount_g,
+            im.calories_100g as manual_calories_100g,
+            im.carbs_100g as manual_carbs_100g,
+            im.sugars_100g as manual_sugars_100g,
+            im.fats_100g as manual_fats_100g,
+            im.saturated_100g as manual_saturated_100g,
+            im.proteins_100g as manual_proteins_100g,
+            im.fiber_100g as manual_fiber_100g
         FROM portion_detail pd
         LEFT JOIN catalog c ON pd.catalog_id = c.id
         LEFT JOIN manual_intake im ON pd.manual_intake_id = im.id
@@ -731,4 +766,3 @@ def get_portion_detail(connection, portion_id: int) -> Optional[dict]:
         WHERE pd.id = %(id)s;
     """
     return _execute_query(connection, query, {"id": portion_id}, commit=False)
-

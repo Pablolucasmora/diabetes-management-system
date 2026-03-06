@@ -205,6 +205,7 @@ def _labeled_input(
     placeholder: str = "",
     help_text: str = "",
     step: str = "",
+    value: str | None = None,
 ):
     help_value = help_text or f"What to enter in {label}"
     return Div(
@@ -213,8 +214,10 @@ def _labeled_input(
             type=typ,
             name=name,
             placeholder=placeholder,
-            cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-base",
+            cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-base mr-1",
+            onclick="this.select()",
             **({"step": step} if step else {}),
+            **({"value": value} if value is not None else {}),
         ),
         cls="flex flex-col gap-1",
     )
@@ -227,6 +230,7 @@ def _searchable_autocomplete_input(
     help_text: str = "",
     placeholder: str = "",
     allow_add: bool = True,
+    value: str | None = None,
 ):
     normalized_options = sorted({(opt or "").strip() for opt in (options or []) if (opt or "").strip()})
     options_json = json.dumps(normalized_options)
@@ -241,7 +245,9 @@ def _searchable_autocomplete_input(
                 data_searchable_input="true",
                 placeholder=placeholder_value,
                 autocomplete="off",
-                cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-base",
+                cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-base mr-1",
+                onclick="this.select()",
+                **({"value": value} if value is not None else {}),
             ),
             Div(
                 data_searchable_suggestions="true",
@@ -262,7 +268,7 @@ def _searchable_autocomplete_input(
     )
 
 
-def _brand_autocomplete_input(brand_options: list[str] | None = None):
+def _brand_autocomplete_input(brand_options: list[str] | None = None, value: str | None = None):
     return _searchable_autocomplete_input(
         label="Brand",
         name="brand",
@@ -270,6 +276,7 @@ def _brand_autocomplete_input(brand_options: list[str] | None = None):
         help_text="Brand or manufacturer name.",
         placeholder="Type brand",
         allow_add=True,
+        value=value,
     )
 
 
@@ -414,7 +421,14 @@ def _searchable_autocomplete_bootstrap_script():
               if (ev.key === "Escape") closeBox();
             });
             document.addEventListener("click", function (ev) {
-              if (!root.contains(ev.target)) closeBox();
+              var target = ev.target;
+              if (!root.contains(target)) {
+                closeBox();
+                return;
+              }
+              if (target !== input && !box.contains(target)) {
+                closeBox();
+              }
             });
           }
 
@@ -434,28 +448,28 @@ def _searchable_autocomplete_bootstrap_script():
     )
 
 
-def _labeled_select(label: str, name: str, options: list[str], help_text: str = ""):
+def _labeled_select(label: str, name: str, options: list[str], help_text: str = "", selected_value: str = ""):
     help_value = help_text or f"What to select in {label}"
     return Div(
         _label_with_help(label, help_value),
         Select(
-            Option("-", value=""),
-            *[Option(opt, value=opt) for opt in options],
+            Option("-", value="", selected=(selected_value == "")),
+            *[Option(opt, value=opt, selected=(opt == selected_value)) for opt in options],
             name=name,
-            cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-xs",
+            cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-xs mr-1",
         ),
         cls="flex flex-col gap-1",
     )
 
 
-def _favorite_checkbox(name: str = "favorite"):
+def _favorite_checkbox(name: str = "favorite", checked: bool = True, centered: bool = False):
     return Div(
         Label(
             Input(
                 type="checkbox",
                 name=name,
                 value="true",
-                checked=True,
+                checked=checked,
                 cls=CHECKBOX_CLS,
             ),
             Span(
@@ -482,7 +496,11 @@ def _favorite_checkbox(name: str = "favorite"):
         ),
         Span("Favorite", cls="text-xs text-gray-700"),
         _help_icon("Mark as favorite so it appears highlighted and in Favs filter."),
-        cls="flex items-center justify-end gap-2 col-span-1 md:col-span-2",
+        cls=(
+            "flex items-center justify-center gap-2 col-span-1 md:col-span-2"
+            if centered
+            else "flex items-center justify-end gap-2 col-span-1 md:col-span-2"
+        ),
     )
 
 
@@ -698,6 +716,7 @@ def _create_page_shell(title: str, form, result_id: str):
         Div(id=result_id, cls="text-xs w-full"),
         _searchable_autocomplete_bootstrap_script(),
         Script(src="/js/smart_macros.js", defer="defer"),
+        data_hide_cart="true",
         cls="""
             flex flex-col items-center
             gap-4
@@ -844,6 +863,249 @@ def CreateRecipePage():
     return _create_page_shell("Create Recipe", form, result_id)
 
 
+def _input_value(value) -> str:
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _edit_page_shell(form, result_id: str):
+    return Div(
+        Div(form, cls="w-full"),
+        Div(id=result_id, cls="text-xs w-full"),
+        _searchable_autocomplete_bootstrap_script(),
+        data_hide_cart="true",
+        cls="""
+            flex flex-col items-center
+            gap-4
+            md:mt-7 lg:mt-7 mt-2
+            md:w-md lg:w-md w-xs
+            w-full mx-auto
+            md:mb-28 lg:mb-28 mb-24
+        """,
+    )
+
+
+def _edit_tile(content, cls: str = ""):
+    extra = f" {cls.strip()}" if cls and cls.strip() else ""
+    return Div(content, cls=f"web_container p-3 rounded-xl flex flex-col gap-1{extra}")
+
+
+def _edit_name_input(value: str):
+    return Textarea(
+        value,
+        name="name",
+        rows="2",
+        cls="""
+            w-full text-2xl font-bold text-black text-center
+            px-0 py-0 border-0 rounded-none
+            bg-transparent shadow-none
+            focus:outline-none resize-none mr-1
+        """,
+        style="background:transparent;border-color:transparent;box-shadow:none;",
+    )
+
+
+def EditCatalogPage(entry: dict, brand_options: list[str] | None = None, subtype_options: list[str] | None = None):
+    result_id = f"edit_catalog_result_{entry['id']}"
+    form = Form(
+        _edit_name_input(_input_value(entry.get("name"))),
+        _edit_tile(_brand_autocomplete_input(brand_options=brand_options, value=_input_value(entry.get("brand")))),
+        Div(
+            H2("Macros Summary", cls="font-semibold text-gray-900"),
+            Div(
+                _edit_tile(_labeled_input("Calories/100g", "calories_100g", "number", value=_input_value(entry.get("calories_100g")))),
+                _edit_tile(_labeled_input("Carbs/100g", "carbs_100g", "number", value=_input_value(entry.get("carbs_100g")))),
+                _edit_tile(_labeled_input("Sugars/100g", "sugars_100g", "number", value=_input_value(entry.get("sugars_100g")))),
+                _edit_tile(_labeled_input("Fats/100g", "fats_100g", "number", value=_input_value(entry.get("fats_100g")))),
+                _edit_tile(_labeled_input("Saturated/100g", "saturated_100g", "number", value=_input_value(entry.get("saturated_100g")))),
+                _edit_tile(_labeled_input("Proteins/100g", "proteins_100g", "number", value=_input_value(entry.get("proteins_100g")))),
+                _edit_tile(_labeled_input("Fiber/100g", "fiber_100g", "number", value=_input_value(entry.get("fiber_100g")))),
+                cls="grid grid-cols-2 md:grid-cols-3 gap-2",
+            ),
+            cls="flex flex-col gap-2 w-full",
+        ),
+        Div(
+            H2("Details", cls="font-semibold text-gray-900"),
+            Div(
+                _edit_tile(_searchable_autocomplete_input("Category*", "category", CATEGORY_OPTIONS, allow_add=True, value=_input_value(entry.get("category")))),
+                _edit_tile(_searchable_autocomplete_input("Subtype*", "subtype", subtype_options or [], allow_add=True, value=_input_value(entry.get("subtype")))),
+                _edit_tile(_labeled_input("Default portion", "default_portion", "number", step="any", value=_input_value(entry.get("default_portion")))),
+                _edit_tile(_searchable_autocomplete_input("Initial state", "initial_state", INITIAL_STATE_OPTIONS, allow_add=False, value=_input_value(entry.get("initial_state")))),
+                _edit_tile(_searchable_autocomplete_input("Nutriscore", "nutriscore", ["A", "B", "C", "D", "E"], allow_add=False, value=_input_value(entry.get("nutriscore")))),
+                _edit_tile(_labeled_input("NOVA (1-4)", "nova", "number", value=_input_value(entry.get("nova")))),
+                _edit_tile(_labeled_input("Yuka (0-100)", "yuka", "number", value=_input_value(entry.get("yuka")))),
+                _edit_tile(_labeled_input("Caffeine", "caffeine", "number", value=_input_value(entry.get("caffeine")))),
+                _edit_tile(_labeled_input("Alcohol", "alcohol", "number", value=_input_value(entry.get("alcohol")))),
+                _edit_tile(_labeled_input("Barcode", "barcode", value=_input_value(entry.get("barcode")))),
+                _edit_tile(_labeled_input("Cooking factor", "cooking_factor", "number", value=_input_value(entry.get("cooking_factor")))),
+                _edit_tile(
+                    Div(
+                        _favorite_checkbox(checked=bool(entry.get("favorite")), centered=True),
+                        cls="h-full min-h-20 flex items-center justify-center",
+                    )
+                ),
+                cls="grid grid-cols-1 md:grid-cols-2 gap-2",
+            ),
+            cls="flex flex-col gap-2 w-full",
+        ),
+        Div(
+            Button(
+                "Back",
+                type="button",
+                cls="""
+                    web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl
+                    bg-white/85 text-gray-800 border border-gray-300
+                    shadow-[0_6px_20px_rgba(17,24,39,0.08)]
+                """,
+                hx_get=f"/food/item/catalog/{entry['id']}",
+                hx_target="#main_content",
+                hx_swap="innerHTML",
+                hx_push_url="true",
+            ),
+            Button("Save changes", type="submit", cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-black text-white border-black"),
+            cls="grid grid-cols-2 gap-3",
+        ),
+        hx_post=f"/food/edit/catalog/{entry['id']}",
+        hx_target=f"#{result_id}",
+        hx_swap="innerHTML",
+        cls="flex flex-col gap-3 w-full",
+    )
+    return _edit_page_shell(form, result_id)
+
+
+def EditManualPage(entry: dict, subtype_options: list[str] | None = None, origin_options: list[str] | None = None):
+    result_id = f"edit_manual_result_{entry['id']}"
+    form = Form(
+        _edit_name_input(_input_value(entry.get("name"))),
+        _edit_tile(_searchable_autocomplete_input("Brand / Origin", "source_origin", origin_options or [], allow_add=True, value=_input_value(entry.get("origin")))),
+        Div(
+            H2("Macros Summary", cls="font-semibold text-gray-900"),
+            Div(
+                _edit_tile(_labeled_input("Calories/100g", "calories_100g", "number", value=_input_value(entry.get("calories_100g")))),
+                _edit_tile(_labeled_input("Carbs/100g", "carbs_100g", "number", value=_input_value(entry.get("carbs_100g")))),
+                _edit_tile(_labeled_input("Sugars/100g", "sugars_100g", "number", value=_input_value(entry.get("sugars_100g")))),
+                _edit_tile(_labeled_input("Fats/100g", "fats_100g", "number", value=_input_value(entry.get("fats_100g")))),
+                _edit_tile(_labeled_input("Saturated/100g", "saturated_100g", "number", value=_input_value(entry.get("saturated_100g")))),
+                _edit_tile(_labeled_input("Proteins/100g", "proteins_100g", "number", value=_input_value(entry.get("proteins_100g")))),
+                _edit_tile(_labeled_input("Fiber/100g", "fiber_100g", "number", value=_input_value(entry.get("fiber_100g")))),
+                cls="grid grid-cols-2 md:grid-cols-3 gap-2",
+            ),
+            cls="flex flex-col gap-2 w-full",
+        ),
+        Div(
+            H2("Details", cls="font-semibold text-gray-900"),
+            Div(
+                _edit_tile(
+                    Div(
+                        _label_with_help("Description", "Optional short description."),
+                        Textarea(
+                            _input_value(entry.get("description")),
+                            name="description",
+                            rows="4",
+                            cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-base mr-1 w-full",
+                        ),
+                        cls="flex flex-col gap-1",
+                    ),
+                    cls="col-span-1 md:col-span-2",
+                ),
+                _edit_tile(_searchable_autocomplete_input("Subtype*", "subtype", subtype_options or [], allow_add=True, value=_input_value(entry.get("subtype")))),
+                _edit_tile(_labeled_input("Amount g*", "amount_g", "number", value=_input_value(entry.get("amount_g")))),
+                _edit_tile(_labeled_input("Caffeine", "caffeine", "number", value=_input_value(entry.get("caffeine")))),
+                _edit_tile(_labeled_input("Alcohol", "alcohol", "number", value=_input_value(entry.get("alcohol")))),
+                _edit_tile(_searchable_autocomplete_input("Glycemic index", "glycemic_index", GLYCEMIC_INDEX_OPTIONS, allow_add=False, value=_input_value(entry.get("glycemic_index")))),
+                _edit_tile(_labeled_input("IG confidence 1-5", "ig_confidence", "number", value=_input_value(entry.get("ig_confidence")))),
+                _edit_tile(
+                    Div(
+                        _favorite_checkbox(checked=bool(entry.get("favorite")), centered=True),
+                        cls="h-full min-h-20 flex items-center justify-center",
+                    )
+                ),
+                cls="grid grid-cols-1 md:grid-cols-2 gap-2",
+            ),
+            cls="flex flex-col gap-2 w-full",
+        ),
+        Div(
+            Button(
+                "Back",
+                type="button",
+                cls="""
+                    web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl
+                    bg-white/85 text-gray-800 border border-gray-300
+                    shadow-[0_6px_20px_rgba(17,24,39,0.08)]
+                """,
+                hx_get=f"/food/item/manual_intake/{entry['id']}",
+                hx_target="#main_content",
+                hx_swap="innerHTML",
+                hx_push_url="true",
+            ),
+            Button("Save changes", type="submit", cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-black text-white border-black"),
+            cls="grid grid-cols-2 gap-3",
+        ),
+        hx_post=f"/food/edit/manual/{entry['id']}",
+        hx_target=f"#{result_id}",
+        hx_swap="innerHTML",
+        cls="flex flex-col gap-3 w-full",
+    )
+    return _edit_page_shell(form, result_id)
+
+
+def EditRecipePage(entry: dict):
+    result_id = f"edit_recipe_result_{entry['id']}"
+    form = Form(
+        _edit_name_input(_input_value(entry.get("name"))),
+        Div(
+            H2("Details", cls="font-semibold text-gray-900"),
+            Div(
+                _edit_tile(_labeled_select("Meal type", "meal_type", MEAL_TYPES, selected_value=_input_value(entry.get("meal_type")))),
+                _edit_tile(
+                    Div(
+                        _favorite_checkbox(checked=bool(entry.get("favorite")), centered=True),
+                        cls="h-full min-h-20 flex items-center justify-center",
+                    )
+                ),
+                _edit_tile(
+                    Div(
+                        _label_with_help("Notes", "Optional instructions, comments, or context about this recipe."),
+                        Textarea(
+                            _input_value(entry.get("notes")),
+                            name="notes",
+                            rows="3",
+                            onclick="this.select()",
+                            cls="web_input border border-white rounded-lg px-2 py-1 text-xs mr-1",
+                        ),
+                        cls="flex flex-col gap-1",
+                    )
+                ),
+                cls="grid grid-cols-1 md:grid-cols-2 gap-2",
+            ),
+            cls="flex flex-col gap-2 w-full",
+        ),
+        Div(
+            Button(
+                "Back",
+                type="button",
+                cls="""
+                    web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl
+                    bg-white/85 text-gray-800 border border-gray-300
+                    shadow-[0_6px_20px_rgba(17,24,39,0.08)]
+                """,
+                hx_get=f"/food/item/recipe/{entry['id']}",
+                hx_target="#main_content",
+                hx_swap="innerHTML",
+                hx_push_url="true",
+            ),
+            Button("Save changes", type="submit", cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-black text-white border-black"),
+            cls="grid grid-cols-2 gap-3",
+        ),
+        hx_post=f"/food/edit/recipe/{entry['id']}",
+        hx_target=f"#{result_id}",
+        hx_swap="innerHTML",
+        cls="flex flex-col gap-3 w-full",
+    )
+    return _edit_page_shell(form, result_id)
+
+
 def FavoriteButton(entry_type: str, entry_id: int, favorite: bool):
     icon = "/images/content/fav_icon.svg" if favorite else "/images/content/not_fav_icon.svg"
     return Button(
@@ -859,14 +1121,20 @@ def FavoriteButton(entry_type: str, entry_id: int, favorite: bool):
             hover:bg-gray-500/20
         """,
         hx_post=f"/food/favorite/{entry_type}/{entry_id}",
+        hx_target="this",
         hx_swap="outerHTML",
+        hx_trigger="click consume",
         data_skip_page_loading="true",
+        data_no_open="true",
     )
 
 
 def AddButton(**attrs):
     attrs.setdefault("hx_include", "#meal_selector")
     attrs.setdefault("data_skip_page_loading", "true")
+    attrs.setdefault("hx_target", "this")
+    attrs.setdefault("hx_trigger", "click consume")
+    attrs.setdefault("data_no_open", "true")
     return Button(
         "+",
         cls="""
@@ -895,6 +1163,262 @@ def _entry_meta(food):
     return "Recipe"
 
 
+def _float_or_zero(value) -> float:
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _display_base_unit(entry_type: str, item: dict) -> str:
+    if entry_type == "catalog" and (item.get("category") or "").strip().lower() == "beverages":
+        return "ml"
+    if entry_type == "manual_intake":
+        subtype = (item.get("subtype") or "").strip().lower()
+        liquid_hints = ("drink", "beverage", "juice", "soda", "smoothie", "milk", "coffee", "tea", "bebida")
+        if any(token in subtype for token in liquid_hints):
+            return "ml"
+    return "g"
+
+
+def _detail_unit_options(base_amount: float, base_unit: str):
+    hundred_label = f"100{base_unit}"
+    one_label = base_unit
+    return [
+        Option(
+            f"serving ({base_amount:.0f}{base_unit})",
+            value="portion",
+            selected=True,
+            data_factor=f"{base_amount:.6f}",
+            data_unit_label="serving",
+        ),
+        Option(f"{hundred_label} (100{base_unit})", value="x100", data_factor="100.000000", data_unit_label=hundred_label),
+        Option(f"{one_label} (1{base_unit})", value=base_unit, data_factor="1.000000", data_unit_label=one_label),
+        Option(f"lb (453.59{base_unit})", value="lb", data_factor="453.592370", data_unit_label="lb"),
+        Option(f"oz (28.35{base_unit})", value="oz", data_factor="28.349523", data_unit_label="oz"),
+    ]
+
+
+def _detail_macro_tiles(per100: dict, amount_g: float):
+    specs = [
+        ("calories_100g", "Calories", "kcal"),
+        ("carbs_100g", "Carbs", "g"),
+        ("sugars_100g", "Sugars", "g"),
+        ("fats_100g", "Fats", "g"),
+        ("saturated_100g", "Saturated", "g"),
+        ("proteins_100g", "Proteins", "g"),
+        ("fiber_100g", "Fiber", "g"),
+    ]
+    tiles = []
+    for key, label, unit in specs:
+        amount = (amount_g * _float_or_zero(per100.get(key))) / 100.0
+        amount_text = f"{amount:.0f} {unit}" if unit == "kcal" else f"{amount:.1f} {unit}"
+        tiles.append(
+            Div(
+                Span(label, cls="text-xs text-gray-600"),
+                Span(
+                    amount_text,
+                    data_detail_macro_key=key,
+                    data_per100=f"{_float_or_zero(per100.get(key)):.6f}",
+                    data_unit=unit,
+                    cls="text-base font-semibold text-gray-900",
+                ),
+                cls="web_container p-3 rounded-xl flex flex-col gap-1",
+            )
+        )
+    return tiles
+
+
+def _detail_info_rows(rows: list[tuple[str, str]]):
+    blocks = []
+    for label, value in rows:
+        clean = (value or "").strip()
+        if not clean:
+            continue
+        blocks.append(
+            Div(
+                Span(label, cls="text-xs text-gray-600"),
+                Span(clean, cls="text-sm text-gray-900"),
+                cls="web_container p-3 rounded-xl flex flex-col gap-1",
+            )
+        )
+    if not blocks:
+        return Div("No extra info yet.", cls="text-sm text-gray-500")
+    return Div(*blocks, cls="grid grid-cols-1 md:grid-cols-2 gap-2")
+
+
+def FoodDetailPage(connection, user_id: int, entry_type: str, entry: dict, summary: dict):
+    base_unit = _display_base_unit(entry_type, entry)
+    default_amount = max(1.0, _float_or_zero(summary.get("default_amount_g")) or 100.0)
+    amount_display = f"{default_amount:.2f}".replace(".", ",")
+    per100 = summary.get("per100") or {}
+    info_rows = summary.get("info_rows") or []
+    subtitle = summary.get("subtitle") or ""
+    edit_label = {"catalog": "Edit food", "manual_intake": "Edit manual", "recipe": "Edit recipe"}.get(entry_type, "Edit")
+    edit_href = {
+        "catalog": f"/food/edit/catalog/{entry['id']}/form",
+        "manual_intake": f"/food/edit/manual_intake/{entry['id']}/form",
+        "recipe": f"/food/edit/recipe/{entry['id']}/form",
+    }.get(entry_type, "/food")
+
+    root_id = f"food_detail_{entry_type}_{entry['id']}"
+    display_id = f"{root_id}_display"
+    grams_id = f"{root_id}_grams"
+    select_id = f"{root_id}_select"
+    side_unit_id = f"{root_id}_side_unit"
+    plate_value_id = f"{root_id}_plate_value"
+    plate_unit_id = f"{root_id}_plate_unit"
+    plate_unit_btn_id = f"{root_id}_plate_unit_btn"
+    plate_grams_id = f"{root_id}_plate_grams"
+    plate_equivalent_id = f"{root_id}_plate_equivalent"
+    leftovers_id = f"{root_id}_leftovers"
+    msg_id = f"{root_id}_msg"
+    persist_key = f"food_detail_amount_{entry_type}_{entry['id']}"
+
+    return Div(
+        Div(
+            H1(entry.get("name") or "-", cls="text-2xl font-bold text-gray-900"),
+            P(subtitle, cls="text-sm text-gray-600"),
+            cls="flex flex-col gap-1",
+        ),
+        MealSelector(connection, user_id=user_id or 0),
+        Div(
+            Form(
+                Div(
+                    Input(
+                        type="text",
+                        id=display_id,
+                        inputmode="decimal",
+                        value=amount_display,
+                        aria_label="Food amount",
+                        cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 w-24 text-base",
+                        onchange=f"dbFoodDetailRefresh('{root_id}')",
+                        onclick="this.select()",
+                    ),
+                    Span("serving", id=side_unit_id, cls="text-xs text-gray-600"),
+                    Select(
+                        *_detail_unit_options(default_amount, base_unit),
+                        id=select_id,
+                        data_display_id=display_id,
+                        data_grams_id=grams_id,
+                        data_side_unit_id=side_unit_id,
+                        data_persist_key=f"food_detail_unit_{entry_type}_{entry['id']}",
+                        aria_label="Food unit selector",
+                        cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-xs md:text-sm justify-self-end",
+                        onchange=f"dbFoodDetailOnUnitChange('{root_id}')",
+                    ),
+                    Input(type="hidden", name="total_amount_g", id=grams_id, value=f"{default_amount:.6f}"),
+                    cls="flex items-center gap-2",
+                ),
+                Div(
+                    Span("To plate", cls="text-xs text-gray-600"),
+                    Input(
+                        type="text",
+                        id=plate_value_id,
+                        inputmode="decimal",
+                        value="100",
+                        aria_label="Amount to plate",
+                        cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 w-20 text-base",
+                        oninput=f"dbFoodDetailPlateRefresh('{root_id}')",
+                        onchange=f"dbFoodDetailPlateRefresh('{root_id}')",
+                        onclick="this.select()",
+                    ),
+                    Button(
+                        "%",
+                        type="button",
+                        id=plate_unit_btn_id,
+                        aria_label="Toggle to plate unit",
+                        onclick=f"dbFoodDetailTogglePlateUnit('{root_id}')",
+                        cls="""
+                            web_button px-2 py-1 text-sm min-w-10
+                            border border-gray-300 bg-white/85
+                        """,
+                    ),
+                    Input(type="hidden", id=plate_unit_id, value="%"),
+                    Input(type="hidden", name="amount_g", id=plate_grams_id, value=f"{default_amount:.6f}"),
+                    cls="flex items-center gap-2",
+                ),
+                P(
+                    f"Total amount (plate amount): {default_amount:.1f} ({default_amount:.1f}) {base_unit}",
+                    id=plate_equivalent_id,
+                    data_detail_plate_equivalent="true",
+                    cls="text-xs text-gray-600",
+                ),
+                P(
+                    f"Will be saved in fridge: {0.0:.1f} {base_unit}",
+                    id=leftovers_id,
+                    data_detail_leftovers="true",
+                    cls="text-xs text-gray-600",
+                ),
+                cls="web_container p-3 rounded-2xl flex flex-col gap-2",
+            ),
+            cls="w-full",
+        ),
+        Div(
+            H2("Macros Summary", cls="font-semibold text-gray-900"),
+            Div(*_detail_macro_tiles(per100, default_amount), id=f"{root_id}_macros", cls="grid grid-cols-2 md:grid-cols-3 gap-2"),
+            cls="flex flex-col gap-2 w-full",
+        ),
+        Div(
+            H2("Details", cls="font-semibold text-gray-900"),
+            _detail_info_rows(info_rows),
+            cls="flex flex-col gap-2 w-full",
+        ),
+        Div(
+            Button(
+                edit_label,
+                type="button",
+                cls="""
+                    web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl
+                    bg-white/85 text-gray-800 border border-gray-300
+                    shadow-[0_6px_20px_rgba(17,24,39,0.08)]
+                """,
+                hx_get=edit_href,
+                hx_target="#main_content",
+                hx_swap="innerHTML",
+                hx_push_url="true",
+            ),
+            Button(
+                "Log food",
+                type="button",
+                cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-black text-white border-black",
+                hx_post=f"/food/log/{entry_type}/{entry['id']}",
+                hx_target=f"#{msg_id}",
+                hx_swap="innerHTML",
+                hx_include=f"#meal_selector, #{plate_grams_id}, #{grams_id}",
+                data_skip_page_loading="true",
+            ),
+            cls="w-full grid grid-cols-2 gap-3",
+        ),
+        Div(id=msg_id, cls="min-h-6 text-xs"),
+        Script(src="/js/cart_units.js", defer="defer"),
+        Script(src="/js/food_detail.js", defer="defer"),
+        data_food_detail="true",
+        data_detail_display_id=display_id,
+        data_detail_select_id=select_id,
+        data_detail_grams_id=grams_id,
+        data_detail_side_unit_id=side_unit_id,
+        data_detail_plate_value_id=plate_value_id,
+        data_detail_plate_unit_id=plate_unit_id,
+        data_detail_plate_unit_btn_id=plate_unit_btn_id,
+        data_detail_plate_grams_id=plate_grams_id,
+        data_detail_plate_equivalent_id=plate_equivalent_id,
+        data_detail_leftovers_id=leftovers_id,
+        data_detail_base_unit=base_unit,
+        data_detail_persist_key=persist_key,
+        data_hide_cart="true",
+        id=root_id,
+        cls="""
+            flex flex-col items-center
+            gap-4
+            md:mt-7 lg:mt-7 mt-2
+            md:w-md lg:w-md w-xs
+            w-full mx-auto
+            md:mb-28 lg:mb-28 mb-24
+        """,
+    )
+
+
 def FoodCard(food):
     add_path = f"/add_food/{food['id']}"
     if food["entry_type"] == "manual_intake":
@@ -904,7 +1428,7 @@ def FoodCard(food):
 
     return Div(
         Div(
-            H1(food["name"], cls="font-semibold"),
+            H1(food["name"], cls="text-left font-semibold hover:underline"),
             Div(_entry_meta(food), cls="text-sm text-gray-700"),
             cls="flex flex-col gap-0.5 min-w-0",
         ),
@@ -913,7 +1437,12 @@ def FoodCard(food):
             AddButton(hx_post=add_path),
             cls="flex items-center gap-2 ml-3",
         ),
-        cls="web_button food_entry flex items-center justify-between",
+        hx_get=f"/food/item/{food['entry_type']}/{food['id']}",
+        hx_target="#main_content",
+        hx_swap="innerHTML",
+        hx_push_url="true",
+        hx_trigger="click[!event.target.closest('[data-no-open]')]",
+        cls="web_button food_entry flex items-center justify-between cursor-pointer",
     )
 
 
