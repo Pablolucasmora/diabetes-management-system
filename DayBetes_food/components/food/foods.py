@@ -856,8 +856,18 @@ def _create_page_shell(title: str, form, result_id: str):
     )
 
 
-def CreateCatalogPage(brand_options: list[str] | None = None, subtype_options: list[str] | None = None):
+def CreateCatalogPage(
+    brand_options: list[str] | None = None,
+    subtype_options: list[str] | None = None,
+    barcode_prefill: str = "",
+):
     result_id = "create_catalog_result_page"
+    initial_barcode = (barcode_prefill or "").strip()
+    advanced_cls = (
+        "grid grid-cols-1 md:grid-cols-2 gap-2 col-span-1 md:col-span-2"
+        if initial_barcode
+        else "hidden grid grid-cols-1 md:grid-cols-2 gap-2 col-span-1 md:col-span-2"
+    )
     form = Form(
         Div(
             _labeled_input("Name*", "name", help_text="Product name. Required."),
@@ -899,10 +909,10 @@ def CreateCatalogPage(brand_options: list[str] | None = None, subtype_options: l
                 _labeled_input("Yuka (0-100)", "yuka", "number", help_text="Optional Yuka-style score from 0 to 100."),
                 _labeled_input("Caffeine", "caffeine", "number", help_text="Caffeine content in mg per 100g/ml."),
                 _labeled_input("Alcohol", "alcohol", "number", help_text="Alcohol content in grams per 100g/ml."),
-                _labeled_input("Barcode", "barcode", help_text="Optional product barcode."),
+                _labeled_input("Barcode", "barcode", value=initial_barcode, help_text="Optional product barcode."),
                 _labeled_input("Cooking factor", "cooking_factor", "number", help_text="Raw/cooked weight conversion factor."),
                 id="catalog_advanced",
-                cls="hidden grid grid-cols-1 md:grid-cols-2 gap-2 col-span-1 md:col-span-2",
+                cls=advanced_cls,
             ),
             cls="grid grid-cols-1 md:grid-cols-2 gap-2",
         ),

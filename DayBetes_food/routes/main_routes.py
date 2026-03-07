@@ -1,7 +1,11 @@
 from fasthtml.common import *
+import json
+from urllib.parse import quote_plus
 from DayBetes_food.components.menu.main_menu import main_menu
 from DayBetes_food.components.scanner.scanner_main import scanner_main
 from DayBetes_food.components.ui import render_page
+from DayBetes_food.database.connection import get_connection
+from DayBetes_food.database.queries.crud import get_catalog_item_by_barcode
 
 
 def setup_main_routes(rt):
@@ -16,3 +20,29 @@ def setup_main_routes(rt):
     @rt("/scanner")
     def get(req):
         return render_page(req, lambda _: scanner_main())
+
+    @rt("/scanner/resolve")
+    def post(request: Request, barcode: str = ""):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        clean = (barcode or "").strip()
+        if not clean:
+            return HTMLResponse("", status_code=400)
+        with get_connection() as connection:
+            existing = get_catalog_item_by_barcode(connection, clean)
+        if existing:
+            location = {
+                "path": f"/food/item/catalog/{int(existing['id'])}",
+                "target": "#main_content",
+                "swap": "innerHTML",
+                "push": True,
+            }
+            return HTMLResponse("", headers={"HX-Location": json.dumps(location)})
+        encoded = quote_plus(clean)
+        location = {
+            "path": f"/food/create/catalog/form?barcode={encoded}",
+            "target": "#main_content",
+            "swap": "innerHTML",
+            "push": True,
+        }
+        return HTMLResponse("", headers={"HX-Location": json.dumps(location)})

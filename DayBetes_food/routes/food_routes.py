@@ -220,11 +220,19 @@ def setup_food_routes(rt):
         return render_page(request, food_main)
 
     @rt("/food/create/catalog/form")
-    def get(request: Request):
+    def get(request: Request, barcode: str = ""):
         with get_connection() as connection:
             brands = get_food_brand_suggestions(connection, search="", limit=500)
             subtypes = get_subtype_suggestions(connection, search="", limit=500)
-        return render_page(request, lambda _: CreateCatalogPage(brand_options=brands, subtype_options=subtypes), show_cart=False)
+        return render_page(
+            request,
+            lambda _: CreateCatalogPage(
+                brand_options=brands,
+                subtype_options=subtypes,
+                barcode_prefill=(barcode or "").strip(),
+            ),
+            show_cart=False,
+        )
 
     @rt("/food/create/manual/form")
     def get(request: Request):
@@ -512,6 +520,8 @@ def setup_food_routes(rt):
                         cooking=(cooking or "").strip() or None,
                         final_state=(final_state or "").strip() or None,
                         conservation=((conservation or "").strip() or None),
+                        strictly_weighed=True,
+                        macros_quality=True,
                         plate_amount=parsed_amount,
                         offset_minutes=offset_minutes,
                     )
@@ -528,6 +538,8 @@ def setup_food_routes(rt):
                         cooking=(cooking or "").strip() or None,
                         final_state=(final_state or "").strip() or None,
                         conservation=((conservation or "").strip() or None),
+                        strictly_weighed=True,
+                        macros_quality=True,
                         plate_amount=parsed_amount,
                         offset_minutes=offset_minutes,
                     )
@@ -649,6 +661,7 @@ def setup_food_routes(rt):
                     destination="intake_event",
                     destination_id=event_id,
                     amount_g=portion_amount,
+                    macros_quality=True,
                     offset_minutes=offset_minutes,
                 )
 
@@ -689,6 +702,7 @@ def setup_food_routes(rt):
                 destination="intake_event",
                 destination_id=event_id,
                 amount_g=portion_amount,
+                macros_quality=True,
                 offset_minutes=offset_minutes,
             )
             headers = {"HX-Trigger": "addSuccess" if portion_id else "addError"}
@@ -740,7 +754,6 @@ def setup_food_routes(rt):
                             cooking=row.get("cooking"),
                             conservation=row.get("conservation"),
                             final_state=row.get("final_state"),
-                            strictly_weighed=True,
                             macros_quality=True,
                             plate_amount=row.get("plate_amount"),
                             is_cooked_weight=bool(row.get("is_cooked_weight")),
@@ -759,7 +772,6 @@ def setup_food_routes(rt):
                             cooking=row.get("cooking"),
                             conservation=row.get("conservation"),
                             final_state=row.get("final_state"),
-                            strictly_weighed=True,
                             macros_quality=True,
                             plate_amount=row.get("plate_amount"),
                             is_cooked_weight=bool(row.get("is_cooked_weight")),

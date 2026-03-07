@@ -182,6 +182,7 @@ def EventHeader(event):
                 cls="web_input border border-white rounded-lg px-2 py-1 text-sm",
                 hx_post=f"/cart/event/{event['id']}/meal_type",
                 hx_trigger="change",
+                onchange="this.blur();",
             ),
             cls="flex gap-3 items-center justify-end"
         ),

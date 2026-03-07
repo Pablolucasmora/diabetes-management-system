@@ -18,8 +18,8 @@ def quick_actions():
                 hx_push_url="true",
             ),
             Button(
-                "Scanner",
-                cls="web_button w-full text-xs md:text-sm px-2 py-1.5 md:px-3 md:py-2",
+                Img(src="/images/ui/bar_code.svg", alt="Scanner", cls="w-10 h-10 md:w-12 md:h-12"),
+                cls="web_button w-full flex items-center justify-center p-0.5 md:p-1",
                 hx_get="/scanner",
                 hx_target="#main_content",
                 hx_push_url="true",

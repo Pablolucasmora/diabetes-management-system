@@ -313,6 +313,21 @@ def get_catalog_item(connection, catalog_id: int) -> Optional[dict]:
     return _execute_query(connection, query, {"id": catalog_id}, commit=False)
 
 
+def get_catalog_item_by_barcode(connection, barcode: str) -> Optional[dict]:
+    """Gets a catalog item by barcode."""
+    clean = (barcode or "").strip()
+    if not clean:
+        return None
+    query = """
+        SELECT *
+        FROM catalog
+        WHERE trim(barcode) = %(barcode)s
+        ORDER BY id
+        LIMIT 1;
+    """
+    return _execute_query(connection, query, {"barcode": clean}, commit=False)
+
+
 def get_all_catalog(connection, search: str = None, category: str = None, favorite: bool = None) -> list:
     """Gets all catalog items with optional filters."""
     conditions = []

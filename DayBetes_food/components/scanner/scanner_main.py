@@ -19,10 +19,14 @@ def scanner_main():
                     autoplay=True,
                     playsinline=True,
                     muted=True,
-                    cls="w-full h-full object-cover rounded-2xl bg-black",
+                    cls="w-full h-full object-cover rounded-3xl bg-black relative z-0",
+                ),
+                Div(
+                    id="scanner_border_overlay",
+                    cls="absolute inset-0 border-[8px] border-white rounded-3xl pointer-events-none transition-colors duration-100 z-[1]",
                 ),
                 id="scanner_camera_frame",
-                cls="web_container w-full aspect-[4/3] p-2 overflow-hidden border-[6px] border-white transition-colors duration-150",
+                cls="web_container relative z-0 w-full aspect-[4/3] p-2 overflow-hidden",
             ),
             Div(
                 P("Detected barcode", cls="text-xs font-semibold uppercase tracking-wide text-gray-600"),
@@ -35,16 +39,62 @@ def scanner_main():
                 Div(
                     Input(
                         type="text",
+                        id="scanner_manual_input",
                         name="barcode_manual",
                         placeholder="Enter barcode",
                         inputmode="numeric",
                         autocomplete="off",
                         cls="web_input w-full text-sm",
                     ),
-                    Button("Use", type="button", cls="web_button px-3 py-1.5 text-sm shrink-0"),
+                    Button("Use", id="scanner_manual_use_btn", type="button", cls="web_button px-3 py-1.5 text-sm shrink-0"),
                     cls="w-full flex items-center gap-2.5",
                 ),
                 cls="web_container w-full p-3 rounded-2xl flex flex-col gap-2.5",
+            ),
+            Form(
+                Input(type="hidden", name="barcode", id="scanner_confirm_barcode", value=""),
+                id="scanner_confirm_form",
+                hx_post="/scanner/resolve",
+                hx_target="#scanner_confirm_feedback",
+                hx_swap="innerHTML",
+            ),
+            Div(id="scanner_confirm_feedback", cls="hidden"),
+            Div(
+                Div(
+                    P("Confirm barcode", cls="text-lg font-semibold text-gray-900"),
+                    P(
+                        "Are you sure this is the correct code: ",
+                        Span("", id="scanner_confirm_code", cls="font-semibold"),
+                        "?",
+                        cls="text-sm text-gray-700",
+                    ),
+                    Div(
+                        Button(
+                            "Yes",
+                            id="scanner_confirm_yes",
+                            type="button",
+                            cls="web_button px-4 py-2 text-sm border-black text-black hover:bg-black hover:text-white",
+                        ),
+                        Button(
+                            "No",
+                            id="scanner_confirm_no",
+                            type="button",
+                            cls="web_button px-4 py-2 text-sm border-black text-black",
+                        ),
+                        cls="flex items-center justify-end gap-2",
+                    ),
+                    cls="web_container p-5 rounded-3xl w-[92vw] max-w-md flex flex-col gap-4",
+                ),
+                id="scanner_confirm_modal",
+                cls="""
+                    fixed inset-0 z-50
+                    flex items-center justify-center
+                    bg-black/35 backdrop-blur-xl
+                    px-4
+                    opacity-0 invisible pointer-events-none
+                    transition-opacity duration-100
+                """,
+                style="z-index: 9999;",
             ),
             cls="""
                 min-h-screen
@@ -56,151 +106,5 @@ def scanner_main():
                 gap-4
             """,
             data_hide_cart="true",
-        ),
-        Script(
-            """
-            (async function(){
-              var video = document.getElementById('scanner_video');
-              var output = document.getElementById('scanner_detected_code');
-              var frame = document.getElementById('scanner_camera_frame');
-              if(!video || !output || !frame) return;
-              var lastCode = "";
-              var stream = null;
-              var rafId = 0;
-              var stopRequested = false;
-              var detector = null;
-
-              var setCode = function(text){
-                if(!text) return;
-                if(text === lastCode) return;
-                lastCode = text;
-                output.textContent = text;
-                frame.style.borderColor = "#22c55e";
-              };
-
-              var getDetectorCtor = async function(){
-                if("BarcodeDetector" in window){
-                  return window.BarcodeDetector;
-                }
-                try {
-                  var mod = await import("https://esm.sh/barcode-detector/ponyfill");
-                  return mod && mod.BarcodeDetector ? mod.BarcodeDetector : null;
-                } catch(_) {
-                  return null;
-                }
-              };
-
-              var startDetectorLoop = function(){
-                var lastRun = 0;
-                var loop = function(ts){
-                  if(stopRequested) return;
-                  rafId = window.requestAnimationFrame(loop);
-                  if(ts - lastRun < 150) return;
-                  lastRun = ts;
-                  if(!detector || video.readyState < 2) return;
-                  detector.detect(video).then(function(codes){
-                    if(codes && codes.length){
-                      setCode(String(codes[0].rawValue || ""));
-                    }
-                  }).catch(function(){});
-                };
-                rafId = window.requestAnimationFrame(loop);
-              };
-
-              var improveTrackForSafari = function(s){
-                var tracks = s ? s.getVideoTracks() : [];
-                if(!tracks || !tracks.length) return;
-                var track = tracks[0];
-                if(!track.getCapabilities || !track.applyConstraints) return;
-                var caps = {};
-                try { caps = track.getCapabilities() || {}; } catch(_) { return; }
-                var advanced = [];
-                if(Array.isArray(caps.focusMode) && caps.focusMode.indexOf("continuous") !== -1){
-                  advanced.push({ focusMode: "continuous" });
-                }
-                if(caps.zoom && typeof caps.zoom.max === "number"){
-                  var zoomTarget = Math.max(caps.zoom.min || 1, Math.min(caps.zoom.max, 2));
-                  advanced.push({ zoom: zoomTarget });
-                }
-                if(advanced.length){
-                  track.applyConstraints({ advanced: advanced }).catch(function(){});
-                }
-              };
-
-              var DetectorCtor = await getDetectorCtor();
-              if(!DetectorCtor){
-                output.textContent = "Scanner unavailable on this browser";
-                return;
-              }
-              output.textContent = "Starting scanner...";
-              var wantedFormats = ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "itf", "codabar", "databar"];
-              var supportedFormats = [];
-              if(typeof DetectorCtor.getSupportedFormats === "function"){
-                try {
-                  supportedFormats = await DetectorCtor.getSupportedFormats();
-                } catch (_) {
-                  supportedFormats = [];
-                }
-              }
-              var selectedFormats = supportedFormats.length
-                ? wantedFormats.filter(function(f){ return supportedFormats.indexOf(f) !== -1; })
-                : wantedFormats;
-              try {
-                detector = selectedFormats.length
-                  ? new DetectorCtor({ formats: selectedFormats })
-                  : new DetectorCtor();
-              } catch (_) {
-                try {
-                  detector = new DetectorCtor();
-                } catch (_) {
-                  output.textContent = "Scanner unavailable on this browser";
-                  return;
-                }
-              }
-
-              navigator.mediaDevices.getUserMedia({
-                video: {
-                  facingMode: { ideal: "environment" },
-                  width: { ideal: 1920, max: 3840 },
-                  height: { ideal: 1080, max: 2160 },
-                  frameRate: { ideal: 30, max: 60 }
-                },
-                audio: false
-              }).then(function(s){
-                stream = s;
-                video.srcObject = s;
-                video.setAttribute("playsinline", "true");
-                video.setAttribute("webkit-playsinline", "true");
-                video.play().catch(function(){});
-                improveTrackForSafari(s);
-                output.textContent = "Scanning...";
-                startDetectorLoop();
-              }).catch(function(){
-                output.textContent = "Camera permission denied or unavailable";
-              });
-
-              var stop = function(){
-                stopRequested = true;
-                if(rafId){
-                  window.cancelAnimationFrame(rafId);
-                  rafId = 0;
-                }
-                if(stream){
-                  stream.getTracks().forEach(function(track){ track.stop(); });
-                  stream = null;
-                }
-              };
-              window.__dbStopScanner = stop;
-              document.body.addEventListener("htmx:beforeSwap", function(event){
-                var target = event && event.detail ? event.detail.target : null;
-                if(target && target.id === "main_content"){
-                  stop();
-                }
-              }, { once: true });
-              window.addEventListener("beforeunload", stop, { once: true });
-            })();
-            """
-            ,
-            type="module"
         ),
     )
