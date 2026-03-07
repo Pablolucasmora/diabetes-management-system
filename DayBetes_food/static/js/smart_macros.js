@@ -124,7 +124,13 @@
     while ((match = regexNumberFirst.exec(raw)) !== null) {
       applyMatch(match[1], match[2]);
     }
-    while ((match = regexWordFirst.exec(raw)) !== null) {
+
+    // Prevent overlap: remove already-consumed "number+macro" pairs so
+    // "447kcal 67hc" is not re-read as "kcal 67".
+    regexNumberFirst.lastIndex = 0;
+    var rawWordOnly = raw.replace(regexNumberFirst, " ");
+    regexWordFirst.lastIndex = 0;
+    while ((match = regexWordFirst.exec(rawWordOnly)) !== null) {
       applyMatch(match[2], match[1]);
     }
 

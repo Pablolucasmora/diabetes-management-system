@@ -368,6 +368,8 @@ def update_catalog_item(connection, catalog_id: int, data: dict) -> bool:
     return result is not None
 
 
+
+
 # ============================================
 # MANUAL INTAKE
 # ============================================
@@ -431,6 +433,8 @@ def update_manual_intake(connection, intake_id: int, data: dict) -> bool:
         
     result = _execute_query(connection, query, params)
     return result is not None
+
+
 
 
 # ============================================
@@ -499,6 +503,8 @@ def update_recipe(connection, recipe_id: int, name: str = None, meal_type: str =
         
     result = _execute_query(connection, query, params)
     return result is not None
+
+
 
 
 # ============================================

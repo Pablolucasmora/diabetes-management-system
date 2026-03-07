@@ -505,9 +505,10 @@ def _searchable_autocomplete_bootstrap_script():
               if (target.dataset && target.dataset.searchableAdd === "true") {
                 var q = normalize(input.value);
                 if (!q) return;
-                var exists = options.some(function (x) { return normalize(x).toLowerCase() === q.toLowerCase(); });
-                if (!exists) options.push(q);
-                input.value = q;
+                var qLower = q.toLowerCase();
+                var exists = options.some(function (x) { return normalize(x).toLowerCase() === qLower; });
+                if (!exists) options.push(qLower);
+                input.value = qLower;
                 persistValue(input);
                 input.dispatchEvent(new Event("input", { bubbles: true }));
                 input.dispatchEvent(new Event("change", { bubbles: true }));
@@ -631,7 +632,37 @@ def _favorite_checkbox(name: str = "favorite", checked: bool = True, centered: b
     )
 
 
-def _smart_macros_block(prefix: str):
+def _smart_macros_block(prefix: str, prefill: dict | None = None):
+    prefill = prefill or {}
+    def _mv(key: str):
+        value = prefill.get(key)
+        if value is None or value == "":
+            return "0"
+        return str(value)
+    def _smart_prefill_text():
+        calories = prefill.get("calories_100g")
+        carbs = prefill.get("carbs_100g")
+        sugars = prefill.get("sugars_100g")
+        proteins = prefill.get("proteins_100g")
+        fats = prefill.get("fats_100g")
+        saturated = prefill.get("saturated_100g")
+        fiber = prefill.get("fiber_100g")
+        parts = []
+        if calories not in (None, ""):
+            parts.append(f"{calories}kcal")
+        if carbs not in (None, ""):
+            parts.append(f"{carbs}hc")
+        if sugars not in (None, ""):
+            parts.append(f"{sugars}az")
+        if proteins not in (None, ""):
+            parts.append(f"{proteins}prot")
+        if fats not in (None, ""):
+            parts.append(f"{fats}grasas")
+        if saturated not in (None, ""):
+            parts.append(f"{saturated}sat")
+        if fiber not in (None, ""):
+            parts.append(f"{fiber}fibra")
+        return " ".join(parts)
     input_id = f"{prefix}_smart_macros_input"
     output_id = f"{prefix}_smart_macros_output"
     return Div(
@@ -654,16 +685,21 @@ def _smart_macros_block(prefix: str):
             oninput="dbSmartMacrosSync(this)",
             onchange="dbSmartMacrosSync(this)",
             cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-base",
+            value=_smart_prefill_text(),
         ),
-        Div("Escribe macros para ver la deteccion.", id=output_id, cls="text-xs text-gray-700 min-h-5"),
+        Div(
+            "Escribe macros para ver la deteccion." if not _smart_prefill_text() else "Imported from barcode data.",
+            id=output_id,
+            cls="text-xs text-gray-700 min-h-5",
+        ),
         # Hidden fields populated by Smart Macros parser
-        Input(type="hidden", name="calories_100g", id=f"{prefix}_calories_100g", value="0"),
-        Input(type="hidden", name="carbs_100g", id=f"{prefix}_carbs_100g", value="0"),
-        Input(type="hidden", name="sugars_100g", id=f"{prefix}_sugars_100g", value="0"),
-        Input(type="hidden", name="proteins_100g", id=f"{prefix}_proteins_100g", value="0"),
-        Input(type="hidden", name="fats_100g", id=f"{prefix}_fats_100g", value="0"),
-        Input(type="hidden", name="saturated_100g", id=f"{prefix}_saturated_100g", value="0"),
-        Input(type="hidden", name="fiber_100g", id=f"{prefix}_fiber_100g", value="0"),
+        Input(type="hidden", name="calories_100g", id=f"{prefix}_calories_100g", value=_mv("calories_100g")),
+        Input(type="hidden", name="carbs_100g", id=f"{prefix}_carbs_100g", value=_mv("carbs_100g")),
+        Input(type="hidden", name="sugars_100g", id=f"{prefix}_sugars_100g", value=_mv("sugars_100g")),
+        Input(type="hidden", name="proteins_100g", id=f"{prefix}_proteins_100g", value=_mv("proteins_100g")),
+        Input(type="hidden", name="fats_100g", id=f"{prefix}_fats_100g", value=_mv("fats_100g")),
+        Input(type="hidden", name="saturated_100g", id=f"{prefix}_saturated_100g", value=_mv("saturated_100g")),
+        Input(type="hidden", name="fiber_100g", id=f"{prefix}_fiber_100g", value=_mv("fiber_100g")),
         cls="flex flex-col gap-1 col-span-1 md:col-span-2",
     )
 
@@ -859,25 +895,34 @@ def _create_page_shell(title: str, form, result_id: str):
 def CreateCatalogPage(
     brand_options: list[str] | None = None,
     subtype_options: list[str] | None = None,
-    barcode_prefill: str = "",
+    prefill: dict | None = None,
+    existing_item_id: int | None = None,
 ):
     result_id = "create_catalog_result_page"
-    initial_barcode = (barcode_prefill or "").strip()
+    data = prefill or {}
+    def _pv(key: str, fallback: str = ""):
+        value = data.get(key)
+        if value is None:
+            return fallback
+        return str(value)
+
+    initial_barcode = _pv("barcode", "").strip()
     advanced_cls = (
         "grid grid-cols-1 md:grid-cols-2 gap-2 col-span-1 md:col-span-2"
-        if initial_barcode
+        if any(_pv(k, "").strip() for k in ("initial_state", "nutriscore", "nova", "yuka", "caffeine", "alcohol", "barcode", "cooking_factor"))
         else "hidden grid grid-cols-1 md:grid-cols-2 gap-2 col-span-1 md:col-span-2"
     )
     form = Form(
         Div(
-            _labeled_input("Name*", "name", help_text="Product name. Required."),
-            _brand_autocomplete_input(brand_options=brand_options),
+            _labeled_input("Name*", "name", help_text="Product name. Required.", value=_pv("name")),
+            _brand_autocomplete_input(brand_options=brand_options, value=_pv("brand")),
             _searchable_autocomplete_input(
                 "Category*",
                 "category",
                 CATEGORY_OPTIONS,
                 help_text="Main category. Required.",
                 allow_add=True,
+                value=_pv("category"),
             ),
             _searchable_autocomplete_input(
                 "Subtype*",
@@ -885,9 +930,10 @@ def CreateCatalogPage(
                 subtype_options or [],
                 help_text="Specific subtype, e.g. yogurt, pasta, soda. Required.",
                 allow_add=True,
+                value=_pv("subtype"),
             ),
-            _smart_macros_block("catalog"),
-            _labeled_input("Default portion", "default_portion", "number", help_text="Default serving size in g/ml.", step="any"),
+            _smart_macros_block("catalog", prefill=data),
+            _labeled_input("Default portion", "default_portion", "number", help_text="Default serving size in g/ml.", step="any", value=_pv("default_portion")),
             _favorite_checkbox(),
             _advanced_toggle("catalog_advanced"),
             Div(
@@ -897,6 +943,7 @@ def CreateCatalogPage(
                     INITIAL_STATE_OPTIONS,
                     help_text="Physical state before preparation.",
                     allow_add=False,
+                    value=_pv("initial_state"),
                 ),
                 _searchable_autocomplete_input(
                     "Nutriscore",
@@ -904,17 +951,33 @@ def CreateCatalogPage(
                     ["A", "B", "C", "D", "E"],
                     help_text="Nutrition quality score from A to E.",
                     allow_add=False,
+                    value=_pv("nutriscore"),
                 ),
-                _labeled_input("NOVA (1-4)", "nova", "number", help_text="Food processing level from 1 to 4."),
-                _labeled_input("Yuka (0-100)", "yuka", "number", help_text="Optional Yuka-style score from 0 to 100."),
-                _labeled_input("Caffeine", "caffeine", "number", help_text="Caffeine content in mg per 100g/ml."),
-                _labeled_input("Alcohol", "alcohol", "number", help_text="Alcohol content in grams per 100g/ml."),
+                _labeled_input("NOVA (1-4)", "nova", "number", help_text="Food processing level from 1 to 4.", value=_pv("nova")),
+                _labeled_input("Yuka (0-100)", "yuka", "number", help_text="Optional Yuka-style score from 0 to 100.", value=_pv("yuka")),
+                _labeled_input("Caffeine", "caffeine", "number", help_text="Caffeine content in mg per 100g/ml.", value=_pv("caffeine")),
+                _labeled_input("Alcohol", "alcohol", "number", help_text="Alcohol content in grams per 100g/ml.", value=_pv("alcohol")),
                 _labeled_input("Barcode", "barcode", value=initial_barcode, help_text="Optional product barcode."),
-                _labeled_input("Cooking factor", "cooking_factor", "number", help_text="Raw/cooked weight conversion factor."),
+                _labeled_input("Cooking factor", "cooking_factor", "number", help_text="Raw/cooked weight conversion factor.", value=_pv("cooking_factor")),
                 id="catalog_advanced",
                 cls=advanced_cls,
             ),
             cls="grid grid-cols-1 md:grid-cols-2 gap-2",
+        ),
+        (
+            Div(
+                P("A catalog item with this barcode already exists.", cls="text-sm text-gray-700"),
+                A(
+                    "Open existing item",
+                    hx_get=f"/food/item/catalog/{int(existing_item_id)}",
+                    hx_target="#main_content",
+                    hx_push_url="true",
+                    cls="web_button px-3 py-1.5 text-xs w-fit bg-black text-white border-black",
+                ),
+                cls="web_container rounded-xl p-2 flex items-center justify-between gap-2",
+            )
+            if existing_item_id
+            else None
         ),
         Button("Create catalog item", type="submit", cls="web_button px-3 py-2 text-xs"),
         hx_post="/food/create/catalog",

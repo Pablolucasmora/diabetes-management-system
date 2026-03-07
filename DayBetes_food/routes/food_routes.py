@@ -1,6 +1,10 @@
 from fasthtml.common import *
 from datetime import datetime
 import json
+import difflib
+import re
+import unicodedata
+from urllib import request as urlrequest
 from DayBetes_food.components.food.food_main import food_main
 from DayBetes_food.components.ui import render_fragment, render_page
 from DayBetes_food.database.queries.crud import (
@@ -11,6 +15,7 @@ from DayBetes_food.database.queries.crud import (
     add_intake_event,
     add_portion_detail,
     get_catalog_item,
+    get_catalog_item_by_barcode,
     get_manual_intake,
     get_recipe,
     get_portion_detail_by_recipe,
@@ -70,6 +75,162 @@ def _to_int(value: str):
 
 def _to_bool(value: str):
     return (value or "").strip().lower() in ("1", "true", "on", "yes")
+
+
+def _to_str_or_none(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _off_number(value):
+    if value is None:
+        return None
+    try:
+        return float(str(value).replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+
+
+def _off_pick_name(product: dict):
+    return (
+        _to_str_or_none(product.get("product_name_es"))
+        or _to_str_or_none(product.get("product_name"))
+        or _to_str_or_none(product.get("product_name_en"))
+        or _to_str_or_none(product.get("generic_name_es"))
+        or _to_str_or_none(product.get("generic_name"))
+        or _to_str_or_none(product.get("generic_name_en"))
+    )
+
+
+def _off_pick_subtype(product: dict):
+    categories = _to_str_or_none(product.get("categories")) or ""
+    parts = [p.strip() for p in categories.split(",") if p.strip()]
+    if parts:
+        return parts[-1].lower()
+    return None
+
+
+def _off_pick_category(product: dict):
+    categories = _to_str_or_none(product.get("categories")) or ""
+    parts = [p.strip() for p in categories.split(",") if p.strip()]
+    base = ""
+    if len(parts) >= 3:
+        base = parts[-3]
+    elif len(parts) >= 2:
+        base = parts[-2]
+    elif len(parts) == 1:
+        base = parts[0]
+
+    blob = (base or "").strip().lower()
+    if any(k in blob for k in ("beverage", "drink", "juice", "soda", "water", "tea", "coffee")):
+        return "beverages"
+    if any(k in blob for k in ("dairy", "milk", "yogurt", "cheese")):
+        return "dairy"
+    if any(k in blob for k in ("cereal", "bread", "flour", "grain", "rice", "wheat", "oat")):
+        return "cereals"
+    if any(k in blob for k in ("fruit", "apple", "banana", "berries")):
+        return "fruits"
+    if any(k in blob for k in ("vegetable", "greens", "salad", "tomato")):
+        return "vegetables"
+    if any(k in blob for k in ("fish", "seafood", "salmon", "tuna")):
+        return "fish"
+    if any(k in blob for k in ("meat", "beef", "chicken", "pork", "ham")):
+        return "meat"
+    if any(k in blob for k in ("legume", "lentil", "chickpea", "bean")):
+        return "legumes"
+    if any(k in blob for k in ("nut", "almond", "hazelnut", "walnut")):
+        return "nuts"
+    if any(k in blob for k in ("oil", "fat", "butter", "margarine")):
+        return "oils_and_fats"
+    if any(k in blob for k in ("sweet", "chocolate", "candy", "dessert", "biscuit", "cookie")):
+        return "sweets"
+    if any(k in blob for k in ("sauce", "ketchup", "mustard", "mayo")):
+        return "sauces"
+    if any(k in blob for k in ("condiment", "spice", "seasoning")):
+        return "condiments"
+    if any(k in blob for k in ("egg", "omelette")):
+        return "eggs"
+    if any(k in blob for k in ("potato", "tuber")):
+        return "tubers"
+    return None
+
+
+def _off_prefill_by_barcode(barcode: str):
+    clean = (barcode or "").strip()
+    if not clean:
+        return {}
+    url = f"https://world.openfoodfacts.net/api/v2/product/{clean}.json"
+    try:
+        with urlrequest.urlopen(url, timeout=4) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return {"barcode": clean}
+    product = payload.get("product") if isinstance(payload, dict) else None
+    if not isinstance(product, dict):
+        return {"barcode": clean}
+    nutriments = product.get("nutriments") or {}
+    category = _off_pick_category(product)
+    prefill = {
+        "barcode": clean,
+        "name": _off_pick_name(product) or "",
+        "brand": (_to_str_or_none(product.get("brands")) or "").split(",")[0].strip() if _to_str_or_none(product.get("brands")) else "",
+        "category": category or "",
+        "subtype": _off_pick_subtype(product) or "",
+        "default_portion": _off_number(product.get("serving_quantity")),
+        "initial_state": "liquid" if category == "beverages" else "solid",
+        "nutriscore": (_to_str_or_none(product.get("nutriscore_grade")) or "").upper(),
+        "nova": product.get("nova_group"),
+        "calories_100g": _off_number(nutriments.get("energy-kcal_100g")),
+        "carbs_100g": _off_number(nutriments.get("carbohydrates_100g")),
+        "sugars_100g": _off_number(nutriments.get("sugars_100g")),
+        "fats_100g": _off_number(nutriments.get("fat_100g")),
+        "saturated_100g": _off_number(nutriments.get("saturated-fat_100g")),
+        "proteins_100g": _off_number(nutriments.get("proteins_100g")),
+        "fiber_100g": _off_number(nutriments.get("fiber_100g")),
+        "alcohol": _off_number(nutriments.get("alcohol_100g")),
+        "caffeine": _off_number(nutriments.get("caffeine_100g")),
+    }
+    for key, value in list(prefill.items()):
+        if value is None:
+            prefill[key] = ""
+    return prefill
+
+
+def _normalize_text(value: str) -> str:
+    text = unicodedata.normalize("NFD", str(value or ""))
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+    text = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+    return text
+
+
+def _closest_option(value: str, options: list[str]) -> str:
+    clean = (value or "").strip()
+    if not clean:
+        return ""
+    by_norm = {}
+    normalized_pool = []
+    for opt in options or []:
+        opt_clean = (opt or "").strip()
+        if not opt_clean:
+            continue
+        norm = _normalize_text(opt_clean)
+        if not norm:
+            continue
+        if norm not in by_norm:
+            by_norm[norm] = opt_clean
+            normalized_pool.append(norm)
+
+    target = _normalize_text(clean)
+    if not target or not normalized_pool:
+        return clean
+    if target in by_norm:
+        return by_norm[target]
+    matches = difflib.get_close_matches(target, normalized_pool, n=1, cutoff=0.72)
+    if matches:
+        return by_norm[matches[0]]
+    return clean
 
 
 def _macro_value(row: dict, macro_key: str):
@@ -220,16 +381,28 @@ def setup_food_routes(rt):
         return render_page(request, food_main)
 
     @rt("/food/create/catalog/form")
-    def get(request: Request, barcode: str = ""):
+    def get(request: Request, barcode: str = "", existing_id: str = ""):
+        clean_barcode = (barcode or "").strip()
+        prefill = _off_prefill_by_barcode(clean_barcode) if clean_barcode else {}
+        existing_item_id = int(existing_id) if (existing_id or "").isdigit() else None
+        if clean_barcode and not existing_item_id:
+            with get_connection() as connection:
+                existing = get_catalog_item_by_barcode(connection, clean_barcode)
+                if existing:
+                    existing_item_id = int(existing["id"])
         with get_connection() as connection:
             brands = get_food_brand_suggestions(connection, search="", limit=500)
             subtypes = get_subtype_suggestions(connection, search="", limit=500)
+        subtype_prefill = (prefill.get("subtype") or "").strip()
+        if subtype_prefill:
+            prefill["subtype"] = _closest_option(subtype_prefill, subtypes)
         return render_page(
             request,
             lambda _: CreateCatalogPage(
                 brand_options=brands,
                 subtype_options=subtypes,
-                barcode_prefill=(barcode or "").strip(),
+                prefill=prefill,
+                existing_item_id=existing_item_id,
             ),
             show_cart=False,
         )

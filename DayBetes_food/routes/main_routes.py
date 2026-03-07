@@ -28,19 +28,15 @@ def setup_main_routes(rt):
         clean = (barcode or "").strip()
         if not clean:
             return HTMLResponse("", status_code=400)
+        existing_id = None
         with get_connection() as connection:
             existing = get_catalog_item_by_barcode(connection, clean)
-        if existing:
-            location = {
-                "path": f"/food/item/catalog/{int(existing['id'])}",
-                "target": "#main_content",
-                "swap": "innerHTML",
-                "push": True,
-            }
-            return HTMLResponse("", headers={"HX-Location": json.dumps(location)})
+            if existing:
+                existing_id = int(existing["id"])
         encoded = quote_plus(clean)
+        existing_suffix = f"&existing_id={existing_id}" if existing_id else ""
         location = {
-            "path": f"/food/create/catalog/form?barcode={encoded}",
+            "path": f"/food/create/catalog/form?barcode={encoded}{existing_suffix}",
             "target": "#main_content",
             "swap": "innerHTML",
             "push": True,
