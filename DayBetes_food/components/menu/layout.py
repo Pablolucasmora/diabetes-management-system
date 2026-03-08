@@ -140,12 +140,5 @@ def Cart(display=True):
         id="cart_button",
         hx_get="/cart",
         hx_target="#main_content",
-        **{
-            "hx-on:click": (
-                "this.style.pointerEvents='none';"
-                "this.style.opacity='0';"
-                "setTimeout(() => { this.style.visibility='hidden'; this.classList.add('invisible'); }, 100);"
-            )
-        },
         hx_push_url="true"
     )

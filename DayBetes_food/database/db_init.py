@@ -161,6 +161,27 @@ def _ensure_catalog_schema(cursor):
         )
 
 
+def _ensure_privacy_schema(cursor):
+    if not _has_column(cursor, "catalog", "is_private"):
+        cursor.execute("ALTER TABLE catalog ADD COLUMN is_private BOOLEAN DEFAULT FALSE;")
+    if not _has_column(cursor, "manual_intake", "is_private"):
+        cursor.execute("ALTER TABLE manual_intake ADD COLUMN is_private BOOLEAN DEFAULT FALSE;")
+    if not _has_column(cursor, "recipe", "is_private"):
+        cursor.execute("ALTER TABLE recipe ADD COLUMN is_private BOOLEAN DEFAULT FALSE;")
+
+    cursor.execute("UPDATE catalog SET is_private = FALSE WHERE is_private IS NULL;")
+    cursor.execute("UPDATE manual_intake SET is_private = FALSE WHERE is_private IS NULL;")
+    cursor.execute("UPDATE recipe SET is_private = FALSE WHERE is_private IS NULL;")
+
+    cursor.execute("ALTER TABLE catalog ALTER COLUMN is_private SET DEFAULT FALSE;")
+    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN is_private SET DEFAULT FALSE;")
+    cursor.execute("ALTER TABLE recipe ALTER COLUMN is_private SET DEFAULT FALSE;")
+
+    cursor.execute("ALTER TABLE catalog ALTER COLUMN is_private SET NOT NULL;")
+    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN is_private SET NOT NULL;")
+    cursor.execute("ALTER TABLE recipe ALTER COLUMN is_private SET NOT NULL;")
+
+
 def _ensure_trgm_search(cursor):
     # Best-effort: if extension/index creation is not permitted, keep app running.
     cursor.execute("SAVEPOINT trgm_setup;")
@@ -209,6 +230,7 @@ def init_db():
 
         _ensure_trgm_search(cur)
         _ensure_catalog_schema(cur)
+        _ensure_privacy_schema(cur)
         _ensure_users_schema(cur)
         _ensure_default_user(cur)
 

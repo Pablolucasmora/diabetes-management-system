@@ -161,8 +161,16 @@ def get_default_user_id(connection) -> Optional[int]:
 # CATALOG
 # ============================================
 
+def normalize_brand_name(brand_name: str) -> str:
+    clean_name = " ".join((brand_name or "").strip().split())
+    if not clean_name:
+        return ""
+    lowered = clean_name.lower()
+    return " ".join(token[:1].upper() + token[1:] for token in lowered.split(" "))
+
+
 def add_food_brand(connection, brand_name: str) -> bool:
-    clean_name = (brand_name or "").strip()
+    clean_name = normalize_brand_name(brand_name)
     if not clean_name:
         return False
     try:
@@ -292,18 +300,21 @@ def add_catalog_item(connection, data: dict) -> Optional[int]:
             nutriscore, nova, yuka, default_portion,
             calories_100g, carbs_100g, sugars_100g, fats_100g,
             saturated_100g, proteins_100g, fiber_100g,
-            caffeine, alcohol, barcode, cooking_factor, favorite
+            caffeine, alcohol, barcode, cooking_factor, favorite, is_private
         )
         VALUES (
             %(created_by)s, %(name)s, %(brand)s, %(category)s, %(subtype)s, %(initial_state)s,
             %(nutriscore)s, %(nova)s, %(yuka)s, %(default_portion)s,
             %(calories_100g)s, %(carbs_100g)s, %(sugars_100g)s, %(fats_100g)s,
             %(saturated_100g)s, %(proteins_100g)s, %(fiber_100g)s,
-            %(caffeine)s, %(alcohol)s, %(barcode)s, %(cooking_factor)s, %(favorite)s
+            %(caffeine)s, %(alcohol)s, %(barcode)s, %(cooking_factor)s, %(favorite)s, %(is_private)s
         )
         RETURNING id;
     """
-    result = _execute_query(connection, query, data)
+    payload = dict(data or {})
+    if "brand" in payload:
+        payload["brand"] = normalize_brand_name(payload.get("brand")) or None
+    result = _execute_query(connection, query, payload)
     return result["id"] if result else None
 
 
@@ -313,22 +324,34 @@ def get_catalog_item(connection, catalog_id: int) -> Optional[dict]:
     return _execute_query(connection, query, {"id": catalog_id}, commit=False)
 
 
-def get_catalog_item_by_barcode(connection, barcode: str) -> Optional[dict]:
+def get_catalog_item_by_barcode(connection, barcode: str, viewer_user_id: int = None) -> Optional[dict]:
     """Gets a catalog item by barcode."""
     clean = (barcode or "").strip()
     if not clean:
         return None
-    query = """
+    params = {"barcode": clean}
+    visibility_clause = ""
+    if viewer_user_id is not None:
+        visibility_clause = "AND (is_private = FALSE OR created_by = %(viewer_user_id)s)"
+        params["viewer_user_id"] = viewer_user_id
+    query = f"""
         SELECT *
         FROM catalog
         WHERE trim(barcode) = %(barcode)s
+          {visibility_clause}
         ORDER BY id
         LIMIT 1;
     """
-    return _execute_query(connection, query, {"barcode": clean}, commit=False)
+    return _execute_query(connection, query, params, commit=False)
 
 
-def get_all_catalog(connection, search: str = None, category: str = None, favorite: bool = None) -> list:
+def get_all_catalog(
+    connection,
+    search: str = None,
+    category: str = None,
+    favorite: bool = None,
+    viewer_user_id: int = None,
+) -> list:
     """Gets all catalog items with optional filters."""
     conditions = []
     params = {}
@@ -340,6 +363,9 @@ def get_all_catalog(connection, search: str = None, category: str = None, favori
     if favorite is not None:
         conditions.append("favorite = %(favorite)s")
         params["favorite"] = favorite
+    if viewer_user_id is not None:
+        conditions.append("(is_private = FALSE OR created_by = %(viewer_user_id)s)")
+        params["viewer_user_id"] = viewer_user_id
     
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     query = f"SELECT * FROM catalog {where_clause} ORDER BY name;"
@@ -359,7 +385,10 @@ def update_catalog_item(connection, catalog_id: int, data: dict) -> bool:
     if not data:
         return False
 
-    params = {**data, "id": catalog_id}
+    payload = dict(data or {})
+    if "brand" in payload:
+        payload["brand"] = normalize_brand_name(payload.get("brand")) or None
+    params = {**payload, "id": catalog_id}
     query = _build_update_query("catalog", params)
     if not query:
         return False
@@ -381,13 +410,13 @@ def add_manual_intake(connection, data: dict) -> Optional[int]:
             created_by, name, description, subtype, origin,
             amount_g, calories_100g, carbs_100g, sugars_100g,
             fats_100g, saturated_100g, proteins_100g, fiber_100g,
-            caffeine, alcohol, glycemic_index, ig_confidence, favorite
+            caffeine, alcohol, glycemic_index, ig_confidence, favorite, is_private
         )
         VALUES (
             %(created_by)s, %(name)s, %(description)s, %(subtype)s, %(origin)s,
             %(amount_g)s, %(calories_100g)s, %(carbs_100g)s, %(sugars_100g)s,
             %(fats_100g)s, %(saturated_100g)s, %(proteins_100g)s, %(fiber_100g)s,
-            %(caffeine)s, %(alcohol)s, %(glycemic_index)s, %(ig_confidence)s, %(favorite)s
+            %(caffeine)s, %(alcohol)s, %(glycemic_index)s, %(ig_confidence)s, %(favorite)s, %(is_private)s
         )
         RETURNING id;
     """
@@ -401,7 +430,13 @@ def get_manual_intake(connection, intake_id: int) -> Optional[dict]:
     return _execute_query(connection, query, {"id": intake_id}, commit=False)
 
 
-def get_all_manual_intakes(connection, users_id: int = None, search: str = None, favorite: bool = None) -> list:
+def get_all_manual_intakes(
+    connection,
+    users_id: int = None,
+    search: str = None,
+    favorite: bool = None,
+    viewer_user_id: int = None,
+) -> list:
     """Gets all manual intakes with optional filters."""
     conditions = []
     params = {}
@@ -413,6 +448,9 @@ def get_all_manual_intakes(connection, users_id: int = None, search: str = None,
     if favorite is not None:
         conditions.append("favorite = %(favorite)s")
         params["favorite"] = favorite
+    if viewer_user_id is not None:
+        conditions.append("(is_private = FALSE OR created_by = %(viewer_user_id)s)")
+        params["viewer_user_id"] = viewer_user_id
     
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     query = f"SELECT * FROM manual_intake {where_clause} ORDER BY name;"
@@ -441,11 +479,19 @@ def update_manual_intake(connection, intake_id: int, data: dict) -> bool:
 # RECIPES
 # ============================================
 
-def add_recipe(connection, users_id: int, name: str, meal_type: str = None, notes: str = None, favorite: bool = False) -> Optional[int]:
+def add_recipe(
+    connection,
+    users_id: int,
+    name: str,
+    meal_type: str = None,
+    notes: str = None,
+    favorite: bool = False,
+    is_private: bool = False,
+) -> Optional[int]:
     """Creates a new recipe."""
     query = """
-        INSERT INTO recipe (users_id, meal_type, name, notes, favorite)
-        VALUES (%(users_id)s, %(meal_type)s, %(name)s, %(notes)s, %(favorite)s)
+        INSERT INTO recipe (users_id, meal_type, name, notes, favorite, is_private)
+        VALUES (%(users_id)s, %(meal_type)s, %(name)s, %(notes)s, %(favorite)s, %(is_private)s)
         RETURNING id;
     """
     result = _execute_query(connection, query, {
@@ -453,7 +499,8 @@ def add_recipe(connection, users_id: int, name: str, meal_type: str = None, note
         "meal_type": meal_type,
         "name": name,
         "notes": notes,
-        "favorite": favorite
+        "favorite": favorite,
+        "is_private": is_private,
     })
     return result["id"] if result else None
 
@@ -464,7 +511,14 @@ def get_recipe(connection, recipe_id: int) -> Optional[dict]:
     return _execute_query(connection, query, {"id": recipe_id}, commit=False)
 
 
-def get_all_recipes(connection, users_id: int = None, meal_type: str = None, favorite: bool = None, search: str = None) -> list:
+def get_all_recipes(
+    connection,
+    users_id: int = None,
+    meal_type: str = None,
+    favorite: bool = None,
+    search: str = None,
+    viewer_user_id: int = None,
+) -> list:
     """Gets all recipes with optional filters."""
     conditions = []
     params = {}
@@ -479,6 +533,9 @@ def get_all_recipes(connection, users_id: int = None, meal_type: str = None, fav
     if favorite is not None:
         conditions.append("favorite = %(favorite)s")
         params["favorite"] = favorite
+    if viewer_user_id is not None:
+        conditions.append("(is_private = FALSE OR users_id = %(viewer_user_id)s)")
+        params["viewer_user_id"] = viewer_user_id
     
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     query = f"SELECT * FROM recipe {where_clause} ORDER BY name;"
@@ -486,14 +543,23 @@ def get_all_recipes(connection, users_id: int = None, meal_type: str = None, fav
     return _execute_query_many(connection, query, params, commit=False)
 
 
-def update_recipe(connection, recipe_id: int, name: str = None, meal_type: str = None, notes: str = None, favorite: bool = None) -> bool:
+def update_recipe(
+    connection,
+    recipe_id: int,
+    name: str = None,
+    meal_type: str = None,
+    notes: str = None,
+    favorite: bool = None,
+    is_private: bool = None,
+) -> bool:
     """Updates a recipe."""
     params = {
         "id": recipe_id, 
         "name": name, 
         "meal_type": meal_type, 
         "notes": notes, 
-        "favorite": favorite
+        "favorite": favorite,
+        "is_private": is_private,
     }
     
     query = _build_update_query("recipe", params)

@@ -190,7 +190,7 @@ def EventHeader(event):
     )
 
 
-def MacrosSummary(event, portions):
+def MacrosSummary(event, portions, compact: bool = False):
     total_amount = sum(float(p.get("amount_g") or 0.0) for p in portions)
     inferred_amount_confidence_num = 0.0
     inferred_quality_confidence_num = 0.0
@@ -207,8 +207,16 @@ def MacrosSummary(event, portions):
     if quality_confidence is None:
         quality_confidence = inferred_quality_confidence
 
+    compact_keys = {"carbs", "proteins", "fats", "fiber"}
     pills = []
+    pill_cls = (
+        "rounded-md px-1.5 py-1 text-[10px] leading-tight flex justify-between gap-1.5"
+        if compact
+        else "rounded-md px-2 py-1 text-xs md:rounded-lg md:px-3 md:py-2 md:text-sm flex justify-between gap-2"
+    )
     for macro_key, label, uncertainty_key in MACRO_KEYS:
+        if compact and macro_key not in compact_keys:
+            continue
         total = 0.0
         unknown_amount = 0.0
         for portion in portions:
@@ -224,26 +232,30 @@ def MacrosSummary(event, portions):
         if uncertainty is None:
             uncertainty = inferred_uncertainty
 
+        label_block = Span(label, cls="font-semibold")
+        if not compact:
+            label_block = Div(
+                Span(label, cls="font-semibold"),
+                Button(
+                    "?",
+                    type="button",
+                    title=f"Uncertainty: {inferred_uncertainty * 100:.1f}%",
+                    onclick=f"alert('Uncertainty: {inferred_uncertainty * 100:.1f}%');",
+                    cls="""
+                        web_button rounded-full border-[1px] border-black/50
+                        h-4 w-4 md:h-5 md:w-5
+                        text-[10px] md:text-xs
+                        p-0 leading-none
+                        flex items-center justify-center
+                        shadow-none
+                    """,
+                ),
+                cls="flex items-center gap-1"
+            )
+
         pills.append(
             Div(
-                Div(
-                    Span(label, cls="font-semibold"),
-                    Button(
-                        "?",
-                        type="button",
-                        title=f"Uncertainty: {inferred_uncertainty * 100:.1f}%",
-                        onclick=f"alert('Uncertainty: {inferred_uncertainty * 100:.1f}%');",
-                        cls="""
-                            web_button rounded-full border-[1px] border-black/50
-                            h-4 w-4 md:h-5 md:w-5
-                            text-[10px] md:text-xs
-                            p-0 leading-none
-                            flex items-center justify-center
-                            shadow-none
-                        """,
-                    ),
-                    cls="flex items-center gap-1"
-                ),
+                label_block,
                 Span(f"{total:.1f} g"),
                 style=(
                     f"background-color: {macro_color(uncertainty, amount_confidence, quality_confidence)}; "
@@ -255,21 +267,23 @@ def MacrosSummary(event, portions):
                     f"Strictly weighted confidence: {float(amount_confidence) * 100:.1f}% | "
                     f"Macros quality confidence: {float(quality_confidence) * 100:.1f}%"
                 ),
-                cls="""
-                    rounded-md px-2 py-1 text-xs
-                    md:rounded-lg md:px-3 md:py-2 md:text-sm
-                    flex justify-between gap-2
-                """
+                cls=pill_cls,
             )
         )
 
-    return Div(
-        Div(
-            H3("Meal macros", cls="font-semibold"),
+    header = (
+        Span(f"Total: {total_amount:.1f} g", cls="text-[10px] text-gray-700 md:text-xs")
+        if compact
+        else Div(
+            H3("Meal macros", cls="font-semibold text-sm md:text-base"),
             Span(f"Total: {total_amount:.1f} g", cls="text-xs md:text-sm text-gray-700"),
             cls="flex items-center justify-between gap-2"
-        ),
-        Div(*pills, cls="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-2 gap-1 md:gap-2"),
+        )
+    )
+
+    return Div(
+        header,
+        Div(*pills, cls="grid grid-cols-2 md:grid-cols-2 gap-1" if compact else "grid grid-cols-2 gap-1 md:gap-2"),
         cls="flex flex-col gap-2"
     )
 

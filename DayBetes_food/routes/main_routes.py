@@ -5,7 +5,7 @@ from DayBetes_food.components.menu.main_menu import main_menu
 from DayBetes_food.components.scanner.scanner_main import scanner_main
 from DayBetes_food.components.ui import render_page
 from DayBetes_food.database.connection import get_connection
-from DayBetes_food.database.queries.crud import get_catalog_item_by_barcode
+from DayBetes_food.database.queries.crud import get_catalog_item_by_barcode, get_default_user_id
 
 
 def setup_main_routes(rt):
@@ -30,7 +30,9 @@ def setup_main_routes(rt):
             return HTMLResponse("", status_code=400)
         existing_id = None
         with get_connection() as connection:
-            existing = get_catalog_item_by_barcode(connection, clean)
+            user_id = get_default_user_id(connection)
+            viewer_id = user_id if user_id else -1
+            existing = get_catalog_item_by_barcode(connection, clean, viewer_user_id=viewer_id)
             if existing:
                 existing_id = int(existing["id"])
         encoded = quote_plus(clean)

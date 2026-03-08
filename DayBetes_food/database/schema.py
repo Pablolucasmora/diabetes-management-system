@@ -87,7 +87,8 @@ class DBSchema:
         barcode VARCHAR,
         cooking_factor REAL DEFAULT 1.0, -- Cooking factor, in case it is needed at some point to calculate the real raw weight
 
-        favorite BOOLEAN DEFAULT FALSE -- To mark user favorites for easier access
+        favorite BOOLEAN DEFAULT FALSE, -- To mark user favorites for easier access
+        is_private BOOLEAN NOT NULL DEFAULT FALSE -- True: only creator can view it
     );
     """
 
@@ -117,6 +118,7 @@ class DBSchema:
         ), -- Estimated glycemic index of the meal
         ig_confidence INTEGER CHECK (ig_confidence BETWEEN 1 AND 5), -- Confidence level with which the glycemic index value above was established
         favorite BOOLEAN DEFAULT FALSE, -- Same as in catalog
+        is_private BOOLEAN NOT NULL DEFAULT FALSE, -- True: only creator can view it
 
         UNIQUE (created_by, name)
     );
@@ -153,7 +155,8 @@ class DBSchema:
         ), -- Used to set this as the default value in intake_event, making it easier to reuse
         name VARCHAR(255) NOT NULL,
         notes TEXT,
-        favorite BOOLEAN DEFAULT FALSE
+        favorite BOOLEAN DEFAULT FALSE,
+        is_private BOOLEAN NOT NULL DEFAULT FALSE -- True: only owner can view it
     );
     """
 

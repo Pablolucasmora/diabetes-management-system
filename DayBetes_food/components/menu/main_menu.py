@@ -8,13 +8,12 @@ def main_menu(conexion):
                   ,cls="""
                   flex items-center justify-center
                   """), Div(
-                      quick_actions(),
+                      quick_actions(conexion),
                       cls="""
                       md:mt-40 lg:mt-40 mt-36
                       flex flex-col items-center justify-center
                       gap-6
                       """)
-
 
 
 

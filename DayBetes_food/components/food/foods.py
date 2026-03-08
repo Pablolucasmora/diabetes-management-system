@@ -259,6 +259,7 @@ def _searchable_autocomplete_input(
     placeholder: str = "",
     allow_add: bool = True,
     value: str | None = None,
+    case_mode: str = "lower",
 ):
     normalized_options = sorted({(opt or "").strip() for opt in (options or []) if (opt or "").strip()})
     options_json = json.dumps(normalized_options)
@@ -292,6 +293,7 @@ def _searchable_autocomplete_input(
             data_searchable_autocomplete="true",
             data_searchable_options=options_json,
             data_searchable_allow_add="1" if allow_add else "0",
+            data_searchable_case_mode=case_mode,
             cls="relative",
         ),
         cls="flex flex-col gap-1",
@@ -357,6 +359,7 @@ def _brand_autocomplete_input(brand_options: list[str] | None = None, value: str
         placeholder="Type brand",
         allow_add=True,
         value=value,
+        case_mode="title",
     )
 
 
@@ -372,7 +375,7 @@ def _searchable_autocomplete_bootstrap_script():
             if (!input) return "";
             var form = input.form;
             var action = form && form.getAttribute ? (form.getAttribute("hx-post") || form.getAttribute("action") || "") : "";
-            return "dbSearchableValue::" + window.location.pathname + "::" + (input.name || "") + "::" + action;
+            return "dbSearchableValue::" + window.location.pathname + window.location.search + "::" + (input.name || "") + "::" + action;
           }
           function persistValue(input) {
             if (!input || !window.localStorage) return;
@@ -411,7 +414,23 @@ def _searchable_autocomplete_bootstrap_script():
             try { options = JSON.parse(root.dataset.searchableOptions || "[]"); }
             catch (_) { options = []; }
             var allowAdd = root.dataset.searchableAllowAdd === "1";
+            var caseMode = root.dataset.searchableCaseMode || "lower";
             restoreValue(input);
+
+            function formatByCaseMode(v) {
+              var text = normalize(v);
+              if (!text) return "";
+              if (caseMode === "title") {
+                var words = text.toLowerCase().split(/\\s+/);
+                for (var i = 0; i < words.length; i += 1) {
+                  var w = words[i];
+                  if (!w) continue;
+                  words[i] = w.charAt(0).toUpperCase() + w.slice(1);
+                }
+                return words.join(" ");
+              }
+              return text.toLowerCase();
+            }
 
             function closeBox() {
               box.style.display = "none";
@@ -507,8 +526,9 @@ def _searchable_autocomplete_bootstrap_script():
                 if (!q) return;
                 var qLower = q.toLowerCase();
                 var exists = options.some(function (x) { return normalize(x).toLowerCase() === qLower; });
-                if (!exists) options.push(qLower);
-                input.value = qLower;
+                var formatted = formatByCaseMode(q);
+                if (!exists) options.push(formatted);
+                input.value = formatted;
                 persistValue(input);
                 input.dispatchEvent(new Event("input", { bubbles: true }));
                 input.dispatchEvent(new Event("change", { bubbles: true }));
@@ -559,6 +579,109 @@ def _searchable_autocomplete_bootstrap_script():
             bindAll();
           }
           document.body.addEventListener("htmx:afterSwap", bindAll);
+        })();
+        """
+    )
+
+
+def _form_draft_bootstrap_script():
+    return Script(
+        """
+        (function () {
+          if (window.__dbFoodFormDraftsBootstrapped) return;
+          window.__dbFoodFormDraftsBootstrapped = true;
+
+          function byName(form, name) {
+            var all = form.querySelectorAll("input[name], select[name], textarea[name]");
+            var result = [];
+            for (var i = 0; i < all.length; i += 1) {
+              if (all[i].name === name) result.push(all[i]);
+            }
+            return result;
+          }
+
+          function saveForm(form) {
+            var key = form.getAttribute("data-draft-key");
+            if (!key || !window.localStorage) return;
+            var fields = form.querySelectorAll("input[name], select[name], textarea[name]");
+            var payload = {};
+            for (var i = 0; i < fields.length; i += 1) {
+              var el = fields[i];
+              if (!el || el.disabled) continue;
+              var type = (el.type || "").toLowerCase();
+              if (type === "submit" || type === "button" || type === "reset" || type === "file" || type === "image") continue;
+              var name = el.name;
+              if (!name) continue;
+              if (type === "checkbox") {
+                payload[name] = !!el.checked;
+              } else if (type === "radio") {
+                if (el.checked) payload[name] = el.value;
+              } else {
+                payload[name] = el.value;
+              }
+            }
+            try {
+              window.localStorage.setItem(key, JSON.stringify(payload));
+            } catch (_) {}
+          }
+
+          function restoreForm(form) {
+            var key = form.getAttribute("data-draft-key");
+            if (!key || !window.localStorage) return;
+            var raw = null;
+            try { raw = window.localStorage.getItem(key); } catch (_) {}
+            if (!raw) return;
+            var data = null;
+            try { data = JSON.parse(raw); } catch (_) { return; }
+            if (!data || typeof data !== "object") return;
+
+            var names = Object.keys(data);
+            for (var i = 0; i < names.length; i += 1) {
+              var name = names[i];
+              var value = data[name];
+              var fields = byName(form, name);
+              for (var j = 0; j < fields.length; j += 1) {
+                var el = fields[j];
+                if (!el || el.disabled) continue;
+                var type = (el.type || "").toLowerCase();
+                if (type === "checkbox") {
+                  if (!el.checked) el.checked = !!value;
+                } else if (type === "radio") {
+                  if (!el.checked) el.checked = String(el.value) === String(value);
+                } else if (value != null) {
+                  if (!String(el.value || "").trim()) {
+                    el.value = String(value);
+                  }
+                }
+              }
+            }
+          }
+
+          function bindForm(form) {
+            if (!form || form.dataset.draftBound === "1") return;
+            form.dataset.draftBound = "1";
+            restoreForm(form);
+            form.addEventListener("focusout", function () { saveForm(form); });
+            form.addEventListener("change", function () { saveForm(form); });
+            form.addEventListener("input", function () { saveForm(form); });
+            form.addEventListener("submit", function () { saveForm(form); });
+          }
+
+          function bindAll(scope) {
+            var root = scope || document;
+            var forms = root.querySelectorAll("form[data-draft-key]");
+            for (var i = 0; i < forms.length; i += 1) bindForm(forms[i]);
+          }
+
+          if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", function () { bindAll(document); });
+          } else {
+            bindAll(document);
+          }
+          document.body.addEventListener("htmx:afterSwap", function (event) {
+            var target = event && event.detail ? event.detail.target : null;
+            bindAll(target || document);
+          });
         })();
         """
     )
@@ -624,6 +747,50 @@ def _favorite_checkbox(name: str = "favorite", checked: bool = True, centered: b
         ),
         Label("Favorite", cls="text-xs text-gray-700 cursor-pointer", **{"for": checkbox_id}),
         _help_icon("Mark as favorite so it appears highlighted and in Favs filter."),
+        cls=(
+            "flex items-center justify-center gap-2 col-span-1 md:col-span-2"
+            if centered
+            else "flex items-center justify-end gap-2 col-span-1 md:col-span-2"
+        ),
+    )
+
+
+def _private_checkbox(name: str = "is_private", checked: bool = False, centered: bool = False):
+    checkbox_id = f"field_{name}"
+    return Div(
+        Label(
+            Input(
+                type="checkbox",
+                id=checkbox_id,
+                name=name,
+                value="true",
+                checked=checked,
+                cls=CHECKBOX_CLS,
+            ),
+            Span(
+                Svg(
+                    Path(
+                        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z",
+                        fill_rule="evenodd",
+                        clip_rule="evenodd",
+                    ),
+                    xmlns="http://www.w3.org/2000/svg",
+                    cls="h-3.5 w-3.5",
+                    viewBox="0 0 20 20",
+                    fill="currentColor",
+                    stroke="currentColor",
+                    stroke_width="1",
+                ),
+                cls="""
+                    absolute text-white opacity-0 peer-checked:opacity-100
+                    top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2
+                    pointer-events-none
+                """,
+            ),
+            cls="flex items-center cursor-pointer relative h-5 w-5",
+        ),
+        Label("Private", cls="text-xs text-gray-700 cursor-pointer", **{"for": checkbox_id}),
+        _help_icon("If enabled, only you can see this item. If disabled, everyone can see it."),
         cls=(
             "flex items-center justify-center gap-2 col-span-1 md:col-span-2"
             if centered
@@ -776,8 +943,9 @@ def CreateCatalogPanel(brand_options: list[str] | None = None, subtype_options: 
                 _labeled_input("Caffeine", "caffeine", "number"),
                 _labeled_input("Alcohol", "alcohol", "number"),
                 _labeled_input("Barcode", "barcode"),
-                _labeled_input("Cooking factor", "cooking_factor", "number"),
+                _labeled_input("Cooking factor", "cooking_factor", "number", step="any"),
                 _favorite_checkbox(),
+                _private_checkbox(),
                 cls="grid grid-cols-2 gap-2",
             ),
             Button(
@@ -788,6 +956,7 @@ def CreateCatalogPanel(brand_options: list[str] | None = None, subtype_options: 
             hx_post="/food/create/catalog",
             hx_target="#create_catalog_result",
             hx_swap="innerHTML",
+            data_draft_key="food_form_create_catalog_panel",
             cls="web_container p-3 rounded-2xl flex flex-col gap-3",
         ),
         Div(id="create_catalog_result", cls="text-xs"),
@@ -817,6 +986,7 @@ def CreateManualPanel(subtype_options: list[str] | None = None, origin_options: 
                 _searchable_autocomplete_input("Glycemic index", "glycemic_index", GLYCEMIC_INDEX_OPTIONS, help_text="Estimated glycemic index level."),
                 _labeled_input("IG confidence 1-5", "ig_confidence", "number"),
                 _favorite_checkbox(),
+                _private_checkbox(),
                 cls="grid grid-cols-2 gap-2",
             ),
             Button(
@@ -827,6 +997,7 @@ def CreateManualPanel(subtype_options: list[str] | None = None, origin_options: 
             hx_post="/food/create/manual",
             hx_target="#create_manual_result",
             hx_swap="innerHTML",
+            data_draft_key="food_form_create_manual_panel",
             cls="web_container p-3 rounded-2xl flex flex-col gap-3",
         ),
         Div(id="create_manual_result", cls="text-xs"),
@@ -852,6 +1023,7 @@ def CreateRecipePanel():
                     cls="flex flex-col gap-1 col-span-2",
                 ),
                 _favorite_checkbox(),
+                _private_checkbox(),
                 cls="grid grid-cols-2 gap-2",
             ),
             Button(
@@ -862,6 +1034,7 @@ def CreateRecipePanel():
             hx_post="/food/create/recipe",
             hx_target="#create_recipe_result",
             hx_swap="innerHTML",
+            data_draft_key="food_form_create_recipe_panel",
             cls="web_container p-3 rounded-2xl flex flex-col gap-3",
         ),
         Div(id="create_recipe_result", cls="text-xs"),
@@ -878,6 +1051,7 @@ def _create_page_shell(title: str, form, result_id: str):
         ),
         Div(form, cls="w-full"),
         Div(id=result_id, cls="text-xs w-full"),
+        _form_draft_bootstrap_script(),
         _searchable_autocomplete_bootstrap_script(),
         Script(src="/js/smart_macros.js", defer="defer"),
         data_hide_cart="true",
@@ -907,6 +1081,7 @@ def CreateCatalogPage(
         return str(value)
 
     initial_barcode = _pv("barcode", "").strip()
+    draft_suffix = initial_barcode if initial_barcode else "no_barcode"
     advanced_cls = (
         "grid grid-cols-1 md:grid-cols-2 gap-2 col-span-1 md:col-span-2"
         if any(_pv(k, "").strip() for k in ("initial_state", "nutriscore", "nova", "yuka", "caffeine", "alcohol", "barcode", "cooking_factor"))
@@ -935,6 +1110,7 @@ def CreateCatalogPage(
             _smart_macros_block("catalog", prefill=data),
             _labeled_input("Default portion", "default_portion", "number", help_text="Default serving size in g/ml.", step="any", value=_pv("default_portion")),
             _favorite_checkbox(),
+            _private_checkbox(checked=str(data.get("is_private") or "").strip().lower() in ("1", "true", "on", "yes")),
             _advanced_toggle("catalog_advanced"),
             Div(
                 _searchable_autocomplete_input(
@@ -958,7 +1134,7 @@ def CreateCatalogPage(
                 _labeled_input("Caffeine", "caffeine", "number", help_text="Caffeine content in mg per 100g/ml.", value=_pv("caffeine")),
                 _labeled_input("Alcohol", "alcohol", "number", help_text="Alcohol content in grams per 100g/ml.", value=_pv("alcohol")),
                 _labeled_input("Barcode", "barcode", value=initial_barcode, help_text="Optional product barcode."),
-                _labeled_input("Cooking factor", "cooking_factor", "number", help_text="Raw/cooked weight conversion factor.", value=_pv("cooking_factor")),
+                _labeled_input("Cooking factor", "cooking_factor", "number", help_text="Raw/cooked weight conversion factor.", step="any", value=_pv("cooking_factor")),
                 id="catalog_advanced",
                 cls=advanced_cls,
             ),
@@ -983,6 +1159,7 @@ def CreateCatalogPage(
         hx_post="/food/create/catalog",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
+        data_draft_key=f"food_form_create_catalog_page::{draft_suffix}",
         cls="web_container p-3 rounded-2xl flex flex-col gap-3 w-full",
     )
     return _create_page_shell("Create Catalog", form, result_id)
@@ -1011,6 +1188,7 @@ def CreateManualPage(subtype_options: list[str] | None = None, origin_options: l
             _labeled_input("Amount g*", "amount_g", "number", help_text="Consumed amount in grams/ml. Required."),
             _smart_macros_block("manual"),
             _favorite_checkbox(),
+            _private_checkbox(),
             _advanced_toggle("manual_advanced"),
             Div(
                 _labeled_input("Caffeine", "caffeine", "number", help_text="Caffeine content in mg per 100g/ml."),
@@ -1026,6 +1204,7 @@ def CreateManualPage(subtype_options: list[str] | None = None, origin_options: l
         hx_post="/food/create/manual",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
+        data_draft_key="food_form_create_manual_page",
         cls="web_container p-3 rounded-2xl flex flex-col gap-3 w-full",
     )
     return _create_page_shell("Create Manual Intake", form, result_id)
@@ -1038,6 +1217,7 @@ def CreateRecipePage():
             _labeled_input("Name*", "name", help_text="Recipe name. Required."),
             _labeled_select("Meal type", "meal_type", MEAL_TYPES, help_text="When this recipe is usually eaten."),
             _favorite_checkbox(),
+            _private_checkbox(),
             _advanced_toggle("recipe_advanced"),
             Div(
                 Div(
@@ -1060,6 +1240,7 @@ def CreateRecipePage():
         hx_post="/food/create/recipe",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
+        data_draft_key="food_form_create_recipe_page",
         cls="web_container p-3 rounded-2xl flex flex-col gap-3 w-full",
     )
     return _create_page_shell("Create Recipe", form, result_id)
@@ -1075,6 +1256,7 @@ def _edit_page_shell(form, result_id: str):
     return Div(
         Div(form, cls="w-full"),
         Div(id=result_id, cls="text-xs w-full"),
+        _form_draft_bootstrap_script(),
         _searchable_autocomplete_bootstrap_script(),
         data_hide_cart="true",
         cls="""
@@ -1117,7 +1299,12 @@ def _edit_name_input(value: str):
     )
 
 
-def EditCatalogPage(entry: dict, brand_options: list[str] | None = None, subtype_options: list[str] | None = None):
+def EditCatalogPage(
+    entry: dict,
+    brand_options: list[str] | None = None,
+    subtype_options: list[str] | None = None,
+    show_private: bool = False,
+):
     result_id = f"edit_catalog_result_{entry['id']}"
     form = Form(
         _edit_name_input(_input_value(entry.get("name"))),
@@ -1149,11 +1336,12 @@ def EditCatalogPage(entry: dict, brand_options: list[str] | None = None, subtype
                 _edit_tile(_labeled_input("Caffeine", "caffeine", "number", value=_input_value(entry.get("caffeine")))),
                 _edit_tile(_labeled_input("Alcohol", "alcohol", "number", value=_input_value(entry.get("alcohol")))),
                 _edit_tile(_labeled_input("Barcode", "barcode", value=_input_value(entry.get("barcode")))),
-                _edit_tile(_labeled_input("Cooking factor", "cooking_factor", "number", value=_input_value(entry.get("cooking_factor")))),
+                _edit_tile(_labeled_input("Cooking factor", "cooking_factor", "number", step="any", value=_input_value(entry.get("cooking_factor")))),
                 cls="grid grid-cols-1 md:grid-cols-2 gap-2",
             ),
             cls="flex flex-col gap-2 w-full",
         ),
+        *([_private_checkbox(checked=bool(entry.get("is_private")), centered=True)] if show_private else []),
         Div(
             Button(
                 "Back",
@@ -1174,12 +1362,18 @@ def EditCatalogPage(entry: dict, brand_options: list[str] | None = None, subtype
         hx_post=f"/food/edit/catalog/{entry['id']}",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
+        data_draft_key=f"food_form_edit_catalog_{entry['id']}",
         cls="flex flex-col gap-3 w-full",
     )
     return _edit_page_shell(form, result_id)
 
 
-def EditManualPage(entry: dict, subtype_options: list[str] | None = None, origin_options: list[str] | None = None):
+def EditManualPage(
+    entry: dict,
+    subtype_options: list[str] | None = None,
+    origin_options: list[str] | None = None,
+    show_private: bool = False,
+):
     result_id = f"edit_manual_result_{entry['id']}"
     form = Form(
         _edit_name_input(_input_value(entry.get("name"))),
@@ -1225,6 +1419,7 @@ def EditManualPage(entry: dict, subtype_options: list[str] | None = None, origin
             ),
             cls="flex flex-col gap-2 w-full",
         ),
+        *([_private_checkbox(checked=bool(entry.get("is_private")), centered=True)] if show_private else []),
         Div(
             Button(
                 "Back",
@@ -1245,12 +1440,13 @@ def EditManualPage(entry: dict, subtype_options: list[str] | None = None, origin
         hx_post=f"/food/edit/manual/{entry['id']}",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
+        data_draft_key=f"food_form_edit_manual_{entry['id']}",
         cls="flex flex-col gap-3 w-full",
     )
     return _edit_page_shell(form, result_id)
 
 
-def EditRecipePage(entry: dict):
+def EditRecipePage(entry: dict, show_private: bool = False):
     result_id = f"edit_recipe_result_{entry['id']}"
     form = Form(
         _edit_name_input(_input_value(entry.get("name"))),
@@ -1276,6 +1472,7 @@ def EditRecipePage(entry: dict):
             ),
             cls="flex flex-col gap-2 w-full",
         ),
+        *([_private_checkbox(checked=bool(entry.get("is_private")), centered=True)] if show_private else []),
         Div(
             Button(
                 "Back",
@@ -1296,6 +1493,7 @@ def EditRecipePage(entry: dict):
         hx_post=f"/food/edit/recipe/{entry['id']}",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
+        data_draft_key=f"food_form_edit_recipe_{entry['id']}",
         cls="flex flex-col gap-3 w-full",
     )
     return _edit_page_shell(form, result_id)

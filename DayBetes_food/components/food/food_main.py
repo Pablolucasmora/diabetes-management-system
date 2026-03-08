@@ -28,9 +28,9 @@ def _sorted_food_entries(catalog_items, manual_items, recipes):
 
 def food_main(connection):
     user_id = get_default_user_id(connection)
-    catalog_items = get_all_catalog(connection)
-    manual_items = get_all_manual_intakes(connection, users_id=user_id) if user_id else []
-    recipes = get_all_recipes(connection, users_id=user_id) if user_id else []
+    catalog_items = get_all_catalog(connection, viewer_user_id=user_id) if user_id else get_all_catalog(connection, viewer_user_id=-1)
+    manual_items = get_all_manual_intakes(connection, viewer_user_id=user_id) if user_id else get_all_manual_intakes(connection, viewer_user_id=-1)
+    recipes = get_all_recipes(connection, viewer_user_id=user_id) if user_id else get_all_recipes(connection, viewer_user_id=-1)
     foods = _sorted_food_entries(catalog_items, manual_items, recipes)
     
     return Div(

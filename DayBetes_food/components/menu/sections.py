@@ -1,6 +1,33 @@
 from fasthtml.common import *
+from DayBetes_food.components.cart.cart_components import MacrosSummary
+from DayBetes_food.database.queries.crud import (
+    get_cart_events,
+    get_default_user_id,
+    get_portion_detail_by_event,
+)
 
-def quick_actions():
+def _menu_cart_summary(connection):
+    user_id = get_default_user_id(connection)
+    if not user_id:
+        return P("No hay carrito", cls="text-xs md:text-sm text-gray-600 text-center")
+
+    events = get_cart_events(connection, user_id)
+    if not events:
+        return P("No hay carrito", cls="text-xs md:text-sm text-gray-600 text-center")
+
+    latest = events[0]
+    portions = get_portion_detail_by_event(connection, int(latest["id"]))
+    meal_name = latest.get("name") or f"Meal #{latest['id']}"
+
+    return Div(
+        P("Último carrito", cls="text-[11px] md:text-xs uppercase tracking-wide text-gray-600"),
+        H2(meal_name, cls="font-semibold text-sm md:text-base truncate w-full"),
+        Div(MacrosSummary(latest, portions, compact=True), cls="w-full"),
+        cls="w-full flex flex-col gap-2"
+    )
+
+
+def quick_actions(connection):
     actions = Div(
         Div(
             Button(
@@ -39,12 +66,26 @@ def quick_actions():
             """
         ),
         Div(
-            H1("Cart", cls="font-bold text-center"),
+            _menu_cart_summary(connection),
+            role="button",
+            tabindex="0",
+            hx_get="/cart",
+            hx_target="#main_content",
+            hx_push_url="true",
+            **{
+                "hx-on:keydown": (
+                    "if(event.key==='Enter' || event.key===' '){"
+                    "event.preventDefault();"
+                    "this.click();"
+                    "}"
+                )
+            },
             cls="""
             web_container
-            grid grid-cols-2 grid-rows-2 md:p-4 lg:p-4 p-3
-            md:gap-y-3 lg:gap-y-3 gap-y-3
-            md:gap-x-2 lg:gap-x-2 gap-x-1
+            md:p-4 lg:p-4 p-3
+            flex flex-col items-start justify-start
+            md:gap-3 lg:gap-3 gap-2
+            cursor-pointer
             """
         ),
         cls="""
