@@ -5,6 +5,7 @@ import difflib
 import re
 import unicodedata
 from urllib import request as urlrequest
+from urllib.parse import urlencode
 from DayBetes_food.components.food.food_main import food_main
 from DayBetes_food.components.ui import render_fragment, render_page
 from DayBetes_food.database.queries.crud import (
@@ -31,6 +32,7 @@ from DayBetes_food.database.queries.crud import (
     add_recipe,
     add_food_brand,
     get_food_brand_suggestions,
+    get_category_suggestions,
     get_subtype_suggestions,
     get_manual_origin_suggestions,
     update_portion_detail_amount,
@@ -38,7 +40,14 @@ from DayBetes_food.database.queries.crud import (
     delete_portion_detail,
     normalize_brand_name,
 )
-from DayBetes_food.components.food.foods import FoodSectionsContent, FavoriteButton, on_after
+from DayBetes_food.components.food.foods import (
+    GLYCEMIC_INDEX_OPTIONS,
+    INITIAL_STATE_OPTIONS,
+    COOKING_OPTIONS,
+    CONSERVATION_OPTIONS,
+    MEAL_TYPES,
+)
+from DayBetes_food.components.food.foods import FoodSectionsContent, FoodCard, FavoriteButton, on_after
 from DayBetes_food.components.food.foods import (
     CreateCatalogPage,
     CreateManualPage,
@@ -234,6 +243,44 @@ def _closest_option(value: str, options: list[str]) -> str:
     return clean
 
 
+def _normalized_choice_set(options: list[str] | None) -> set[str]:
+    return {_normalize_text(opt) for opt in (options or []) if (opt or "").strip()}
+
+
+def _is_allowed_choice(value: str, options: list[str] | None) -> bool:
+    text = (value or "").strip()
+    if not text:
+        return False
+    allowed = _normalized_choice_set(options)
+    return _normalize_text(text) in allowed
+
+
+def _coerce_choice(
+    value: str,
+    *,
+    options: list[str] | None,
+    allow_add: bool,
+    added: bool,
+    required: bool,
+    label: str,
+) -> tuple[str | None, str | None]:
+    text = (value or "").strip()
+    if not text:
+        if required:
+            return None, f"{label} is required."
+        return None, None
+
+    if _is_allowed_choice(text, options):
+        resolved = _closest_option(text, options or [])
+        return (resolved or text), None
+
+    if allow_add and added:
+        return text, None
+
+    action_hint = "Use Add to create a new value." if allow_add else "Choose one of the available options."
+    return None, f"Invalid {label.lower()}. {action_hint}"
+
+
 def _macro_value(row: dict, macro_key: str):
     catalog_value = row.get(f"catalog_{macro_key}_100g")
     manual_value = row.get(f"manual_{macro_key}_100g")
@@ -329,15 +376,30 @@ def _build_detail_summary(entry_type: str, entry: dict, recipe_portions: list | 
     }
 
 
-def _sorted_food_entries(catalog_items, manual_items, recipes):
+def _sorted_food_entries(catalog_items, manual_items, recipes, viewer_user_id: int | None = None):
+    def _is_owned(entry_type: str, item: dict) -> bool:
+        if not viewer_user_id:
+            return False
+        raw_owner = item.get("created_by") if entry_type in ("catalog", "manual_intake") else item.get("users_id")
+        try:
+            return int(raw_owner) == int(viewer_user_id)
+        except (TypeError, ValueError):
+            return False
+
     entries = []
     for item in catalog_items:
-        entries.append({"entry_type": "catalog", **item})
+        entries.append({"entry_type": "catalog", "is_owned": _is_owned("catalog", item), **item})
     for item in manual_items:
-        entries.append({"entry_type": "manual_intake", **item})
+        entries.append({"entry_type": "manual_intake", "is_owned": _is_owned("manual_intake", item), **item})
     for item in recipes:
-        entries.append({"entry_type": "recipe", **item})
-    entries.sort(key=lambda item: (0 if item.get("favorite") else 1, (item.get("name") or "").lower()))
+        entries.append({"entry_type": "recipe", "is_owned": _is_owned("recipe", item), **item})
+    entries.sort(
+        key=lambda item: (
+            0 if (item.get("favorite") or item.get("is_owned")) else 1,
+            0 if item.get("favorite") else 1,
+            (item.get("name") or "").lower(),
+        )
+    )
     return entries
 
 
@@ -367,24 +429,71 @@ def _can_toggle_private(entry_type: str, entry: dict, viewer_user_id: int | None
 
 def _filtered_entries(connection, search: str = "", filter_value: str = "all", include_recipes: bool = True):
     user_id = get_default_user_id(connection)
-
+    has_search = bool((search or "").strip())
     viewer_id = user_id if user_id else -1
-    catalog_items = get_all_catalog(connection, search=search or None, viewer_user_id=viewer_id)
-    manual_items = get_all_manual_intakes(connection, search=search or None, viewer_user_id=viewer_id)
-    recipes = get_all_recipes(connection, search=search or None, viewer_user_id=viewer_id) if include_recipes else []
+
+    def _unique_by_id(items: list[dict]) -> list[dict]:
+        seen = set()
+        merged = []
+        for item in items:
+            item_id = item.get("id")
+            if item_id in seen:
+                continue
+            seen.add(item_id)
+            merged.append(item)
+        return merged
 
     if filter_value == "food":
-        entries = _sorted_food_entries(catalog_items, manual_items, [])
+        if has_search:
+            catalog_items = get_all_catalog(connection, search=search or None, viewer_user_id=viewer_id)
+            manual_items = get_all_manual_intakes(connection, search=search or None, viewer_user_id=viewer_id)
+        else:
+            catalog_items = _unique_by_id(
+                get_all_catalog(connection, favorite=True, viewer_user_id=viewer_id)
+                + (get_all_catalog(connection, users_id=user_id, viewer_user_id=viewer_id) if user_id else [])
+            )
+            manual_items = _unique_by_id(
+                get_all_manual_intakes(connection, favorite=True, viewer_user_id=viewer_id)
+                + (get_all_manual_intakes(connection, users_id=user_id, viewer_user_id=viewer_id) if user_id else [])
+            )
+        entries = _sorted_food_entries(catalog_items, manual_items, [], viewer_user_id=user_id)
     elif filter_value == "recipes":
-        entries = _sorted_food_entries([], [], recipes)
+        if has_search:
+            recipes = get_all_recipes(connection, search=search or None, viewer_user_id=viewer_id) if include_recipes else []
+        else:
+            recipes = _unique_by_id(
+                (get_all_recipes(connection, favorite=True, viewer_user_id=viewer_id) if include_recipes else [])
+                + (get_all_recipes(connection, users_id=user_id, viewer_user_id=viewer_id) if include_recipes and user_id else [])
+            )
+        entries = _sorted_food_entries([], [], recipes, viewer_user_id=user_id)
     elif filter_value == "favs":
-        entries = _sorted_food_entries(
-            [item for item in catalog_items if item.get("favorite")],
-            [item for item in manual_items if item.get("favorite")],
-            [item for item in recipes if item.get("favorite")],
+        catalog_items = get_all_catalog(connection, search=search or None, favorite=True, viewer_user_id=viewer_id)
+        manual_items = get_all_manual_intakes(connection, search=search or None, favorite=True, viewer_user_id=viewer_id)
+        recipes = (
+            get_all_recipes(connection, search=search or None, favorite=True, viewer_user_id=viewer_id)
+            if include_recipes
+            else []
         )
+        entries = _sorted_food_entries(catalog_items, manual_items, recipes, viewer_user_id=user_id)
     else:
-        entries = _sorted_food_entries(catalog_items, manual_items, recipes)
+        if has_search:
+            catalog_items = get_all_catalog(connection, search=search or None, viewer_user_id=viewer_id)
+            manual_items = get_all_manual_intakes(connection, search=search or None, viewer_user_id=viewer_id)
+            recipes = get_all_recipes(connection, search=search or None, viewer_user_id=viewer_id) if include_recipes else []
+        else:
+            catalog_items = _unique_by_id(
+                get_all_catalog(connection, favorite=True, viewer_user_id=viewer_id)
+                + (get_all_catalog(connection, users_id=user_id, viewer_user_id=viewer_id) if user_id else [])
+            )
+            manual_items = _unique_by_id(
+                get_all_manual_intakes(connection, favorite=True, viewer_user_id=viewer_id)
+                + (get_all_manual_intakes(connection, users_id=user_id, viewer_user_id=viewer_id) if user_id else [])
+            )
+            recipes = _unique_by_id(
+                (get_all_recipes(connection, favorite=True, viewer_user_id=viewer_id) if include_recipes else [])
+                + (get_all_recipes(connection, users_id=user_id, viewer_user_id=viewer_id) if include_recipes and user_id else [])
+            )
+        entries = _sorted_food_entries(catalog_items, manual_items, recipes, viewer_user_id=user_id)
 
     return entries
 
@@ -397,6 +506,26 @@ def _error_msg(text: str):
             P(text, cls="text-xs text-red-700"),
             cls="web_container p-2 rounded-lg border border-red-200/70 bg-red-50/60",
         )
+    )
+
+
+SEARCH_PAGE_SIZE = 6
+
+
+def _search_load_more_node(search: str, filter_value: str, next_page: int):
+    query = urlencode({
+        "search": search,
+        "filter": filter_value,
+        "page": next_page,
+    })
+    return Div(
+        "Loading more...",
+        hx_get=f"/food/list?{query}",
+        hx_trigger="revealed",
+        hx_swap="outerHTML",
+        hx_target="this",
+        data_skip_page_loading="true",
+        cls="w-full text-center text-xs text-gray-500 py-2",
     )
 
 
@@ -420,6 +549,7 @@ def setup_food_routes(rt):
                     existing_item_id = int(existing["id"])
         with get_connection() as connection:
             brands = get_food_brand_suggestions(connection, search="", limit=500)
+            categories = get_category_suggestions(connection, search="", limit=500)
             subtypes = get_subtype_suggestions(connection, search="", limit=500)
         subtype_prefill = (prefill.get("subtype") or "").strip()
         if subtype_prefill:
@@ -431,6 +561,7 @@ def setup_food_routes(rt):
             request,
             lambda _: CreateCatalogPage(
                 brand_options=brands,
+                category_options=categories,
                 subtype_options=subtypes,
                 prefill=prefill,
                 existing_item_id=existing_item_id,
@@ -606,6 +737,36 @@ def setup_food_routes(rt):
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
+        clean_cooking, cooking_error = _coerce_choice(
+            cooking,
+            options=COOKING_OPTIONS,
+            allow_add=False,
+            added=False,
+            required=False,
+            label="Cooking",
+        )
+        if cooking_error:
+            return render_fragment(P(cooking_error, cls="text-red-700"))
+        clean_final_state, final_state_error = _coerce_choice(
+            final_state,
+            options=INITIAL_STATE_OPTIONS,
+            allow_add=False,
+            added=False,
+            required=False,
+            label="Final state",
+        )
+        if final_state_error:
+            return render_fragment(P(final_state_error, cls="text-red-700"))
+        clean_conservation, conservation_error = _coerce_choice(
+            conservation,
+            options=CONSERVATION_OPTIONS,
+            allow_add=False,
+            added=False,
+            required=False,
+            label="Conservation",
+        )
+        if conservation_error:
+            return render_fragment(P(conservation_error, cls="text-red-700"))
 
         with get_connection() as connection:
             user_id = get_default_user_id(connection)
@@ -615,13 +776,13 @@ def setup_food_routes(rt):
             portion = get_portion_detail(connection, portion_id)
             if not portion or int(portion.get("recipe_id") or 0) != recipe_id:
                 return render_fragment(P("Ingredient not found.", cls="text-red-700"))
-                updated = update_portion_detail_fields(
-                    connection,
-                    portion_id=portion_id,
-                    cooking=(cooking or "").strip() or None,
-                    final_state=(final_state or "").strip() or None,
-                    conservation=((conservation or "").strip() or None),
-                )
+            updated = update_portion_detail_fields(
+                connection,
+                portion_id=portion_id,
+                cooking=clean_cooking,
+                final_state=clean_final_state,
+                conservation=clean_conservation,
+            )
 
         if not updated:
             return render_fragment(P("Could not save advanced fields.", cls="text-red-700"))
@@ -654,12 +815,14 @@ def setup_food_routes(rt):
                 if not entry or not _can_view_entry("catalog", entry, user_id):
                     return HTMLResponse(status_code=404)
                 brands = get_food_brand_suggestions(connection, search="", limit=500)
+                categories = get_category_suggestions(connection, search="", limit=500)
                 subtypes = get_subtype_suggestions(connection, search="", limit=500)
                 return render_page(
                     request,
                     lambda _: EditCatalogPage(
                         entry=entry,
                         brand_options=brands,
+                        category_options=categories,
                         subtype_options=subtypes,
                         show_private=_can_toggle_private("catalog", entry, user_id),
                     ),
@@ -713,6 +876,36 @@ def setup_food_routes(rt):
             return render_fragment(P("Amount must be greater than 0.", cls="text-red-700"))
         if parsed_total is not None and parsed_total > 0:
             parsed_amount = min(parsed_amount, parsed_total)
+        clean_cooking, cooking_error = _coerce_choice(
+            cooking,
+            options=COOKING_OPTIONS,
+            allow_add=False,
+            added=False,
+            required=False,
+            label="Cooking",
+        )
+        if cooking_error:
+            return render_fragment(P(cooking_error, cls="text-red-700"))
+        clean_final_state, final_state_error = _coerce_choice(
+            final_state,
+            options=INITIAL_STATE_OPTIONS,
+            allow_add=False,
+            added=False,
+            required=False,
+            label="Final state",
+        )
+        if final_state_error:
+            return render_fragment(P(final_state_error, cls="text-red-700"))
+        clean_conservation, conservation_error = _coerce_choice(
+            conservation,
+            options=CONSERVATION_OPTIONS,
+            allow_add=False,
+            added=False,
+            required=False,
+            label="Conservation",
+        )
+        if conservation_error:
+            return render_fragment(P(conservation_error, cls="text-red-700"))
 
         with get_connection() as connection:
             user_id = get_default_user_id(connection)
@@ -752,9 +945,9 @@ def setup_food_routes(rt):
                         destination="intake_event",
                         destination_id=event_id,
                         amount_g=parsed_amount,
-                        cooking=(cooking or "").strip() or None,
-                        final_state=(final_state or "").strip() or None,
-                        conservation=((conservation or "").strip() or None),
+                        cooking=clean_cooking,
+                        final_state=clean_final_state,
+                        conservation=clean_conservation,
                         strictly_weighed=True,
                         macros_quality=True,
                         plate_amount=parsed_amount,
@@ -770,9 +963,9 @@ def setup_food_routes(rt):
                         destination="intake_event",
                         destination_id=event_id,
                         amount_g=parsed_amount,
-                        cooking=(cooking or "").strip() or None,
-                        final_state=(final_state or "").strip() or None,
-                        conservation=((conservation or "").strip() or None),
+                        cooking=clean_cooking,
+                        final_state=clean_final_state,
+                        conservation=clean_conservation,
                         strictly_weighed=True,
                         macros_quality=True,
                         plate_amount=parsed_amount,
@@ -836,15 +1029,36 @@ def setup_food_routes(rt):
             return render_fragment(P("Could not log food.", cls="text-red-700"))
 
     @rt("/food/list")
-    def get(request: Request, search: str = "", filter: str = "all"):
+    def get(request: Request, search: str = "", filter: str = "all", page: int = 1):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
 
+        clean_search = (search or "").strip()
+        page = max(1, int(page or 1))
         with get_connection() as connection:
-            entries = _filtered_entries(connection, search=search, filter_value=filter)
+            entries = _filtered_entries(connection, search=clean_search, filter_value=filter)
         if not entries:
             return render_fragment(H2("No items", cls="text-gray-600"))
-        return render_fragment(tuple(FoodSectionsContent(entries)))
+
+        # Paginate only when the user is actively searching.
+        if not clean_search:
+            return render_fragment(tuple(FoodSectionsContent(entries)))
+
+        start = (page - 1) * SEARCH_PAGE_SIZE
+        end = start + SEARCH_PAGE_SIZE
+        chunk = entries[start:end]
+        has_more = end < len(entries)
+
+        if page == 1:
+            nodes = list(FoodSectionsContent(chunk))
+            if has_more:
+                nodes.append(_search_load_more_node(clean_search, filter, page + 1))
+            return render_fragment(tuple(nodes))
+
+        nodes = [FoodCard(item) for item in chunk]
+        if has_more:
+            nodes.append(_search_load_more_node(clean_search, filter, page + 1))
+        return render_fragment(tuple(nodes))
 
     @rt("/search_food")
     def get(request: Request, search: str = ""):
@@ -1058,8 +1272,11 @@ def setup_food_routes(rt):
         entry_id: int,
         name: str = "",
         brand: str = "",
+        brand__added: str = "",
         category: str = "",
+        category__added: str = "",
         subtype: str = "",
+        subtype__added: str = "",
         initial_state: str = "",
         nutriscore: str = "",
         nova: str = "",
@@ -1082,9 +1299,7 @@ def setup_food_routes(rt):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         clean_name = (name or "").strip()
-        clean_category = (category or "").strip()
-        clean_subtype = (subtype or "").strip()
-        if not clean_name or not clean_category or not clean_subtype:
+        if not clean_name:
             return _error_msg("Name, category and subtype are required.")
 
         with get_connection() as connection:
@@ -1092,6 +1307,64 @@ def setup_food_routes(rt):
             current = get_catalog_item(connection, entry_id)
             if not current or not _can_view_entry("catalog", current, user_id):
                 return _error_msg("Catalog item not found.")
+            brand_options = get_food_brand_suggestions(connection, search="", limit=500)
+            category_options = get_category_suggestions(connection, search="", limit=500)
+            subtype_options = get_subtype_suggestions(connection, search="", limit=500)
+
+            clean_brand, brand_error = _coerce_choice(
+                brand,
+                options=brand_options,
+                allow_add=True,
+                added=_to_bool(brand__added),
+                required=False,
+                label="Brand",
+            )
+            if brand_error:
+                return _error_msg(brand_error)
+
+            clean_category, category_error = _coerce_choice(
+                category,
+                options=category_options,
+                allow_add=True,
+                added=_to_bool(category__added),
+                required=True,
+                label="Category",
+            )
+            if category_error:
+                return _error_msg(category_error)
+
+            clean_subtype, subtype_error = _coerce_choice(
+                subtype,
+                options=subtype_options,
+                allow_add=True,
+                added=_to_bool(subtype__added),
+                required=True,
+                label="Subtype",
+            )
+            if subtype_error:
+                return _error_msg(subtype_error)
+
+            clean_initial_state, initial_state_error = _coerce_choice(
+                initial_state,
+                options=INITIAL_STATE_OPTIONS,
+                allow_add=False,
+                added=False,
+                required=False,
+                label="Initial state",
+            )
+            if initial_state_error:
+                return _error_msg(initial_state_error)
+
+            clean_nutriscore, nutriscore_error = _coerce_choice(
+                nutriscore,
+                options=["A", "B", "C", "D", "E"],
+                allow_add=False,
+                added=False,
+                required=False,
+                label="Nutriscore",
+            )
+            if nutriscore_error:
+                return _error_msg(nutriscore_error)
 
             existing = get_all_catalog(connection, search=clean_name)
             duplicated = any(
@@ -1101,16 +1374,16 @@ def setup_food_routes(rt):
             if duplicated:
                 return _error_msg("A catalog item with that name already exists.")
 
-            clean_brand = normalize_brand_name(brand)
+            normalized_brand = normalize_brand_name(clean_brand or "")
             favorite_value = None if (favorite or "").strip() == "" else _to_bool(favorite)
             can_toggle_private = _can_toggle_private("catalog", current, user_id)
             payload = {
                 "name": clean_name,
-                "brand": clean_brand or None,
+                "brand": normalized_brand or None,
                 "category": clean_category,
                 "subtype": clean_subtype,
-                "initial_state": initial_state.strip() or None,
-                "nutriscore": nutriscore.strip() or None,
+                "initial_state": clean_initial_state,
+                "nutriscore": clean_nutriscore,
                 "nova": _to_int(nova),
                 "yuka": _to_int(yuka),
                 "default_portion": _to_float(default_portion),
@@ -1132,8 +1405,8 @@ def setup_food_routes(rt):
             updated = update_catalog_item(connection, entry_id, payload)
             if not updated:
                 return _error_msg("Catalog item could not be updated.")
-            if clean_brand:
-                add_food_brand(connection, clean_brand)
+            if normalized_brand:
+                add_food_brand(connection, normalized_brand)
             return HTMLResponse("", headers={"HX-Redirect": f"/food/item/catalog/{entry_id}"})
 
     @rt("/food/edit/manual/{entry_id}")
@@ -1143,7 +1416,9 @@ def setup_food_routes(rt):
         name: str = "",
         description: str = "",
         subtype: str = "",
+        subtype__added: str = "",
         source_origin: str = "",
+        source_origin__added: str = "",
         amount_g: str = "",
         calories_100g: str = "",
         carbs_100g: str = "",
@@ -1162,8 +1437,7 @@ def setup_food_routes(rt):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         clean_name = (name or "").strip()
-        clean_subtype = (subtype or "").strip()
-        if not clean_name or not clean_subtype or not amount_g:
+        if not clean_name or not amount_g:
             return _error_msg("Name, subtype and amount are required.")
 
         try:
@@ -1178,6 +1452,42 @@ def setup_food_routes(rt):
             user_id = get_default_user_id(connection)
             if not current or not _can_view_entry("manual_intake", current, user_id):
                 return _error_msg("Manual intake not found.")
+            subtype_options = get_subtype_suggestions(connection, search="", limit=500)
+            origin_options = get_manual_origin_suggestions(connection, search="", limit=500)
+
+            clean_subtype, subtype_error = _coerce_choice(
+                subtype,
+                options=subtype_options,
+                allow_add=True,
+                added=_to_bool(subtype__added),
+                required=True,
+                label="Subtype",
+            )
+            if subtype_error:
+                return _error_msg(subtype_error)
+
+            clean_origin, origin_error = _coerce_choice(
+                source_origin,
+                options=origin_options,
+                allow_add=True,
+                added=_to_bool(source_origin__added),
+                required=False,
+                label="Origin",
+            )
+            if origin_error:
+                return _error_msg(origin_error)
+
+            clean_glycemic, glycemic_error = _coerce_choice(
+                glycemic_index,
+                options=GLYCEMIC_INDEX_OPTIONS,
+                allow_add=False,
+                added=False,
+                required=False,
+                label="Glycemic index",
+            )
+            if glycemic_error:
+                return _error_msg(glycemic_error)
+
             existing = get_all_manual_intakes(connection, users_id=user_id, search=clean_name)
             duplicated = any(
                 ((item.get("name") or "").strip().lower() == clean_name.lower()) and int(item.get("id") or 0) != entry_id
@@ -1191,7 +1501,7 @@ def setup_food_routes(rt):
                 "name": clean_name,
                 "description": description.strip() or None,
                 "subtype": clean_subtype,
-                "origin": source_origin.strip() or None,
+                "origin": clean_origin,
                 "amount_g": amount_value,
                 "calories_100g": _to_float(calories_100g),
                 "carbs_100g": _to_float(carbs_100g),
@@ -1202,7 +1512,7 @@ def setup_food_routes(rt):
                 "fiber_100g": _to_float(fiber_100g),
                 "caffeine": _to_float(caffeine),
                 "alcohol": _to_float(alcohol),
-                "glycemic_index": glycemic_index.strip() or None,
+                "glycemic_index": clean_glycemic,
                 "ig_confidence": _to_int(ig_confidence),
                 "favorite": (None if (favorite or "").strip() == "" else _to_bool(favorite)),
             }
@@ -1233,12 +1543,22 @@ def setup_food_routes(rt):
             current = get_recipe(connection, entry_id)
             if not current or not _can_view_entry("recipe", current, user_id):
                 return _error_msg("Recipe not found.")
+            clean_meal_type, meal_type_error = _coerce_choice(
+                meal_type,
+                options=MEAL_TYPES,
+                allow_add=False,
+                added=False,
+                required=False,
+                label="Meal type",
+            )
+            if meal_type_error:
+                return _error_msg(meal_type_error)
             can_toggle_private = _can_toggle_private("recipe", current, user_id)
             updated = update_recipe(
                 connection,
                 entry_id,
                 name=clean_name,
-                meal_type=meal_type.strip() or None,
+                meal_type=clean_meal_type,
                 notes=notes.strip() or None,
                 favorite=(None if (favorite or "").strip() == "" else _to_bool(favorite)),
                 is_private=_to_bool(is_private) if can_toggle_private else None,
@@ -1252,8 +1572,11 @@ def setup_food_routes(rt):
         request: Request,
         name: str = "",
         brand: str = "",
+        brand__added: str = "",
         category: str = "",
+        category__added: str = "",
         subtype: str = "",
+        subtype__added: str = "",
         initial_state: str = "",
         nutriscore: str = "",
         nova: str = "",
@@ -1282,6 +1605,65 @@ def setup_food_routes(rt):
             return _error_msg("Name, category and subtype are required.")
 
         with get_connection() as connection:
+            brand_options = get_food_brand_suggestions(connection, search="", limit=500)
+            category_options = get_category_suggestions(connection, search="", limit=500)
+            subtype_options = get_subtype_suggestions(connection, search="", limit=500)
+
+            clean_brand, brand_error = _coerce_choice(
+                brand,
+                options=brand_options,
+                allow_add=True,
+                added=_to_bool(brand__added),
+                required=False,
+                label="Brand",
+            )
+            if brand_error:
+                return _error_msg(brand_error)
+
+            clean_category, category_error = _coerce_choice(
+                category,
+                options=category_options,
+                allow_add=True,
+                added=_to_bool(category__added),
+                required=True,
+                label="Category",
+            )
+            if category_error:
+                return _error_msg(category_error)
+
+            clean_subtype, subtype_error = _coerce_choice(
+                subtype,
+                options=subtype_options,
+                allow_add=True,
+                added=_to_bool(subtype__added),
+                required=True,
+                label="Subtype",
+            )
+            if subtype_error:
+                return _error_msg(subtype_error)
+
+            clean_initial_state, initial_state_error = _coerce_choice(
+                initial_state,
+                options=INITIAL_STATE_OPTIONS,
+                allow_add=False,
+                added=False,
+                required=False,
+                label="Initial state",
+            )
+            if initial_state_error:
+                return _error_msg(initial_state_error)
+
+            clean_nutriscore, nutriscore_error = _coerce_choice(
+                nutriscore,
+                options=["A", "B", "C", "D", "E"],
+                allow_add=False,
+                added=False,
+                required=False,
+                label="Nutriscore",
+            )
+            if nutriscore_error:
+                return _error_msg(nutriscore_error)
+
             existing = get_all_catalog(connection, search=clean_name)
             if any(((item.get("name") or "").strip().lower() == clean_name.lower()) for item in existing):
                 return _error_msg("A catalog item with that name already exists.")
@@ -1289,15 +1671,15 @@ def setup_food_routes(rt):
             user_id = get_default_user_id(connection)
             if not user_id:
                 return _error_msg("No users found.")
-            clean_brand = normalize_brand_name(brand)
+            normalized_brand = normalize_brand_name(clean_brand or "")
             payload = {
                 "created_by": user_id,
                 "name": clean_name,
-                "brand": clean_brand or None,
+                "brand": normalized_brand or None,
                 "category": clean_category,
                 "subtype": clean_subtype,
-                "initial_state": initial_state.strip() or None,
-                "nutriscore": nutriscore.strip() or None,
+                "initial_state": clean_initial_state,
+                "nutriscore": clean_nutriscore,
                 "nova": _to_int(nova),
                 "yuka": _to_int(yuka),
                 "default_portion": _to_float(default_portion),
@@ -1318,8 +1700,8 @@ def setup_food_routes(rt):
             created_id = add_catalog_item(connection, payload)
             if not created_id:
                 return _error_msg("Catalog item could not be created. Check required fields and uniqueness constraints.")
-            if clean_brand:
-                add_food_brand(connection, clean_brand)
+            if normalized_brand:
+                add_food_brand(connection, normalized_brand)
             return HTMLResponse("", headers={"HX-Redirect": "/food"})
 
     @rt("/food/create/manual")
@@ -1328,7 +1710,9 @@ def setup_food_routes(rt):
         name: str = "",
         description: str = "",
         subtype: str = "",
+        subtype__added: str = "",
         source_origin: str = "",
+        source_origin__added: str = "",
         amount_g: str = "",
         calories_100g: str = "",
         carbs_100g: str = "",
@@ -1347,8 +1731,7 @@ def setup_food_routes(rt):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         clean_name = (name or "").strip()
-        clean_subtype = (subtype or "").strip()
-        if not clean_name or not clean_subtype or not amount_g:
+        if not clean_name or not amount_g:
             return _error_msg("Name, subtype and amount are required.")
 
         try:
@@ -1362,6 +1745,41 @@ def setup_food_routes(rt):
             user_id = get_default_user_id(connection)
             if not user_id:
                 return _error_msg("No users found.")
+            subtype_options = get_subtype_suggestions(connection, search="", limit=500)
+            origin_options = get_manual_origin_suggestions(connection, search="", limit=500)
+
+            clean_subtype, subtype_error = _coerce_choice(
+                subtype,
+                options=subtype_options,
+                allow_add=True,
+                added=_to_bool(subtype__added),
+                required=True,
+                label="Subtype",
+            )
+            if subtype_error:
+                return _error_msg(subtype_error)
+
+            clean_origin, origin_error = _coerce_choice(
+                source_origin,
+                options=origin_options,
+                allow_add=True,
+                added=_to_bool(source_origin__added),
+                required=False,
+                label="Origin",
+            )
+            if origin_error:
+                return _error_msg(origin_error)
+
+            clean_glycemic, glycemic_error = _coerce_choice(
+                glycemic_index,
+                options=GLYCEMIC_INDEX_OPTIONS,
+                allow_add=False,
+                added=False,
+                required=False,
+                label="Glycemic index",
+            )
+            if glycemic_error:
+                return _error_msg(glycemic_error)
 
             existing = get_all_manual_intakes(connection, users_id=user_id, search=clean_name)
             if any(((item.get("name") or "").strip().lower() == clean_name.lower()) for item in existing):
@@ -1372,7 +1790,7 @@ def setup_food_routes(rt):
                 "name": clean_name,
                 "description": description.strip() or None,
                 "subtype": clean_subtype,
-                "origin": source_origin.strip() or None,
+                "origin": clean_origin,
                 "amount_g": amount_value,
                 "calories_100g": _to_float(calories_100g),
                 "carbs_100g": _to_float(carbs_100g),
@@ -1383,7 +1801,7 @@ def setup_food_routes(rt):
                 "fiber_100g": _to_float(fiber_100g),
                 "caffeine": _to_float(caffeine),
                 "alcohol": _to_float(alcohol),
-                "glycemic_index": glycemic_index.strip() or None,
+                "glycemic_index": clean_glycemic,
                 "ig_confidence": _to_int(ig_confidence),
                 "favorite": _to_bool(favorite),
                 "is_private": _to_bool(is_private),
@@ -1412,11 +1830,21 @@ def setup_food_routes(rt):
             user_id = get_default_user_id(connection)
             if not user_id:
                 return _error_msg("No users found.")
+            clean_meal_type, meal_type_error = _coerce_choice(
+                meal_type,
+                options=MEAL_TYPES,
+                allow_add=False,
+                added=False,
+                required=False,
+                label="Meal type",
+            )
+            if meal_type_error:
+                return _error_msg(meal_type_error)
             created_id = add_recipe(
                 connection,
                 users_id=user_id,
                 name=clean_name,
-                meal_type=meal_type.strip() or None,
+                meal_type=clean_meal_type,
                 notes=notes.strip() or None,
                 favorite=_to_bool(favorite),
                 is_private=_to_bool(is_private),

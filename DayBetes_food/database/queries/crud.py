@@ -260,6 +260,46 @@ def get_subtype_suggestions(connection, search: str = "", limit: int = 50) -> li
     rows = _execute_query_many(connection, query, params, commit=False)
     return [str(row["name"]) for row in rows if row and row.get("name")]
 
+def get_category_suggestions(connection, search: str = "", limit: int = 50) -> list[str]:
+    normalized = (search or "").strip()
+    params = {
+        "q": normalized,
+        "q_like": f"%{normalized}%",
+        "q_prefix": f"{normalized.lower()}%",
+        "q_lower": normalized.lower(),
+        "limit": max(1, min(int(limit or 50), 500)),
+    }
+    query = """
+        WITH defaults AS (
+            SELECT unnest(ARRAY[
+                'meat', 'fish', 'dairy', 'eggs', 'processed_meat',
+                'legumes', 'tubers', 'nuts', 'vegetables', 'fruits',
+                'cereals', 'oils_and_fats', 'sweets', 'beverages',
+                'sauces', 'condiments', 'supplements'
+            ]) AS name
+        ),
+        source AS (
+            SELECT DISTINCT trim(category) AS name
+            FROM catalog
+            WHERE category IS NOT NULL AND trim(category) <> ''
+            UNION
+            SELECT name FROM defaults
+        )
+        SELECT name
+        FROM source
+        WHERE (%(q)s = '' OR name ILIKE %(q_like)s)
+        ORDER BY
+            CASE
+                WHEN lower(name) = %(q_lower)s THEN 0
+                WHEN lower(name) LIKE %(q_prefix)s THEN 1
+                ELSE 2
+            END,
+            name
+        LIMIT %(limit)s;
+    """
+    rows = _execute_query_many(connection, query, params, commit=False)
+    return [str(row["name"]) for row in rows if row and row.get("name")]
+
 
 def get_manual_origin_suggestions(connection, search: str = "", limit: int = 50) -> list[str]:
     normalized = (search or "").strip()
@@ -350,16 +390,23 @@ def get_all_catalog(
     search: str = None,
     category: str = None,
     favorite: bool = None,
+    users_id: int = None,
     viewer_user_id: int = None,
 ) -> list:
     """Gets all catalog items with optional filters."""
     conditions = []
     params = {}
-    
-    _add_fuzzy_name_condition(connection, conditions, params, "name", search)
+
+    normalized = (search or "").strip()
+    if normalized:
+        params["search_like"] = f"%{normalized}%"
+        conditions.append("(name ILIKE %(search_like)s OR COALESCE(brand, '') ILIKE %(search_like)s)")
     if category:
         conditions.append("category = %(category)s")
         params["category"] = category
+    if users_id:
+        conditions.append("created_by = %(users_id)s")
+        params["users_id"] = users_id
     if favorite is not None:
         conditions.append("favorite = %(favorite)s")
         params["favorite"] = favorite
@@ -444,7 +491,10 @@ def get_all_manual_intakes(
     if users_id:
         conditions.append("created_by = %(users_id)s")
         params["users_id"] = users_id
-    _add_fuzzy_name_condition(connection, conditions, params, "name", search)
+    normalized = (search or "").strip()
+    if normalized:
+        params["search_like"] = f"%{normalized}%"
+        conditions.append("(name ILIKE %(search_like)s OR COALESCE(origin, '') ILIKE %(search_like)s)")
     if favorite is not None:
         conditions.append("favorite = %(favorite)s")
         params["favorite"] = favorite

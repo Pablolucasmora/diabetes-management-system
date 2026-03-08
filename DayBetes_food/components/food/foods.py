@@ -269,6 +269,7 @@ def _searchable_autocomplete_input(
     return Div(
         _label_with_help(label, help_value, for_id=input_id),
         Div(
+            (Input(type="hidden", name=f"{name}__added", value="0", data_searchable_added_flag="true") if allow_add else None),
             Input(
                 type="text",
                 id=input_id,
@@ -311,6 +312,7 @@ def _searchable_compact_input(
     normalized_options = sorted({(opt or "").strip() for opt in (options or []) if (opt or "").strip()})
     options_json = json.dumps(normalized_options)
     return Div(
+        (Input(type="hidden", name=f"{name}__added", value="0", data_searchable_added_flag="true") if allow_add else None),
         Input(
             type="text",
             name=name,
@@ -408,6 +410,7 @@ def _searchable_autocomplete_bootstrap_script():
 
             var input = root.querySelector("[data-searchable-input='true']");
             var box = root.querySelector("[data-searchable-suggestions='true']");
+            var addedFlag = root.querySelector("[data-searchable-added-flag='true']");
             if (!input || !box) return;
 
             var options = [];
@@ -436,6 +439,11 @@ def _searchable_autocomplete_bootstrap_script():
               box.style.display = "none";
               box.innerHTML = "";
               root.style.zIndex = "";
+            }
+
+            function setAddedFlag(value) {
+              if (!addedFlag) return;
+              addedFlag.value = value ? "1" : "0";
             }
 
             function similarityScore(nameLower, qLower) {
@@ -529,16 +537,19 @@ def _searchable_autocomplete_bootstrap_script():
                 var formatted = formatByCaseMode(q);
                 if (!exists) options.push(formatted);
                 input.value = formatted;
+                setAddedFlag(true);
                 persistValue(input);
                 input.dispatchEvent(new Event("input", { bubbles: true }));
                 input.dispatchEvent(new Event("change", { bubbles: true }));
                 input.dispatchEvent(new CustomEvent("db-searchable-commit", { bubbles: true }));
+                setAddedFlag(true);
                 closeBox();
                 return;
               }
               var pick = target.dataset ? target.dataset.searchablePick : "";
               if (pick) {
                 input.value = pick;
+                setAddedFlag(false);
                 persistValue(input);
                 input.dispatchEvent(new Event("input", { bubbles: true }));
                 input.dispatchEvent(new Event("change", { bubbles: true }));
@@ -549,6 +560,7 @@ def _searchable_autocomplete_bootstrap_script():
 
             input.addEventListener("focus", render);
             input.addEventListener("input", function () {
+              setAddedFlag(false);
               persistValue(input);
               render();
             });
@@ -920,13 +932,17 @@ def QuickCreateButtons():
     )
 
 
-def CreateCatalogPanel(brand_options: list[str] | None = None, subtype_options: list[str] | None = None):
+def CreateCatalogPanel(
+    brand_options: list[str] | None = None,
+    category_options: list[str] | None = None,
+    subtype_options: list[str] | None = None,
+):
     return Div(
         Form(
             Div(
                 _labeled_input("Name*", "name"),
                 _brand_autocomplete_input(brand_options=brand_options),
-                _searchable_autocomplete_input("Category*", "category", CATEGORY_OPTIONS, allow_add=True),
+                _searchable_autocomplete_input("Category*", "category", category_options or CATEGORY_OPTIONS, allow_add=True),
                 _searchable_autocomplete_input("Subtype*", "subtype", subtype_options or [], allow_add=True),
                 _searchable_autocomplete_input("Initial state", "initial_state", INITIAL_STATE_OPTIONS, allow_add=False),
                 _searchable_autocomplete_input("Nutriscore", "nutriscore", ["A", "B", "C", "D", "E"], allow_add=False),
@@ -983,7 +999,7 @@ def CreateManualPanel(subtype_options: list[str] | None = None, origin_options: 
                 _labeled_input("Fiber/100g", "fiber_100g", "number"),
                 _labeled_input("Caffeine", "caffeine", "number"),
                 _labeled_input("Alcohol", "alcohol", "number"),
-                _searchable_autocomplete_input("Glycemic index", "glycemic_index", GLYCEMIC_INDEX_OPTIONS, help_text="Estimated glycemic index level."),
+                _searchable_autocomplete_input("Glycemic index", "glycemic_index", GLYCEMIC_INDEX_OPTIONS, help_text="Estimated glycemic index level.", allow_add=False),
                 _labeled_input("IG confidence 1-5", "ig_confidence", "number"),
                 _favorite_checkbox(),
                 _private_checkbox(),
@@ -1068,6 +1084,7 @@ def _create_page_shell(title: str, form, result_id: str):
 
 def CreateCatalogPage(
     brand_options: list[str] | None = None,
+    category_options: list[str] | None = None,
     subtype_options: list[str] | None = None,
     prefill: dict | None = None,
     existing_item_id: int | None = None,
@@ -1094,7 +1111,7 @@ def CreateCatalogPage(
             _searchable_autocomplete_input(
                 "Category*",
                 "category",
-                CATEGORY_OPTIONS,
+                category_options or CATEGORY_OPTIONS,
                 help_text="Main category. Required.",
                 allow_add=True,
                 value=_pv("category"),
@@ -1193,7 +1210,7 @@ def CreateManualPage(subtype_options: list[str] | None = None, origin_options: l
             Div(
                 _labeled_input("Caffeine", "caffeine", "number", help_text="Caffeine content in mg per 100g/ml."),
                 _labeled_input("Alcohol", "alcohol", "number", help_text="Alcohol content in grams per 100g/ml."),
-                _searchable_autocomplete_input("Glycemic index", "glycemic_index", GLYCEMIC_INDEX_OPTIONS, help_text="Estimated glycemic index level."),
+                _searchable_autocomplete_input("Glycemic index", "glycemic_index", GLYCEMIC_INDEX_OPTIONS, help_text="Estimated glycemic index level.", allow_add=False),
                 _labeled_input("IG confidence 1-5", "ig_confidence", "number", help_text="Confidence in glycemic index estimate (1 low, 5 high)."),
                 id="manual_advanced",
                 cls="hidden grid grid-cols-1 md:grid-cols-2 gap-2 col-span-1 md:col-span-2",
@@ -1302,6 +1319,7 @@ def _edit_name_input(value: str):
 def EditCatalogPage(
     entry: dict,
     brand_options: list[str] | None = None,
+    category_options: list[str] | None = None,
     subtype_options: list[str] | None = None,
     show_private: bool = False,
 ):
@@ -1326,7 +1344,7 @@ def EditCatalogPage(
         Div(
             H2("Details", cls="font-semibold text-gray-900"),
             Div(
-                _edit_tile(_searchable_autocomplete_input("Category*", "category", CATEGORY_OPTIONS, allow_add=True, value=_input_value(entry.get("category")))),
+                _edit_tile(_searchable_autocomplete_input("Category*", "category", category_options or CATEGORY_OPTIONS, allow_add=True, value=_input_value(entry.get("category")))),
                 _edit_tile(_searchable_autocomplete_input("Subtype*", "subtype", subtype_options or [], allow_add=True, value=_input_value(entry.get("subtype")))),
                 _edit_tile(_labeled_input("Default portion", "default_portion", "number", step="any", value=_input_value(entry.get("default_portion")))),
                 _edit_tile(_searchable_autocomplete_input("Initial state", "initial_state", INITIAL_STATE_OPTIONS, allow_add=False, value=_input_value(entry.get("initial_state")))),
@@ -1517,6 +1535,8 @@ def FavoriteButton(entry_type: str, entry_id: int, favorite: bool):
         hx_target="this",
         hx_swap="outerHTML",
         hx_trigger="click consume",
+        hx_push_url="false",
+        **{"hx-on:click": "event.stopPropagation();"},
         data_skip_page_loading="true",
         data_no_open="true",
     )
@@ -2228,9 +2248,23 @@ def FoodCard(food):
     if food["entry_type"] == "recipe":
         add_path = f"/add_recipe/{food['id']}"
 
+    owner_suffix = " *" if food.get("is_owned") else ""
+    name_text = f"{food['name']}{owner_suffix}"
+    subtitle = ""
+    if food.get("entry_type") == "catalog":
+        subtitle = (food.get("brand") or "").strip()
+    elif food.get("entry_type") == "manual_intake":
+        subtitle = (food.get("origin") or "").strip()
+
+    title_node = H1(
+        Span(name_text),
+        Span(f"({subtitle})", cls="text-xs text-gray-500 font-medium") if subtitle else "",
+        cls="text-left font-semibold hover:underline flex flex-wrap items-baseline gap-1",
+    )
+
     return Div(
         Div(
-            H1(food["name"], cls="text-left font-semibold hover:underline"),
+            title_node,
             Div(_entry_meta(food), cls="text-sm text-gray-700"),
             cls="flex flex-col gap-0.5 min-w-0",
         ),
@@ -2276,5 +2310,5 @@ def FoodList(foods):
     return Div(
         *FoodSectionsContent(foods),
         id="food-list",
-        cls="flex flex-col items-center md:gap-3 lg:gap-3 gap-2 mt-4",
+        cls="flex flex-col items-center md:gap-3 lg:gap-3 gap-2 mt-4 transition-all duration-150 ease-out",
     )

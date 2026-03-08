@@ -54,14 +54,7 @@ class DBSchema:
         created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         name VARCHAR(255) NOT NULL UNIQUE, -- Product name
         brand VARCHAR(255), -- Brand name
-        category VARCHAR(100) NOT NULL CHECK (
-            category IN (
-                'meat', 'fish', 'dairy', 'eggs', 'processed_meat',
-                'legumes', 'tubers', 'nuts', 'vegetables', 'fruits',
-                'cereals', 'oils_and_fats', 'sweets', 'beverages',
-                'sauces', 'condiments', 'supplements'
-            )
-        ),
+        category VARCHAR(100) NOT NULL,
         subtype VARCHAR(100) NOT NULL, -- More specific food category (e.g. yogurt, milk, biscuit, turkey, sweet potato, avocado...). This variable will also be used in the future to estimate macros based on meals of the same subtype for which we have nutritional info.
         initial_state VARCHAR(50) CHECK (
             initial_state IN ('solid', 'mashed/creamy', 'liquid', 'gel')

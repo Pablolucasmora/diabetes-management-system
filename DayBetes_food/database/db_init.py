@@ -160,6 +160,25 @@ def _ensure_catalog_schema(cursor):
             "ALTER TABLE catalog ALTER COLUMN default_portion TYPE DOUBLE PRECISION USING default_portion::double precision;"
         )
 
+def _drop_legacy_category_check(cursor):
+    cursor.execute(
+        """
+        SELECT con.conname
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+        WHERE rel.relname = 'catalog'
+          AND con.contype = 'c'
+          AND pg_get_constraintdef(con.oid) ILIKE '%category%'
+          AND pg_get_constraintdef(con.oid) ILIKE '%IN (%';
+        """
+    )
+    rows = cursor.fetchall() or []
+    for row in rows:
+        name = row.get("conname")
+        if not name:
+            continue
+        cursor.execute(f'ALTER TABLE catalog DROP CONSTRAINT IF EXISTS "{name}";')
+
 
 def _ensure_privacy_schema(cursor):
     if not _has_column(cursor, "catalog", "is_private"):
@@ -199,11 +218,31 @@ def _ensure_trgm_search(cursor):
             "CREATE INDEX IF NOT EXISTS idx_recipe_name_trgm "
             "ON recipe USING gin (lower(name) gin_trgm_ops);"
         )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_catalog_brand_trgm "
+            "ON catalog USING gin (lower(brand) gin_trgm_ops);"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_manual_origin_trgm "
+            "ON manual_intake USING gin (lower(origin) gin_trgm_ops);"
+        )
         cursor.execute("RELEASE SAVEPOINT trgm_setup;")
     except Exception as exc:
         cursor.execute("ROLLBACK TO SAVEPOINT trgm_setup;")
         cursor.execute("RELEASE SAVEPOINT trgm_setup;")
         print(f"Warning: pg_trgm setup skipped: {exc}")
+
+
+def _ensure_food_filter_indexes(cursor):
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_created_by ON catalog (created_by);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_favorite ON catalog (favorite);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_visibility ON catalog (is_private, created_by);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_created_by ON manual_intake (created_by);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_favorite ON manual_intake (favorite);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_visibility ON manual_intake (is_private, created_by);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_users_id ON recipe (users_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_favorite ON recipe (favorite);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_visibility ON recipe (is_private, users_id);")
 
 
 def init_db():
@@ -229,6 +268,8 @@ def init_db():
             cur.execute(table_sql)
 
         _ensure_trgm_search(cur)
+        _ensure_food_filter_indexes(cur)
+        _drop_legacy_category_check(cur)
         _ensure_catalog_schema(cur)
         _ensure_privacy_schema(cur)
         _ensure_users_schema(cur)

@@ -12,6 +12,20 @@
     return !!(target && target.id === "main_content");
   }
 
+  function isFoodListTarget(target) {
+    return !!(target && target.id === "food-list");
+  }
+
+  function setFoodListLoading(active) {
+    var list = byId("food-list");
+    if (!list) return;
+    if (active) {
+      list.classList.add("opacity-55", "scale-[0.995]", "pointer-events-none");
+      return;
+    }
+    list.classList.remove("opacity-55", "scale-[0.995]", "pointer-events-none");
+  }
+
   function syncFoodTopSpacing(force) {
     var topBar = byId("food_top_bar");
     var wrapper = byId("food_list_wrapper");
@@ -109,6 +123,7 @@
       var elt = event && event.detail ? event.detail.elt : null;
       var xhr = event && event.detail ? event.detail.xhr : null;
       var target = event && event.detail ? event.detail.target : null;
+      if (isFoodListTarget(target)) setFoodListLoading(true);
       var skip = !!(elt && elt.closest && elt.closest("[data-skip-page-loading='true']"));
       if (xhr) xhr.__skipPageLoading = skip;
       if (skip) return;
@@ -133,6 +148,7 @@
         target.style.removeProperty("visibility");
         target.style.removeProperty("opacity");
       }
+      if (isFoodListTarget(target)) setFoodListLoading(false);
       syncFoodTopSpacing(false);
       if (canHideOverlay()) setLoading(false);
     });
@@ -147,6 +163,7 @@
 
     document.body.addEventListener("htmx:responseError", function () {
       pendingRequests = 0;
+      setFoodListLoading(false);
       var main = byId("main_content");
       if (main) {
         main.style.removeProperty("visibility");

@@ -11,6 +11,7 @@ from DayBetes_food.database.queries.crud import (
     get_portion_detail_by_event,
     update_intake_event,
 )
+from DayBetes_food.components.food.foods import MEAL_TYPES
 
 
 def _cart_response(connection, status: int = 200):
@@ -166,10 +167,13 @@ def setup_cart_routes(rt):
     def post(request: Request, event_id: int, meal_type: str = ""):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
-        if not meal_type:
+        clean_meal_type = (meal_type or "").strip()
+        if not clean_meal_type:
+            return HTMLResponse(status_code=400)
+        if clean_meal_type not in MEAL_TYPES:
             return HTMLResponse(status_code=400)
         with get_connection() as connection:
-            ok = update_intake_event(connection, event_id, {"meal_type": meal_type})
+            ok = update_intake_event(connection, event_id, {"meal_type": clean_meal_type})
             return _cart_response(connection, status=200 if ok else 400)
 
     @rt("/cart/event/{event_id}/macros_summary")
