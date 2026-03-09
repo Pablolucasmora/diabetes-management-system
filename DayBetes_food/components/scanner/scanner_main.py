@@ -73,7 +73,7 @@ def scanner_main():
                             "Yes",
                             id="scanner_confirm_yes",
                             type="button",
-                            cls="web_button px-4 py-2 text-sm border-black text-black hover:bg-black hover:text-white",
+                            cls="web_button px-4 py-2 text-sm bg-black text-white border-black",
                         ),
                         Button(
                             "No",

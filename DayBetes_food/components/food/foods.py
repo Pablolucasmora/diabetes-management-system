@@ -85,6 +85,60 @@ def on_after(target="this", reload_page=True):
 """}
 
 
+def _close_modal_js(modal_id: str) -> str:
+    return (
+        f"const m=document.getElementById('{modal_id}');"
+        "if(!m) return;"
+        "m.classList.remove('opacity-100');"
+        "m.classList.add('opacity-0','invisible','pointer-events-none');"
+    )
+
+
+def _open_modal_js(modal_id: str) -> str:
+    return (
+        f"const m=document.getElementById('{modal_id}');"
+        "if(!m) return;"
+        "m.classList.remove('invisible','opacity-0','pointer-events-none');"
+        "m.classList.add('opacity-100');"
+    )
+
+
+def ConfirmActionModal(modal_id: str, title: str, question: str, yes_button):
+    return Div(
+        Div(
+            Div(
+                Div(
+                    P(title, cls="text-lg font-semibold"),
+                    P(question, cls="text-sm md:text-base text-gray-700"),
+                    cls="flex flex-col gap-1",
+                ),
+                Div(
+                    yes_button,
+                    Button(
+                        "No",
+                        type="button",
+                        cls="web_button px-4 py-2 text-sm",
+                        onclick=_close_modal_js(modal_id),
+                    ),
+                    cls="flex items-center gap-2 justify-end",
+                ),
+                onclick="event.stopPropagation()",
+                cls="web_container p-5 md:p-6 rounded-3xl w-[92vw] max-w-md flex flex-col gap-4",
+            ),
+            id=modal_id,
+            onclick=_close_modal_js(modal_id),
+            cls="""
+                fixed inset-0 z-[70]
+                flex items-center justify-center
+                bg-black/35 backdrop-blur-xl
+                px-4
+                opacity-0 invisible pointer-events-none
+                transition-opacity duration-200
+            """,
+        ),
+    )
+
+
 def MealSelector(connection, user_id: int, selected_id: int = None):
     events = get_cart_events(connection, user_id)
 
@@ -151,6 +205,7 @@ def MealSelector(connection, user_id: int, selected_id: int = None):
                     hx_trigger="keyup[keyCode==13]",
                     hx_target="#meal_name_input",
                     hx_swap="none",
+                    hx_push_url="false",
                     hx_include="this",
                     **on_after("add_meal_btn")
                 ),
@@ -168,6 +223,7 @@ def MealSelector(connection, user_id: int, selected_id: int = None):
                     hx_post="/create_named_event",
                     hx_target="#meal_name_input",
                     hx_swap="none",
+                    hx_push_url="false",
                     hx_include="#meal_name_input_text",
                     **on_after()
                 ),
@@ -1031,6 +1087,7 @@ def CreateCatalogPanel(
             hx_post="/food/create/catalog",
             hx_target="#create_catalog_result",
             hx_swap="innerHTML",
+            hx_push_url="false",
             data_draft_key="food_form_create_catalog_panel",
             cls="web_container p-3 rounded-2xl flex flex-col gap-3",
         ),
@@ -1071,6 +1128,7 @@ def CreateManualPanel(subtype_options: list[str] | None = None, origin_options: 
             hx_post="/food/create/manual",
             hx_target="#create_manual_result",
             hx_swap="innerHTML",
+            hx_push_url="false",
             data_draft_key="food_form_create_manual_panel",
             cls="web_container p-3 rounded-2xl flex flex-col gap-3",
         ),
@@ -1107,6 +1165,7 @@ def CreateRecipePanel():
             hx_post="/food/create/recipe",
             hx_target="#create_recipe_result",
             hx_swap="innerHTML",
+            hx_push_url="false",
             data_draft_key="food_form_create_recipe_panel",
             cls="web_container p-3 rounded-2xl flex flex-col gap-3",
         ),
@@ -1235,6 +1294,7 @@ def CreateCatalogPage(
         hx_post="/food/create/catalog",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
+        hx_push_url="false",
         data_draft_key=f"food_form_create_catalog_page::{draft_suffix}",
         cls="web_container p-3 rounded-2xl flex flex-col gap-3 w-full",
     )
@@ -1279,6 +1339,7 @@ def CreateManualPage(subtype_options: list[str] | None = None, origin_options: l
         hx_post="/food/create/manual",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
+        hx_push_url="false",
         data_draft_key="food_form_create_manual_page",
         cls="web_container p-3 rounded-2xl flex flex-col gap-3 w-full",
     )
@@ -1314,6 +1375,7 @@ def CreateRecipePage():
         hx_post="/food/create/recipe",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
+        hx_push_url="false",
         data_draft_key="food_form_create_recipe_page",
         cls="web_container p-3 rounded-2xl flex flex-col gap-3 w-full",
     )
@@ -1437,6 +1499,7 @@ def EditCatalogPage(
         hx_post=f"/food/edit/catalog/{entry['id']}",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
+        hx_push_url="false",
         data_draft_key=f"food_form_edit_catalog_{entry['id']}",
         cls="flex flex-col gap-3 w-full",
     )
@@ -1515,6 +1578,7 @@ def EditManualPage(
         hx_post=f"/food/edit/manual/{entry['id']}",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
+        hx_push_url="false",
         data_draft_key=f"food_form_edit_manual_{entry['id']}",
         cls="flex flex-col gap-3 w-full",
     )
@@ -1568,6 +1632,7 @@ def EditRecipePage(entry: dict, show_private: bool = False):
         hx_post=f"/food/edit/recipe/{entry['id']}",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
+        hx_push_url="false",
         data_draft_key=f"food_form_edit_recipe_{entry['id']}",
         cls="flex flex-col gap-3 w-full",
     )
@@ -1607,7 +1672,9 @@ def AddButton(label: str = "+", include_meal_selector: bool = True, **attrs):
     attrs.setdefault("data_skip_page_loading", "true")
     attrs.setdefault("hx_target", "this")
     attrs.setdefault("hx_trigger", "click consume")
+    attrs.setdefault("hx_push_url", "false")
     attrs.setdefault("data_no_open", "true")
+    attrs.setdefault("type", "button")
     button_cls = attrs.pop(
         "cls",
         """
@@ -1814,6 +1881,7 @@ def RecipeIngredientRow(recipe_id: int, portion: dict):
                     hx_trigger=f"change from:#{grams_id}",
                     hx_target=f"#{msg_id}",
                     hx_swap="innerHTML",
+                    hx_push_url="false",
                     data_skip_page_loading="true",
                     **{
                         "hx-on:htmx:after-request": (
@@ -1856,6 +1924,7 @@ def RecipeIngredientRow(recipe_id: int, portion: dict):
                         hx_post=f"/food/recipe/{recipe_id}/ingredient/{portion_id}/delete",
                         hx_target="closest .food_entry",
                         hx_swap="outerHTML",
+                        hx_push_url="false",
                         data_skip_page_loading="true",
                         data_no_open="true",
                     ),
@@ -1909,6 +1978,7 @@ def RecipeIngredientRow(recipe_id: int, portion: dict):
                 hx_trigger="submit",
                 hx_target=f"#{advanced_msg_id}",
                 hx_swap="innerHTML",
+                hx_push_url="false",
                 data_skip_page_loading="true",
                 id=advanced_content_id,
                 cls="flex flex-col gap-0 w-full max-w-full min-w-0",
@@ -1943,19 +2013,44 @@ def RecipeIngredientsBlock(recipe_id: int, portions: list[dict]):
     )
 
 
-def FoodDetailPage(connection, user_id: int, entry_type: str, entry: dict, summary: dict, recipe_portions: list[dict] | None = None):
+def FoodDetailPage(
+    connection,
+    user_id: int,
+    entry_type: str,
+    entry: dict,
+    summary: dict,
+    recipe_portions: list[dict] | None = None,
+    can_edit: bool = True,
+    can_delete: bool = False,
+):
     base_unit = _display_base_unit(entry_type, entry)
     default_amount = max(1.0, _float_or_zero(summary.get("default_amount_g")) or 100.0)
     amount_display = f"{default_amount:.2f}".replace(".", ",")
     per100 = summary.get("per100") or {}
     info_rows = summary.get("info_rows") or []
     subtitle = summary.get("subtitle") or ""
-    edit_label = {"catalog": "Edit food", "manual_intake": "Edit manual", "recipe": "Edit recipe"}.get(entry_type, "Edit")
+    edit_label = (
+        {"catalog": "Edit food", "manual_intake": "Edit manual", "recipe": "Edit recipe"}.get(entry_type, "Edit")
+        if can_edit
+        else "Create editable copy"
+    )
     edit_href = {
         "catalog": f"/food/edit/catalog/{entry['id']}/form",
         "manual_intake": f"/food/edit/manual_intake/{entry['id']}/form",
         "recipe": f"/food/edit/recipe/{entry['id']}/form",
     }.get(entry_type, "/food")
+    copy_confirm_id = f"copy_confirm_{entry_type}_{entry['id']}"
+    delete_confirm_id = f"delete_confirm_{entry_type}_{entry['id']}"
+    delete_title = {
+        "catalog": "Delete food",
+        "manual_intake": "Delete manual intake",
+        "recipe": "Delete recipe",
+    }.get(entry_type, "Delete item")
+    delete_question = {
+        "catalog": "Are you sure you want to delete this food?",
+        "manual_intake": "Are you sure you want to delete this manual intake?",
+        "recipe": "Are you sure you want to delete this recipe?",
+    }.get(entry_type, "Are you sure you want to delete this item?")
 
     root_id = f"food_detail_{entry_type}_{entry['id']}"
     display_id = f"{root_id}_display"
@@ -1981,9 +2076,34 @@ def FoodDetailPage(connection, user_id: int, entry_type: str, entry: dict, summa
 
     return Div(
         Div(
-            H1(entry.get("name") or "-", cls="text-2xl font-bold text-gray-900"),
-            P(subtitle, cls="text-sm text-gray-600"),
-            cls="flex flex-col gap-1",
+            Div(
+                Div(
+                    H1(entry.get("name") or "-", cls="text-2xl font-bold text-gray-900"),
+                    P(subtitle, cls="text-sm text-gray-600"),
+                    cls="flex flex-col gap-1",
+                ),
+                (
+                    Button(
+                        Img(src="/images/content/delete.svg", alt="", cls="w-4 h-4"),
+                        type="button",
+                        aria_label=delete_title,
+                        title=delete_title,
+                        cls="""
+                            web_button p-2
+                            border-red-600/40 shadow-none
+                            w-9 h-9
+                            flex items-center justify-center
+                            hover:bg-red-50
+                        """,
+                        style="color:#b91c1c;",
+                        onclick=_open_modal_js(delete_confirm_id),
+                    )
+                    if can_delete
+                    else ""
+                ),
+                cls="flex items-start justify-between gap-3",
+            ),
+            cls="flex flex-col gap-1 w-full",
         ),
         meal_selector,
         Div(
@@ -2164,10 +2284,19 @@ def FoodDetailPage(connection, user_id: int, entry_type: str, entry: dict, summa
                     bg-white/85 text-gray-800 border border-gray-300
                     shadow-[0_6px_20px_rgba(17,24,39,0.08)]
                 """,
-                hx_get=edit_href,
-                hx_target="#main_content",
-                hx_swap="innerHTML",
-                hx_push_url="true",
+                **(
+                    {
+                        "hx_get": edit_href,
+                        "hx_target": "#main_content",
+                        "hx_swap": "innerHTML",
+                        "hx_push_url": "true",
+                    }
+                    if can_edit
+                    else
+                    {
+                        "onclick": _open_modal_js(copy_confirm_id),
+                    }
+                ),
             ),
             Button(
                 action_button_label,
@@ -2176,10 +2305,52 @@ def FoodDetailPage(connection, user_id: int, entry_type: str, entry: dict, summa
                 hx_post=f"/food/log/{entry_type}/{entry['id']}",
                 hx_target=f"#{msg_id}",
                 hx_swap="innerHTML",
+                hx_push_url="false",
                 hx_include=f"{'#meal_selector, ' if not recipe_mode else ''}#{form_id}",
                 data_skip_page_loading="true",
             ),
             cls="w-full grid grid-cols-2 gap-3",
+        ),
+        (
+            ConfirmActionModal(
+                modal_id=copy_confirm_id,
+                title="Create editable copy",
+                question="You are editing another user's item. A personal copy will be created and opened for editing. Continue?",
+                yes_button=Button(
+                    "Yes",
+                    type="button",
+                    cls="web_button px-4 py-2 text-sm text-white border-black bg-black",
+                    hx_post=f"/food/copy/{entry_type}/{entry['id']}",
+                    hx_target="#main_content",
+                    hx_swap="innerHTML",
+                    hx_push_url="false",
+                    data_skip_page_loading="true",
+                    onclick=_close_modal_js(copy_confirm_id),
+                ),
+            )
+            if not can_edit
+            else ""
+        ),
+        (
+            ConfirmActionModal(
+                modal_id=delete_confirm_id,
+                title=delete_title,
+                question=delete_question,
+                yes_button=Button(
+                    "Yes",
+                    type="button",
+                    cls="web_button px-4 py-2 text-sm text-white",
+                    style="background-color:#b91c1c;border-color:#b91c1c;",
+                    hx_post=f"/food/delete/{entry_type}/{entry['id']}",
+                    hx_target="#main_content",
+                    hx_swap="innerHTML",
+                    hx_push_url="false",
+                    data_skip_page_loading="true",
+                    onclick=_close_modal_js(delete_confirm_id),
+                ),
+            )
+            if can_delete
+            else ""
         ),
         Div(id=msg_id, cls="min-h-6 text-xs"),
         _searchable_autocomplete_bootstrap_script(),

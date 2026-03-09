@@ -336,14 +336,14 @@ def add_catalog_item(connection, data: dict) -> Optional[int]:
     """
     query = """
         INSERT INTO catalog (
-            created_by, name, brand, category, subtype, initial_state,
+            created_by, origin_root_id, name, brand, category, subtype, initial_state,
             nutriscore, nova, yuka, default_portion,
             calories_100g, carbs_100g, sugars_100g, fats_100g,
             saturated_100g, proteins_100g, fiber_100g,
             caffeine, alcohol, barcode, cooking_factor, favorite, is_private
         )
         VALUES (
-            %(created_by)s, %(name)s, %(brand)s, %(category)s, %(subtype)s, %(initial_state)s,
+            %(created_by)s, %(origin_root_id)s, %(name)s, %(brand)s, %(category)s, %(subtype)s, %(initial_state)s,
             %(nutriscore)s, %(nova)s, %(yuka)s, %(default_portion)s,
             %(calories_100g)s, %(carbs_100g)s, %(sugars_100g)s, %(fats_100g)s,
             %(saturated_100g)s, %(proteins_100g)s, %(fiber_100g)s,
@@ -352,6 +352,7 @@ def add_catalog_item(connection, data: dict) -> Optional[int]:
         RETURNING id;
     """
     payload = dict(data or {})
+    payload.setdefault("origin_root_id", None)
     if "brand" in payload:
         payload["brand"] = normalize_brand_name(payload.get("brand")) or None
     result = _execute_query(connection, query, payload)
@@ -444,6 +445,13 @@ def update_catalog_item(connection, catalog_id: int, data: dict) -> bool:
     return result is not None
 
 
+def delete_catalog_item(connection, catalog_id: int) -> bool:
+    """Deletes a catalog item by ID."""
+    query = "DELETE FROM catalog WHERE id = %(id)s RETURNING id;"
+    result = _execute_query(connection, query, {"id": catalog_id})
+    return result is not None
+
+
 
 
 # ============================================
@@ -454,20 +462,22 @@ def add_manual_intake(connection, data: dict) -> Optional[int]:
     """Adds a new manual intake."""
     query = """
         INSERT INTO manual_intake (
-            created_by, name, description, subtype, origin,
+            created_by, origin_root_id, name, description, subtype, origin,
             amount_g, calories_100g, carbs_100g, sugars_100g,
             fats_100g, saturated_100g, proteins_100g, fiber_100g,
             caffeine, alcohol, glycemic_index, ig_confidence, favorite, is_private
         )
         VALUES (
-            %(created_by)s, %(name)s, %(description)s, %(subtype)s, %(origin)s,
+            %(created_by)s, %(origin_root_id)s, %(name)s, %(description)s, %(subtype)s, %(origin)s,
             %(amount_g)s, %(calories_100g)s, %(carbs_100g)s, %(sugars_100g)s,
             %(fats_100g)s, %(saturated_100g)s, %(proteins_100g)s, %(fiber_100g)s,
             %(caffeine)s, %(alcohol)s, %(glycemic_index)s, %(ig_confidence)s, %(favorite)s, %(is_private)s
         )
         RETURNING id;
     """
-    result = _execute_query(connection, query, data)
+    payload = dict(data or {})
+    payload.setdefault("origin_root_id", None)
+    result = _execute_query(connection, query, payload)
     return result["id"] if result else None
 
 
@@ -523,6 +533,13 @@ def update_manual_intake(connection, intake_id: int, data: dict) -> bool:
     return result is not None
 
 
+def delete_manual_intake(connection, intake_id: int) -> bool:
+    """Deletes a manual intake by ID."""
+    query = "DELETE FROM manual_intake WHERE id = %(id)s RETURNING id;"
+    result = _execute_query(connection, query, {"id": intake_id})
+    return result is not None
+
+
 
 
 # ============================================
@@ -537,15 +554,17 @@ def add_recipe(
     notes: str = None,
     favorite: bool = False,
     is_private: bool = False,
+    origin_root_id: int = None,
 ) -> Optional[int]:
     """Creates a new recipe."""
     query = """
-        INSERT INTO recipe (users_id, meal_type, name, notes, favorite, is_private)
-        VALUES (%(users_id)s, %(meal_type)s, %(name)s, %(notes)s, %(favorite)s, %(is_private)s)
+        INSERT INTO recipe (users_id, origin_root_id, meal_type, name, notes, favorite, is_private)
+        VALUES (%(users_id)s, %(origin_root_id)s, %(meal_type)s, %(name)s, %(notes)s, %(favorite)s, %(is_private)s)
         RETURNING id;
     """
     result = _execute_query(connection, query, {
         "users_id": users_id,
+        "origin_root_id": origin_root_id,
         "meal_type": meal_type,
         "name": name,
         "notes": notes,
@@ -618,6 +637,13 @@ def update_recipe(
         return False
         
     result = _execute_query(connection, query, params)
+    return result is not None
+
+
+def delete_recipe(connection, recipe_id: int) -> bool:
+    """Deletes a recipe by ID."""
+    query = "DELETE FROM recipe WHERE id = %(id)s RETURNING id;"
+    result = _execute_query(connection, query, {"id": recipe_id})
     return result is not None
 
 

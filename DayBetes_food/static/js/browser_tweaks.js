@@ -20,3 +20,29 @@
     applyClass();
   }
 })();
+
+(function () {
+  function lockHistoryForMutations(event) {
+    var detail = event && event.detail ? event.detail : null;
+    var cfg = detail && detail.requestConfig ? detail.requestConfig : null;
+    if (!cfg) return;
+
+    var verb = String(cfg.verb || "get").toLowerCase();
+    if (verb === "get") return;
+
+    // Keep URL/history stable for mutating HTMX requests.
+    cfg.pushURL = false;
+    cfg.replaceURL = false;
+  }
+
+  function bind() {
+    if (!document.body) return;
+    document.body.addEventListener("htmx:beforeRequest", lockHistoryForMutations);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bind);
+  } else {
+    bind();
+  }
+})();

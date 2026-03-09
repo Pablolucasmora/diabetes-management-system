@@ -28,6 +28,9 @@ from DayBetes_food.database.queries.crud import (
     update_catalog_favorite,
     update_manual_intake,
     update_recipe,
+    delete_catalog_item,
+    delete_manual_intake,
+    delete_recipe,
     add_manual_intake,
     add_recipe,
     add_food_brand,
@@ -427,6 +430,42 @@ def _can_toggle_private(entry_type: str, entry: dict, viewer_user_id: int | None
     return bool(viewer_user_id and owner_id and owner_id == viewer_user_id)
 
 
+def _can_edit_entry(entry_type: str, entry: dict, viewer_user_id: int | None) -> bool:
+    owner_id = _entry_owner_id(entry_type, entry)
+    return bool(viewer_user_id and owner_id and owner_id == viewer_user_id)
+
+
+def _copy_root_id(entry: dict) -> int | None:
+    raw = entry.get("origin_root_id")
+    try:
+        return int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _next_copy_name(connection, entry_type: str, base_name: str, owner_user_id: int) -> str:
+    base = (base_name or "").strip() or "Untitled"
+    for index in range(1, 5000):
+        suffix = " (copy)" if index == 1 else f" (copy {index})"
+        candidate = f"{base}{suffix}"
+        with connection.cursor() as cursor:
+            if entry_type == "catalog":
+                cursor.execute("SELECT 1 FROM catalog WHERE lower(name) = lower(%(name)s) LIMIT 1;", {"name": candidate})
+            elif entry_type == "manual_intake":
+                cursor.execute(
+                    "SELECT 1 FROM manual_intake WHERE created_by = %(user_id)s AND lower(name) = lower(%(name)s) LIMIT 1;",
+                    {"user_id": owner_user_id, "name": candidate},
+                )
+            else:
+                cursor.execute(
+                    "SELECT 1 FROM recipe WHERE users_id = %(user_id)s AND lower(name) = lower(%(name)s) LIMIT 1;",
+                    {"user_id": owner_user_id, "name": candidate},
+                )
+            if cursor.fetchone() is None:
+                return candidate
+    return f"{base} (copy {datetime.now().strftime('%Y%m%d%H%M%S')})"
+
+
 def _filtered_entries(connection, search: str = "", filter_value: str = "all", include_recipes: bool = True):
     user_id = get_default_user_id(connection)
     has_search = bool((search or "").strip())
@@ -596,6 +635,8 @@ def setup_food_routes(rt):
             if not entry or not _can_view_entry(entry_type, entry, user_id):
                 return HTMLResponse(status_code=404)
             summary = _build_detail_summary(entry_type, entry, recipe_portions=recipe_portions)
+            can_edit = _can_edit_entry(entry_type, entry, user_id)
+            can_delete = can_edit
         return render_page(
             request,
             lambda conn: FoodDetailPage(
@@ -605,6 +646,8 @@ def setup_food_routes(rt):
                 entry=entry,
                 summary=summary,
                 recipe_portions=recipe_portions,
+                can_edit=can_edit,
+                can_delete=can_delete,
             ),
             show_cart=False,
         )
@@ -614,7 +657,7 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             user_id = get_default_user_id(connection)
             recipe = get_recipe(connection, recipe_id)
-            if not recipe or not _can_view_entry("recipe", recipe, user_id):
+            if not recipe or not _can_edit_entry("recipe", recipe, user_id):
                 return HTMLResponse(status_code=404)
             entries = _filtered_entries(connection, search="", filter_value="food", include_recipes=False)
         return render_page(request, lambda _: RecipeIngredientPickerPage(recipe_entry=recipe, foods=entries), show_cart=False)
@@ -626,7 +669,7 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             user_id = get_default_user_id(connection)
             recipe = get_recipe(connection, recipe_id)
-            if not recipe or not _can_view_entry("recipe", recipe, user_id):
+            if not recipe or not _can_edit_entry("recipe", recipe, user_id):
                 return HTMLResponse(status_code=404)
             entries = _filtered_entries(connection, search=search, filter_value="food", include_recipes=False)
         return render_fragment(RecipeIngredientPickerList(recipe_id=recipe_id, foods=entries))
@@ -641,7 +684,7 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             user_id = get_default_user_id(connection)
             recipe = get_recipe(connection, recipe_id)
-            if not recipe or not _can_view_entry("recipe", recipe, user_id):
+            if not recipe or not _can_edit_entry("recipe", recipe, user_id):
                 return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
 
             amount_g = 100.0
@@ -689,7 +732,7 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             user_id = get_default_user_id(connection)
             recipe = get_recipe(connection, recipe_id)
-            if not recipe or not _can_view_entry("recipe", recipe, user_id):
+            if not recipe or not _can_edit_entry("recipe", recipe, user_id):
                 return render_fragment(P("Recipe not found.", cls="text-red-700"))
             portion = get_portion_detail(connection, portion_id)
             if not portion or int(portion.get("recipe_id") or 0) != recipe_id:
@@ -771,7 +814,7 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             user_id = get_default_user_id(connection)
             recipe = get_recipe(connection, recipe_id)
-            if not recipe or not _can_view_entry("recipe", recipe, user_id):
+            if not recipe or not _can_edit_entry("recipe", recipe, user_id):
                 return render_fragment(P("Recipe not found.", cls="text-red-700"))
             portion = get_portion_detail(connection, portion_id)
             if not portion or int(portion.get("recipe_id") or 0) != recipe_id:
@@ -796,7 +839,7 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             user_id = get_default_user_id(connection)
             recipe = get_recipe(connection, recipe_id)
-            if not recipe or not _can_view_entry("recipe", recipe, user_id):
+            if not recipe or not _can_edit_entry("recipe", recipe, user_id):
                 return HTMLResponse(status_code=404)
             portion = get_portion_detail(connection, portion_id)
             if not portion or int(portion.get("recipe_id") or 0) != recipe_id:
@@ -804,6 +847,132 @@ def setup_food_routes(rt):
             ok = delete_portion_detail(connection, portion_id)
 
         return HTMLResponse("", status_code=200 if ok else 400)
+
+    @rt("/food/copy/{entry_type}/{entry_id}")
+    def post(request: Request, entry_type: str, entry_id: int):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        if entry_type not in ("catalog", "manual_intake", "recipe"):
+            return _error_msg("Unsupported entry type.")
+
+        with get_connection() as connection:
+            user_id = get_default_user_id(connection)
+            if not user_id:
+                return _error_msg("No users found.")
+
+            if entry_type == "catalog":
+                source = get_catalog_item(connection, entry_id)
+            elif entry_type == "manual_intake":
+                source = get_manual_intake(connection, entry_id)
+            else:
+                source = get_recipe(connection, entry_id)
+
+            if not source or not _can_view_entry(entry_type, source, user_id):
+                return _error_msg("Item not found.")
+
+            if _can_edit_entry(entry_type, source, user_id):
+                location = f"/food/edit/{entry_type if entry_type != 'manual_intake' else 'manual_intake'}/{entry_id}/form"
+                return HTMLResponse("", headers={"HX-Redirect": location})
+
+            root_id = _copy_root_id(source) or int(source["id"])
+            copy_name = _next_copy_name(connection, entry_type, str(source.get("name") or ""), int(user_id))
+
+            if entry_type == "catalog":
+                payload = {
+                    "created_by": int(user_id),
+                    "origin_root_id": root_id,
+                    "name": copy_name,
+                    "brand": source.get("brand"),
+                    "category": source.get("category"),
+                    "subtype": source.get("subtype"),
+                    "initial_state": source.get("initial_state"),
+                    "nutriscore": source.get("nutriscore"),
+                    "nova": source.get("nova"),
+                    "yuka": source.get("yuka"),
+                    "default_portion": source.get("default_portion"),
+                    "calories_100g": source.get("calories_100g"),
+                    "carbs_100g": source.get("carbs_100g"),
+                    "sugars_100g": source.get("sugars_100g"),
+                    "fats_100g": source.get("fats_100g"),
+                    "saturated_100g": source.get("saturated_100g"),
+                    "proteins_100g": source.get("proteins_100g"),
+                    "fiber_100g": source.get("fiber_100g"),
+                    "caffeine": source.get("caffeine"),
+                    "alcohol": source.get("alcohol"),
+                    "barcode": source.get("barcode"),
+                    "cooking_factor": source.get("cooking_factor"),
+                    "favorite": False,
+                    "is_private": False,
+                }
+                created_id = add_catalog_item(connection, payload)
+                if payload.get("brand"):
+                    add_food_brand(connection, str(payload["brand"]))
+            elif entry_type == "manual_intake":
+                payload = {
+                    "created_by": int(user_id),
+                    "origin_root_id": root_id,
+                    "name": copy_name,
+                    "description": source.get("description"),
+                    "subtype": source.get("subtype"),
+                    "origin": source.get("origin"),
+                    "amount_g": source.get("amount_g"),
+                    "calories_100g": source.get("calories_100g"),
+                    "carbs_100g": source.get("carbs_100g"),
+                    "sugars_100g": source.get("sugars_100g"),
+                    "fats_100g": source.get("fats_100g"),
+                    "saturated_100g": source.get("saturated_100g"),
+                    "proteins_100g": source.get("proteins_100g"),
+                    "fiber_100g": source.get("fiber_100g"),
+                    "caffeine": source.get("caffeine"),
+                    "alcohol": source.get("alcohol"),
+                    "glycemic_index": source.get("glycemic_index"),
+                    "ig_confidence": source.get("ig_confidence"),
+                    "favorite": False,
+                    "is_private": False,
+                }
+                created_id = add_manual_intake(connection, payload)
+            else:
+                created_id = add_recipe(
+                    connection,
+                    users_id=int(user_id),
+                    origin_root_id=root_id,
+                    name=copy_name,
+                    meal_type=source.get("meal_type"),
+                    notes=source.get("notes"),
+                    favorite=False,
+                    is_private=False,
+                )
+                if created_id:
+                    source_portions = get_portion_detail_by_recipe(connection, int(source["id"]))
+                    for portion in source_portions:
+                        origin = "catalog" if portion.get("catalog_id") else "manual_intake"
+                        origin_id = int(portion.get("catalog_id") or portion.get("manual_intake_id") or 0)
+                        amount_g = float(portion.get("amount_g") or 0.0)
+                        if origin_id <= 0:
+                            continue
+                        if amount_g <= 0:
+                            continue
+                        add_portion_detail(
+                            connection,
+                            origin=origin,
+                            origin_id=origin_id,
+                            destination="recipe",
+                            destination_id=int(created_id),
+                            amount_g=amount_g,
+                            cooking=portion.get("cooking"),
+                            conservation=portion.get("conservation"),
+                            final_state=portion.get("final_state"),
+                            strictly_weighed=portion.get("strictly_weighed"),
+                            macros_quality=portion.get("macros_quality"),
+                            plate_amount=portion.get("plate_amount"),
+                            is_cooked_weight=bool(portion.get("is_cooked_weight")),
+                        )
+
+            if not created_id:
+                return _error_msg("Could not create editable copy.")
+
+            target_type = "manual_intake" if entry_type == "manual_intake" else entry_type
+            return HTMLResponse("", headers={"HX-Redirect": f"/food/edit/{target_type}/{created_id}/form"})
 
     @rt("/food/edit/{entry_type}/{entry_id}/form")
     def get(request: Request, entry_type: str, entry_id: int):
@@ -814,6 +983,8 @@ def setup_food_routes(rt):
                 entry = get_catalog_item(connection, entry_id)
                 if not entry or not _can_view_entry("catalog", entry, user_id):
                     return HTMLResponse(status_code=404)
+                if not _can_edit_entry("catalog", entry, user_id):
+                    return HTMLResponse(status_code=403)
                 brands = get_food_brand_suggestions(connection, search="", limit=500)
                 categories = get_category_suggestions(connection, search="", limit=500)
                 subtypes = get_subtype_suggestions(connection, search="", limit=500)
@@ -832,6 +1003,8 @@ def setup_food_routes(rt):
                 entry = get_manual_intake(connection, entry_id)
                 if not entry or not _can_view_entry("manual_intake", entry, user_id):
                     return HTMLResponse(status_code=404)
+                if not _can_edit_entry("manual_intake", entry, user_id):
+                    return HTMLResponse(status_code=403)
                 subtypes = get_subtype_suggestions(connection, search="", limit=500)
                 origins = get_manual_origin_suggestions(connection, search="", limit=500)
                 return render_page(
@@ -848,12 +1021,54 @@ def setup_food_routes(rt):
                 entry = get_recipe(connection, entry_id)
                 if not entry or not _can_view_entry("recipe", entry, user_id):
                     return HTMLResponse(status_code=404)
+                if not _can_edit_entry("recipe", entry, user_id):
+                    return HTMLResponse(status_code=403)
                 return render_page(
                     request,
                     lambda _: EditRecipePage(entry=entry, show_private=_can_toggle_private("recipe", entry, user_id)),
                     show_cart=False,
                 )
         return HTMLResponse(status_code=404)
+
+    @rt("/food/delete/{entry_type}/{entry_id}")
+    def post(request: Request, entry_type: str, entry_id: int):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        if entry_type not in ("catalog", "manual_intake", "recipe"):
+            return _error_msg("Unsupported entry type.")
+
+        with get_connection() as connection:
+            user_id = get_default_user_id(connection)
+            if not user_id:
+                return _error_msg("No users found.")
+
+            current = None
+            deleted = False
+            if entry_type == "catalog":
+                current = get_catalog_item(connection, entry_id)
+                if not current or not _can_view_entry("catalog", current, user_id):
+                    return _error_msg("Catalog item not found.")
+                if not _can_edit_entry("catalog", current, user_id):
+                    return _error_msg("Only the owner can delete this item.")
+                deleted = delete_catalog_item(connection, entry_id)
+            elif entry_type == "manual_intake":
+                current = get_manual_intake(connection, entry_id)
+                if not current or not _can_view_entry("manual_intake", current, user_id):
+                    return _error_msg("Manual intake not found.")
+                if not _can_edit_entry("manual_intake", current, user_id):
+                    return _error_msg("Only the owner can delete this item.")
+                deleted = delete_manual_intake(connection, entry_id)
+            else:
+                current = get_recipe(connection, entry_id)
+                if not current or not _can_view_entry("recipe", current, user_id):
+                    return _error_msg("Recipe not found.")
+                if not _can_edit_entry("recipe", current, user_id):
+                    return _error_msg("Only the owner can delete this item.")
+                deleted = delete_recipe(connection, entry_id)
+
+            if not deleted:
+                return _error_msg("Could not delete this item. It may be in use.")
+            return HTMLResponse("", headers={"HX-Redirect": "/food"})
 
     @rt("/food/log/{entry_type}/{entry_id}")
     def post(
@@ -1307,6 +1522,8 @@ def setup_food_routes(rt):
             current = get_catalog_item(connection, entry_id)
             if not current or not _can_view_entry("catalog", current, user_id):
                 return _error_msg("Catalog item not found.")
+            if not _can_edit_entry("catalog", current, user_id):
+                return _error_msg("Only the owner can edit this item. Create a copy to edit it.")
             brand_options = get_food_brand_suggestions(connection, search="", limit=500)
             category_options = get_category_suggestions(connection, search="", limit=500)
             subtype_options = get_subtype_suggestions(connection, search="", limit=500)
@@ -1452,6 +1669,8 @@ def setup_food_routes(rt):
             user_id = get_default_user_id(connection)
             if not current or not _can_view_entry("manual_intake", current, user_id):
                 return _error_msg("Manual intake not found.")
+            if not _can_edit_entry("manual_intake", current, user_id):
+                return _error_msg("Only the owner can edit this item. Create a copy to edit it.")
             subtype_options = get_subtype_suggestions(connection, search="", limit=500)
             origin_options = get_manual_origin_suggestions(connection, search="", limit=500)
 
@@ -1543,6 +1762,8 @@ def setup_food_routes(rt):
             current = get_recipe(connection, entry_id)
             if not current or not _can_view_entry("recipe", current, user_id):
                 return _error_msg("Recipe not found.")
+            if not _can_edit_entry("recipe", current, user_id):
+                return _error_msg("Only the owner can edit this item. Create a copy to edit it.")
             clean_meal_type, meal_type_error = _coerce_choice(
                 meal_type,
                 options=MEAL_TYPES,
@@ -1875,6 +2096,7 @@ def setup_food_routes(rt):
                 hx_trigger="keyup[keyCode==13]",
                 hx_target="#meal_name_input",
                 hx_swap="none",
+                hx_push_url="false",
                 hx_include="this",
                 **on_after("add_meal_btn")
             ),
@@ -1892,6 +2114,7 @@ def setup_food_routes(rt):
                 hx_post="/create_named_event",
                 hx_target="#meal_name_input",
                 hx_swap="none",
+                hx_push_url="false",
                 hx_include="#meal_name_input_text",
                 **on_after()
             ),

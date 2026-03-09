@@ -52,6 +52,7 @@ class DBSchema:
     CREATE TABLE IF NOT EXISTS catalog (
         id SERIAL PRIMARY KEY,
         created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        origin_root_id INTEGER REFERENCES catalog(id) ON DELETE SET NULL,
         name VARCHAR(255) NOT NULL UNIQUE, -- Product name
         brand VARCHAR(255), -- Brand name
         category VARCHAR(100) NOT NULL,
@@ -89,6 +90,7 @@ class DBSchema:
     CREATE TABLE IF NOT EXISTS manual_intake ( -- Table used when consuming already-prepared dishes outside, for which we don't know the exact nutritional characteristics
         id SERIAL PRIMARY KEY,
         created_by INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        origin_root_id INTEGER REFERENCES manual_intake(id) ON DELETE SET NULL,
         name VARCHAR(255) NOT NULL, -- Name of this manual meal, such as "uni cafeteria cake", "grandma's stew"
         description TEXT, -- Description of the dish (optional), which will be used to more precisely determine its nutritional info if an AI is integrated
         subtype VARCHAR(100) NOT NULL, -- More specific product category, same as in catalog. This variable will also be used in the future to estimate macros based on meals of the same subtype for which we have nutritional info.
@@ -140,6 +142,7 @@ class DBSchema:
     CREATE TABLE IF NOT EXISTS recipe (
         id SERIAL PRIMARY KEY, 
         users_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        origin_root_id INTEGER REFERENCES recipe(id) ON DELETE SET NULL,
         meal_type VARCHAR(50) CHECK (
             meal_type IN (
                 'breakfast', 'brunch', 'lunch',
