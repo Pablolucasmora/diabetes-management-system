@@ -110,10 +110,20 @@ def MealSelector(connection, user_id: int, selected_id: int = None):
             name="intake_event_id",
             data_skip_page_loading="true",
             aria_label="Meal selector",
-            hx_get="/meal_selector_input",
-            hx_target="#meal_name_input",
-            hx_trigger="change",
-            hx_include="this",
+            **{
+                "hx-on:change": (
+                    "var box=document.getElementById('meal_name_input');"
+                    "var input=document.getElementById('meal_name_input_text');"
+                    "if(!box||!input) return;"
+                    "if(this.value==='0'){"
+                    "box.classList.remove('hidden');"
+                    "setTimeout(function(){input.focus();},0);"
+                    "} else {"
+                    "box.classList.add('hidden');"
+                    "input.value='';"
+                    "}"
+                )
+            },
             style="color: gray" if not events else "",
             cls="""
             border-[1px] px-2 py-1
@@ -123,7 +133,49 @@ def MealSelector(connection, user_id: int, selected_id: int = None):
             border-white cursor-pointer
             """,
         ),
-        Div(id="meal_name_input", cls="lg:w-40 md:w-40 w-32 bg-transparent"),
+        Div(
+            Div(
+                Input(
+                    placeholder="Meal name",
+                    name="meal_name",
+                    id="meal_name_input_text",
+                    autofocus="autofocus" if selected_id == 0 else None,
+                    data_skip_page_loading="true",
+                    cls="""
+                    border-[1px] px-2 py-1
+                    md:text-sm lg:text-sm text-base
+                    shadow-sm rounded-md focus:outline-none
+                    border-gray-300 w-full
+                    """,
+                    hx_post="/create_named_event",
+                    hx_trigger="keyup[keyCode==13]",
+                    hx_target="#meal_name_input",
+                    hx_swap="none",
+                    hx_include="this",
+                    **on_after("add_meal_btn")
+                ),
+                Button(
+                    "Add",
+                    id="add_meal_btn",
+                    data_skip_page_loading="true",
+                    cls="""
+                    border-[1px] px-2 py-1
+                    md:text-sm lg:text-sm text-xs
+                    shadow-sm rounded-md cursor-pointer
+                    border-gray-300 hover:bg-gray-200
+                    transition-colors duration-300
+                    """,
+                    hx_post="/create_named_event",
+                    hx_target="#meal_name_input",
+                    hx_swap="none",
+                    hx_include="#meal_name_input_text",
+                    **on_after()
+                ),
+                cls="flex gap-2 w-full",
+            ),
+            id="meal_name_input",
+            cls=f"lg:w-40 md:w-40 w-32 bg-transparent {'hidden' if selected_id != 0 else ''}",
+        ),
         cls="flex items-center justify-center gap-2  md:w-md lg:w-md w-xs mb-3",
     )
 
@@ -194,7 +246,7 @@ def SearchInput():
         """,
         hx_get="/food/list",
         hx_target="#food-list",
-        hx_trigger="keyup changed delay:300ms",
+        hx_trigger="keyup changed delay:500ms",
         hx_include="#food_filter",
         hx_swap="innerHTML",
     )
@@ -811,6 +863,14 @@ def _private_checkbox(name: str = "is_private", checked: bool = False, centered:
     )
 
 
+def _create_flags_row(favorite_checked: bool = True, private_checked: bool = False):
+    return Div(
+        _favorite_checkbox(checked=favorite_checked, centered=True),
+        _private_checkbox(checked=private_checked, centered=True),
+        cls="col-span-1 md:col-span-2 flex items-center justify-between gap-2",
+    )
+
+
 def _smart_macros_block(prefix: str, prefill: dict | None = None):
     prefill = prefill or {}
     def _mv(key: str):
@@ -960,8 +1020,7 @@ def CreateCatalogPanel(
                 _labeled_input("Alcohol", "alcohol", "number"),
                 _labeled_input("Barcode", "barcode"),
                 _labeled_input("Cooking factor", "cooking_factor", "number", step="any"),
-                _favorite_checkbox(),
-                _private_checkbox(),
+                _create_flags_row(),
                 cls="grid grid-cols-2 gap-2",
             ),
             Button(
@@ -1001,8 +1060,7 @@ def CreateManualPanel(subtype_options: list[str] | None = None, origin_options: 
                 _labeled_input("Alcohol", "alcohol", "number"),
                 _searchable_autocomplete_input("Glycemic index", "glycemic_index", GLYCEMIC_INDEX_OPTIONS, help_text="Estimated glycemic index level.", allow_add=False),
                 _labeled_input("IG confidence 1-5", "ig_confidence", "number"),
-                _favorite_checkbox(),
-                _private_checkbox(),
+                _create_flags_row(),
                 cls="grid grid-cols-2 gap-2",
             ),
             Button(
@@ -1038,8 +1096,7 @@ def CreateRecipePanel():
                     ),
                     cls="flex flex-col gap-1 col-span-2",
                 ),
-                _favorite_checkbox(),
-                _private_checkbox(),
+                _create_flags_row(),
                 cls="grid grid-cols-2 gap-2",
             ),
             Button(
@@ -1126,8 +1183,10 @@ def CreateCatalogPage(
             ),
             _smart_macros_block("catalog", prefill=data),
             _labeled_input("Default portion", "default_portion", "number", help_text="Default serving size in g/ml.", step="any", value=_pv("default_portion")),
-            _favorite_checkbox(),
-            _private_checkbox(checked=str(data.get("is_private") or "").strip().lower() in ("1", "true", "on", "yes")),
+            _create_flags_row(
+                favorite_checked=True,
+                private_checked=str(data.get("is_private") or "").strip().lower() in ("1", "true", "on", "yes"),
+            ),
             _advanced_toggle("catalog_advanced"),
             Div(
                 _searchable_autocomplete_input(
@@ -1204,8 +1263,7 @@ def CreateManualPage(subtype_options: list[str] | None = None, origin_options: l
             ),
             _labeled_input("Amount g*", "amount_g", "number", help_text="Consumed amount in grams/ml. Required."),
             _smart_macros_block("manual"),
-            _favorite_checkbox(),
-            _private_checkbox(),
+            _create_flags_row(),
             _advanced_toggle("manual_advanced"),
             Div(
                 _labeled_input("Caffeine", "caffeine", "number", help_text="Caffeine content in mg per 100g/ml."),
@@ -1233,8 +1291,7 @@ def CreateRecipePage():
         Div(
             _labeled_input("Name*", "name", help_text="Recipe name. Required."),
             _labeled_select("Meal type", "meal_type", MEAL_TYPES, help_text="When this recipe is usually eaten."),
-            _favorite_checkbox(),
-            _private_checkbox(),
+            _create_flags_row(),
             _advanced_toggle("recipe_advanced"),
             Div(
                 Div(

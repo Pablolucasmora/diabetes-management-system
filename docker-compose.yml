@@ -45,8 +45,9 @@ services:
   tunnel:
     image: cloudflare/cloudflared:latest
     container_name: diabetes_tunnel
-    # Le decimos al binario que cree un Quick Tunnel temporal apuntando a tu Python
-    command: tunnel --url http://web:8000
+    command: tunnel --config /home/nonroot/.cloudflared/config.yml run daybetes
+    volumes:
+      - ~/.cloudflared:/home/nonroot/.cloudflared
     depends_on:
       web:
         condition: service_started
