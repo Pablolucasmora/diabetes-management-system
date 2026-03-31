@@ -21,6 +21,7 @@ All functions follow the same pattern:
 
 import os
 import re
+from datetime import datetime
 from typing import Optional, Any
 
 from DayBetes_food.auth.context import get_current_user_id
@@ -714,6 +715,33 @@ def get_cart_events(connection, users_id: int) -> list:
     return _execute_query_many(connection, query, {"users_id": users_id}, commit=False)
 
 
+def get_consumed_events_for_day(connection, users_id: int, day=None) -> list:
+    """Gets events in 'consumed' state for a specific calendar day."""
+    if day is None:
+        day = datetime.now().date()
+    query = """
+        SELECT *
+        FROM intake_event
+        WHERE users_id = %(users_id)s
+          AND state = 'consumed'
+          AND DATE(meal_time) = %(day)s
+        ORDER BY meal_time ASC, id ASC;
+    """
+    return _execute_query_many(connection, query, {"users_id": users_id, "day": day}, commit=False)
+
+
+def get_consumed_events(connection, users_id: int) -> list:
+    """Gets all events in 'consumed' state for a users."""
+    query = """
+        SELECT *
+        FROM intake_event
+        WHERE users_id = %(users_id)s
+          AND state = 'consumed'
+        ORDER BY meal_time ASC, id ASC;
+    """
+    return _execute_query_many(connection, query, {"users_id": users_id}, commit=False)
+
+
 def update_intake_event(connection, event_id: int, data: dict) -> bool:
     """Updates an intake event."""
     if not data:
@@ -823,6 +851,7 @@ def get_portion_detail_by_event(connection, intake_event_id: int) -> list:
             c.name as catalog_name,
             c.category as catalog_category,
             c.default_portion as catalog_default_portion,
+            c.calories_100g as catalog_calories_100g,
             c.carbs_100g as catalog_carbs_100g,
             c.sugars_100g as catalog_sugars_100g,
             c.fats_100g as catalog_fats_100g,
@@ -832,6 +861,7 @@ def get_portion_detail_by_event(connection, intake_event_id: int) -> list:
             im.name as manual_intake_name,
             im.subtype as manual_subtype,
             im.amount_g as manual_amount_g,
+            im.calories_100g as manual_calories_100g,
             im.carbs_100g as manual_carbs_100g,
             im.sugars_100g as manual_sugars_100g,
             im.fats_100g as manual_fats_100g,
@@ -858,6 +888,7 @@ def get_portion_detail_by_events(connection, intake_event_ids: list[int]) -> lis
             c.name as catalog_name,
             c.category as catalog_category,
             c.default_portion as catalog_default_portion,
+            c.calories_100g as catalog_calories_100g,
             c.carbs_100g as catalog_carbs_100g,
             c.sugars_100g as catalog_sugars_100g,
             c.fats_100g as catalog_fats_100g,
@@ -867,6 +898,7 @@ def get_portion_detail_by_events(connection, intake_event_ids: list[int]) -> lis
             im.name as manual_intake_name,
             im.subtype as manual_subtype,
             im.amount_g as manual_amount_g,
+            im.calories_100g as manual_calories_100g,
             im.carbs_100g as manual_carbs_100g,
             im.sugars_100g as manual_sugars_100g,
             im.fats_100g as manual_fats_100g,
