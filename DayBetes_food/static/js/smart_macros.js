@@ -47,13 +47,13 @@
   ];
 
   var defaultValues = {
-    calories_100g: 0,
-    carbs_100g: 0,
-    sugars_100g: 0,
-    proteins_100g: 0,
-    fats_100g: 0,
-    saturated_100g: 0,
-    fiber_100g: 0
+    calories_100g: null,
+    carbs_100g: null,
+    sugars_100g: null,
+    proteins_100g: null,
+    fats_100g: null,
+    saturated_100g: null,
+    fiber_100g: null
   };
 
   var prettyName = {
@@ -97,13 +97,13 @@
 
   function parseSmartMacros(text) {
     var result = {
-      calories_100g: 0,
-      carbs_100g: 0,
-      sugars_100g: 0,
-      proteins_100g: 0,
-      fats_100g: 0,
-      saturated_100g: 0,
-      fiber_100g: 0
+      calories_100g: null,
+      carbs_100g: null,
+      sugars_100g: null,
+      proteins_100g: null,
+      fats_100g: null,
+      saturated_100g: null,
+      fiber_100g: null
     };
 
     if (!text) return result;
@@ -142,7 +142,8 @@
       var key = defaultKeys[i];
       var hidden = document.getElementById(prefix + "_" + key);
       if (!hidden) continue;
-      hidden.value = String(values[key] != null ? values[key] : defaultValues[key]);
+      var value = values[key];
+      hidden.value = value == null ? "" : String(value);
     }
   }
 

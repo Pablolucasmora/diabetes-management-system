@@ -90,6 +90,16 @@ def _to_bool(value: str):
     return (value or "").strip().lower() in ("1", "true", "on", "yes")
 
 
+def _smart_macro_float(
+    smart_enabled: str,
+    smart_raw: str,
+    raw_value: str,
+):
+    if _to_bool(smart_enabled) and not (smart_raw or "").strip():
+        return None
+    return _to_float(raw_value)
+
+
 def _to_str_or_none(value):
     if value is None:
         return None
@@ -176,7 +186,7 @@ def _off_prefill_by_barcode(barcode: str):
         return {}
     url = f"https://world.openfoodfacts.net/api/v2/product/{clean}.json"
     try:
-        with urlrequest.urlopen(url, timeout=4) as response:
+        with urlrequest.urlopen(url, timeout=6) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except Exception:
         return {"barcode": clean}
@@ -1816,6 +1826,8 @@ def setup_food_routes(rt):
         cooking_factor: str = "",
         favorite: str = "",
         is_private: str = "",
+        catalog_smart_macros_enabled: str = "",
+        catalog_smart_macros_raw: str = "",
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -1904,13 +1916,13 @@ def setup_food_routes(rt):
                 "nova": _to_int(nova),
                 "yuka": _to_int(yuka),
                 "default_portion": _to_float(default_portion),
-                "calories_100g": _to_float(calories_100g),
-                "carbs_100g": _to_float(carbs_100g),
-                "sugars_100g": _to_float(sugars_100g),
-                "fats_100g": _to_float(fats_100g),
-                "saturated_100g": _to_float(saturated_100g),
-                "proteins_100g": _to_float(proteins_100g),
-                "fiber_100g": _to_float(fiber_100g),
+                "calories_100g": _smart_macro_float(catalog_smart_macros_enabled, catalog_smart_macros_raw, calories_100g),
+                "carbs_100g": _smart_macro_float(catalog_smart_macros_enabled, catalog_smart_macros_raw, carbs_100g),
+                "sugars_100g": _smart_macro_float(catalog_smart_macros_enabled, catalog_smart_macros_raw, sugars_100g),
+                "fats_100g": _smart_macro_float(catalog_smart_macros_enabled, catalog_smart_macros_raw, fats_100g),
+                "saturated_100g": _smart_macro_float(catalog_smart_macros_enabled, catalog_smart_macros_raw, saturated_100g),
+                "proteins_100g": _smart_macro_float(catalog_smart_macros_enabled, catalog_smart_macros_raw, proteins_100g),
+                "fiber_100g": _smart_macro_float(catalog_smart_macros_enabled, catalog_smart_macros_raw, fiber_100g),
                 "caffeine": _to_float(caffeine),
                 "alcohol": _to_float(alcohol),
                 "barcode": barcode.strip() or None,
@@ -1948,6 +1960,8 @@ def setup_food_routes(rt):
         ig_confidence: str = "",
         favorite: str = "",
         is_private: str = "",
+        manual_smart_macros_enabled: str = "",
+        manual_smart_macros_raw: str = "",
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -2013,13 +2027,13 @@ def setup_food_routes(rt):
                 "subtype": clean_subtype,
                 "origin": clean_origin,
                 "amount_g": amount_value,
-                "calories_100g": _to_float(calories_100g),
-                "carbs_100g": _to_float(carbs_100g),
-                "sugars_100g": _to_float(sugars_100g),
-                "fats_100g": _to_float(fats_100g),
-                "saturated_100g": _to_float(saturated_100g),
-                "proteins_100g": _to_float(proteins_100g),
-                "fiber_100g": _to_float(fiber_100g),
+                "calories_100g": _smart_macro_float(manual_smart_macros_enabled, manual_smart_macros_raw, calories_100g),
+                "carbs_100g": _smart_macro_float(manual_smart_macros_enabled, manual_smart_macros_raw, carbs_100g),
+                "sugars_100g": _smart_macro_float(manual_smart_macros_enabled, manual_smart_macros_raw, sugars_100g),
+                "fats_100g": _smart_macro_float(manual_smart_macros_enabled, manual_smart_macros_raw, fats_100g),
+                "saturated_100g": _smart_macro_float(manual_smart_macros_enabled, manual_smart_macros_raw, saturated_100g),
+                "proteins_100g": _smart_macro_float(manual_smart_macros_enabled, manual_smart_macros_raw, proteins_100g),
+                "fiber_100g": _smart_macro_float(manual_smart_macros_enabled, manual_smart_macros_raw, fiber_100g),
                 "caffeine": _to_float(caffeine),
                 "alcohol": _to_float(alcohol),
                 "glycemic_index": clean_glycemic,

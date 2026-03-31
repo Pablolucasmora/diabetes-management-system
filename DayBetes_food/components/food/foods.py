@@ -932,7 +932,7 @@ def _smart_macros_block(prefix: str, prefill: dict | None = None):
     def _mv(key: str):
         value = prefill.get(key)
         if value is None or value == "":
-            return "0"
+            return ""
         return str(value)
     def _smart_prefill_text():
         calories = prefill.get("calories_100g")
@@ -973,6 +973,7 @@ def _smart_macros_block(prefix: str, prefill: dict | None = None):
         Input(
             type="text",
             id=input_id,
+            name=f"{prefix}_smart_macros_raw",
             placeholder="Ej: 120kcal, 30hc, 12az, 20prot, 10 grasas, 3 sat, 5 fibra",
             data_smart_macros="true",
             data_smart_macros_output=f"#{output_id}",
@@ -987,6 +988,7 @@ def _smart_macros_block(prefix: str, prefill: dict | None = None):
             id=output_id,
             cls="text-xs text-gray-700 min-h-5",
         ),
+        Input(type="hidden", name=f"{prefix}_smart_macros_enabled", value="1"),
         # Hidden fields populated by Smart Macros parser
         Input(type="hidden", name="calories_100g", id=f"{prefix}_calories_100g", value=_mv("calories_100g")),
         Input(type="hidden", name="carbs_100g", id=f"{prefix}_carbs_100g", value=_mv("carbs_100g")),
@@ -1185,7 +1187,7 @@ def _create_page_shell(title: str, form, result_id: str):
         Div(id=result_id, cls="text-xs w-full"),
         _form_draft_bootstrap_script(),
         _searchable_autocomplete_bootstrap_script(),
-        Script(src="/js/smart_macros.js", defer="defer"),
+        Script(src="/js/smart_macros.js?v=2", defer="defer"),
         data_hide_cart="true",
         cls="""
             flex flex-col items-center
@@ -1449,13 +1451,13 @@ def EditCatalogPage(
         Div(
             H2("Macros Summary", cls="font-semibold text-gray-900"),
             Div(
-                _edit_tile(_labeled_input("Calories/100g", "calories_100g", "number", value=_input_value(entry.get("calories_100g")))),
-                _edit_tile(_labeled_input("Carbs/100g", "carbs_100g", "number", value=_input_value(entry.get("carbs_100g")))),
-                _edit_tile(_labeled_input("Sugars/100g", "sugars_100g", "number", value=_input_value(entry.get("sugars_100g")))),
-                _edit_tile(_labeled_input("Fats/100g", "fats_100g", "number", value=_input_value(entry.get("fats_100g")))),
-                _edit_tile(_labeled_input("Saturated/100g", "saturated_100g", "number", value=_input_value(entry.get("saturated_100g")))),
-                _edit_tile(_labeled_input("Proteins/100g", "proteins_100g", "number", value=_input_value(entry.get("proteins_100g")))),
-                _edit_tile(_labeled_input("Fiber/100g", "fiber_100g", "number", value=_input_value(entry.get("fiber_100g")))),
+                _edit_tile(_labeled_input("Calories/100g", "calories_100g", "float", value=_input_value(entry.get("calories_100g")))),
+                _edit_tile(_labeled_input("Carbs/100g", "carbs_100g", "float", value=_input_value(entry.get("carbs_100g")))),
+                _edit_tile(_labeled_input("Sugars/100g", "sugars_100g", "float", value=_input_value(entry.get("sugars_100g")))),
+                _edit_tile(_labeled_input("Fats/100g", "fats_100g", "float", value=_input_value(entry.get("fats_100g")))),
+                _edit_tile(_labeled_input("Saturated/100g", "saturated_100g", "float", value=_input_value(entry.get("saturated_100g")))),
+                _edit_tile(_labeled_input("Proteins/100g", "proteins_100g", "float", value=_input_value(entry.get("proteins_100g")))),
+                _edit_tile(_labeled_input("Fiber/100g", "fiber_100g", "float", value=_input_value(entry.get("fiber_100g")))),
                 cls="grid grid-cols-2 md:grid-cols-3 gap-2",
             ),
             cls="flex flex-col gap-2 w-full",
