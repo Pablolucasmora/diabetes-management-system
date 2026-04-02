@@ -48,6 +48,10 @@ def _totals_average(totals: dict, count: int) -> dict:
     }
 
 
+def _has_non_zero_totals(totals: dict) -> bool:
+    return any(to_float(totals.get(nutrient_key)) > 0 for nutrient_key, _, _ in NUTRIENT_SPECS)
+
+
 def _event_day_key(event: dict) -> str:
     meal_time = event.get("meal_time")
     if isinstance(meal_time, datetime):
@@ -86,6 +90,7 @@ def get_stats_payload(connection, user_id: int, today: date) -> dict:
         portions_by_event.setdefault(event_id, []).append(portion)
 
     daily_totals_by_day = {}
+    meal_type_historical_totals = {}
     for event in all_consumed_events:
         event_id = int(event["id"])
         day_key = _event_day_key(event)
@@ -94,12 +99,22 @@ def get_stats_payload(connection, user_id: int, today: date) -> dict:
         event_totals = _compute_totals_for_portions(portions_by_event.get(event_id, []))
         _sum_totals(daily_totals_by_day[day_key], event_totals)
 
-    days_count = len(daily_totals_by_day)
+        meal_type = (event.get("meal_type") or "sin_tipo").strip() or "sin_tipo"
+        if meal_type not in meal_type_historical_totals:
+            meal_type_historical_totals[meal_type] = empty_totals()
+        _sum_totals(meal_type_historical_totals[meal_type], event_totals)
+
+    valid_daily_totals = [one_day_totals for one_day_totals in daily_totals_by_day.values() if _has_non_zero_totals(one_day_totals)]
+    days_count = len(valid_daily_totals)
     daily_average_totals = empty_totals()
     if days_count > 0:
-        for one_day_totals in daily_totals_by_day.values():
+        for one_day_totals in valid_daily_totals:
             _sum_totals(daily_average_totals, one_day_totals)
         daily_average_totals = _totals_average(daily_average_totals, days_count)
+
+    meal_type_daily_averages = {}
+    for meal_type, totals in meal_type_historical_totals.items():
+        meal_type_daily_averages[meal_type] = _totals_average(totals, days_count)
 
     grouped = {meal_type: {"count": 0, "totals": empty_totals()} for meal_type in MEAL_TYPE_ORDER}
     for event in today_events:
@@ -120,7 +135,7 @@ def get_stats_payload(connection, user_id: int, today: date) -> dict:
                 "label": MEAL_TYPE_LABELS.get(meal_type, meal_type),
                 "count": int(group["count"]),
                 "totals": group["totals"],
-                "averages": _totals_average(group["totals"], int(group["count"])),
+                "averages": meal_type_daily_averages.get(meal_type, empty_totals()),
             }
         )
 

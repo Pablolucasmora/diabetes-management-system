@@ -133,6 +133,26 @@ def _update_group_field(connection, event_id: int, origin: str, origin_id: int, 
         return False
 
 
+def _update_event_name(connection, event_id: int, name_value):
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE intake_event
+                SET name = %(name)s
+                WHERE id = %(id)s
+                RETURNING id;
+                """,
+                {"id": event_id, "name": name_value},
+            )
+            updated = cursor.fetchone()
+        connection.commit()
+        return bool(updated)
+    except Exception:
+        connection.rollback()
+        return False
+
+
 def setup_cart_routes(rt):
     @rt("/cart")
     def get(req):
@@ -174,6 +194,17 @@ def setup_cart_routes(rt):
             return HTMLResponse(status_code=400)
         with get_connection() as connection:
             ok = update_intake_event(connection, event_id, {"meal_type": clean_meal_type})
+            return _cart_response(connection, status=200 if ok else 400)
+
+    @rt("/cart/event/{event_id}/name")
+    def post(request: Request, event_id: int, event_name: str = ""):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        clean_name = (event_name or "").strip()
+        if len(clean_name) > 255:
+            clean_name = clean_name[:255]
+        with get_connection() as connection:
+            ok = _update_event_name(connection, event_id, clean_name or None)
             return _cart_response(connection, status=200 if ok else 400)
 
     @rt("/cart/event/{event_id}/macros_summary")

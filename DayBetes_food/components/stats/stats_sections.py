@@ -121,7 +121,7 @@ def meal_breakdown_section(meal_groups: list[dict]):
         H2("Desglose por tipo de comida", cls="text-base md:text-lg font-semibold"),
         Div(
             *meal_cards,
-            cls="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 md:gap-3",
+            cls="grid grid-cols-1 gap-2 md:gap-3",
         )
         if meal_cards
         else Div(

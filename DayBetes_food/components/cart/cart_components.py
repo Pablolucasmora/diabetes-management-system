@@ -122,12 +122,40 @@ def ConfirmActionModal(modal_id: str, title: str, question: str, yes_button):
 
 def EventHeader(event):
     meal_time = event.get("meal_time") or datetime.now()
+    event_name_id = f"event_name_{event['id']}"
     meal_hour_id = f"meal_hour_{event['id']}"
     meal_date_id = f"meal_date_{event['id']}"
     meal_type_id = f"meal_type_{event['id']}"
     return Div(
         Div(
-            H2(event.get("name") or f"Intake event #{event['id']}", cls="font-bold text-lg"),
+            Form(
+                Label(
+                    "Event name",
+                    **{"for": event_name_id},
+                    style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;",
+                ),
+                Input(
+                    type="text",
+                    id=event_name_id,
+                    name="event_name",
+                    value=event.get("name") or "",
+                    placeholder=f"Intake event #{event['id']}",
+                    aria_label="Event name",
+                    cls="""
+                        w-full font-bold text-lg text-black
+                        px-0 py-0 border-0 rounded-none
+                        bg-transparent shadow-none
+                        focus:outline-none
+                    """,
+                    style="background:transparent;border-color:transparent;box-shadow:none;",
+                    hx_post=f"/cart/event/{event['id']}/name",
+                    hx_trigger="change",
+                    onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}",
+                    onchange="this.blur();",
+                    onclick="this.select();",
+                ),
+                cls="w-full",
+            ),
             Form(
                 Div(
                     Input(
@@ -138,7 +166,7 @@ def EventHeader(event):
                         aria_label="Meal time",
                         cls="web_input border border-white rounded-lg px-2 py-1 text-sm",
                         hx_post=f"/cart/event/{event['id']}/meal_hour",
-                        hx_trigger="change",
+                        hx_trigger="blur",
                         hx_include="closest form",
                     ),
                     Button(
