@@ -6,160 +6,49 @@ from datetime import datetime
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.database.queries.crud import (
     change_event_status,
+    consolidate_event_portion_group_amount,
+    delete_event_portion_group,
     delete_intake_event,
     get_intake_event,
     get_portion_detail_by_event,
+    update_event_portion_group_field,
+    update_intake_event_name,
     update_intake_event,
 )
 from DayBetes_food.components.food.foods import MEAL_TYPES
 
 
 def _cart_response(connection, status: int = 200):
+    """
+    Helper function to generate a consistent response for cart updates.
+    """
     if status >= 400:
         return HTMLResponse("", status_code=status)
     return render_fragment(cart_main(connection))
 
 
 def _to_float(value: str):
+    """
+    Convert a string to a float, handling comma as decimal separator.
+    """
+
     normalized = (value or "").strip().replace(",", ".")
     return float(normalized)
-
-
-def _group_column(origin: str):
-    if origin == "catalog":
-        return "catalog_id"
-    if origin == "manual_intake":
-        return "manual_intake_id"
-    return None
-
-
-def _get_group_rows(connection, event_id: int, origin: str, origin_id: int):
-    group_col = _group_column(origin)
-    if not group_col:
-        return []
-    query = f"""
-        SELECT
-            pd.id,
-            pd.amount_g,
-            c.default_portion AS catalog_default_portion,
-            im.amount_g AS manual_amount_g
-        FROM portion_detail pd
-        LEFT JOIN catalog c ON pd.catalog_id = c.id
-        LEFT JOIN manual_intake im ON pd.manual_intake_id = im.id
-        WHERE pd.intake_event_id = %(event_id)s
-          AND pd.{group_col} = %(origin_id)s
-        ORDER BY pd.id;
-    """
-    with connection.cursor() as cursor:
-        cursor.execute(query, {"event_id": event_id, "origin_id": origin_id})
-        return cursor.fetchall()
-
-
-def _delete_group(connection, rows):
-    if not rows:
-        return False
-    ids = [int(row["id"]) for row in rows]
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "DELETE FROM portion_detail WHERE id = ANY(%(ids)s);",
-                {"ids": ids},
-            )
-            deleted = cursor.rowcount
-        connection.commit()
-        return deleted == len(ids)
-    except Exception:
-        connection.rollback()
-        return False
-
-
-def _consolidate_group_amount(connection, event_id: int, origin: str, origin_id: int, total_amount: float):
-    rows = _get_group_rows(connection, event_id, origin, origin_id)
-    if not rows:
-        return False
-
-    keep_id = int(rows[0]["id"])
-    delete_ids = [int(row["id"]) for row in rows[1:]]
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "UPDATE portion_detail SET amount_g = %(amount)s WHERE id = %(id)s;",
-                {"amount": total_amount, "id": keep_id},
-            )
-            if cursor.rowcount != 1:
-                connection.rollback()
-                return False
-
-            if delete_ids:
-                cursor.execute(
-                    "DELETE FROM portion_detail WHERE id = ANY(%(ids)s);",
-                    {"ids": delete_ids},
-                )
-                if cursor.rowcount != len(delete_ids):
-                    connection.rollback()
-                    return False
-        connection.commit()
-        return True
-    except Exception:
-        connection.rollback()
-        return False
-
-
-def _update_group_field(connection, event_id: int, origin: str, origin_id: int, field_name: str, field_value):
-    group_col = _group_column(origin)
-    if not group_col:
-        return False
-    allowed_fields = {"offset_minutes", "strictly_weighed", "macros_quality", "is_cooked_weight"}
-    if field_name not in allowed_fields:
-        return False
-
-    query = f"""
-        UPDATE portion_detail pd
-        SET {field_name} = %(value)s
-        WHERE pd.intake_event_id = %(event_id)s
-          AND pd.{group_col} = %(origin_id)s;
-    """
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                query,
-                {"value": field_value, "event_id": event_id, "origin_id": origin_id},
-            )
-            updated = cursor.rowcount
-        connection.commit()
-        return updated > 0
-    except Exception:
-        connection.rollback()
-        return False
-
-
-def _update_event_name(connection, event_id: int, name_value):
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                UPDATE intake_event
-                SET name = %(name)s
-                WHERE id = %(id)s
-                RETURNING id;
-                """,
-                {"id": event_id, "name": name_value},
-            )
-            updated = cursor.fetchone()
-        connection.commit()
-        return bool(updated)
-    except Exception:
-        connection.rollback()
-        return False
 
 
 def setup_cart_routes(rt):
     @rt("/cart")
     def get(req):
+        """
+        Render cart page (cart_main), without the cart button (show_cart=False), when request to /cart
+        """
         return render_page(req, cart_main, show_cart=False)
 
     @rt("/cart/event/{event_id}/meal_hour")
     def post(request: Request, event_id: int, meal_hour: str = "", meal_date: str = ""):
+        """
+        Update meal_hour from a specific event, returning the response to the request
+        """
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         try:
@@ -185,6 +74,9 @@ def setup_cart_routes(rt):
 
     @rt("/cart/event/{event_id}/meal_type")
     def post(request: Request, event_id: int, meal_type: str = ""):
+        """
+        Update meal_type from a specific event, returning the response to the request
+        """
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         clean_meal_type = (meal_type or "").strip()
@@ -204,7 +96,7 @@ def setup_cart_routes(rt):
         if len(clean_name) > 255:
             clean_name = clean_name[:255]
         with get_connection() as connection:
-            ok = _update_event_name(connection, event_id, clean_name or None)
+            ok = update_intake_event_name(connection, event_id, clean_name or None)
             return _cart_response(connection, status=200 if ok else 400)
 
     @rt("/cart/event/{event_id}/macros_summary")
@@ -260,10 +152,9 @@ def setup_cart_routes(rt):
 
         with get_connection() as connection:
             if amount <= 0:
-                rows = _get_group_rows(connection, event_id, origin, origin_id)
-                ok = _delete_group(connection, rows)
+                ok = delete_event_portion_group(connection, event_id, origin, origin_id)
             else:
-                ok = _consolidate_group_amount(connection, event_id, origin, origin_id, amount)
+                ok = consolidate_event_portion_group_amount(connection, event_id, origin, origin_id, amount)
             return _cart_response(connection, status=200 if ok else 400)
 
     @rt("/cart/event/{event_id}/ingredient/{origin}/{origin_id}/offset")
@@ -275,7 +166,7 @@ def setup_cart_routes(rt):
         except (TypeError, ValueError):
             return HTMLResponse(status_code=400)
         with get_connection() as connection:
-            ok = _update_group_field(connection, event_id, origin, origin_id, "offset_minutes", value)
+            ok = update_event_portion_group_field(connection, event_id, origin, origin_id, "offset_minutes", value)
             return _cart_response(connection, status=200 if ok else 400)
 
     @rt("/cart/event/{event_id}/ingredient/{origin}/{origin_id}/strictly_weighed")
@@ -284,7 +175,7 @@ def setup_cart_routes(rt):
             return HTMLResponse(status_code=403)
         value = (strictly_weighed or "").strip().lower() == "true"
         with get_connection() as connection:
-            ok = _update_group_field(connection, event_id, origin, origin_id, "strictly_weighed", value)
+            ok = update_event_portion_group_field(connection, event_id, origin, origin_id, "strictly_weighed", value)
             if not ok:
                 return HTMLResponse("", status_code=400)
             event = get_intake_event(connection, event_id)
@@ -299,7 +190,7 @@ def setup_cart_routes(rt):
             return HTMLResponse(status_code=403)
         value = (macros_quality or "").strip().lower() == "true"
         with get_connection() as connection:
-            ok = _update_group_field(connection, event_id, origin, origin_id, "macros_quality", value)
+            ok = update_event_portion_group_field(connection, event_id, origin, origin_id, "macros_quality", value)
             if not ok:
                 return HTMLResponse("", status_code=400)
             event = get_intake_event(connection, event_id)
@@ -314,7 +205,7 @@ def setup_cart_routes(rt):
             return HTMLResponse(status_code=403)
         value = (is_cooked_weight or "").strip().lower() == "true"
         with get_connection() as connection:
-            ok = _update_group_field(connection, event_id, origin, origin_id, "is_cooked_weight", value)
+            ok = update_event_portion_group_field(connection, event_id, origin, origin_id, "is_cooked_weight", value)
             if not ok:
                 return HTMLResponse("", status_code=400)
             event = get_intake_event(connection, event_id)
