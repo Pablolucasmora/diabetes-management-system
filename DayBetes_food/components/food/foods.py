@@ -103,6 +103,15 @@ def _open_modal_js(modal_id: str) -> str:
     )
 
 
+def _food_back_button(label: str = "Back"):
+    return Button(
+        label,
+        type="button",
+        cls="web_button self-start px-3 py-1.5 text-sm",
+        onclick="if(window.history.length>1){window.history.back();}else{window.location.href='/food';}",
+    )
+
+
 def ConfirmActionModal(modal_id: str, title: str, question: str, yes_button):
     return Div(
         Div(
@@ -237,7 +246,7 @@ def MealSelector(connection, user_id: int, selected_id: int = None):
 
 
 def Filters():
-    filters = [("All", "all"), ("Food", "food"), ("Recipes", "recipes"), ("Favs", "favs")]
+    filters = [("Search", "all"), ("Food", "food"), ("Recipes", "recipes"), ("Favs", "favs")]
     buttons = []
     for text, value in filters:
         buttons.append(
@@ -250,18 +259,48 @@ def Filters():
                 hx_get="/food/list",
                 hx_target="#food-list",
                 hx_swap="innerHTML",
-                hx_include="#food_search_input, #food_filter",
+                hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
                 **{
                     "hx-on:click": (
                         f"document.getElementById('food_filter').value='{value}';"
-                        "var active='bg-black text-white shadow-md';"
-                        "var inactive='bg-transparent text-gray-700';"
                         "document.querySelectorAll('[data-food-filter-btn]').forEach(function(btn){"
                         "btn.classList.remove('bg-black','text-white','shadow-md');"
                         "btn.classList.add('bg-transparent','text-gray-700');"
                         "});"
                         "this.classList.remove('bg-transparent','text-gray-700');"
                         "this.classList.add('bg-black','text-white','shadow-md');"
+                        "var searchTabs=document.getElementById('food_search_tabs');"
+                        "if(searchTabs){"
+                        "if(this.dataset.filterValue==='all'){"
+                        "searchTabs.classList.remove('hidden');"
+                        "}else{"
+                        "searchTabs.classList.add('hidden');"
+                        "}"
+                        "}"
+                        "var foodTabs=document.getElementById('food_food_tabs');"
+                        "if(foodTabs){"
+                        "if(this.dataset.filterValue==='food'){"
+                        "foodTabs.classList.remove('hidden');"
+                        "}else{"
+                        "foodTabs.classList.add('hidden');"
+                        "}"
+                        "}"
+                        "var favsTabs=document.getElementById('food_favs_tabs');"
+                        "if(favsTabs){"
+                        "if(this.dataset.filterValue==='favs'){"
+                        "favsTabs.classList.remove('hidden');"
+                        "}else{"
+                        "favsTabs.classList.add('hidden');"
+                        "}"
+                        "}"
+                        "var recipesTabs=document.getElementById('food_recipes_tabs');"
+                        "if(recipesTabs){"
+                        "if(this.dataset.filterValue==='recipes'){"
+                        "recipesTabs.classList.remove('hidden');"
+                        "}else{"
+                        "recipesTabs.classList.add('hidden');"
+                        "}"
+                        "}"
                     ),
                 },
             )
@@ -269,6 +308,10 @@ def Filters():
 
     return Div(
         Input(type="hidden", id="food_filter", name="filter", value="all"),
+        Input(type="hidden", id="food_search_mode", name="search_mode", value="recommended"),
+        Input(type="hidden", id="food_food_mode", name="food_mode", value="catalog"),
+        Input(type="hidden", id="food_favs_mode", name="favs_mode", value="catalog"),
+        Input(type="hidden", id="food_recipes_mode", name="recipes_mode", value="mine"),
         Div(
             *buttons,
             cls="""
@@ -278,6 +321,310 @@ def Filters():
                 w-full
                 rounded-full
             """,
+        ),
+        Div(
+            Div(
+                Button(
+                    "Recommended",
+                    type="button",
+                    data_skip_page_loading="true",
+                    data_search_mode_btn="true",
+                    data_search_mode_value="recommended",
+                    cls="inline-flex px-0 pb-2 text-lg font-bold text-black text-left transition-colors duration-150 cursor-pointer",
+                    style="transform: translateX(0); border-bottom: 2px solid #111827;",
+                    hx_get="/food/list",
+                    hx_target="#food-list",
+                    hx_swap="innerHTML",
+                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
+                    **{
+                        "hx-on:click": (
+                            "var mode='recommended';"
+                            "var modeInput=document.getElementById('food_search_mode');"
+                            "if(modeInput){modeInput.value=mode;}"
+                            "document.querySelectorAll('[data-search-mode-btn]').forEach(function(btn){"
+                            "btn.classList.remove('text-black','font-bold');"
+                            "btn.classList.add('text-gray-400','font-medium');"
+                            "btn.style.borderBottom='2px solid transparent';"
+                            "});"
+                            "this.classList.remove('text-gray-400');"
+                            "this.classList.remove('font-medium');"
+                            "this.classList.add('text-black','font-bold');"
+                            "this.style.borderBottom='2px solid #111827';"
+                        ),
+                    },
+                ),
+                cls="w-1/2 flex items-end justify-center",
+            ),
+            Div(
+                Button(
+                    "Global",
+                    type="button",
+                    data_skip_page_loading="true",
+                    data_search_mode_btn="true",
+                    data_search_mode_value="global",
+                    cls="inline-flex px-0 pb-2 text-lg font-medium text-gray-400 text-right transition-colors duration-150 cursor-pointer",
+                    style="transform: translateX(0); border-bottom: 2px solid transparent;",
+                    hx_get="/food/list",
+                    hx_target="#food-list",
+                    hx_swap="innerHTML",
+                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
+                    **{
+                        "hx-on:click": (
+                            "var mode='global';"
+                            "var modeInput=document.getElementById('food_search_mode');"
+                            "if(modeInput){modeInput.value=mode;}"
+                            "document.querySelectorAll('[data-search-mode-btn]').forEach(function(btn){"
+                            "btn.classList.remove('text-black','font-bold');"
+                            "btn.classList.add('text-gray-400','font-medium');"
+                            "btn.style.borderBottom='2px solid transparent';"
+                            "});"
+                            "this.classList.remove('text-gray-400');"
+                            "this.classList.remove('font-medium');"
+                            "this.classList.add('text-black','font-bold');"
+                            "this.style.borderBottom='2px solid #111827';"
+                        ),
+                    },
+                ),
+                cls="w-1/2 flex items-end justify-center",
+            ),
+            id="food_search_tabs",
+            cls="w-full flex items-end justify-between mt-4",
+        ),
+        Div(
+            Div(
+                Button(
+                    "Catalog",
+                    type="button",
+                    data_skip_page_loading="true",
+                    data_food_mode_btn="true",
+                    data_food_mode_value="catalog",
+                    cls="inline-flex px-0 pb-2 text-lg font-bold text-black text-left transition-colors duration-150 cursor-pointer",
+                    style="transform: translateX(0); border-bottom: 2px solid #111827;",
+                    hx_get="/food/list",
+                    hx_target="#food-list",
+                    hx_swap="innerHTML",
+                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
+                    **{
+                        "hx-on:click": (
+                            "var mode='catalog';"
+                            "var modeInput=document.getElementById('food_food_mode');"
+                            "if(modeInput){modeInput.value=mode;}"
+                            "document.querySelectorAll('[data-food-mode-btn]').forEach(function(btn){"
+                            "btn.classList.remove('text-black','font-bold');"
+                            "btn.classList.add('text-gray-400','font-medium');"
+                            "btn.style.borderBottom='2px solid transparent';"
+                            "});"
+                            "this.classList.remove('text-gray-400');"
+                            "this.classList.remove('font-medium');"
+                            "this.classList.add('text-black','font-bold');"
+                            "this.style.borderBottom='2px solid #111827';"
+                        ),
+                    },
+                ),
+                cls="w-1/2 flex items-end justify-center",
+            ),
+            Div(
+                Button(
+                    "Manual",
+                    type="button",
+                    data_skip_page_loading="true",
+                    data_food_mode_btn="true",
+                    data_food_mode_value="manual",
+                    cls="inline-flex px-0 pb-2 text-lg font-medium text-gray-400 text-right transition-colors duration-150 cursor-pointer",
+                    style="transform: translateX(0); border-bottom: 2px solid transparent;",
+                    hx_get="/food/list",
+                    hx_target="#food-list",
+                    hx_swap="innerHTML",
+                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
+                    **{
+                        "hx-on:click": (
+                            "var mode='manual';"
+                            "var modeInput=document.getElementById('food_food_mode');"
+                            "if(modeInput){modeInput.value=mode;}"
+                            "document.querySelectorAll('[data-food-mode-btn]').forEach(function(btn){"
+                            "btn.classList.remove('text-black','font-bold');"
+                            "btn.classList.add('text-gray-400','font-medium');"
+                            "btn.style.borderBottom='2px solid transparent';"
+                            "});"
+                            "this.classList.remove('text-gray-400');"
+                            "this.classList.remove('font-medium');"
+                            "this.classList.add('text-black','font-bold');"
+                            "this.style.borderBottom='2px solid #111827';"
+                        ),
+                    },
+                ),
+                cls="w-1/2 flex items-end justify-center",
+            ),
+            id="food_food_tabs",
+            cls="hidden w-full flex items-end justify-between mt-4",
+        ),
+        Div(
+            Div(
+                Button(
+                    "Mine",
+                    type="button",
+                    data_skip_page_loading="true",
+                    data_recipes_mode_btn="true",
+                    data_recipes_mode_value="mine",
+                    cls="inline-flex px-0 pb-2 text-lg font-bold text-black text-left transition-colors duration-150 cursor-pointer",
+                    style="transform: translateX(0); border-bottom: 2px solid #111827;",
+                    hx_get="/food/list",
+                    hx_target="#food-list",
+                    hx_swap="innerHTML",
+                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
+                    **{
+                        "hx-on:click": (
+                            "var mode='mine';"
+                            "var modeInput=document.getElementById('food_recipes_mode');"
+                            "if(modeInput){modeInput.value=mode;}"
+                            "document.querySelectorAll('[data-recipes-mode-btn]').forEach(function(btn){"
+                            "btn.classList.remove('text-black','font-bold');"
+                            "btn.classList.add('text-gray-400','font-medium');"
+                            "btn.style.borderBottom='2px solid transparent';"
+                            "});"
+                            "this.classList.remove('text-gray-400');"
+                            "this.classList.remove('font-medium');"
+                            "this.classList.add('text-black','font-bold');"
+                            "this.style.borderBottom='2px solid #111827';"
+                        ),
+                    },
+                ),
+                cls="w-1/2 flex items-end justify-center",
+            ),
+            Div(
+                Button(
+                    "Discover",
+                    type="button",
+                    data_skip_page_loading="true",
+                    data_recipes_mode_btn="true",
+                    data_recipes_mode_value="discover",
+                    cls="inline-flex px-0 pb-2 text-lg font-medium text-gray-400 text-right transition-colors duration-150 cursor-pointer",
+                    style="transform: translateX(0); border-bottom: 2px solid transparent;",
+                    hx_get="/food/list",
+                    hx_target="#food-list",
+                    hx_swap="innerHTML",
+                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
+                    **{
+                        "hx-on:click": (
+                            "var mode='discover';"
+                            "var modeInput=document.getElementById('food_recipes_mode');"
+                            "if(modeInput){modeInput.value=mode;}"
+                            "document.querySelectorAll('[data-recipes-mode-btn]').forEach(function(btn){"
+                            "btn.classList.remove('text-black','font-bold');"
+                            "btn.classList.add('text-gray-400','font-medium');"
+                            "btn.style.borderBottom='2px solid transparent';"
+                            "});"
+                            "this.classList.remove('text-gray-400');"
+                            "this.classList.remove('font-medium');"
+                            "this.classList.add('text-black','font-bold');"
+                            "this.style.borderBottom='2px solid #111827';"
+                        ),
+                    },
+                ),
+                cls="w-1/2 flex items-end justify-center",
+            ),
+            id="food_recipes_tabs",
+            cls="hidden w-full flex items-end justify-between mt-4",
+        ),
+        Div(
+            Div(
+                Button(
+                    "Catalog",
+                    type="button",
+                    data_skip_page_loading="true",
+                    data_favs_mode_btn="true",
+                    data_favs_mode_value="catalog",
+                    cls="inline-flex px-0 pb-2 text-lg font-bold text-black text-left transition-colors duration-150 cursor-pointer",
+                    style="transform: translateX(0); border-bottom: 2px solid #111827;",
+                    hx_get="/food/list",
+                    hx_target="#food-list",
+                    hx_swap="innerHTML",
+                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
+                    **{
+                        "hx-on:click": (
+                            "var mode='catalog';"
+                            "var modeInput=document.getElementById('food_favs_mode');"
+                            "if(modeInput){modeInput.value=mode;}"
+                            "document.querySelectorAll('[data-favs-mode-btn]').forEach(function(btn){"
+                            "btn.classList.remove('text-black','font-bold');"
+                            "btn.classList.add('text-gray-400','font-medium');"
+                            "btn.style.borderBottom='2px solid transparent';"
+                            "});"
+                            "this.classList.remove('text-gray-400');"
+                            "this.classList.remove('font-medium');"
+                            "this.classList.add('text-black','font-bold');"
+                            "this.style.borderBottom='2px solid #111827';"
+                        ),
+                    },
+                ),
+                cls="w-1/3 flex items-end justify-center",
+            ),
+            Div(
+                Button(
+                    "Manual",
+                    type="button",
+                    data_skip_page_loading="true",
+                    data_favs_mode_btn="true",
+                    data_favs_mode_value="manual",
+                    cls="inline-flex px-0 pb-2 text-lg font-medium text-gray-400 text-center transition-colors duration-150 cursor-pointer",
+                    style="transform: translateX(0); border-bottom: 2px solid transparent;",
+                    hx_get="/food/list",
+                    hx_target="#food-list",
+                    hx_swap="innerHTML",
+                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
+                    **{
+                        "hx-on:click": (
+                            "var mode='manual';"
+                            "var modeInput=document.getElementById('food_favs_mode');"
+                            "if(modeInput){modeInput.value=mode;}"
+                            "document.querySelectorAll('[data-favs-mode-btn]').forEach(function(btn){"
+                            "btn.classList.remove('text-black','font-bold');"
+                            "btn.classList.add('text-gray-400','font-medium');"
+                            "btn.style.borderBottom='2px solid transparent';"
+                            "});"
+                            "this.classList.remove('text-gray-400');"
+                            "this.classList.remove('font-medium');"
+                            "this.classList.add('text-black','font-bold');"
+                            "this.style.borderBottom='2px solid #111827';"
+                        ),
+                    },
+                ),
+                cls="w-1/3 flex items-end justify-center",
+            ),
+            Div(
+                Button(
+                    "Recipes",
+                    type="button",
+                    data_skip_page_loading="true",
+                    data_favs_mode_btn="true",
+                    data_favs_mode_value="recipes",
+                    cls="inline-flex px-0 pb-2 text-lg font-medium text-gray-400 text-right transition-colors duration-150 cursor-pointer",
+                    style="transform: translateX(0); border-bottom: 2px solid transparent;",
+                    hx_get="/food/list",
+                    hx_target="#food-list",
+                    hx_swap="innerHTML",
+                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
+                    **{
+                        "hx-on:click": (
+                            "var mode='recipes';"
+                            "var modeInput=document.getElementById('food_favs_mode');"
+                            "if(modeInput){modeInput.value=mode;}"
+                            "document.querySelectorAll('[data-favs-mode-btn]').forEach(function(btn){"
+                            "btn.classList.remove('text-black','font-bold');"
+                            "btn.classList.add('text-gray-400','font-medium');"
+                            "btn.style.borderBottom='2px solid transparent';"
+                            "});"
+                            "this.classList.remove('text-gray-400');"
+                            "this.classList.remove('font-medium');"
+                            "this.classList.add('text-black','font-bold');"
+                            "this.style.borderBottom='2px solid #111827';"
+                        ),
+                    },
+                ),
+                cls="w-1/3 flex items-end justify-center",
+            ),
+            id="food_favs_tabs",
+            cls="hidden w-full flex items-end justify-between mt-4",
         ),
         cls="md:w-md lg:w-md w-xs transition-all",
     )
@@ -303,7 +650,7 @@ def SearchInput():
         hx_get="/food/list",
         hx_target="#food-list",
         hx_trigger="keyup changed delay:500ms",
-        hx_include="#food_filter",
+        hx_include="#food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
         hx_swap="innerHTML",
     )
 
@@ -1179,6 +1526,7 @@ def CreateRecipePanel():
 
 def _create_page_shell(title: str, form, result_id: str):
     return Div(
+        Div(_food_back_button(), cls="w-full flex justify-start"),
         Div(
             H1(title, cls="text-xl font-bold"),
             cls="flex items-center justify-center gap-3 w-full",
@@ -2077,6 +2425,7 @@ def FoodDetailPage(
     recipe_ingredients = RecipeIngredientsBlock(int(entry.get("id") or 0), recipe_portions or []) if recipe_mode else ""
 
     return Div(
+        Div(_food_back_button(), cls="w-full flex justify-start"),
         Div(
             Div(
                 Div(
