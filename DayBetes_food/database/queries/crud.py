@@ -774,9 +774,26 @@ def delete_intake_event(connection, event_id: int) -> bool:
     return result is not None
 
 
+def update_intake_event_name(connection, event_id: int, name: Optional[str]) -> bool:
+    """Updates intake event name."""
+    query = """
+        UPDATE intake_event
+        SET name = %(name)s
+        WHERE id = %(id)s
+        RETURNING id;
+    """
+    result = _execute_query(connection, query, {"id": event_id, "name": name})
+    return result is not None
+
+
 # ============================================
 # PORTION DETAIL
 # ============================================
+
+_PORTION_ORIGIN_COLUMNS = {
+    "catalog": "catalog_id",
+    "manual_intake": "manual_intake_id",
+}
 
 def add_portion_detail(
     connection,
@@ -875,6 +892,127 @@ def get_portion_detail_by_event(connection, intake_event_id: int) -> list:
         ORDER BY pd.id;
     """
     return _execute_query_many(connection, query, {"id": intake_event_id}, commit=False)
+
+
+def get_event_portion_rows_by_origin(connection, event_id: int, origin: str, origin_id: int) -> list:
+    """Gets all portion_detail rows in an intake event matching origin and origin_id."""
+    origin_field = _PORTION_ORIGIN_COLUMNS.get(origin)
+    if not origin_field:
+        return []
+    query = f"""
+        SELECT
+            pd.id,
+            pd.amount_g,
+            c.default_portion AS catalog_default_portion,
+            im.amount_g AS manual_amount_g
+        FROM portion_detail pd
+        LEFT JOIN catalog c ON pd.catalog_id = c.id
+        LEFT JOIN manual_intake im ON pd.manual_intake_id = im.id
+        WHERE pd.intake_event_id = %(event_id)s
+          AND pd.{origin_field} = %(origin_id)s
+        ORDER BY pd.id;
+    """
+    return _execute_query_many(
+        connection,
+        query,
+        {"event_id": event_id, "origin_id": origin_id},
+        commit=False,
+    )
+
+
+def delete_event_portion_group(connection, event_id: int, origin: str, origin_id: int) -> bool:
+    """Deletes all rows in an intake event group (same origin + origin_id)."""
+    rows = get_event_portion_rows_by_origin(connection, event_id, origin, origin_id)
+    if not rows:
+        return False
+    ids = [int(row["id"]) for row in rows]
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM portion_detail WHERE id = ANY(%(ids)s);",
+                {"ids": ids},
+            )
+            deleted = cursor.rowcount
+        connection.commit()
+        return deleted == len(ids)
+    except Exception as e:
+        connection.rollback()
+        print(f"Error in query: {e}")
+        return False
+
+
+def consolidate_event_portion_group_amount(
+    connection, event_id: int, origin: str, origin_id: int, total_amount: float
+) -> bool:
+    """Consolidates group rows into one row and sets the total amount."""
+    rows = get_event_portion_rows_by_origin(connection, event_id, origin, origin_id)
+    if not rows:
+        return False
+
+    keep_id = int(rows[0]["id"])
+    delete_ids = [int(row["id"]) for row in rows[1:]]
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE portion_detail SET amount_g = %(amount)s WHERE id = %(id)s;",
+                {"amount": total_amount, "id": keep_id},
+            )
+            if cursor.rowcount != 1:
+                connection.rollback()
+                return False
+
+            if delete_ids:
+                cursor.execute(
+                    "DELETE FROM portion_detail WHERE id = ANY(%(ids)s);",
+                    {"ids": delete_ids},
+                )
+                if cursor.rowcount != len(delete_ids):
+                    connection.rollback()
+                    return False
+        connection.commit()
+        return True
+    except Exception as e:
+        connection.rollback()
+        print(f"Error in query: {e}")
+        return False
+
+
+def update_event_portion_group_field(
+    connection,
+    event_id: int,
+    origin: str,
+    origin_id: int,
+    field_name: str,
+    field_value: Any,
+) -> bool:
+    """Updates a whitelisted field for all rows in an intake event group."""
+    origin_field = _PORTION_ORIGIN_COLUMNS.get(origin)
+    if not origin_field:
+        return False
+
+    allowed_fields = {"offset_minutes", "strictly_weighed", "macros_quality", "is_cooked_weight"}
+    if field_name not in allowed_fields:
+        return False
+
+    query = f"""
+        UPDATE portion_detail pd
+        SET {field_name} = %(value)s
+        WHERE pd.intake_event_id = %(event_id)s
+          AND pd.{origin_field} = %(origin_id)s;
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                query,
+                {"value": field_value, "event_id": event_id, "origin_id": origin_id},
+            )
+            updated = cursor.rowcount
+        connection.commit()
+        return updated > 0
+    except Exception as e:
+        connection.rollback()
+        print(f"Error in query: {e}")
+        return False
 
 
 def get_portion_detail_by_events(connection, intake_event_ids: list[int]) -> list:
