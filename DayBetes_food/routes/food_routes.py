@@ -38,6 +38,7 @@ from DayBetes_food.database.queries.crud import (
     get_category_suggestions,
     get_subtype_suggestions,
     get_manual_origin_suggestions,
+    get_consumed_food_usage_rankings,
     update_portion_detail_amount,
     update_portion_detail_fields,
     delete_portion_detail,
@@ -416,6 +417,122 @@ def _sorted_food_entries(catalog_items, manual_items, recipes, viewer_user_id: i
     return entries
 
 
+def _is_owned_by_viewer(entry_type: str, item: dict, viewer_user_id: int | None) -> bool:
+    if not viewer_user_id:
+        return False
+    raw_owner = item.get("created_by") if entry_type in ("catalog", "manual_intake") else item.get("users_id")
+    try:
+        return int(raw_owner) == int(viewer_user_id)
+    except (TypeError, ValueError):
+        return False
+
+
+def _community_entries(connection, search: str = "") -> list[dict]:
+    viewer_user_id = get_default_user_id(connection)
+    viewer_id = viewer_user_id if viewer_user_id else -1
+    search_value = (search or "").strip() or None
+
+    catalog_items = get_all_catalog(connection, search=search_value, viewer_user_id=viewer_id)
+    manual_items = get_all_manual_intakes(connection, search=search_value, viewer_user_id=viewer_id)
+
+    if viewer_user_id:
+        catalog_items = [item for item in catalog_items if not _is_owned_by_viewer("catalog", item, viewer_user_id)]
+        manual_items = [item for item in manual_items if not _is_owned_by_viewer("manual_intake", item, viewer_user_id)]
+
+    entries = []
+    for item in manual_items:
+        entries.append({"entry_type": "manual_intake", "is_owned": False, **item})
+    for item in catalog_items:
+        entries.append({"entry_type": "catalog", "is_owned": False, **item})
+    return entries
+
+
+def _recommended_entries(connection, search: str = "", days: int = 14) -> list[dict]:
+    viewer_user_id = get_default_user_id(connection)
+    viewer_id = viewer_user_id if viewer_user_id else -1
+    search_value = (search or "").strip() or None
+
+    catalog_items = get_all_catalog(connection, search=search_value, viewer_user_id=viewer_id)
+    manual_items = get_all_manual_intakes(connection, search=search_value, viewer_user_id=viewer_id)
+    catalog_by_id = {int(item["id"]): item for item in catalog_items if item.get("id") is not None}
+    manual_by_id = {int(item["id"]): item for item in manual_items if item.get("id") is not None}
+
+    rankings = get_consumed_food_usage_rankings(connection, days=days)
+    entries = []
+    for row in rankings:
+        entry_type = row.get("entry_type")
+        try:
+            entry_id = int(row.get("entry_id"))
+        except (TypeError, ValueError):
+            continue
+
+        if entry_type == "catalog":
+            item = catalog_by_id.get(entry_id)
+            if not item:
+                continue
+            entries.append(
+                {
+                    "entry_type": "catalog",
+                    "is_owned": _is_owned_by_viewer("catalog", item, viewer_user_id),
+                    "usage_count": int(row.get("usage_count") or 0),
+                    **item,
+                }
+            )
+        elif entry_type == "manual_intake":
+            item = manual_by_id.get(entry_id)
+            if not item:
+                continue
+            entries.append(
+                {
+                    "entry_type": "manual_intake",
+                    "is_owned": _is_owned_by_viewer("manual_intake", item, viewer_user_id),
+                    "usage_count": int(row.get("usage_count") or 0),
+                    **item,
+                }
+            )
+    return entries
+
+
+def _recipes_entries(connection, search: str = "", recipes_mode: str = "mine") -> list[dict]:
+    user_id = get_default_user_id(connection)
+    viewer_id = user_id if user_id else -1
+    clean_search = (search or "").strip() or None
+    mode = (recipes_mode or "mine").strip().lower()
+
+    if mode == "discover":
+        recipes = get_all_recipes(connection, search=clean_search, viewer_user_id=viewer_id)
+        if user_id:
+            recipes = [item for item in recipes if not _is_owned_by_viewer("recipe", item, user_id)]
+    else:
+        mode = "mine"
+        if not user_id:
+            recipes = []
+        else:
+            recipes = get_all_recipes(connection, users_id=user_id, search=clean_search, viewer_user_id=viewer_id)
+
+    return _sorted_food_entries([], [], recipes, viewer_user_id=user_id)
+
+
+def _community_sections_content(entries: list[dict]):
+    grouped = {"catalog": [], "manual_intake": []}
+    for item in entries:
+        entry_type = item.get("entry_type")
+        if entry_type in grouped:
+            grouped[entry_type].append(item)
+
+    nodes = []
+    for entry_type, title in (
+        ("catalog", "Catalog"),
+        ("manual_intake", "Manual"),
+    ):
+        section_items = grouped[entry_type]
+        if not section_items:
+            continue
+        nodes.append(H2(title, cls="text-gray-700"))
+        nodes.extend(FoodCard(item) for item in section_items)
+    return nodes
+
+
 def _entry_owner_id(entry_type: str, entry: dict) -> int | None:
     if not entry:
         return None
@@ -558,13 +675,25 @@ def _error_msg(text: str):
     )
 
 
-SEARCH_PAGE_SIZE = 6
+LIST_PAGE_SIZE = 15
 
 
-def _search_load_more_node(search: str, filter_value: str, next_page: int):
+def _search_load_more_node(
+    search: str,
+    filter_value: str,
+    search_mode: str,
+    food_mode: str,
+    favs_mode: str,
+    recipes_mode: str,
+    next_page: int,
+):
     query = urlencode({
         "search": search,
         "filter": filter_value,
+        "search_mode": search_mode,
+        "food_mode": food_mode,
+        "favs_mode": favs_mode,
+        "recipes_mode": recipes_mode,
         "page": next_page,
     })
     return Div(
@@ -1254,35 +1383,127 @@ def setup_food_routes(rt):
             return render_fragment(P("Could not log food.", cls="text-red-700"))
 
     @rt("/food/list")
-    def get(request: Request, search: str = "", filter: str = "all", page: int = 1):
+    def get(
+        request: Request,
+        search: str = "",
+        filter: str = "all",
+        search_mode: str = "recommended",
+        food_mode: str = "catalog",
+        favs_mode: str = "catalog",
+        recipes_mode: str = "mine",
+        page: int = 1,
+    ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
 
         clean_search = (search or "").strip()
         page = max(1, int(page or 1))
+        food_mode_norm = (food_mode or "catalog").strip().lower()
+        if food_mode_norm not in ("catalog", "manual"):
+            food_mode_norm = "catalog"
+        favs_mode_norm = (favs_mode or "catalog").strip().lower()
+        if favs_mode_norm not in ("catalog", "manual", "recipes"):
+            favs_mode_norm = "catalog"
+        recipes_mode_norm = (recipes_mode or "mine").strip().lower()
+        if recipes_mode_norm not in ("mine", "discover"):
+            recipes_mode_norm = "mine"
         with get_connection() as connection:
-            entries = _filtered_entries(connection, search=clean_search, filter_value=filter)
+            if filter == "all":
+                mode = (search_mode or "recommended").strip().lower()
+                if mode == "global":
+                    entries = _community_entries(connection, search=clean_search)
+                else:
+                    mode = "recommended"
+                    entries = _recommended_entries(connection, search=clean_search, days=28)
+            elif filter == "recipes":
+                mode = (search_mode or "recommended").strip().lower()
+                entries = _recipes_entries(connection, search=clean_search, recipes_mode=recipes_mode_norm)
+            else:
+                mode = (search_mode or "recommended").strip().lower()
+                entries = _filtered_entries(connection, search=clean_search, filter_value=filter)
+                if filter == "food":
+                    desired_entry_type = "catalog" if food_mode_norm == "catalog" else "manual_intake"
+                    entries = [item for item in entries if item.get("entry_type") == desired_entry_type]
+                elif filter == "favs":
+                    desired_entry_type = {
+                        "catalog": "catalog",
+                        "manual": "manual_intake",
+                        "recipes": "recipe",
+                    }[favs_mode_norm]
+                    entries = [item for item in entries if item.get("entry_type") == desired_entry_type]
+
         if not entries:
             return render_fragment(H2("No items", cls="text-gray-600"))
 
-        # Paginate only when the user is actively searching.
-        if not clean_search:
-            return render_fragment(tuple(FoodSectionsContent(entries)))
-
-        start = (page - 1) * SEARCH_PAGE_SIZE
-        end = start + SEARCH_PAGE_SIZE
+        start = (page - 1) * LIST_PAGE_SIZE
+        end = start + LIST_PAGE_SIZE
         chunk = entries[start:end]
         has_more = end < len(entries)
+
+        if filter == "all" and mode == "recommended":
+            nodes = [FoodCard(item) for item in chunk]
+            if has_more:
+                nodes.append(
+                    _search_load_more_node(
+                        clean_search,
+                        filter,
+                        mode,
+                        food_mode_norm,
+                        favs_mode_norm,
+                        recipes_mode_norm,
+                        page + 1,
+                    )
+                )
+            return render_fragment(tuple(nodes))
+
+        if filter == "all" and mode == "global":
+            if page == 1:
+                nodes = list(_community_sections_content(chunk))
+            else:
+                nodes = [FoodCard(item) for item in chunk]
+            if has_more:
+                nodes.append(
+                    _search_load_more_node(
+                        clean_search,
+                        filter,
+                        mode,
+                        food_mode_norm,
+                        favs_mode_norm,
+                        recipes_mode_norm,
+                        page + 1,
+                    )
+                )
+            return render_fragment(tuple(nodes))
 
         if page == 1:
             nodes = list(FoodSectionsContent(chunk))
             if has_more:
-                nodes.append(_search_load_more_node(clean_search, filter, page + 1))
+                nodes.append(
+                    _search_load_more_node(
+                        clean_search,
+                        filter,
+                        mode,
+                        food_mode_norm,
+                        favs_mode_norm,
+                        recipes_mode_norm,
+                        page + 1,
+                    )
+                )
             return render_fragment(tuple(nodes))
 
         nodes = [FoodCard(item) for item in chunk]
         if has_more:
-            nodes.append(_search_load_more_node(clean_search, filter, page + 1))
+            nodes.append(
+                _search_load_more_node(
+                    clean_search,
+                    filter,
+                    mode,
+                    food_mode_norm,
+                    favs_mode_norm,
+                    recipes_mode_norm,
+                    page + 1,
+                )
+            )
         return render_fragment(tuple(nodes))
 
     @rt("/search_food")

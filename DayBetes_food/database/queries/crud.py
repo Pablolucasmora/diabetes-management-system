@@ -648,6 +648,33 @@ def delete_recipe(connection, recipe_id: int) -> bool:
     return result is not None
 
 
+def get_consumed_food_usage_rankings(connection, days: int = 14) -> list[dict]:
+    """Gets food usage rankings from consumed intake events for recent days."""
+    safe_days = max(1, int(days or 14))
+    query = """
+        SELECT 'catalog' AS entry_type, pd.catalog_id AS entry_id, COUNT(*)::int AS usage_count
+        FROM portion_detail pd
+        INNER JOIN intake_event ie ON ie.id = pd.intake_event_id
+        WHERE pd.catalog_id IS NOT NULL
+          AND ie.state = 'consumed'
+          AND ie.meal_time >= NOW() - (%(days)s * INTERVAL '1 day')
+        GROUP BY pd.catalog_id
+
+        UNION ALL
+
+        SELECT 'manual_intake' AS entry_type, pd.manual_intake_id AS entry_id, COUNT(*)::int AS usage_count
+        FROM portion_detail pd
+        INNER JOIN intake_event ie ON ie.id = pd.intake_event_id
+        WHERE pd.manual_intake_id IS NOT NULL
+          AND ie.state = 'consumed'
+          AND ie.meal_time >= NOW() - (%(days)s * INTERVAL '1 day')
+        GROUP BY pd.manual_intake_id
+
+        ORDER BY usage_count DESC, entry_type ASC, entry_id ASC;
+    """
+    return _execute_query_many(connection, query, {"days": safe_days}, commit=False)
+
+
 
 
 # ============================================
