@@ -19,14 +19,12 @@ All functions follow the same pattern:
 - Return ID or result, or None on error
 """
 
-import os
 import re
 from datetime import datetime
 from typing import Optional, Any
 
 from DayBetes_food.auth.context import get_current_user_id
 
-DEFAULT_USER_EMAIL = os.getenv("DEFAULT_USER_EMAIL", "default@daybetes.local")
 TRGM_SIMILARITY_THRESHOLD = 0.25
 _HAS_PG_TRGM = None
 
@@ -139,23 +137,6 @@ def get_all_users(connection) -> list:
     """Gets all users."""
     query = "SELECT * FROM users ORDER BY created_at DESC;"
     return _execute_query_many(connection, query, commit=False)
-
-
-def get_default_user_id(connection) -> Optional[int]:
-    """Gets current authenticated user id, falling back to default user for compatibility."""
-    current_user_id = get_current_user_id()
-    if current_user_id:
-        return current_user_id
-
-    user = get_users_by_email(connection, DEFAULT_USER_EMAIL)
-    if user:
-        return user["id"]
-
-    users = get_all_users(connection)
-    if users:
-        return users[0]["id"]
-
-    return None
 
 
 # ============================================
@@ -422,6 +403,36 @@ def get_all_catalog(
     return _execute_query_many(connection, query, params, commit=False)
 
 
+def catalog_name_brand_exists(
+    connection,
+    name: str,
+    brand: str | None = None,
+    exclude_id: int | None = None,
+) -> bool:
+    normalized_name = " ".join((name or "").strip().split())
+    normalized_brand = normalize_brand_name(brand or "")
+    if not normalized_name:
+        return False
+    params = {
+        "name": normalized_name,
+        "brand": normalized_brand,
+    }
+    exclusion = ""
+    if exclude_id is not None:
+        params["exclude_id"] = exclude_id
+        exclusion = "AND id <> %(exclude_id)s"
+    query = f"""
+        SELECT 1
+        FROM catalog
+        WHERE lower(trim(name)) = lower(trim(%(name)s))
+          AND lower(trim(COALESCE(brand, ''))) = lower(trim(COALESCE(%(brand)s, '')))
+          {exclusion}
+        LIMIT 1;
+    """
+    row = _execute_query(connection, query, params, commit=False)
+    return row is not None
+
+
 def update_catalog_favorite(connection, catalog_id: int, favorite: bool) -> bool:
     """Updates the favorite status of a catalog item."""
     query = "UPDATE catalog SET favorite = %(favorite)s WHERE id = %(id)s RETURNING id;"
@@ -517,6 +528,39 @@ def get_all_manual_intakes(
     query = f"SELECT * FROM manual_intake {where_clause} ORDER BY name;"
     
     return _execute_query_many(connection, query, params, commit=False)
+
+
+def manual_intake_name_origin_exists(
+    connection,
+    users_id: int,
+    name: str,
+    origin: str | None = None,
+    exclude_id: int | None = None,
+) -> bool:
+    normalized_name = " ".join((name or "").strip().split())
+    normalized_origin = " ".join((origin or "").strip().split())
+    if not normalized_name or not users_id:
+        return False
+    params = {
+        "users_id": users_id,
+        "name": normalized_name,
+        "origin": normalized_origin,
+    }
+    exclusion = ""
+    if exclude_id is not None:
+        params["exclude_id"] = exclude_id
+        exclusion = "AND id <> %(exclude_id)s"
+    query = f"""
+        SELECT 1
+        FROM manual_intake
+        WHERE created_by = %(users_id)s
+          AND lower(trim(name)) = lower(trim(%(name)s))
+          AND lower(trim(COALESCE(origin, ''))) = lower(trim(COALESCE(%(origin)s, '')))
+          {exclusion}
+        LIMIT 1;
+    """
+    row = _execute_query(connection, query, params, commit=False)
+    return row is not None
 
 
 def update_manual_intake(connection, intake_id: int, data: dict) -> bool:
@@ -648,31 +692,239 @@ def delete_recipe(connection, recipe_id: int) -> bool:
     return result is not None
 
 
-def get_consumed_food_usage_rankings(connection, days: int = 14) -> list[dict]:
-    """Gets food usage rankings from consumed intake events for recent days."""
-    safe_days = max(1, int(days or 14))
+def get_tag_suggestions(connection, search: str = "", limit: int = 100) -> list[str]:
+    normalized = (search or "").strip()
+    params = {
+        "q": normalized,
+        "q_like": f"%{normalized}%",
+        "q_prefix": f"{normalized.lower()}%",
+        "q_lower": normalized.lower(),
+        "limit": max(1, min(int(limit or 100), 500)),
+    }
     query = """
-        SELECT 'catalog' AS entry_type, pd.catalog_id AS entry_id, COUNT(*)::int AS usage_count
-        FROM portion_detail pd
-        INNER JOIN intake_event ie ON ie.id = pd.intake_event_id
-        WHERE pd.catalog_id IS NOT NULL
-          AND ie.state = 'consumed'
-          AND ie.meal_time >= NOW() - (%(days)s * INTERVAL '1 day')
-        GROUP BY pd.catalog_id
-
-        UNION ALL
-
-        SELECT 'manual_intake' AS entry_type, pd.manual_intake_id AS entry_id, COUNT(*)::int AS usage_count
-        FROM portion_detail pd
-        INNER JOIN intake_event ie ON ie.id = pd.intake_event_id
-        WHERE pd.manual_intake_id IS NOT NULL
-          AND ie.state = 'consumed'
-          AND ie.meal_time >= NOW() - (%(days)s * INTERVAL '1 day')
-        GROUP BY pd.manual_intake_id
-
-        ORDER BY usage_count DESC, entry_type ASC, entry_id ASC;
+        SELECT DISTINCT trim(name) AS name
+        FROM tags
+        WHERE name IS NOT NULL
+          AND trim(name) <> ''
+          AND (%(q)s = '' OR name ILIKE %(q_like)s)
+        ORDER BY
+            CASE
+                WHEN lower(trim(name)) = %(q_lower)s THEN 0
+                WHEN lower(trim(name)) LIKE %(q_prefix)s THEN 1
+                ELSE 2
+            END,
+            trim(name)
+        LIMIT %(limit)s;
     """
-    return _execute_query_many(connection, query, {"days": safe_days}, commit=False)
+    rows = _execute_query_many(connection, query, params, commit=False)
+    return [str(row["name"]) for row in rows if row and row.get("name")]
+
+
+def _normalize_tag_name(tag: str) -> str:
+    return " ".join((tag or "").strip().split())
+
+
+def _tag_color_from_name(tag_name: str) -> str:
+    text = _normalize_tag_name(tag_name).lower()
+    hue = 0
+    for ch in text:
+        hue = (hue * 31 + ord(ch)) % 360
+    return f"hsl({hue} 80% 90%)"
+
+
+def ensure_tag(connection, tag_name: str) -> Optional[int]:
+    clean = _normalize_tag_name(tag_name)
+    if not clean:
+        return None
+    query = """
+        INSERT INTO tags (name, color)
+        VALUES (%(name)s, %(color)s)
+        ON CONFLICT (name) DO UPDATE SET
+            name = EXCLUDED.name,
+            color = COALESCE(NULLIF(tags.color, ''), EXCLUDED.color)
+        RETURNING id;
+    """
+    row = _execute_query(connection, query, {"name": clean, "color": _tag_color_from_name(clean)})
+    return int(row["id"]) if row and row.get("id") is not None else None
+
+
+def get_entry_tags(connection, entry_type: str, entry_id: int) -> list[dict]:
+    entry_col = {"catalog": "catalog_id", "manual_intake": "manual_intake_id", "recipe": "recipe_id"}.get(entry_type)
+    if not entry_col or not entry_id:
+        return []
+    query = f"""
+        SELECT t.id, t.name, t.color
+        FROM linked_tags lt
+        INNER JOIN tags t ON t.id = lt.tag_id
+        WHERE lt.{entry_col} = %(entry_id)s
+        ORDER BY lower(t.name), t.id;
+    """
+    return _execute_query_many(connection, query, {"entry_id": entry_id}, commit=False)
+
+
+def set_entry_tags(connection, entry_type: str, entry_id: int, tag_names: list[str]) -> bool:
+    entry_col = {"catalog": "catalog_id", "manual_intake": "manual_intake_id", "recipe": "recipe_id"}.get(entry_type)
+    if not entry_col or not entry_id:
+        return False
+
+    unique_names = []
+    seen = set()
+    for raw in tag_names or []:
+        clean = _normalize_tag_name(raw)
+        key = clean.lower()
+        if not clean or key in seen:
+            continue
+        seen.add(key)
+        unique_names.append(clean)
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(f"DELETE FROM linked_tags WHERE {entry_col} = %(entry_id)s;", {"entry_id": entry_id})
+            for name in unique_names:
+                cursor.execute(
+                    """
+                    INSERT INTO tags (name, color)
+                    VALUES (%(name)s, %(color)s)
+                    ON CONFLICT (name) DO UPDATE SET
+                        color = COALESCE(NULLIF(tags.color, ''), EXCLUDED.color);
+                    """,
+                    {"name": name, "color": _tag_color_from_name(name)},
+                )
+                cursor.execute(
+                    "SELECT id FROM tags WHERE lower(trim(name)) = lower(trim(%(name)s)) LIMIT 1;",
+                    {"name": name},
+                )
+                tag_row = cursor.fetchone()
+                if not tag_row or tag_row.get("id") is None:
+                    continue
+                cursor.execute(
+                    f"""
+                    INSERT INTO linked_tags (tag_id, {entry_col})
+                    VALUES (%(tag_id)s, %(entry_id)s);
+                    """,
+                    {"tag_id": int(tag_row["id"]), "entry_id": entry_id},
+                )
+        connection.commit()
+        return True
+    except Exception as e:
+        connection.rollback()
+        print(f"Error in query: {e}")
+        return False
+
+
+def get_all_tags(connection, search: str = "", limit: int = 500) -> list[dict]:
+    normalized = (search or "").strip()
+    params = {
+        "q": normalized,
+        "q_like": f"%{normalized}%",
+        "limit": max(1, min(int(limit or 500), 2000)),
+    }
+    query = """
+        SELECT t.id, t.name, t.color, t.description
+        FROM tags t
+        WHERE (%(q)s = '' OR t.name ILIKE %(q_like)s)
+        ORDER BY lower(t.name), t.id
+        LIMIT %(limit)s;
+    """
+    return _execute_query_many(connection, query, params, commit=False)
+
+
+def update_tag(connection, tag_id: int, name: str, color: str) -> bool:
+    clean_name = _normalize_tag_name(name)
+    clean_color = " ".join((color or "").strip().split())
+    if not clean_name or not clean_color:
+        return False
+    query = """
+        UPDATE tags
+        SET name = %(name)s,
+            color = %(color)s
+        WHERE id = %(id)s
+        RETURNING id;
+    """
+    row = _execute_query(connection, query, {"id": tag_id, "name": clean_name, "color": clean_color})
+    return row is not None
+
+
+def get_consumed_food_usage_rankings(connection, users_id: int, days: int = 60) -> list[dict]:
+    """Gets personalized food rankings weighted by frequency and time-of-day proximity."""
+    safe_days = max(1, int(days or 60))
+    query = """
+        WITH base AS (
+            SELECT
+                pd.catalog_id,
+                pd.manual_intake_id,
+                (
+                    EXTRACT(HOUR FROM ie.meal_time) * 60
+                    + EXTRACT(MINUTE FROM ie.meal_time)
+                )::int AS event_minute,
+                (
+                    EXTRACT(HOUR FROM NOW()) * 60
+                    + EXTRACT(MINUTE FROM NOW())
+                )::int AS now_minute
+            FROM portion_detail pd
+            INNER JOIN intake_event ie ON ie.id = pd.intake_event_id
+            WHERE ie.users_id = %(users_id)s
+              AND ie.state = 'consumed'
+              AND ie.meal_time >= NOW() - (%(days)s * INTERVAL '1 day')
+        ),
+        scored AS (
+            SELECT
+                catalog_id,
+                manual_intake_id,
+                LEAST(
+                    ABS(event_minute - now_minute),
+                    1440 - ABS(event_minute - now_minute)
+                )::numeric AS minute_distance
+            FROM base
+        ),
+        catalog_rank AS (
+            SELECT
+                'catalog'::text AS entry_type,
+                catalog_id AS entry_id,
+                COUNT(*)::int AS usage_count,
+                AVG(minute_distance) AS avg_minute_distance,
+                SUM(1.0 / (1.0 + (minute_distance / 60.0))) AS proximity_score
+            FROM scored
+            WHERE catalog_id IS NOT NULL
+            GROUP BY catalog_id
+        ),
+        manual_rank AS (
+            SELECT
+                'manual_intake'::text AS entry_type,
+                manual_intake_id AS entry_id,
+                COUNT(*)::int AS usage_count,
+                AVG(minute_distance) AS avg_minute_distance,
+                SUM(1.0 / (1.0 + (minute_distance / 60.0))) AS proximity_score
+            FROM scored
+            WHERE manual_intake_id IS NOT NULL
+            GROUP BY manual_intake_id
+        ),
+        combined AS (
+            SELECT * FROM catalog_rank
+            UNION ALL
+            SELECT * FROM manual_rank
+        )
+        SELECT
+            entry_type,
+            entry_id,
+            usage_count,
+            avg_minute_distance,
+            proximity_score,
+            (usage_count * 100.0 + proximity_score * 10.0) AS rank_score
+        FROM combined
+        ORDER BY
+            rank_score DESC,
+            usage_count DESC,
+            avg_minute_distance ASC,
+            entry_type ASC,
+            entry_id ASC;
+    """
+    return _execute_query_many(
+        connection,
+        query,
+        {"users_id": users_id, "days": safe_days},
+        commit=False,
+    )
 
 
 
@@ -836,7 +1088,7 @@ def add_portion_detail(
     macros_quality: bool = None,
     plate_amount: float = None,
     is_cooked_weight: bool = False,
-    offset_minutes: int = None
+    offset_minutes: int = None,
 ) -> Optional[int]:
     """Adds a record to portion_detail in a centralized way."""
     if origin not in ("catalog", "manual_intake"):
@@ -847,7 +1099,7 @@ def add_portion_detail(
         raise ValueError("amount_g must be positive")
     if offset_minutes is not None and destination != "intake_event":
         raise ValueError("offset_minutes only for intake_event")
-    
+
     data = {
         "amount_g": amount_g,
         "catalog_id": origin_id if origin == "catalog" else None,
@@ -862,7 +1114,7 @@ def add_portion_detail(
         "macros_quality": macros_quality,
         "plate_amount": plate_amount,
         "is_cooked_weight": is_cooked_weight,
-        "offset_minutes": offset_minutes
+        "offset_minutes": offset_minutes,
     }
     
     query = """
@@ -968,9 +1220,7 @@ def delete_event_portion_group(connection, event_id: int, origin: str, origin_id
         return False
 
 
-def consolidate_event_portion_group_amount(
-    connection, event_id: int, origin: str, origin_id: int, total_amount: float
-) -> bool:
+def consolidate_event_portion_group_amount(connection, event_id: int, origin: str, origin_id: int, total_amount: float) -> bool:
     """Consolidates group rows into one row and sets the total amount."""
     rows = get_event_portion_rows_by_origin(connection, event_id, origin, origin_id)
     if not rows:
@@ -1027,11 +1277,12 @@ def update_event_portion_group_field(
         WHERE pd.intake_event_id = %(event_id)s
           AND pd.{origin_field} = %(origin_id)s;
     """
+    params = {"value": field_value, "event_id": event_id, "origin_id": origin_id}
     try:
         with connection.cursor() as cursor:
             cursor.execute(
                 query,
-                {"value": field_value, "event_id": event_id, "origin_id": origin_id},
+                params,
             )
             updated = cursor.rowcount
         connection.commit()
@@ -1040,8 +1291,6 @@ def update_event_portion_group_field(
         connection.rollback()
         print(f"Error in query: {e}")
         return False
-
-
 def get_portion_detail_by_events(connection, intake_event_ids: list[int]) -> list:
     """Gets all portions for multiple intake events in one query."""
     if not intake_event_ids:

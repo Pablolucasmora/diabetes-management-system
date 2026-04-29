@@ -1,13 +1,13 @@
 from fasthtml.common import *
+from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.cart.cart_components import MacrosSummary
 from DayBetes_food.database.queries.crud import (
     get_cart_events,
-    get_default_user_id,
     get_portion_detail_by_event,
 )
 
 def _menu_cart_summary(connection):
-    user_id = get_default_user_id(connection)
+    user_id = get_current_user_id()
     if not user_id:
         return P("No hay carrito", cls="text-xs md:text-sm text-gray-600 text-center")
 
