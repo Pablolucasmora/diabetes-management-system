@@ -1,15 +1,14 @@
 from fasthtml.common import *
+from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.food.foods import (
     Filters,
     MealSelector,
     QuickCreateButtons,
     SearchInput,
 )
-from DayBetes_food.database.queries.crud import get_default_user_id
-
 
 def food_main(connection):
-    user_id = get_default_user_id(connection)
+    user_id = get_current_user_id()
 
     return Div(
         QuickCreateButtons(),

@@ -687,6 +687,8 @@ def _labeled_input(
     help_text: str = "",
     step: str = "",
     value: str | None = None,
+    select_on_click: bool = True,
+    input_style: str = "",
 ):
     help_value = help_text or f"What to enter in {label}"
     input_id = f"field_{name}"
@@ -698,11 +700,83 @@ def _labeled_input(
             name=name,
             placeholder=placeholder,
             cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-base mr-1",
-            onclick="this.select()",
+            style=input_style,
+            **({"onclick": "this.select()"} if select_on_click else {}),
             **({"step": step} if step else {}),
             **({"value": value} if value is not None else {}),
         ),
         cls="flex flex-col gap-1",
+    )
+
+
+def _tag_badge_style(tag_name: str) -> str:
+    text = (tag_name or "").strip().lower()
+    hue = 0
+    for ch in text:
+        hue = (hue * 31 + ord(ch)) % 360
+    return (
+        f"background:hsl({hue} 80% 90%);"
+        f"border-color:hsl({hue} 70% 55%);"
+        f"color:hsl({hue} 55% 28%);"
+    )
+
+
+def _tags_multiselect_input(
+    tag_options: list[str] | None = None,
+    selected_tags: list[str] | None = None,
+    *,
+    label: str = "Tags",
+    field_name: str = "tags_json",
+    input_style: str = "",
+):
+    options = sorted({(x or "").strip() for x in (tag_options or []) if (x or "").strip()})
+    selected = []
+    seen = set()
+    for raw in (selected_tags or []):
+        clean = " ".join((raw or "").strip().split())
+        key = clean.lower()
+        if clean and key not in seen:
+            seen.add(key)
+            selected.append(clean)
+    input_id = f"field_{field_name}_picker"
+    return Div(
+        _label_with_help(label, "Select one or more tags. You can add new ones with Add.", for_id=input_id),
+        Div(
+            Input(type="hidden", name=field_name, value=json.dumps(selected, ensure_ascii=True), data_tags_hidden="true"),
+            Input(
+                type="text",
+                id=input_id,
+                data_tags_input="true",
+                placeholder="Type to search tags",
+                autocomplete="off",
+                cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-base mr-1",
+                style=input_style,
+            ),
+            Div(
+                data_tags_suggestions="true",
+                cls="absolute left-0 right-0 top-full mt-1 z-[70] rounded-md border border-gray-200 bg-white shadow-lg overflow-hidden",
+                style="display:none;background:#fff;backdrop-filter:none;z-index:70;",
+            ),
+            Div(
+                *[
+                    Div(
+                        Span(tag, cls="text-xs font-semibold"),
+                        Button("x", type="button", data_tags_remove=tag, cls="ml-1 text-xs font-bold"),
+                        data_tags_chip=tag,
+                        cls="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs",
+                        style=_tag_badge_style(tag),
+                    )
+                    for tag in selected
+                ],
+                data_tags_chips="true",
+                cls="mt-2 flex flex-wrap gap-1.5",
+            ),
+            data_tags_multiselect="true",
+            data_tags_options=json.dumps(options, ensure_ascii=True),
+            data_tags_suggest_url="/food/tags/suggestions",
+            cls="relative",
+        ),
+        cls="flex flex-col gap-1 col-span-1 md:col-span-2",
     )
 
 
@@ -1046,6 +1120,211 @@ def _searchable_autocomplete_bootstrap_script():
             bindAll();
           }
           document.body.addEventListener("htmx:afterSwap", bindAll);
+        })();
+        """
+    )
+
+
+def _tags_multiselect_bootstrap_script():
+    return Script(
+        """
+        (function () {
+          if (window.__dbTagsMultiBootstrapped) return;
+          window.__dbTagsMultiBootstrapped = true;
+
+          function norm(v) { return String(v || "").trim().replace(/\\s+/g, " "); }
+          function esc(v) {
+            return String(v || "")
+              .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+              .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+          }
+          function hue(tag) {
+            var s = String(tag || "").toLowerCase();
+            var h = 0;
+            for (var i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) % 360;
+            return h;
+          }
+          function chipStyle(tag) {
+            var h = hue(tag);
+            return "background:hsl(" + h + " 80% 90%);border-color:hsl(" + h + " 70% 55%);color:hsl(" + h + " 55% 28%);";
+          }
+          function parseHidden(hidden) {
+            try {
+              var arr = JSON.parse(hidden.value || "[]");
+              if (!Array.isArray(arr)) return [];
+              return arr.map(norm).filter(Boolean);
+            } catch (_) { return []; }
+          }
+          function writeHidden(hidden, arr) {
+            hidden.value = JSON.stringify(arr);
+            hidden.dispatchEvent(new Event("input", { bubbles: true }));
+            hidden.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+          function readKnown() {
+            try {
+              var raw = window.localStorage ? window.localStorage.getItem("dbKnownTags") : null;
+              var arr = raw ? JSON.parse(raw) : [];
+              return Array.isArray(arr) ? arr.map(norm).filter(Boolean) : [];
+            } catch (_) { return []; }
+          }
+          function writeKnown(values) {
+            try {
+              if (!window.localStorage) return;
+              var seen = {};
+              var out = [];
+              for (var i = 0; i < values.length; i += 1) {
+                var v = norm(values[i]);
+                var k = v.toLowerCase();
+                if (!v || seen[k]) continue;
+                seen[k] = true;
+                out.push(v);
+              }
+              window.localStorage.setItem("dbKnownTags", JSON.stringify(out));
+            } catch (_) {}
+          }
+          function bindOne(root) {
+            if (!root || root.dataset.tagsBound === "1") return;
+            root.dataset.tagsBound = "1";
+            var input = root.querySelector("[data-tags-input='true']");
+            var box = root.querySelector("[data-tags-suggestions='true']");
+            var hidden = root.querySelector("[data-tags-hidden='true']");
+            var chips = root.querySelector("[data-tags-chips='true']");
+            if (!input || !box || !hidden || !chips) return;
+            var options = [];
+            try { options = JSON.parse(root.dataset.tagsOptions || "[]"); } catch (_) { options = []; }
+            options = options.concat(readKnown());
+            var suggestUrl = root.dataset.tagsSuggestUrl || "";
+            var selected = parseHidden(hidden);
+            function mergeOptions(items) {
+              if (!Array.isArray(items)) return;
+              var seen = {};
+              for (var i = 0; i < options.length; i += 1) {
+                var ok = norm(options[i]).toLowerCase();
+                if (ok) seen[ok] = true;
+              }
+              for (var j = 0; j < items.length; j += 1) {
+                var clean = norm(items[j]);
+                var key = clean.toLowerCase();
+                if (!clean || seen[key]) continue;
+                seen[key] = true;
+                options.push(clean);
+              }
+            }
+            function refreshOptions(q, done) {
+              if (!suggestUrl) { if (done) done(); return; }
+              var url = suggestUrl + "?q=" + encodeURIComponent(q || "");
+              fetch(url, { credentials: "same-origin" })
+                .then(function (res) { return res.ok ? res.json() : null; })
+                .then(function (payload) {
+                  if (payload && Array.isArray(payload.tags)) mergeOptions(payload.tags);
+                })
+                .catch(function () {})
+                .finally(function () { if (done) done(); });
+            }
+            function selectedSet() {
+              var s = {};
+              for (var i = 0; i < selected.length; i += 1) s[selected[i].toLowerCase()] = true;
+              return s;
+            }
+            function syncChips() {
+              chips.innerHTML = "";
+              for (var i = 0; i < selected.length; i += 1) {
+                var tag = selected[i];
+                var safe = esc(tag);
+                chips.insertAdjacentHTML("beforeend",
+                  "<div data-tags-chip='" + safe + "' class='inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs' style='" + chipStyle(tag) + "'>" +
+                  "<span class='text-xs font-semibold'>" + safe + "</span>" +
+                  "<button type='button' data-tags-remove='" + safe + "' class='ml-1 text-xs font-bold'>x</button>" +
+                  "</div>"
+                );
+              }
+              writeHidden(hidden, selected);
+              writeKnown(options.concat(selected));
+            }
+            function closeBox() { box.style.display = "none"; box.innerHTML = ""; root.style.zIndex = ""; }
+            function render() {
+              var qRaw = norm(input.value);
+              var q = qRaw.toLowerCase();
+              var rows = [];
+              var sel = selectedSet();
+              for (var i = 0; i < options.length; i += 1) {
+                var name = norm(options[i]);
+                if (!name || sel[name.toLowerCase()]) continue;
+                if (q && name.toLowerCase().indexOf(q) === -1) continue;
+                var safe = esc(name);
+                rows.push("<li class='border-b border-gray-200'><button type='button' data-tags-pick='" + safe + "' class='w-full text-left px-3 py-2 bg-white hover:bg-gray-200 text-sm text-gray-800'>" + safe + "</button></li>");
+              }
+              var exactExists = options.some(function (x) { return norm(x).toLowerCase() === q; });
+              if (q && !exactExists && !sel[q]) {
+                rows.push("<li class='border-b border-gray-200'><button type='button' data-tags-add='true' class='w-full text-left px-3 py-2 bg-white hover:bg-gray-200 text-sm font-semibold text-gray-800'>Add: '" + esc(qRaw) + "'</button></li>");
+              }
+              if (!rows.length) { closeBox(); return; }
+              box.innerHTML = "<div class='p-0 max-h-44 overflow-y-auto'><ul>" + rows.join("") + "</ul></div>";
+              box.style.display = "block";
+              root.style.zIndex = "80";
+            }
+            box.addEventListener("click", function (ev) {
+              var t = ev.target;
+              if (!t || !t.dataset) return;
+              var pick = t.dataset.tagsPick;
+              if (pick) {
+                var clean = norm(pick);
+                if (clean && !selectedSet()[clean.toLowerCase()]) selected.push(clean);
+                if (!options.some(function (x) { return norm(x).toLowerCase() === clean.toLowerCase(); })) options.push(clean);
+                input.value = "";
+                syncChips();
+                closeBox();
+                return;
+              }
+              if (t.dataset.tagsAdd === "true") {
+                var add = norm(input.value);
+                if (!add) return;
+                if (!selectedSet()[add.toLowerCase()]) selected.push(add);
+                if (!options.some(function (x) { return norm(x).toLowerCase() === add.toLowerCase(); })) options.push(add);
+                input.value = "";
+                syncChips();
+                closeBox();
+              }
+            });
+            chips.addEventListener("click", function (ev) {
+              var t = ev.target;
+              if (!t || !t.dataset || !t.dataset.tagsRemove) return;
+              var rem = norm(t.dataset.tagsRemove).toLowerCase();
+              selected = selected.filter(function (x) { return x.toLowerCase() !== rem; });
+              syncChips();
+            });
+            input.addEventListener("focus", function () {
+              refreshOptions("", render);
+            });
+            input.addEventListener("input", function () {
+              refreshOptions(norm(input.value), render);
+            });
+            input.addEventListener("blur", function () {
+              setTimeout(function () {
+                if (!root.contains(document.activeElement)) closeBox();
+              }, 0);
+            });
+            input.addEventListener("keydown", function (ev) { if (ev.key === "Escape") closeBox(); });
+            document.addEventListener("mousedown", function (ev) {
+              if (!root.contains(ev.target)) closeBox();
+            });
+            document.addEventListener("click", function (ev) {
+              if (!root.contains(ev.target)) closeBox();
+            });
+            refreshOptions("", function () {});
+            syncChips();
+          }
+          function bindAll(scope) {
+            var root = scope || document;
+            var nodes = root.querySelectorAll("[data-tags-multiselect='true']");
+            for (var i = 0; i < nodes.length; i += 1) bindOne(nodes[i]);
+          }
+          if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { bindAll(document); });
+          else bindAll(document);
+          document.body.addEventListener("htmx:afterSwap", function (event) {
+            var target = event && event.detail ? event.detail.target : null;
+            bindAll(target || document);
+          });
         })();
         """
     )
@@ -1423,7 +1702,12 @@ def CreateCatalogPanel(
                 _labeled_input("Fiber/100g", "fiber_100g", "number"),
                 _labeled_input("Caffeine", "caffeine", "number"),
                 _labeled_input("Alcohol", "alcohol", "number"),
-                _labeled_input("Barcode", "barcode"),
+                _labeled_input(
+                    "Barcode",
+                    "barcode",
+                    select_on_click=False,
+                    input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
+                ),
                 _labeled_input("Cooking factor", "cooking_factor", "number", step="any"),
                 _create_flags_row(),
                 cls="grid grid-cols-2 gap-2",
@@ -1535,6 +1819,7 @@ def _create_page_shell(title: str, form, result_id: str):
         Div(id=result_id, cls="text-xs w-full"),
         _form_draft_bootstrap_script(),
         _searchable_autocomplete_bootstrap_script(),
+        _tags_multiselect_bootstrap_script(),
         Script(src="/js/smart_macros.js?v=2", defer="defer"),
         data_hide_cart="true",
         cls="""
@@ -1554,6 +1839,7 @@ def CreateCatalogPage(
     subtype_options: list[str] | None = None,
     prefill: dict | None = None,
     existing_item_id: int | None = None,
+    tag_options: list[str] | None = None,
 ):
     result_id = "create_catalog_result_page"
     data = prefill or {}
@@ -1596,6 +1882,11 @@ def CreateCatalogPage(
                 favorite_checked=True,
                 private_checked=str(data.get("is_private") or "").strip().lower() in ("1", "true", "on", "yes"),
             ),
+            _tags_multiselect_input(
+                tag_options=tag_options,
+                selected_tags=[],
+                input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
+            ),
             _advanced_toggle("catalog_advanced"),
             Div(
                 _searchable_autocomplete_input(
@@ -1618,7 +1909,14 @@ def CreateCatalogPage(
                 _labeled_input("Yuka (0-100)", "yuka", "number", help_text="Optional Yuka-style score from 0 to 100.", value=_pv("yuka")),
                 _labeled_input("Caffeine", "caffeine", "number", help_text="Caffeine content in mg per 100g/ml.", value=_pv("caffeine")),
                 _labeled_input("Alcohol", "alcohol", "number", help_text="Alcohol content in grams per 100g/ml.", value=_pv("alcohol")),
-                _labeled_input("Barcode", "barcode", value=initial_barcode, help_text="Optional product barcode."),
+                _labeled_input(
+                    "Barcode",
+                    "barcode",
+                    value=initial_barcode,
+                    help_text="Optional product barcode.",
+                    select_on_click=False,
+                    input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
+                ),
                 _labeled_input("Cooking factor", "cooking_factor", "number", help_text="Raw/cooked weight conversion factor.", step="any", value=_pv("cooking_factor")),
                 id="catalog_advanced",
                 cls=advanced_cls,
@@ -1651,7 +1949,11 @@ def CreateCatalogPage(
     return _create_page_shell("Create Catalog", form, result_id)
 
 
-def CreateManualPage(subtype_options: list[str] | None = None, origin_options: list[str] | None = None):
+def CreateManualPage(
+    subtype_options: list[str] | None = None,
+    origin_options: list[str] | None = None,
+    tag_options: list[str] | None = None,
+):
     result_id = "create_manual_result_page"
     form = Form(
         Div(
@@ -1674,6 +1976,11 @@ def CreateManualPage(subtype_options: list[str] | None = None, origin_options: l
             _labeled_input("Amount g*", "amount_g", "number", help_text="Consumed amount in grams/ml. Required."),
             _smart_macros_block("manual"),
             _create_flags_row(),
+            _tags_multiselect_input(
+                tag_options=tag_options,
+                selected_tags=[],
+                input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
+            ),
             _advanced_toggle("manual_advanced"),
             Div(
                 _labeled_input("Caffeine", "caffeine", "number", help_text="Caffeine content in mg per 100g/ml."),
@@ -1696,13 +2003,18 @@ def CreateManualPage(subtype_options: list[str] | None = None, origin_options: l
     return _create_page_shell("Create Manual Intake", form, result_id)
 
 
-def CreateRecipePage():
+def CreateRecipePage(tag_options: list[str] | None = None):
     result_id = "create_recipe_result_page"
     form = Form(
         Div(
             _labeled_input("Name*", "name", help_text="Recipe name. Required."),
             _labeled_select("Meal type", "meal_type", MEAL_TYPES, help_text="When this recipe is usually eaten."),
             _create_flags_row(),
+            _tags_multiselect_input(
+                tag_options=tag_options,
+                selected_tags=[],
+                input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
+            ),
             _advanced_toggle("recipe_advanced"),
             Div(
                 Div(
@@ -1744,6 +2056,7 @@ def _edit_page_shell(form, result_id: str):
         Div(id=result_id, cls="text-xs w-full"),
         _form_draft_bootstrap_script(),
         _searchable_autocomplete_bootstrap_script(),
+        _tags_multiselect_bootstrap_script(),
         data_hide_cart="true",
         cls="""
             flex flex-col items-center
@@ -1791,11 +2104,21 @@ def EditCatalogPage(
     category_options: list[str] | None = None,
     subtype_options: list[str] | None = None,
     show_private: bool = False,
+    tag_options: list[str] | None = None,
+    selected_tags: list[str] | None = None,
 ):
     result_id = f"edit_catalog_result_{entry['id']}"
     form = Form(
         _edit_name_input(_input_value(entry.get("name"))),
         _edit_tile(_brand_autocomplete_input(brand_options=brand_options, value=_input_value(entry.get("brand")))),
+        _edit_tile(
+            _tags_multiselect_input(
+                tag_options=tag_options,
+                selected_tags=selected_tags or [],
+                input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
+            ),
+            cls="w-full",
+        ),
         Div(
             H2("Macros Summary", cls="font-semibold text-gray-900"),
             Div(
@@ -1822,7 +2145,15 @@ def EditCatalogPage(
                 _edit_tile(_labeled_input("Yuka (0-100)", "yuka", "number", value=_input_value(entry.get("yuka")))),
                 _edit_tile(_labeled_input("Caffeine", "caffeine", "number", value=_input_value(entry.get("caffeine")))),
                 _edit_tile(_labeled_input("Alcohol", "alcohol", "number", value=_input_value(entry.get("alcohol")))),
-                _edit_tile(_labeled_input("Barcode", "barcode", value=_input_value(entry.get("barcode")))),
+                _edit_tile(
+                    _labeled_input(
+                        "Barcode",
+                        "barcode",
+                        value=_input_value(entry.get("barcode")),
+                        select_on_click=False,
+                        input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
+                    )
+                ),
                 _edit_tile(_labeled_input("Cooking factor", "cooking_factor", "number", step="any", value=_input_value(entry.get("cooking_factor")))),
                 cls="grid grid-cols-1 md:grid-cols-2 gap-2",
             ),
@@ -1861,11 +2192,21 @@ def EditManualPage(
     subtype_options: list[str] | None = None,
     origin_options: list[str] | None = None,
     show_private: bool = False,
+    tag_options: list[str] | None = None,
+    selected_tags: list[str] | None = None,
 ):
     result_id = f"edit_manual_result_{entry['id']}"
     form = Form(
         _edit_name_input(_input_value(entry.get("name"))),
         _edit_tile(_searchable_autocomplete_input("Brand / Origin", "source_origin", origin_options or [], allow_add=True, value=_input_value(entry.get("origin")))),
+        _edit_tile(
+            _tags_multiselect_input(
+                tag_options=tag_options,
+                selected_tags=selected_tags or [],
+                input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
+            ),
+            cls="w-full",
+        ),
         Div(
             H2("Macros Summary", cls="font-semibold text-gray-900"),
             Div(
@@ -1935,10 +2276,23 @@ def EditManualPage(
     return _edit_page_shell(form, result_id)
 
 
-def EditRecipePage(entry: dict, show_private: bool = False):
+def EditRecipePage(
+    entry: dict,
+    show_private: bool = False,
+    tag_options: list[str] | None = None,
+    selected_tags: list[str] | None = None,
+):
     result_id = f"edit_recipe_result_{entry['id']}"
     form = Form(
         _edit_name_input(_input_value(entry.get("name"))),
+        _edit_tile(
+            _tags_multiselect_input(
+                tag_options=tag_options,
+                selected_tags=selected_tags or [],
+                input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
+            ),
+            cls="w-full",
+        ),
         Div(
             H2("Details", cls="font-semibold text-gray-900"),
             Div(
@@ -2370,6 +2724,7 @@ def FoodDetailPage(
     entry: dict,
     summary: dict,
     recipe_portions: list[dict] | None = None,
+    tags: list[dict] | list[str] | None = None,
     can_edit: bool = True,
     can_delete: bool = False,
 ):
@@ -2431,6 +2786,28 @@ def FoodDetailPage(
                 Div(
                     H1(entry.get("name") or "-", cls="text-2xl font-bold text-gray-900"),
                     P(subtitle, cls="text-sm text-gray-600"),
+                    (
+                        Div(
+                            *[
+                                Span(
+                                    (tag.get("name") if isinstance(tag, dict) else str(tag)),
+                                    cls="inline-flex items-center rounded-full border px-2 py-1 text-xs font-semibold",
+                                    style=(
+                                        (
+                                            f"background:{str(tag.get('color') or '')};"
+                                            if isinstance(tag, dict) and str(tag.get("color") or "").strip()
+                                            else _tag_badge_style(str(tag.get("name") if isinstance(tag, dict) else tag))
+                                        )
+                                        + "border-color:rgba(0,0,0,0.2);color:rgba(17,24,39,0.95);"
+                                    ),
+                                )
+                                for tag in (tags or [])
+                            ],
+                            cls="flex flex-wrap gap-1.5 pt-1",
+                        )
+                        if tags
+                        else ""
+                    ),
                     cls="flex flex-col gap-1",
                 ),
                 (
@@ -2735,9 +3112,20 @@ def FoodDetailPage(
 
 def RecipeIngredientPickerCard(food: dict, recipe_id: int):
     add_path = f"/food/recipe/{recipe_id}/ingredients/add/{food['entry_type']}/{food['id']}"
+    subtitle = ""
+    if food.get("entry_type") == "catalog":
+        subtitle = (food.get("brand") or "").strip()
+    elif food.get("entry_type") == "manual_intake":
+        subtitle = (food.get("origin") or "").strip()
+
+    title_node = H1(
+        Span(food["name"]),
+        Span(f"({subtitle})", cls="text-xs text-gray-500 font-medium") if subtitle else "",
+        cls="text-left font-semibold flex flex-wrap items-baseline gap-1",
+    )
     return Div(
         Div(
-            H1(food["name"], cls="text-left font-semibold"),
+            title_node,
             Div(_entry_meta(food), cls="text-sm text-gray-700"),
             cls="flex flex-col gap-0.5 min-w-0",
         ),

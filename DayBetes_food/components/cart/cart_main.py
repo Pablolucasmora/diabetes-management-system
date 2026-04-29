@@ -1,15 +1,15 @@
 from fasthtml.common import *
+from DayBetes_food.auth.context import get_current_user_id
 
 from DayBetes_food.components.cart.cart_components import CartCard
 from DayBetes_food.database.queries.crud import (
     get_cart_events,
-    get_default_user_id,
     get_portion_detail_by_events,
 )
 
 
 def cart_main(connection):
-    user_id = get_default_user_id(connection)
+    user_id = get_current_user_id()
     if not user_id:
         return Div(H2("No users"), cls="flex flex-col items-center")
 

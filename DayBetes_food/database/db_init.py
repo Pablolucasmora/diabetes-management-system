@@ -208,7 +208,6 @@ def _ensure_copy_origin_schema(cursor):
         cursor.execute("ALTER TABLE manual_intake ADD COLUMN origin_root_id INTEGER REFERENCES manual_intake(id) ON DELETE SET NULL;")
     if not _has_column(cursor, "recipe", "origin_root_id"):
         cursor.execute("ALTER TABLE recipe ADD COLUMN origin_root_id INTEGER REFERENCES recipe(id) ON DELETE SET NULL;")
-
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_origin_root ON catalog (origin_root_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_origin_root ON manual_intake (origin_root_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_origin_root ON recipe (origin_root_id);")
@@ -258,6 +257,76 @@ def _ensure_food_filter_indexes(cursor):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_visibility ON recipe (is_private, users_id);")
 
 
+def _ensure_tags_color_schema(cursor):
+    if not _has_column(cursor, "tags", "color"):
+        cursor.execute("ALTER TABLE tags ADD COLUMN color VARCHAR(64);")
+    cursor.execute(
+        """
+        UPDATE tags
+        SET color = 'hsl(' || (
+            (('x' || substr(md5(lower(trim(name))), 1, 8))::bit(32)::int % 360 + 360) % 360
+        ) || ' 80% 90%)'
+        WHERE color IS NULL OR trim(color) = '';
+        """
+    )
+    cursor.execute("ALTER TABLE tags ALTER COLUMN color SET DEFAULT 'hsl(0 80% 90%)';")
+    cursor.execute("ALTER TABLE tags ALTER COLUMN color SET NOT NULL;")
+
+
+def _ensure_food_name_origin_uniqueness(cursor):
+    # Drop legacy unique constraints that only considered `name`.
+    cursor.execute(
+        """
+        SELECT con.conname
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+        WHERE rel.relname = 'catalog'
+          AND con.contype = 'u'
+          AND pg_get_constraintdef(con.oid) ILIKE 'UNIQUE (name)%';
+        """
+    )
+    for row in cursor.fetchall() or []:
+        name = row.get("conname")
+        if name:
+            cursor.execute(f'ALTER TABLE catalog DROP CONSTRAINT IF EXISTS "{name}";')
+
+    cursor.execute(
+        """
+        SELECT con.conname
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+        WHERE rel.relname = 'manual_intake'
+          AND con.contype = 'u'
+          AND pg_get_constraintdef(con.oid) ILIKE 'UNIQUE (created_by, name)%';
+        """
+    )
+    for row in cursor.fetchall() or []:
+        name = row.get("conname")
+        if name:
+            cursor.execute(f'ALTER TABLE manual_intake DROP CONSTRAINT IF EXISTS "{name}";')
+
+    # Enforce normalized uniqueness (case-insensitive and space-trimmed).
+    cursor.execute("SAVEPOINT food_name_origin_uniqueness;")
+    try:
+        cursor.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_catalog_name_brand_norm
+            ON catalog (lower(trim(name)), lower(trim(COALESCE(brand, ''))));
+            """
+        )
+        cursor.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_manual_created_name_origin_norm
+            ON manual_intake (created_by, lower(trim(name)), lower(trim(COALESCE(origin, ''))));
+            """
+        )
+        cursor.execute("RELEASE SAVEPOINT food_name_origin_uniqueness;")
+    except Exception as exc:
+        cursor.execute("ROLLBACK TO SAVEPOINT food_name_origin_uniqueness;")
+        cursor.execute("RELEASE SAVEPOINT food_name_origin_uniqueness;")
+        print(f"Warning: food uniqueness migration skipped: {exc}")
+
+
 def init_db():
     conn = get_connection()
     cur = conn.cursor()
@@ -282,6 +351,8 @@ def init_db():
 
         _ensure_trgm_search(cur)
         _ensure_food_filter_indexes(cur)
+        _ensure_tags_color_schema(cur)
+        _ensure_food_name_origin_uniqueness(cur)
         _drop_legacy_category_check(cur)
         _ensure_catalog_schema(cur)
         _ensure_privacy_schema(cur)

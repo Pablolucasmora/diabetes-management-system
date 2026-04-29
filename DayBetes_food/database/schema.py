@@ -53,7 +53,7 @@ class DBSchema:
         id SERIAL PRIMARY KEY,
         created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         origin_root_id INTEGER REFERENCES catalog(id) ON DELETE SET NULL,
-        name VARCHAR(255) NOT NULL UNIQUE, -- Product name
+        name VARCHAR(255) NOT NULL, -- Product name
         brand VARCHAR(255), -- Brand name
         category VARCHAR(100) NOT NULL,
         subtype VARCHAR(100) NOT NULL, -- More specific food category (e.g. yogurt, milk, biscuit, turkey, sweet potato, avocado...). This variable will also be used in the future to estimate macros based on meals of the same subtype for which we have nutritional info.
@@ -115,7 +115,7 @@ class DBSchema:
         favorite BOOLEAN DEFAULT FALSE, -- Same as in catalog
         is_private BOOLEAN NOT NULL DEFAULT FALSE, -- True: only creator can view it
 
-        UNIQUE (created_by, name)
+        UNIQUE (created_by, name, origin)
     );
     """
 
@@ -134,6 +134,7 @@ class DBSchema:
     CREATE TABLE IF NOT EXISTS tags (
         id SERIAL PRIMARY KEY,
         name VARCHAR(100) UNIQUE NOT NULL, -- Tag name, such as "low fat", "high protein"...
+        color VARCHAR(64) NOT NULL DEFAULT 'hsl(0 80% 90%)',
         description TEXT -- Description of what the tag means
     );
     """
