@@ -1349,7 +1349,7 @@ def setup_food_routes(rt):
             event_data = get_intake_event(connection, event_id)
             offset_minutes = 0
             if event_data and event_data.get("meal_time"):
-                delta = datetime.now() - event_data["meal_time"]
+                delta = datetime.utcnow() - event_data["meal_time"]
                 offset_minutes = int(delta.total_seconds() // 60)
 
             created = []
@@ -1611,7 +1611,7 @@ def setup_food_routes(rt):
                 event_data = get_intake_event(connection, event_id)
                 offset_minutes = 0
                 if event_data and event_data.get("meal_time"):
-                    delta = datetime.now() - event_data["meal_time"]
+                    delta = datetime.utcnow() - event_data["meal_time"]
                     offset_minutes = int(delta.total_seconds() // 60)
 
                 portion_id = add_portion_detail(
@@ -1652,7 +1652,7 @@ def setup_food_routes(rt):
             event_data = get_intake_event(connection, event_id)
             offset_minutes = 0
             if event_data and event_data.get("meal_time"):
-                delta = datetime.now() - event_data["meal_time"]
+                delta = datetime.utcnow() - event_data["meal_time"]
                 offset_minutes = int(delta.total_seconds() // 60)
 
             portion_id = add_portion_detail(
@@ -1696,7 +1696,7 @@ def setup_food_routes(rt):
             event_data = get_intake_event(connection, event_id)
             offset_minutes = 0
             if event_data and event_data.get("meal_time"):
-                delta = datetime.now() - event_data["meal_time"]
+                delta = datetime.utcnow() - event_data["meal_time"]
                 offset_minutes = int(delta.total_seconds() // 60)
 
             recipe_portions = get_portion_detail_by_recipe(connection, recipe_id)

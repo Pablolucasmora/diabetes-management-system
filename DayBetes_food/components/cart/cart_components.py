@@ -1,4 +1,3 @@
-from datetime import datetime
 from fasthtml.common import *
 
 from DayBetes_food.components.cart.cart_shared import (
@@ -13,6 +12,7 @@ from DayBetes_food.components.cart.cart_shared import (
     portion_name,
     unit_amount,
 )
+from DayBetes_food.time_utils import local_now, utc_naive_to_local
 
 
 def _check_icon():
@@ -121,7 +121,7 @@ def ConfirmActionModal(modal_id: str, title: str, question: str, yes_button):
 
 
 def EventHeader(event):
-    meal_time = event.get("meal_time") or datetime.now()
+    meal_time = utc_naive_to_local(event.get("meal_time")) or local_now()
     event_name_id = f"event_name_{event['id']}"
     meal_hour_id = f"meal_hour_{event['id']}"
     meal_date_id = f"meal_date_{event['id']}"

@@ -1,4 +1,3 @@
-from datetime import datetime
 from fasthtml.common import *
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.stats.stats_calculations import get_stats_payload
@@ -9,6 +8,7 @@ from DayBetes_food.components.stats.stats_sections import (
     stats_header,
 )
 from DayBetes_food.components.stats.stats_shared import STATS_PAGE_CLS
+from DayBetes_food.time_utils import local_today
 
 
 def stats_main(connection):
@@ -16,7 +16,7 @@ def stats_main(connection):
     if not user_id:
         return Div(no_user_section(), cls=STATS_PAGE_CLS)
 
-    today = datetime.now().date()
+    today = local_today()
     payload = get_stats_payload(connection, user_id=user_id, today=today)
 
     return Div(

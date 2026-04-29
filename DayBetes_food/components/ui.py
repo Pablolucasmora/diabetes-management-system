@@ -72,6 +72,7 @@ def _base_html_shell(content_html: str) -> str:
     <script src="/js/page_loading.js" defer></script>
     <script src="/js/island_indicator.js" defer></script>
     <script src="/js/browser_tweaks.js" defer></script>
+    <script src="/js/food_quick_create.js" defer></script>
     <script src="/js/cart_units.js" defer></script>
     <script src="/js/food_detail.js" defer></script>
     <script src="/js/scanner.js" defer></script>

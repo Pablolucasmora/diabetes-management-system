@@ -4,6 +4,7 @@ from DayBetes_food.components.cart.cart_components import MacrosSummary
 from DayBetes_food.components.ui import render_fragment, render_page
 from datetime import datetime
 from DayBetes_food.database.connection import get_connection
+from DayBetes_food.time_utils import local_naive_to_utc, utc_naive_to_local
 from DayBetes_food.database.queries.crud import (
     change_event_status,
     consolidate_event_portion_group_amount,
@@ -60,15 +61,15 @@ def setup_cart_routes(rt):
             event = get_intake_event(connection, event_id)
             if not event or not event.get("meal_time"):
                 return HTMLResponse(status_code=404)
-            current = event["meal_time"]
+            current_local = utc_naive_to_local(event["meal_time"])
             if meal_date:
                 try:
                     chosen_date = datetime.strptime(meal_date, "%Y-%m-%d").date()
                 except ValueError:
                     return HTMLResponse(status_code=400)
             else:
-                chosen_date = current.date()
-            updated = datetime.combine(chosen_date, parsed_time)
+                chosen_date = current_local.date() if current_local else datetime.utcnow().date()
+            updated = local_naive_to_utc(datetime.combine(chosen_date, parsed_time))
             ok = update_intake_event(connection, event_id, {"meal_time": updated})
             return _cart_response(connection, status=200 if ok else 400)
 

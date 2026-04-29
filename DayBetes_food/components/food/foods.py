@@ -3,6 +3,7 @@ from fasthtml.common import *
 
 from DayBetes_food.database.queries.crud import get_cart_events
 from DayBetes_food.components.cart.cart_shared import CHECKBOX_CLS
+from DayBetes_food.time_utils import utc_naive_to_local
 
 
 CATEGORY_OPTIONS = [
@@ -151,14 +152,19 @@ def ConfirmActionModal(modal_id: str, title: str, question: str, yes_button):
 def MealSelector(connection, user_id: int, selected_id: int = None):
     events = get_cart_events(connection, user_id)
 
-    options = [
-        Option(
-            event["name"] or f"Meal {event['meal_time'].strftime('%H:%M')}",
-            value=str(event["id"]),
-            selected=(event["id"] == selected_id),
+    options = []
+    for event in events:
+        local_meal_time = utc_naive_to_local(event.get("meal_time"))
+        label = event["name"] or (
+            f"Meal {local_meal_time.strftime('%H:%M')}" if local_meal_time else f"Meal {event['id']}"
         )
-        for event in events
-    ]
+        options.append(
+            Option(
+                label,
+                value=str(event["id"]),
+                selected=(event["id"] == selected_id),
+            )
+        )
 
     if not options:
         options = [Option("- No meals yet -", value="", cls="text-gray-500/50")]
@@ -317,6 +323,7 @@ def Filters():
             cls="""
                 relative
                 flex items-center justify-between
+                z-20
                 gap-3
                 w-full
                 rounded-full
@@ -1644,35 +1651,116 @@ def _advanced_toggle(section_id: str):
 
 
 def QuickCreateButtons():
+    menu_button_cls = """
+        web_button
+        h-12 w-12 md:h-14 md:w-14 p-3 md:p-4
+        rounded-3xl md:rounded-4xl
+        bg-[#f6f2eb]/50 backdrop-blur-lg
+        border border-white/80
+        shadow-md
+        flex items-center justify-center
+        transition-transform duration-150
+        hover:scale-[1.04]
+        active:scale-95
+    """
+    menu_panel_cls = """
+        absolute top-full right-0 z-[63] mt-3
+        w-[min(52vw,calc(100vw-1.5rem))]
+        min-w-[24rem]
+        rounded-3xl
+        border border-white/80
+        shadow-lg
+        ring-1 ring-inset ring-white/20
+        p-3
+        grid grid-cols-2 gap-2
+        auto-rows-fr
+    """
+    option_button_cls = """
+        web_button w-full h-full min-h-0 px-3 py-3 rounded-[1.1rem]
+        text-left shadow-none
+        flex flex-col items-start justify-between gap-1
+    """
     return Div(
-        Button(
-            "Add catalog",
-            type="button",
-            cls="web_button px-2 py-1 text-[10px] md:text-xs w-full",
-            hx_get="/food/create/catalog/form",
-            hx_target="#main_content",
-            hx_swap="innerHTML",
-            hx_push_url="true",
+        Div(
+            Button(
+                Img(src="/images/ui/plus_icon.svg", alt="", cls="h-6 w-6"),
+                type="button",
+                aria_label="Open add menu",
+                cls=menu_button_cls,
+                id="food_quick_create_toggle",
+                aria_controls="food_quick_create_menu",
+                aria_expanded="false",
+            ),
+            Div(
+                Button(
+                    Div(
+                        Span("Add catalog", cls="font-semibold text-gray-900"),
+                        Span("Create a new food item", cls="text-[11px] text-gray-500"),
+                        cls="flex flex-col items-start gap-0.5",
+                    ),
+                    type="button",
+                    cls=option_button_cls,
+                    hx_get="/food/create/catalog/form",
+                    hx_target="#main_content",
+                    hx_swap="innerHTML",
+                    hx_push_url="true",
+                ),
+                Button(
+                    Div(
+                        Span("Add manual", cls="font-semibold text-gray-900"),
+                        Span("Create a manual intake", cls="text-[11px] text-gray-500"),
+                        cls="flex flex-col items-start gap-0.5",
+                    ),
+                    type="button",
+                    cls=option_button_cls,
+                    hx_get="/food/create/manual/form",
+                    hx_target="#main_content",
+                    hx_swap="innerHTML",
+                    hx_push_url="true",
+                ),
+                Button(
+                    Div(
+                        Span("Add recipe", cls="font-semibold text-gray-900"),
+                        Span("Create a recipe entry", cls="text-[11px] text-gray-500"),
+                        cls="flex flex-col items-start gap-0.5",
+                    ),
+                    type="button",
+                    cls=option_button_cls,
+                    hx_get="/food/create/recipe/form",
+                    hx_target="#main_content",
+                    hx_swap="innerHTML",
+                    hx_push_url="true",
+                ),
+                Button(
+                    Div(
+                        Div(
+                            Span("Scanner", cls="font-semibold text-gray-900"),
+                            Span("Open the barcode scanner", cls="text-[11px] text-gray-500"),
+                            cls="flex flex-col items-start gap-0.5",
+                        ),
+                        cls="flex flex-col items-start gap-2",
+                    ),
+                    type="button",
+                    cls=option_button_cls,
+                    hx_get="/scanner",
+                    hx_target="#main_content",
+                    hx_swap="innerHTML",
+                    hx_push_url="true",
+                ),
+                id="food_quick_create_menu",
+                role="menu",
+                aria_label="Create food menu",
+                cls=menu_panel_cls,
+                style=(
+                    "background:#f6f2eb;"
+                    "visibility:hidden; opacity:0; transform:translateY(-8px) scale(0.97);"
+                    "pointer-events:none;"
+                    "transition: opacity 180ms ease, transform 180ms ease;"
+                ),
+            ),
+            cls="relative w-full flex justify-end",
         ),
-        Button(
-            "Add manual",
-            type="button",
-            cls="web_button px-2 py-1 text-[10px] md:text-xs w-full",
-            hx_get="/food/create/manual/form",
-            hx_target="#main_content",
-            hx_swap="innerHTML",
-            hx_push_url="true",
-        ),
-        Button(
-            "Add recipe",
-            type="button",
-            cls="web_button px-2 py-1 text-[10px] md:text-xs w-full",
-            hx_get="/food/create/recipe/form",
-            hx_target="#main_content",
-            hx_swap="innerHTML",
-            hx_push_url="true",
-        ),
-        cls="flex items-center justify-between gap-2 md:w-md lg:w-md w-xs",
+        cls="w-full flex justify-end px-3 md:px-0 z-[62] mb-2 md:mb-3",
     )
 
 

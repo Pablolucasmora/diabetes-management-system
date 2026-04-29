@@ -211,8 +211,6 @@ def _ensure_copy_origin_schema(cursor):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_origin_root ON catalog (origin_root_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_origin_root ON manual_intake (origin_root_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_origin_root ON recipe (origin_root_id);")
-
-
 def _ensure_trgm_search(cursor):
     # Best-effort: if extension/index creation is not permitted, keep app running.
     cursor.execute("SAVEPOINT trgm_setup;")

@@ -24,8 +24,10 @@ from datetime import datetime
 from typing import Optional, Any
 
 from DayBetes_food.auth.context import get_current_user_id
+from DayBetes_food.time_utils import local_today
 
 TRGM_SIMILARITY_THRESHOLD = 0.25
+APP_TIMEZONE_SQL = "Europe/Madrid"
 _HAS_PG_TRGM = None
 
 
@@ -854,18 +856,18 @@ def get_consumed_food_usage_rankings(connection, users_id: int, days: int = 60) 
                 pd.catalog_id,
                 pd.manual_intake_id,
                 (
-                    EXTRACT(HOUR FROM ie.meal_time) * 60
-                    + EXTRACT(MINUTE FROM ie.meal_time)
+                    EXTRACT(HOUR FROM (ie.meal_time AT TIME ZONE 'UTC' AT TIME ZONE %(app_timezone)s)) * 60
+                    + EXTRACT(MINUTE FROM (ie.meal_time AT TIME ZONE 'UTC' AT TIME ZONE %(app_timezone)s))
                 )::int AS event_minute,
                 (
-                    EXTRACT(HOUR FROM NOW()) * 60
-                    + EXTRACT(MINUTE FROM NOW())
+                    EXTRACT(HOUR FROM (CURRENT_TIMESTAMP AT TIME ZONE %(app_timezone)s)) * 60
+                    + EXTRACT(MINUTE FROM (CURRENT_TIMESTAMP AT TIME ZONE %(app_timezone)s))
                 )::int AS now_minute
             FROM portion_detail pd
             INNER JOIN intake_event ie ON ie.id = pd.intake_event_id
             WHERE ie.users_id = %(users_id)s
               AND ie.state = 'consumed'
-              AND ie.meal_time >= NOW() - (%(days)s * INTERVAL '1 day')
+              AND ie.meal_time >= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - (%(days)s * INTERVAL '1 day')
         ),
         scored AS (
             SELECT
@@ -922,7 +924,7 @@ def get_consumed_food_usage_rankings(connection, users_id: int, days: int = 60) 
     return _execute_query_many(
         connection,
         query,
-        {"users_id": users_id, "days": safe_days},
+        {"users_id": users_id, "days": safe_days, "app_timezone": APP_TIMEZONE_SQL},
         commit=False,
     )
 
@@ -997,16 +999,21 @@ def get_cart_events(connection, users_id: int) -> list:
 def get_consumed_events_for_day(connection, users_id: int, day=None) -> list:
     """Gets events in 'consumed' state for a specific calendar day."""
     if day is None:
-        day = datetime.now().date()
+        day = local_today()
     query = """
         SELECT *
         FROM intake_event
         WHERE users_id = %(users_id)s
           AND state = 'consumed'
-          AND DATE(meal_time) = %(day)s
+          AND DATE((meal_time AT TIME ZONE 'UTC' AT TIME ZONE %(app_timezone)s)) = %(day)s
         ORDER BY meal_time ASC, id ASC;
     """
-    return _execute_query_many(connection, query, {"users_id": users_id, "day": day}, commit=False)
+    return _execute_query_many(
+        connection,
+        query,
+        {"users_id": users_id, "day": day, "app_timezone": APP_TIMEZONE_SQL},
+        commit=False,
+    )
 
 
 def get_consumed_events(connection, users_id: int) -> list:
