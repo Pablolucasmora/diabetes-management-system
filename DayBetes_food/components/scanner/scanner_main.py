@@ -8,7 +8,7 @@ def scanner_main():
                 "Back",
                 type="button",
                 cls="web_button self-start px-3 py-1.5 text-sm",
-                hx_get="/menu",
+                hx_get="/food",
                 hx_target="#main_content",
                 hx_push_url="true",
                 **{"hx-on:click": "if(window.__dbStopScanner){window.__dbStopScanner();}"},

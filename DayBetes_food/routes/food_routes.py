@@ -1,5 +1,6 @@
 from fasthtml.common import *
 from datetime import datetime
+from datetime import date
 import json
 import difflib
 import re
@@ -44,6 +45,7 @@ from DayBetes_food.database.queries.crud import (
     catalog_name_brand_exists,
     manual_intake_name_origin_exists,
     get_consumed_food_usage_rankings,
+    get_rescue_entries_suggestions,
     update_portion_detail_amount,
     update_portion_detail_fields,
     delete_portion_detail,
@@ -70,6 +72,7 @@ from DayBetes_food.components.food.foods import (
     RecipeMacrosGrid,
 )
 from DayBetes_food.database.connection import get_connection
+from DayBetes_food.time_utils import local_naive_to_utc
 
 
 def _to_float(value: str):
@@ -94,6 +97,16 @@ def _to_int(value: str):
 
 def _to_bool(value: str):
     return (value or "").strip().lower() in ("1", "true", "on", "yes")
+
+
+def _parse_hhmm(value: str):
+    text = (value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text, "%H:%M").time()
+    except ValueError:
+        return None
 
 
 def _smart_macro_float(
@@ -803,6 +816,100 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             tags = get_tag_suggestions(connection, search=(q or "").strip(), limit=500)
         return JSONResponse({"tags": tags})
+
+    @rt("/food/rescue/options")
+    def get(request: Request, q: str = ""):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        with get_connection() as connection:
+            user_id = get_current_user_id()
+            if not user_id:
+                return render_fragment(P("No user.", cls="text-xs text-red-700"))
+            rows = get_rescue_entries_suggestions(connection, users_id=int(user_id), search=(q or "").strip(), limit=30)
+        if not rows:
+            return render_fragment(P("No rescue items found.", cls="text-xs text-gray-600 px-1 py-1"))
+        nodes = []
+        for row in rows:
+            name = str(row.get("name") or "").strip() or "Unnamed"
+            subtitle = str(row.get("subtitle") or "").strip()
+            available_g = row.get("available_g")
+            serving_g = float(row.get("serving_g") or 100.0)
+            nodes.append(
+                Button(
+                    Div(
+                        Span(name, cls="font-semibold text-gray-900 text-sm"),
+                        Span(subtitle or row.get("entry_type") or "", cls="text-[11px] text-gray-500"),
+                        cls="flex flex-col items-start",
+                    ),
+                    type="button",
+                    cls="w-full text-left px-2.5 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50",
+                    data_rescue_pick="true",
+                    data_entry_type=str(row.get("entry_type") or ""),
+                    data_entry_id=str(int(row.get("entry_id") or 0)),
+                    data_entry_name=name,
+                    data_serving_g=f"{serving_g:.3f}",
+                    data_available_g=("" if available_g is None else f"{float(available_g):.3f}"),
+                )
+            )
+        return render_fragment(Div(*nodes, cls="flex flex-col gap-1"))
+
+    @rt("/food/rescue/log")
+    def post(
+        request: Request,
+        entry_type: str = "",
+        entry_id: str = "",
+        meal_hour: str = "",
+        consumed_g: str = "",
+    ):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        origin_type = (entry_type or "").strip()
+        origin_id = _to_int(entry_id)
+        grams = _to_float(consumed_g)
+        meal_t = _parse_hhmm(meal_hour)
+        if origin_type not in ("catalog", "manual_intake") or not origin_id:
+            return render_fragment(P("Choose a rescue item.", cls="text-xs text-red-700"))
+        if grams is None or grams <= 0:
+            return render_fragment(P("Consumed amount must be greater than 0g.", cls="text-xs text-red-700"))
+        if not meal_t:
+            return render_fragment(P("Choose a valid time.", cls="text-xs text-red-700"))
+
+        local_dt = datetime.combine(date.today(), meal_t)
+        utc_dt = local_naive_to_utc(local_dt)
+        with get_connection() as connection:
+            user_id = get_current_user_id()
+            if not user_id:
+                return render_fragment(P("No user.", cls="text-xs text-red-700"))
+            if origin_type == "catalog":
+                origin = get_catalog_item(connection, int(origin_id))
+            else:
+                origin = get_manual_intake(connection, int(origin_id))
+            if not origin or not _can_view_entry(origin_type, origin, user_id):
+                return render_fragment(P("Rescue item not found.", cls="text-xs text-red-700"))
+            event_id = add_intake_event(
+                connection,
+                users_id=int(user_id),
+                state="consumed",
+                meal_type="rescue",
+                meal_time=utc_dt,
+            )
+            if not event_id:
+                return render_fragment(P("Could not create rescue event.", cls="text-xs text-red-700"))
+            ok = add_portion_detail(
+                connection,
+                origin=origin_type,
+                origin_id=int(origin_id),
+                destination="intake_event",
+                destination_id=int(event_id),
+                amount_g=float(grams),
+                strictly_weighed=True,
+                macros_quality=True,
+                plate_amount=float(grams),
+                offset_minutes=0,
+            )
+            if not ok:
+                return render_fragment(P("Could not register rescue.", cls="text-xs text-red-700"))
+        return render_fragment(P("Rescue registered.", cls="text-xs text-green-700"))
 
     @rt("/food/item/{entry_type}/{entry_id}")
     def get(request: Request, entry_type: str, entry_id: int):
