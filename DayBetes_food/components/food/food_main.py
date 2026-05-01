@@ -21,7 +21,7 @@ def food_main(connection):
             justify-between lg:gap-4 md:gap-4 gap-3 md:w-lg lg:w-lg w-sm
             fixed inset-x-0 mx-auto
             top-0 pt-2 md:pt-7 lg:pt-7
-            z-30
+            z-[600]
             bg-[#f6f2eb] border-b-[1px] border-white
         """,
         style=(

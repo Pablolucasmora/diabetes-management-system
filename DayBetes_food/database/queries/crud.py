@@ -722,6 +722,76 @@ def get_tag_suggestions(connection, search: str = "", limit: int = 100) -> list[
     return [str(row["name"]) for row in rows if row and row.get("name")]
 
 
+def get_rescue_entries_suggestions(connection, users_id: int, search: str = "", limit: int = 50) -> list[dict]:
+    normalized = (search or "").strip()
+    params = {
+        "users_id": users_id,
+        "q": normalized,
+        "q_like": f"%{normalized}%",
+        "limit": max(1, min(int(limit or 50), 200)),
+    }
+    query = """
+        WITH rescue_tag AS (
+            SELECT id
+            FROM tags
+            WHERE lower(trim(name)) = 'rescate'
+            LIMIT 1
+        ),
+        catalog_rows AS (
+            SELECT
+                'catalog'::text AS entry_type,
+                c.id AS entry_id,
+                c.name AS name,
+                COALESCE(c.brand, '') AS subtitle,
+                COALESCE(c.default_portion, 100.0) AS serving_g,
+                NULL::double precision AS available_g
+            FROM linked_tags lt
+            INNER JOIN rescue_tag rt ON rt.id = lt.tag_id
+            INNER JOIN catalog c ON c.id = lt.catalog_id
+            WHERE (c.is_private = FALSE OR c.created_by = %(users_id)s)
+              AND (%(q)s = '' OR c.name ILIKE %(q_like)s OR COALESCE(c.brand, '') ILIKE %(q_like)s)
+        ),
+        manual_rows AS (
+            SELECT
+                'manual_intake'::text AS entry_type,
+                m.id AS entry_id,
+                m.name AS name,
+                COALESCE(m.origin, '') AS subtitle,
+                COALESCE(m.amount_g, 100.0) AS serving_g,
+                COALESCE(m.amount_g, 0.0) AS available_g
+            FROM linked_tags lt
+            INNER JOIN rescue_tag rt ON rt.id = lt.tag_id
+            INNER JOIN manual_intake m ON m.id = lt.manual_intake_id
+            WHERE (m.is_private = FALSE OR m.created_by = %(users_id)s)
+              AND (%(q)s = '' OR m.name ILIKE %(q_like)s OR COALESCE(m.origin, '') ILIKE %(q_like)s)
+        )
+        SELECT *
+        FROM (
+            SELECT * FROM catalog_rows
+            UNION ALL
+            SELECT * FROM manual_rows
+        ) src
+        ORDER BY name ASC, entry_type ASC, entry_id ASC
+        LIMIT %(limit)s;
+    """
+    rows = _execute_query_many(connection, query, params, commit=False)
+    out = []
+    for row in rows:
+        if not row:
+            continue
+        out.append(
+            {
+                "entry_type": str(row.get("entry_type") or ""),
+                "entry_id": int(row.get("entry_id") or 0),
+                "name": str(row.get("name") or "").strip(),
+                "subtitle": str(row.get("subtitle") or "").strip(),
+                "serving_g": float(row.get("serving_g") or 100.0),
+                "available_g": (float(row.get("available_g")) if row.get("available_g") is not None else None),
+            }
+        )
+    return out
+
+
 def _normalize_tag_name(tag: str) -> str:
     return " ".join((tag or "").strip().split())
 

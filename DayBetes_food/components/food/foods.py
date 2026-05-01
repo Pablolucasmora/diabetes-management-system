@@ -323,7 +323,6 @@ def Filters():
             cls="""
                 relative
                 flex items-center justify-between
-                z-20
                 gap-3
                 w-full
                 rounded-full
@@ -1136,10 +1135,18 @@ def _tags_multiselect_bootstrap_script():
     return Script(
         """
         (function () {
-          if (window.__dbTagsMultiBootstrapped) return;
-          window.__dbTagsMultiBootstrapped = true;
+          if (window.__dbTagsMultiBootstrappedV4) return;
+          window.__dbTagsMultiBootstrappedV4 = true;
 
           function norm(v) { return String(v || "").trim().replace(/\\s+/g, " "); }
+          function fold(v) {
+            var text = norm(v).toLowerCase();
+            try {
+              return text.normalize("NFD").replace(/[\\u0300-\\u036f]/g, "");
+            } catch (_) {
+              return text;
+            }
+          }
           function esc(v) {
             return String(v || "")
               .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -1218,19 +1225,22 @@ def _tags_multiselect_bootstrap_script():
               }
             }
             function refreshOptions(q, done) {
-              if (!suggestUrl) { if (done) done(); return; }
+              if (done) done();
+              if (!suggestUrl) return;
               var url = suggestUrl + "?q=" + encodeURIComponent(q || "");
               fetch(url, { credentials: "same-origin" })
                 .then(function (res) { return res.ok ? res.json() : null; })
                 .then(function (payload) {
-                  if (payload && Array.isArray(payload.tags)) mergeOptions(payload.tags);
+                  if (payload && Array.isArray(payload.tags)) {
+                    mergeOptions(payload.tags);
+                    if (done) done();
+                  }
                 })
-                .catch(function () {})
-                .finally(function () { if (done) done(); });
+                .catch(function () {});
             }
             function selectedSet() {
               var s = {};
-              for (var i = 0; i < selected.length; i += 1) s[selected[i].toLowerCase()] = true;
+              for (var i = 0; i < selected.length; i += 1) s[fold(selected[i])] = true;
               return s;
             }
             function syncChips() {
@@ -1251,17 +1261,20 @@ def _tags_multiselect_bootstrap_script():
             function closeBox() { box.style.display = "none"; box.innerHTML = ""; root.style.zIndex = ""; }
             function render() {
               var qRaw = norm(input.value);
-              var q = qRaw.toLowerCase();
+              var q = fold(qRaw);
               var rows = [];
               var sel = selectedSet();
+              var shown = 0;
               for (var i = 0; i < options.length; i += 1) {
                 var name = norm(options[i]);
-                if (!name || sel[name.toLowerCase()]) continue;
-                if (q && name.toLowerCase().indexOf(q) === -1) continue;
+                if (!name || sel[fold(name)]) continue;
+                if (q && fold(name).indexOf(q) === -1) continue;
                 var safe = esc(name);
                 rows.push("<li class='border-b border-gray-200'><button type='button' data-tags-pick='" + safe + "' class='w-full text-left px-3 py-2 bg-white hover:bg-gray-200 text-sm text-gray-800'>" + safe + "</button></li>");
+                shown += 1;
+                if (shown >= 12) break;
               }
-              var exactExists = options.some(function (x) { return norm(x).toLowerCase() === q; });
+              var exactExists = options.some(function (x) { return fold(x) === q; });
               if (q && !exactExists && !sel[q]) {
                 rows.push("<li class='border-b border-gray-200'><button type='button' data-tags-add='true' class='w-full text-left px-3 py-2 bg-white hover:bg-gray-200 text-sm font-semibold text-gray-800'>Add: '" + esc(qRaw) + "'</button></li>");
               }
@@ -1272,22 +1285,23 @@ def _tags_multiselect_bootstrap_script():
             }
             box.addEventListener("click", function (ev) {
               var t = ev.target;
-              if (!t || !t.dataset) return;
-              var pick = t.dataset.tagsPick;
-              if (pick) {
-                var clean = norm(pick);
-                if (clean && !selectedSet()[clean.toLowerCase()]) selected.push(clean);
-                if (!options.some(function (x) { return norm(x).toLowerCase() === clean.toLowerCase(); })) options.push(clean);
+              if (!t || !t.closest) return;
+              var pickBtn = t.closest("[data-tags-pick]");
+              if (pickBtn && box.contains(pickBtn)) {
+                var clean = norm(pickBtn.getAttribute("data-tags-pick"));
+                if (clean && !selectedSet()[fold(clean)]) selected.push(clean);
+                if (!options.some(function (x) { return fold(x) === fold(clean); })) options.push(clean);
                 input.value = "";
                 syncChips();
                 closeBox();
                 return;
               }
-              if (t.dataset.tagsAdd === "true") {
+              var addBtn = t.closest("[data-tags-add='true']");
+              if (addBtn && box.contains(addBtn)) {
                 var add = norm(input.value);
                 if (!add) return;
-                if (!selectedSet()[add.toLowerCase()]) selected.push(add);
-                if (!options.some(function (x) { return norm(x).toLowerCase() === add.toLowerCase(); })) options.push(add);
+                if (!selectedSet()[fold(add)]) selected.push(add);
+                if (!options.some(function (x) { return fold(x) === fold(add); })) options.push(add);
                 input.value = "";
                 syncChips();
                 closeBox();
@@ -1295,15 +1309,19 @@ def _tags_multiselect_bootstrap_script():
             });
             chips.addEventListener("click", function (ev) {
               var t = ev.target;
-              if (!t || !t.dataset || !t.dataset.tagsRemove) return;
-              var rem = norm(t.dataset.tagsRemove).toLowerCase();
-              selected = selected.filter(function (x) { return x.toLowerCase() !== rem; });
+              if (!t || !t.closest) return;
+              var removeBtn = t.closest("[data-tags-remove]");
+              if (!removeBtn || !chips.contains(removeBtn)) return;
+              var rem = fold(removeBtn.getAttribute("data-tags-remove"));
+              selected = selected.filter(function (x) { return fold(x) !== rem; });
               syncChips();
             });
             input.addEventListener("focus", function () {
+              render();
               refreshOptions("", render);
             });
             input.addEventListener("input", function () {
+              render();
               refreshOptions(norm(input.value), render);
             });
             input.addEventListener("blur", function () {
@@ -1318,7 +1336,8 @@ def _tags_multiselect_bootstrap_script():
             document.addEventListener("click", function (ev) {
               if (!root.contains(ev.target)) closeBox();
             });
-            refreshOptions("", function () {});
+            render();
+            refreshOptions("", render);
             syncChips();
           }
           function bindAll(scope) {
@@ -1660,11 +1679,11 @@ def QuickCreateButtons():
         shadow-md
         flex items-center justify-center
         transition-transform duration-150
-        hover:scale-[1.04]
+        hover:scale-[1.04] z-[130]
         active:scale-95
     """
     menu_panel_cls = """
-        absolute top-full right-0 z-[63] mt-3
+        absolute top-full right-0 z-[9999] mt-3
         w-[min(52vw,calc(100vw-1.5rem))]
         min-w-[24rem]
         rounded-3xl
@@ -1677,90 +1696,232 @@ def QuickCreateButtons():
     """
     option_button_cls = """
         web_button w-full h-full min-h-0 px-3 py-3 rounded-[1.1rem]
-        text-left shadow-none
+        text-left shadow-none z-[130]
         flex flex-col items-start justify-between gap-1
+    """
+    power_panel_cls = """
+        absolute top-full left-0 z-[9999] mt-3
+        w-[min(24rem,calc(100vw-1.5rem))]
+        min-w-[18rem]
+        rounded-3xl
+        border border-white/80
+        shadow-lg
+        ring-1 ring-inset ring-white/20
+        p-3
     """
     return Div(
         Div(
-            Button(
-                Img(src="/images/ui/plus_icon.svg", alt="", cls="h-6 w-6"),
-                type="button",
-                aria_label="Open add menu",
-                cls=menu_button_cls,
-                id="food_quick_create_toggle",
-                aria_controls="food_quick_create_menu",
-                aria_expanded="false",
+            Div(
+                Button(
+                    Img(src="/images/content/power_icon.svg", alt="", cls="h-6 w-6"),
+                    type="button",
+                    aria_label="Open power menu",
+                    cls=menu_button_cls,
+                    id="food_power_toggle",
+                    aria_controls="food_power_menu",
+                    aria_expanded="false",
+                ),
+                Div(
+                    Form(
+                        Input(type="hidden", name="entry_type", id="rescue_entry_type"),
+                        Input(type="hidden", name="entry_id", id="rescue_entry_id"),
+                        Input(type="hidden", name="consumed_g", id="rescue_consumed_g", value="0"),
+                        Input(type="hidden", id="rescue_serving_g", value="100"),
+                        Input(type="hidden", id="rescue_available_g", value="0"),
+                        Div(
+                            Span("Rescue item", cls="text-[11px] text-gray-600"),
+                            Input(
+                                id="rescue_search_input",
+                                name="q",
+                                type="text",
+                                placeholder="Search rescue",
+                                autocomplete="off",
+                                cls="web_input bg-white/70 rounded-lg border border-gray-300 px-2 py-1 text-sm",
+                            ),
+                            Div(
+                                id="rescue_selected_label",
+                                cls="text-[11px] text-gray-700 min-h-[1rem]",
+                            ),
+                            Div(
+                                id="rescue_picker_results",
+                                hx_get="/food/rescue/options",
+                                hx_trigger="load, keyup changed delay:220ms from:#rescue_search_input",
+                                hx_include="#rescue_search_input",
+                                hx_swap="innerHTML",
+                                cls="max-h-32 overflow-y-auto rounded-xl border border-gray-200 bg-white/80 p-1",
+                            ),
+                            cls="flex flex-col gap-1",
+                        ),
+                        Div(
+                            Div(
+                                Span("Time", cls="text-[11px] text-gray-600"),
+                                Input(
+                                    type="time",
+                                    name="meal_hour",
+                                    id="rescue_meal_hour",
+                                    cls="web_input bg-white/70 rounded-lg border border-gray-300 px-2 py-1 text-sm",
+                                ),
+                                cls="flex flex-col gap-1",
+                            ),
+                            Div(
+                                Span("Unit", cls="text-[11px] text-gray-600"),
+                                Select(
+                                    Option("grams", value="grams"),
+                                    Option("servings", value="servings"),
+                                    id="rescue_unit",
+                                    cls="web_input bg-white/70 rounded-lg border border-gray-300 px-2 py-1 text-sm",
+                                ),
+                                cls="flex flex-col gap-1",
+                            ),
+                            cls="grid grid-cols-2 gap-2",
+                        ),
+                        Div(
+                            Div(
+                                Span("Amount", cls="text-[11px] text-gray-600"),
+                                Input(
+                                    type="number",
+                                    id="rescue_amount_value",
+                                    step="any",
+                                    min="0",
+                                    value="0",
+                                    cls="web_input bg-white/70 rounded-lg border border-gray-300 px-2 py-1 text-sm",
+                                ),
+                                cls="flex flex-col gap-1",
+                            ),
+                            Div(
+                                Span("Eaten %", cls="text-[11px] text-gray-600"),
+                                Input(
+                                    type="number",
+                                    id="rescue_eaten_percent",
+                                    step="any",
+                                    min="0",
+                                    max="100",
+                                    value="100",
+                                    cls="web_input bg-white/70 rounded-lg border border-gray-300 px-2 py-1 text-sm",
+                                ),
+                                cls="flex flex-col gap-1",
+                            ),
+                            cls="grid grid-cols-2 gap-2",
+                        ),
+                        Div(
+                            Span("Consumed: ", cls="text-[11px] text-gray-600"),
+                            Span("0 g", id="rescue_consumed_label", cls="text-[11px] font-semibold text-gray-800"),
+                            Span(" · Leftover: ", cls="text-[11px] text-gray-600"),
+                            Span("0 g", id="rescue_leftover_label", cls="text-[11px] font-semibold text-gray-800"),
+                            cls="text-[11px]",
+                        ),
+                        Button(
+                            "OK",
+                            type="submit",
+                            cls="web_button w-full px-3 py-2 text-sm bg-black text-white border-black",
+                        ),
+                        Div(id="rescue_action_result", cls="text-[11px] min-h-[1rem]"),
+                        hx_post="/food/rescue/log",
+                        hx_target="#rescue_action_result",
+                        hx_swap="innerHTML",
+                        id="rescue_power_form",
+                        cls="flex flex-col gap-2",
+                    ),
+                    id="food_power_menu",
+                    role="menu",
+                    aria_label="Power menu",
+                    cls=power_panel_cls,
+                style=(
+                    "z-index:10010;"
+                    "background:#f6f2eb;backdrop-filter:none;-webkit-backdrop-filter:none;filter:none;"
+                    "visibility:hidden; opacity:0; transform:translateY(-8px) scale(0.97);"
+                    "pointer-events:none;"
+                        "transition: opacity 180ms ease, transform 180ms ease;"
+                    ),
+                ),
+                cls="relative flex justify-start",
             ),
             Div(
                 Button(
-                    Div(
-                        Span("Add catalog", cls="font-semibold text-gray-900"),
-                        Span("Create a new food item", cls="text-[11px] text-gray-500"),
-                        cls="flex flex-col items-start gap-0.5",
-                    ),
+                    Img(src="/images/ui/plus_icon.svg", alt="", cls="h-6 w-6"),
                     type="button",
-                    cls=option_button_cls,
-                    hx_get="/food/create/catalog/form",
-                    hx_target="#main_content",
-                    hx_swap="innerHTML",
-                    hx_push_url="true",
+                    aria_label="Open add menu",
+                    cls=menu_button_cls,
+                    id="food_quick_create_toggle",
+                    aria_controls="food_quick_create_menu",
+                    aria_expanded="false",
                 ),
-                Button(
-                    Div(
-                        Span("Add manual", cls="font-semibold text-gray-900"),
-                        Span("Create a manual intake", cls="text-[11px] text-gray-500"),
-                        cls="flex flex-col items-start gap-0.5",
-                    ),
-                    type="button",
-                    cls=option_button_cls,
-                    hx_get="/food/create/manual/form",
-                    hx_target="#main_content",
-                    hx_swap="innerHTML",
-                    hx_push_url="true",
-                ),
-                Button(
-                    Div(
-                        Span("Add recipe", cls="font-semibold text-gray-900"),
-                        Span("Create a recipe entry", cls="text-[11px] text-gray-500"),
-                        cls="flex flex-col items-start gap-0.5",
-                    ),
-                    type="button",
-                    cls=option_button_cls,
-                    hx_get="/food/create/recipe/form",
-                    hx_target="#main_content",
-                    hx_swap="innerHTML",
-                    hx_push_url="true",
-                ),
-                Button(
-                    Div(
+                Div(
+                    Button(
                         Div(
-                            Span("Scanner", cls="font-semibold text-gray-900"),
-                            Span("Open the barcode scanner", cls="text-[11px] text-gray-500"),
+                            Span("Add catalog", cls="font-semibold text-gray-900"),
+                            Span("Create a new food item", cls="text-[11px] text-gray-500"),
                             cls="flex flex-col items-start gap-0.5",
                         ),
-                        cls="flex flex-col items-start gap-2",
+                        type="button",
+                        cls=option_button_cls,
+                        hx_get="/food/create/catalog/form",
+                        hx_target="#main_content",
+                        hx_swap="innerHTML",
+                        hx_push_url="true",
                     ),
-                    type="button",
-                    cls=option_button_cls,
-                    hx_get="/scanner",
-                    hx_target="#main_content",
-                    hx_swap="innerHTML",
-                    hx_push_url="true",
+                    Button(
+                        Div(
+                            Span("Add manual", cls="font-semibold text-gray-900"),
+                            Span("Create a manual intake", cls="text-[11px] text-gray-500"),
+                            cls="flex flex-col items-start gap-0.5",
+                        ),
+                        type="button",
+                        cls=option_button_cls,
+                        hx_get="/food/create/manual/form",
+                        hx_target="#main_content",
+                        hx_swap="innerHTML",
+                        hx_push_url="true",
+                    ),
+                    Button(
+                        Div(
+                            Span("Add recipe", cls="font-semibold text-gray-900"),
+                            Span("Create a recipe entry", cls="text-[11px] text-gray-500"),
+                            cls="flex flex-col items-start gap-0.5",
+                        ),
+                        type="button",
+                        cls=option_button_cls,
+                        hx_get="/food/create/recipe/form",
+                        hx_target="#main_content",
+                        hx_swap="innerHTML",
+                        hx_push_url="true",
+                    ),
+                    Button(
+                        Div(
+                            Div(
+                                Span("Scanner", cls="font-semibold text-gray-900"),
+                                Span("Open the barcode scanner", cls="text-[11px] text-gray-500"),
+                                cls="flex flex-col items-start gap-0.5",
+                            ),
+                            cls="flex flex-col items-start gap-2",
+                        ),
+                        type="button",
+                        cls=option_button_cls,
+                        hx_get="/scanner",
+                        hx_target="#main_content",
+                        hx_swap="innerHTML",
+                        hx_push_url="true",
+                    ),
+                    id="food_quick_create_menu",
+                    role="menu",
+                    aria_label="Create food menu",
+                    cls=menu_panel_cls,
+                    style=(
+                        "z-index:10010;"
+                        "width:min(22rem,calc(100vw - 1.5rem));min-width:10rem;"
+                        "background:#f6f2eb;backdrop-filter:none;-webkit-backdrop-filter:none;filter:none;"
+                        "visibility:hidden; opacity:0; transform:translateY(-8px) scale(0.97);"
+                        "pointer-events:none;"
+                        "transition: opacity 180ms ease, transform 180ms ease;"
+                    ),
                 ),
-                id="food_quick_create_menu",
-                role="menu",
-                aria_label="Create food menu",
-                cls=menu_panel_cls,
-                style=(
-                    "background:#f6f2eb;"
-                    "visibility:hidden; opacity:0; transform:translateY(-8px) scale(0.97);"
-                    "pointer-events:none;"
-                    "transition: opacity 180ms ease, transform 180ms ease;"
-                ),
+                cls="relative flex justify-end",
             ),
-            cls="relative w-full flex justify-end",
+            cls="relative w-full flex items-center justify-between",
+            style="isolation:isolate; z-index:9998;",
         ),
-        cls="w-full flex justify-end px-3 md:px-0 z-[62] mb-2 md:mb-3",
+        cls="w-full flex justify-end px-3 md:px-0 z-[130] mb-2 md:mb-3",
+        data_quick_create_root="true",
     )
 
 
@@ -2777,7 +2938,7 @@ def RecipeIngredientRow(recipe_id: int, portion: dict):
             ),
             id=advanced_id,
             data_open="0",
-            cls="w-full max-w-full relative z-30 transition-all duration-300 ease-out overflow-hidden",
+            cls="w-full max-w-full relative z-0 transition-all duration-300 ease-out overflow-hidden",
             style="max-height:0px;opacity:0;",
         ),
         cls="web_container food_entry flex flex-col gap-1",
@@ -3068,7 +3229,7 @@ def FoodDetailPage(
                     ),
                     id=advanced_id,
                     data_open="0",
-                    cls=f"{'hidden ' if recipe_mode else ''}w-full relative z-30 transition-all duration-300 ease-out overflow-hidden",
+                    cls=f"{'hidden ' if recipe_mode else ''}w-full relative z-0 transition-all duration-300 ease-out overflow-hidden",
                     style="max-height:0px;opacity:0;",
                 ),
                 id=form_id,
