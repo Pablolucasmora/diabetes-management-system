@@ -83,39 +83,17 @@ El proyecto sigue una estructura modular organizada por funcionalidad:
 
 ```
 DayBetes_food/
-├── main.py                          # Punto de entrada de la aplicación
-├── components/                      # Componentes UI reutilizables
-│   ├── ui.py                        # Funciones helper de renderizado
-│   ├── menu/                        # Componentes del menú de navegación
-│   │   ├── main_menu.py             # Página principal del menú
-│   │   ├── layout.py                # Layout de la isla flotante
-│   │   └── sections.py              # Secciones del menú
-│   ├── food/                        # Componentes relacionados con alimentos
-│   │   ├── food_main.py            # Página principal de alimentos
-│   │   └── foods.py                 # Tarjetas y elementos de food
-│   └── cart/                        # Componentes del carrito
-│       └── cart_main.py             # Página del carrito
-├── routes/                          # Definición de rutas de la aplicación
-│   ├── main_routes.py              # Rutas principales
-│   ├── food_routes.py              # Rutas de alimentos
-│   ├── cart_routes.py              # Rutas del carrito
-│   ├── stats_routes.py             # Rutas de estadísticas
-│   └── settings_routes.py          # Rutas de ajustes
-├── database/                        # Capa de acceso a datos
-│   ├── connection.py               # Configuración de conexión a PostgreSQL
-│   ├── schema.py                   # Definición del esquema de base de datos
-│   ├── db_init.py                  # Inicialización de la base de datos
-│   ├── __init__.py
-│   └── queries/
-│       └── crud.py                 # Operaciones CRUD centralizadas
-└── static/                          # Archivos estáticos
+├── main.py
+├── config.py
+├── time_utils.py
+├── auth/
+├── components/
+├── database/
+├── routes/
+└── static/
     ├── css/
-    │   ├── input.css               # Entrada de Tailwind
-    │   └── output.css              # CSS compilado
-    ├── js/
-    │   └── logo_scroll.js          # Scripts JavaScript
-    └── images/
-        └── ui/                     # Iconos e imágenes de interfaz
+    ├── images/
+    └── js/
 ```
 
 ### 3.3 Patrones de Diseño
