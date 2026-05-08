@@ -11,7 +11,9 @@ from DayBetes_food.database.queries.crud import (
     delete_event_portion_group,
     delete_intake_event,
     get_intake_event,
+    finalize_injection_zone_for_event,
     get_portion_detail_by_event,
+    set_injection_zone,
     update_event_portion_group_field,
     update_intake_event_name,
     update_intake_event,
@@ -142,6 +144,19 @@ def setup_cart_routes(rt):
             ok = update_intake_event(connection, event_id, {"insulin_dose": value})
             return _cart_response(connection, status=200 if ok else 400)
 
+    @rt("/cart/event/{event_id}/injection_zone")
+    def post(request: Request, event_id: int, zone: str = ""):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        with get_connection() as connection:
+            event = get_intake_event(connection, event_id)
+            if not event:
+                return HTMLResponse(status_code=404)
+            if not event.get("insulin_dose"):
+                return HTMLResponse(status_code=400)
+            ok = set_injection_zone(connection, event_id, zone)
+            return _cart_response(connection, status=200 if ok else 400)
+
     @rt("/cart/event/{event_id}/ingredient/{origin}/{origin_id}/amount")
     def post(request: Request, event_id: int, origin: str, origin_id: int, amount_g: str = ""):
         if request.headers.get("HX-Request") != "true":
@@ -257,6 +272,7 @@ def setup_cart_routes(rt):
                 except (TypeError, ValueError):
                     pass
             updated = update_intake_event(connection, event_id, update_payload) if update_payload else True
+            finalized_zone = finalize_injection_zone_for_event(connection, event_id)
             changed = change_event_status(connection, event_id, "consumed")
 
-            return _cart_response(connection, status=200 if (updated and changed) else 400)
+            return _cart_response(connection, status=200 if (updated and finalized_zone and changed) else 400)

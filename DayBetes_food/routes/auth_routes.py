@@ -1,6 +1,7 @@
 from fasthtml.common import *
 from html import escape
 from urllib.parse import quote_plus
+from DayBetes_food.database.queries.crud import update_password_hash
 
 from DayBetes_food.auth.security import (
     generate_token,
@@ -226,12 +227,23 @@ def setup_auth_routes(rt):
             if not rate_limit_login_allowed(connection, limiter_key_hash):
                 return _redirect_with_error("/auth/login", GENERIC_AUTH_ERROR)
 
+            # Migración gradual de la base de datos, para añadir el pepper
             user = get_user_by_identifier(connection, identifier)
-            if not user or not verify_password(user.get("password_hash"), password or ""):
+            if not user:
                 register_login_failure(connection, limiter_key_hash)
                 return _redirect_with_error("/auth/login", GENERIC_AUTH_ERROR)
 
+            is_valid, new_hash = verify_password(user.get("password_hash"), password or "")
+            if not is_valid:
+                register_login_failure(connection, limiter_key_hash)
+                return _redirect_with_error("/auth/login", GENERIC_AUTH_ERROR)
+
+            if new_hash:
+                update_password_hash(connection, int(user["id"]), new_hash)
+
             clear_login_failures(connection, limiter_key_hash)
+
+            
             touch_user_login(connection, int(user["id"]))
 
             ip_hash = hash_token(_client_ip(request))

@@ -4,6 +4,7 @@ from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.cart.cart_components import CartCard
 from DayBetes_food.database.queries.crud import (
     get_cart_events,
+    get_latest_injection_zone_for_event,
     get_portion_detail_by_events,
 )
 
@@ -14,6 +15,8 @@ def cart_main(connection):
         return Div(H2("No users"), cls="flex flex-col items-center")
 
     events = get_cart_events(connection, user_id)
+    for event in events:
+        event["selected_injection_zone"] = get_latest_injection_zone_for_event(connection, event["id"])
     if not events:
         return Div(
             Div(

@@ -1,8 +1,6 @@
 import hashlib
 import re
 import secrets
-import hmac
-
 try:
     from argon2 import PasswordHasher
     from argon2.exceptions import VerifyMismatchError, InvalidHashError
@@ -11,16 +9,12 @@ except Exception:
     VerifyMismatchError = Exception
     InvalidHashError = Exception
 
-from DayBetes_food.config import AUTH_TOKEN_PEPPER
+from DayBetes_food.config import AUTH_TOKEN_PEPPER, PASSWORD_PEPPER
 
 
 _password_hasher = PasswordHasher() if PasswordHasher else None
 _EMAIL_RE = re.compile(r"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$", re.IGNORECASE)
 _USERNAME_RE = re.compile(r"^[a-zA-Z0-9_]{3,32}$")
-_SCRYPT_N = 2**14
-_SCRYPT_R = 8
-_SCRYPT_P = 1
-_SCRYPT_DKLEN = 64
 
 
 def normalize_identifier(value: str) -> str:
@@ -52,47 +46,33 @@ def is_strong_password(password: str) -> bool:
 
 
 def hash_password(password: str) -> str:
-    if _password_hasher:
-        return _password_hasher.hash(password)
-    salt = secrets.token_hex(16)
-    derived = hashlib.scrypt(
-        password.encode("utf-8"),
-        salt=salt.encode("utf-8"),
-        n=_SCRYPT_N,
-        r=_SCRYPT_R,
-        p=_SCRYPT_P,
-        dklen=_SCRYPT_DKLEN,
-    ).hex()
-    return f"scrypt${_SCRYPT_N}${_SCRYPT_R}${_SCRYPT_P}${salt}${derived}"
-
-
-def verify_password(password_hash: str, password: str) -> bool:
-    if not password_hash or not password:
-        return False
-
-    if password_hash.startswith("scrypt$"):
-        try:
-            _, n_raw, r_raw, p_raw, salt, expected = password_hash.split("$", 5)
-            derived = hashlib.scrypt(
-                password.encode("utf-8"),
-                salt=salt.encode("utf-8"),
-                n=int(n_raw),
-                r=int(r_raw),
-                p=int(p_raw),
-                dklen=len(bytes.fromhex(expected)),
-            ).hex()
-            return hmac.compare_digest(derived, expected)
-        except Exception:
-            return False
-
     if not _password_hasher:
-        return False
+        raise RuntimeError("argon2-cffi is required for password hashing")
+    peppered = password + PASSWORD_PEPPER
+    return _password_hasher.hash(peppered)
 
+def verify_password(password_hash: str, password: str) -> tuple[bool, str | None]:
+    if not password_hash or not password:
+        return False, None
+    if not _password_hasher:
+        return False, None
+
+    # 1. Intenta con pepper (usuario ya migrado)
     try:
-        return _password_hasher.verify(password_hash, password)
-    except (VerifyMismatchError, InvalidHashError, TypeError):
-        return False
+        _password_hasher.verify(password_hash, password + PASSWORD_PEPPER)
+        return True, None
+    except VerifyMismatchError:
+        pass
+    except (InvalidHashError, TypeError):
+        return False, None
 
+    # 2. Intenta sin pepper (usuario legacy) → migra
+    try:
+        _password_hasher.verify(password_hash, password)
+        new_hash = _password_hasher.hash(password + PASSWORD_PEPPER)
+        return True, new_hash
+    except (VerifyMismatchError, InvalidHashError, TypeError):
+        return False, None
 
 def generate_token() -> str:
     return secrets.token_urlsafe(48)

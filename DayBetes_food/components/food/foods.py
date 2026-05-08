@@ -1826,11 +1826,12 @@ def QuickCreateButtons():
                     role="menu",
                     aria_label="Power menu",
                     cls=power_panel_cls,
-                style=(
-                    "z-index:10010;"
-                    "background:#f6f2eb;backdrop-filter:none;-webkit-backdrop-filter:none;filter:none;"
-                    "visibility:hidden; opacity:0; transform:translateY(-8px) scale(0.97);"
-                    "pointer-events:none;"
+                    style=(
+                        "z-index:10010;"
+                        "width:min(22rem,calc(100vw - 1.5rem));min-width:10rem;"
+                        "background:#f6f2eb;backdrop-filter:none;-webkit-backdrop-filter:none;filter:none;"
+                        "visibility:hidden; opacity:0; transform:translateY(-8px) scale(0.97);"
+                        "pointer-events:none;"
                         "transition: opacity 180ms ease, transform 180ms ease;"
                     ),
                 ),

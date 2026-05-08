@@ -325,6 +325,160 @@ def _ensure_food_name_origin_uniqueness(cursor):
         print(f"Warning: food uniqueness migration skipped: {exc}")
 
 
+def _ensure_insulin_injections_schema(cursor):
+    cursor.execute(
+        """
+        DO $$
+        BEGIN
+            -- Prefer direct rename when old table exists and new one does not.
+            IF to_regclass('public.insulin_injections') IS NULL AND to_regclass('public.injection_zones') IS NOT NULL THEN
+                ALTER TABLE injection_zones RENAME TO insulin_injections;
+            ELSIF to_regclass('public.insulin_injections') IS NULL AND to_regclass('public.injection_zone') IS NOT NULL THEN
+                ALTER TABLE injection_zone RENAME TO insulin_injections;
+            END IF;
+        END $$;
+        """
+    )
+    cursor.execute(
+        """
+        ALTER TABLE intake_event
+        ADD COLUMN IF NOT EXISTS injection_zone VARCHAR(50);
+        """
+    )
+    cursor.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'ck_intake_event_injection_zone'
+            ) THEN
+                ALTER TABLE intake_event
+                ADD CONSTRAINT ck_intake_event_injection_zone
+                CHECK (injection_zone IN ('right_arm', 'left_arm', 'right_thigh', 'left_thigh', 'abdomen', 'right_gluteus', 'left_gluteus') OR injection_zone IS NULL);
+            END IF;
+        END $$;
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS insulin_injections (
+            id SERIAL PRIMARY KEY,
+            users_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            intake_event_id INTEGER REFERENCES intake_event(id) ON DELETE CASCADE,
+            shot_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            insulin_type VARCHAR(20) CHECK (insulin_type IN ('rapid', 'basal')),
+            basal_units REAL CHECK (basal_units > 0),
+            injection_zone VARCHAR(50) CHECK (injection_zone IN ('right_arm', 'left_arm', 'right_thigh', 'left_thigh', 'abdomen', 'right_gluteus', 'left_gluteus'))
+        );
+        """
+    )
+    cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS intake_event_id INTEGER;")
+    cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS users_id INTEGER;")
+    cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS insulin_type VARCHAR(20);")
+    cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS basal_units REAL;")
+    cursor.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'fk_insulin_injections_intake_event'
+            ) THEN
+                ALTER TABLE insulin_injections
+                ADD CONSTRAINT fk_insulin_injections_intake_event
+                FOREIGN KEY (intake_event_id) REFERENCES intake_event(id) ON DELETE CASCADE;
+            END IF;
+        END $$;
+        """
+    )
+    cursor.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'fk_insulin_injections_users'
+            ) THEN
+                ALTER TABLE insulin_injections
+                ADD CONSTRAINT fk_insulin_injections_users
+                FOREIGN KEY (users_id) REFERENCES users(id) ON DELETE CASCADE;
+            END IF;
+        END $$;
+        """
+    )
+    cursor.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'ck_insulin_injections_insulin_type'
+            ) THEN
+                ALTER TABLE insulin_injections
+                ADD CONSTRAINT ck_insulin_injections_insulin_type
+                CHECK (insulin_type IN ('rapid', 'basal') OR insulin_type IS NULL);
+            END IF;
+        END $$;
+        """
+    )
+    cursor.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'ck_insulin_injections_basal_units'
+            ) THEN
+                ALTER TABLE insulin_injections
+                ADD CONSTRAINT ck_insulin_injections_basal_units
+                CHECK (basal_units IS NULL OR basal_units > 0);
+            END IF;
+        END $$;
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_insulin_injections_intake_event_id_shot_time
+        ON insulin_injections (intake_event_id, shot_time DESC, id DESC);
+        """
+    )
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_insulin_injections_users_id_shot_time
+        ON insulin_injections (users_id, shot_time DESC, id DESC);
+        """
+    )
+    cursor.execute(
+        """
+        DO $$
+        BEGIN
+            IF to_regclass('public.injection_zone') IS NOT NULL THEN
+                INSERT INTO insulin_injections (id, users_id, intake_event_id, shot_time, insulin_type, basal_units, injection_zone)
+                SELECT id, users_id, intake_event_id, shot_time, insulin_type, basal_units, injection_zone
+                FROM injection_zone
+                ON CONFLICT (id) DO NOTHING;
+                PERFORM setval('insulin_injections_id_seq', COALESCE((SELECT MAX(id) FROM insulin_injections), 1), true);
+                DROP TABLE injection_zone;
+            END IF;
+            IF to_regclass('public.injection_zones') IS NOT NULL THEN
+                INSERT INTO insulin_injections (id, users_id, intake_event_id, shot_time, insulin_type, basal_units, injection_zone)
+                SELECT id, users_id, intake_event_id, shot_time, insulin_type, basal_units, injection_zone
+                FROM injection_zones
+                ON CONFLICT (id) DO NOTHING;
+                PERFORM setval('insulin_injections_id_seq', COALESCE((SELECT MAX(id) FROM insulin_injections), 1), true);
+                DROP TABLE injection_zones;
+            END IF;
+        END $$;
+        """
+    )
+
+
 def init_db():
     conn = get_connection()
     cur = conn.cursor()
@@ -341,6 +495,7 @@ def init_db():
             DBSchema.recipe,
             DBSchema.linked_tags,
             DBSchema.intake_event,
+            DBSchema.insulin_injections,
             DBSchema.portion_detail,
         ]
 
@@ -356,6 +511,7 @@ def init_db():
         _ensure_privacy_schema(cur)
         _ensure_copy_origin_schema(cur)
         _ensure_users_schema(cur)
+        _ensure_insulin_injections_schema(cur)
         _ensure_default_user(cur)
 
         conn.commit()
