@@ -1,5 +1,7 @@
-import os
+from dotenv import load_dotenv
 
+import os
+load_dotenv()
 
 def _as_bool(value: str, default: bool) -> bool:
     if value is None:
@@ -31,3 +33,6 @@ AUTH_RATE_LIMIT_WINDOW_SECONDS = _as_int("AUTH_RATE_LIMIT_WINDOW_SECONDS", 60 * 
 AUTH_RATE_LIMIT_BLOCK_SECONDS = _as_int("AUTH_RATE_LIMIT_BLOCK_SECONDS", 60 * 15)
 
 AUTH_TOKEN_PEPPER = os.getenv("AUTH_TOKEN_PEPPER", "")
+PASSWORD_PEPPER = os.getenv("PASSWORD_PEPPER", "")
+if not PASSWORD_PEPPER:
+    raise RuntimeError("PASSWORD_PEPPER is required and cannot be empty")

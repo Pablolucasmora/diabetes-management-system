@@ -140,6 +140,13 @@ def get_all_users(connection) -> list:
     query = "SELECT * FROM users ORDER BY created_at DESC;"
     return _execute_query_many(connection, query, commit=False)
 
+def update_password_hash(connection, user_id: int, new_hash: str) -> None:
+    with connection.cursor() as cur:
+        cur.execute(
+            "UPDATE users SET password_hash = %s, updated_at = NOW() WHERE id = %s",
+            (new_hash, user_id),
+        )
+
 
 # ============================================
 # CATALOG
@@ -1140,6 +1147,271 @@ def update_intake_event_name(connection, event_id: int, name: Optional[str]) -> 
     """
     result = _execute_query(connection, query, {"id": event_id, "name": name})
     return result is not None
+
+
+# ============================================
+# INJECTION ZONE
+# ============================================
+
+VALID_INJECTION_ZONES = {
+    "right_arm",
+    "left_arm",
+    "right_thigh",
+    "left_thigh",
+    "abdomen",
+    "right_gluteus",
+    "left_gluteus",
+}
+
+
+def set_injection_zone(connection, intake_event_id: int, zone: str) -> bool:
+    clean_zone = (zone or "").strip()
+    if clean_zone not in VALID_INJECTION_ZONES:
+        return False
+    query = """
+        UPDATE intake_event
+        SET injection_zone = %(zone)s
+        WHERE id = %(intake_event_id)s
+        RETURNING id;
+    """
+    result = _execute_query(
+        connection,
+        query,
+        {"intake_event_id": intake_event_id, "zone": clean_zone},
+    )
+    return result is not None
+
+
+def get_latest_injection_zone_for_event(connection, intake_event_id: int) -> Optional[str]:
+    query = """
+        SELECT injection_zone
+        FROM intake_event
+        WHERE id = %(intake_event_id)s
+        LIMIT 1;
+    """
+    row = _execute_query(connection, query, {"intake_event_id": intake_event_id}, commit=False)
+    return row.get("injection_zone") if row else None
+
+
+def finalize_injection_zone_for_event(connection, intake_event_id: int) -> bool:
+    event = get_intake_event(connection, intake_event_id)
+    if not event:
+        return False
+    zone = (event.get("injection_zone") or "").strip()
+    if not zone or zone not in VALID_INJECTION_ZONES:
+        return True
+    if not bool(event.get("insulin_dose")):
+        return True
+    shot_time = event.get("meal_time")
+    cleanup = _execute_query(
+        connection,
+        "DELETE FROM insulin_injections WHERE intake_event_id = %(intake_event_id)s RETURNING id;",
+        {"intake_event_id": intake_event_id},
+    )
+    _ = cleanup
+    insert_query = """
+        INSERT INTO insulin_injections (users_id, intake_event_id, shot_time, insulin_type, basal_units, injection_zone)
+        VALUES (%(users_id)s, %(intake_event_id)s, COALESCE(%(shot_time)s, CURRENT_TIMESTAMP), 'rapid', NULL, %(zone)s)
+        RETURNING id;
+    """
+    inserted = _execute_query(
+        connection,
+        insert_query,
+        {
+            "users_id": event.get("users_id"),
+            "intake_event_id": intake_event_id,
+            "shot_time": shot_time,
+            "zone": zone,
+        },
+    )
+    return inserted is not None
+
+
+def add_manual_injection_log(
+    connection,
+    users_id: int,
+    insulin_type: str,
+    injection_zone: str,
+    basal_units: float | None = None,
+    shot_time=None,
+) -> bool:
+    clean_type = (insulin_type or "").strip().lower()
+    clean_zone = (injection_zone or "").strip()
+    if clean_type not in {"rapid", "basal"}:
+        return False
+    if clean_zone not in VALID_INJECTION_ZONES:
+        return False
+    units = None
+    if clean_type == "basal":
+        if basal_units is None:
+            return False
+        try:
+            units = float(basal_units)
+        except (TypeError, ValueError):
+            return False
+        if units <= 0:
+            return False
+        if abs((units * 2) - round(units * 2)) > 1e-8:
+            return False
+    query = """
+        INSERT INTO insulin_injections (users_id, intake_event_id, shot_time, insulin_type, basal_units, injection_zone)
+        VALUES (%(users_id)s, NULL, COALESCE(%(shot_time)s, CURRENT_TIMESTAMP), %(insulin_type)s, %(basal_units)s, %(injection_zone)s)
+        RETURNING id;
+    """
+    result = _execute_query(
+        connection,
+        query,
+        {
+            "users_id": users_id,
+            "insulin_type": clean_type,
+            "basal_units": units,
+            "injection_zone": clean_zone,
+            "shot_time": shot_time,
+        },
+    )
+    return result is not None
+
+
+def get_user_injection_logs(connection, users_id: int, limit: int = 15, offset: int = 0) -> list[dict]:
+    clean_limit = max(1, min(int(limit or 15), 100))
+    clean_offset = max(0, int(offset or 0))
+    query = """
+        SELECT
+            id,
+            shot_time,
+            insulin_type,
+            basal_units,
+            injection_zone
+        FROM insulin_injections
+        WHERE users_id = %(users_id)s
+        ORDER BY shot_time DESC, id DESC
+        LIMIT %(limit)s
+        OFFSET %(offset)s;
+    """
+    return _execute_query_many(
+        connection,
+        query,
+        {
+            "users_id": users_id,
+            "limit": clean_limit,
+            "offset": clean_offset,
+        },
+        commit=False,
+    )
+
+
+def get_user_injection_log_prev_day(connection, users_id: int, offset: int = 0):
+    clean_offset = max(0, int(offset or 0))
+    if clean_offset <= 0:
+        return None
+    query = """
+        SELECT shot_time
+        FROM insulin_injections
+        WHERE users_id = %(users_id)s
+        ORDER BY shot_time DESC, id DESC
+        LIMIT 1
+        OFFSET %(offset)s;
+    """
+    row = _execute_query(
+        connection,
+        query,
+        {
+            "users_id": users_id,
+            "offset": clean_offset - 1,
+        },
+        commit=False,
+    )
+    return row.get("shot_time") if row else None
+
+
+def get_user_injection_log_by_id(connection, users_id: int, injection_id: int) -> Optional[dict]:
+    query = """
+        SELECT id, users_id, shot_time, insulin_type, basal_units, injection_zone
+        FROM insulin_injections
+        WHERE id = %(injection_id)s
+          AND users_id = %(users_id)s
+        LIMIT 1;
+    """
+    return _execute_query(
+        connection,
+        query,
+        {
+            "injection_id": injection_id,
+            "users_id": users_id,
+        },
+        commit=False,
+    )
+
+
+def update_user_injection_log(
+    connection,
+    users_id: int,
+    injection_id: int,
+    insulin_type: str,
+    injection_zone: str,
+    shot_time,
+    basal_units: float | None = None,
+) -> bool:
+    clean_type = (insulin_type or "").strip().lower()
+    clean_zone = (injection_zone or "").strip()
+    if clean_type not in {"rapid", "basal"}:
+        return False
+    if clean_zone not in VALID_INJECTION_ZONES:
+        return False
+    units = None
+    if clean_type == "basal":
+        if basal_units is None:
+            return False
+        try:
+            units = float(basal_units)
+        except (TypeError, ValueError):
+            return False
+        if units <= 0:
+            return False
+        if abs((units * 2) - round(units * 2)) > 1e-8:
+            return False
+    query = """
+        UPDATE insulin_injections
+        SET
+            shot_time = COALESCE(%(shot_time)s, shot_time),
+            insulin_type = %(insulin_type)s,
+            basal_units = %(basal_units)s,
+            injection_zone = %(injection_zone)s
+        WHERE id = %(injection_id)s
+          AND users_id = %(users_id)s
+        RETURNING id;
+    """
+    row = _execute_query(
+        connection,
+        query,
+        {
+            "shot_time": shot_time,
+            "insulin_type": clean_type,
+            "basal_units": units if clean_type == "basal" else None,
+            "injection_zone": clean_zone,
+            "injection_id": injection_id,
+            "users_id": users_id,
+        },
+    )
+    return row is not None
+
+
+def delete_user_injection_log(connection, users_id: int, injection_id: int) -> bool:
+    query = """
+        DELETE FROM insulin_injections
+        WHERE id = %(injection_id)s
+          AND users_id = %(users_id)s
+        RETURNING id;
+    """
+    row = _execute_query(
+        connection,
+        query,
+        {
+            "injection_id": injection_id,
+            "users_id": users_id,
+        },
+    )
+    return row is not None
 
 
 # ============================================

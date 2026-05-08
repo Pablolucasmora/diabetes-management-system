@@ -25,7 +25,7 @@ from DayBetes_food.routes.settings_routes import setup_settings_routes
 
 app, rt = fast_app(
     title="DayBetes",
-    htmlkw={"lang": "es"},
+    htmlkw={"lang": "en"},
     static_path='DayBetes_food/static',
 )
 
@@ -125,6 +125,7 @@ else:
     _init_db_on_startup()
 
 setup_main_routes(rt)
+
 setup_auth_routes(rt)
 
 setup_food_routes(rt)

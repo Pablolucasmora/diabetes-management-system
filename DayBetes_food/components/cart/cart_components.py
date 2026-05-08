@@ -12,6 +12,12 @@ from DayBetes_food.components.cart.cart_shared import (
     portion_name,
     unit_amount,
 )
+from DayBetes_food.components.injection_zone import (
+    BASE_INJECTION_ZONE_IMAGE,
+    INJECTION_ZONE_IMAGE_BY_KEY,
+    INJECTION_ZONE_LABEL_BY_KEY,
+    asset_busted,
+)
 from DayBetes_food.time_utils import local_now, utc_naive_to_local
 
 
@@ -79,6 +85,34 @@ def _close_modal_js(modal_id: str) -> str:
 def _open_modal_js(modal_id: str) -> str:
     return (
         f"const m=document.getElementById('{modal_id}');"
+        "m.classList.remove('invisible','opacity-0','pointer-events-none');"
+        "m.classList.add('opacity-100');"
+    )
+
+
+def _open_injection_modal_js(modal_id: str) -> str:
+    return (
+        f"const m=document.getElementById('{modal_id}');"
+        "if(!m) return;"
+        "const img=m.querySelector('[data-injection-image]');"
+        "const hidden=m.querySelector('[data-injection-zone-input]');"
+        "if(img){"
+        "const base=img.getAttribute('data-base-img')||'/images/content/injection_zones/injection_zones.svg';"
+        "const zone=hidden&&hidden.value?hidden.value:'';"
+        "const zoneBtn=zone?m.querySelector(\"[data-zone='\"+zone+\"']\"):null;"
+        "const target=(zoneBtn&&zoneBtn.getAttribute('data-zone-img'))||base;"
+        "img.dataset.fallbackStage='target';"
+        "img.onerror=function(){"
+        "if(this.dataset.fallbackStage==='target'){"
+        "this.dataset.fallbackStage='base';"
+        "this.src=base;"
+        "return;"
+        "}"
+        "this.onerror=null;"
+        "this.src='/images/content/injection.svg';"
+        "};"
+        "img.src=target;"
+        "}"
         "m.classList.remove('invisible','opacity-0','pointer-events-none');"
         "m.classList.add('opacity-100');"
     )
@@ -556,6 +590,96 @@ def DeleteMealModal(event):
     )
 
 
+def InjectionZoneModal(event):
+    modal_id = f"injection_zone_modal_{event['id']}"
+    selected_zone = (event.get("selected_injection_zone") or "").strip()
+    base_image = asset_busted(BASE_INJECTION_ZONE_IMAGE)
+    image = asset_busted(INJECTION_ZONE_IMAGE_BY_KEY.get(selected_zone)) if selected_zone in INJECTION_ZONE_IMAGE_BY_KEY else base_image
+    selector_js = (
+        f"const mid='{modal_id}';"
+        "const box=document.getElementById(mid);"
+        "if(!box) return;"
+        "const zone=this.getAttribute('data-zone')||'';"
+        "const img=box.querySelector('[data-injection-image]');"
+        "const hidden=box.querySelector('[data-injection-zone-input]');"
+        "if(hidden){hidden.value=zone;}"
+        "if(img){img.src=this.getAttribute('data-zone-img')||img.src;}"
+        "box.querySelectorAll('[data-zone]').forEach(function(el){"
+        "el.classList.remove('ring-2','ring-cyan-500','bg-cyan-50');"
+        "});"
+        "this.classList.add('ring-2','ring-cyan-500','bg-cyan-50');"
+    )
+    zone_buttons = [
+        Button(
+            INJECTION_ZONE_LABEL_BY_KEY[zone_key],
+            type="button",
+            cls=(
+                "web_button px-3 py-2 text-xs "
+                + ("ring-2 ring-cyan-500 bg-cyan-50" if selected_zone == zone_key else "")
+            ),
+            **{
+                "data-zone": zone_key,
+                "data-zone-img": asset_busted(INJECTION_ZONE_IMAGE_BY_KEY[zone_key]),
+                "onclick": selector_js,
+            },
+        )
+        for zone_key in INJECTION_ZONE_IMAGE_BY_KEY.keys()
+    ]
+
+    return Div(
+        Div(
+            Div(
+                P("Injection zone", cls="text-lg font-semibold"),
+                Div(
+                    Img(
+                        src=image,
+                        alt="Injection zones map",
+                        cls="w-full max-h-[38vh] md:max-h-[46vh] object-contain rounded-2xl border border-gray-200 bg-white",
+                        data_injection_image="true",
+                        data_base_img=base_image,
+                    ),
+                    cls="w-full",
+                ),
+                Div(*zone_buttons, cls="flex flex-wrap gap-2"),
+                Form(
+                    Input(
+                        type="hidden",
+                        name="zone",
+                        value=selected_zone,
+                        data_injection_zone_input="true",
+                    ),
+                    Button(
+                        "OK",
+                        type="button",
+                        cls="web_button px-4 py-2 text-sm text-white ml-auto",
+                        style="background-color:#111111;border-color:#111111;",
+                        hx_post=f"/cart/event/{event['id']}/injection_zone",
+                        hx_include="closest form",
+                        onclick=(
+                            "const z=this.form?this.form.querySelector('[data-injection-zone-input]'):null;"
+                            "if(!z||!z.value){alert('Select a zone first.');return false;}"
+                            + _close_modal_js(modal_id)
+                        ),
+                    ),
+                    cls="w-full flex items-center",
+                ),
+                onclick="event.stopPropagation()",
+                cls="web_container p-4 md:p-5 rounded-3xl w-[92vw] md:w-[88vw] max-w-md flex flex-col gap-3",
+            ),
+            id=modal_id,
+            onclick=_close_modal_js(modal_id),
+            cls="""
+                fixed inset-0 z-[70]
+                flex items-center justify-center
+                bg-slate-800/30 backdrop-blur-lg
+                px-4
+                opacity-0 invisible pointer-events-none
+                transition-opacity duration-200
+            """,
+        )
+    )
+
+
 def CartCard(event, portions):
     grouped_portions = group_portions(portions)
     confirm_id = f"delete_meal_confirm_{event['id']}"
@@ -586,6 +710,16 @@ def CartCard(event, portions):
                 ),
                 cls="flex items-center gap-2"
             ),
+            Div(
+                Button(
+                    Img(src="/images/content/injection.svg", alt="Injection", cls="w-5 h-5"),
+                    type="button",
+                    cls="web_button px-2 py-1",
+                    onclick=_open_injection_modal_js(f"injection_zone_modal_{event['id']}"),
+                ),
+                P("zone", cls="text-[10px] text-gray-600 text-center"),
+                cls=f"flex flex-col items-center gap-1 {'hidden' if not bool(event.get('insulin_dose')) else ''}",
+            ),
             Button(
                 "Delete meal",
                 type="button",
@@ -595,6 +729,7 @@ def CartCard(event, portions):
             ),
             cls="flex items-center justify-between gap-2"
         ),
+        InjectionZoneModal(event),
         DeleteMealModal(event),
         Div(
             MacrosSummary(event, portions),

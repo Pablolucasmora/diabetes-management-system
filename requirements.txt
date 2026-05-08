@@ -3,3 +3,4 @@ python-dotenv==1.2.2
 psycopg==3.3.2
 argon2-cffi==25.1.0
 starlette==0.40.0
+uvicorn==0.42.0

@@ -47,6 +47,18 @@ class DBSchema:
     );
     """
 
+    insulin_injections = """
+    CREATE TABLE IF NOT EXISTS insulin_injections (
+        id SERIAL PRIMARY KEY,
+        users_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        intake_event_id INTEGER REFERENCES intake_event(id) ON DELETE CASCADE,
+        shot_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        insulin_type VARCHAR(20) CHECK (insulin_type IN ('rapid', 'basal')),
+        basal_units REAL CHECK (basal_units > 0),
+        injection_zone VARCHAR(50) CHECK (injection_zone IN ('right_arm', 'left_arm', 'right_thigh', 'left_thigh', 'abdomen', 'right_gluteus', 'left_gluteus'))
+    );
+    """
+
 
     catalog = """
     CREATE TABLE IF NOT EXISTS catalog (
@@ -191,6 +203,7 @@ class DBSchema:
         meal_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Defaults to the moment it is added, but should be easy to change within the cart
         eating_out BOOLEAN DEFAULT FALSE, -- Whether the user is eating out. Should default to False if most items come from catalog, recipe, or fridge; True if most or all come from manual_intake
         insulin_dose BOOLEAN DEFAULT TRUE, -- Should default to True if total carbs exceed 10g, and False otherwise, but must be adjustable in the cart
+        injection_zone VARCHAR(50) CHECK (injection_zone IN ('right_arm', 'left_arm', 'right_thigh', 'left_thigh', 'abdomen', 'right_gluteus', 'left_gluteus')), -- Temporary selection while the meal is still in the cart; definitive log goes to insulin_injections table when meal is confirmed
         
         total_amount REAL, -- Automatically calculated as the sum of plate_amount from all related portion_detail rows
         ingested_amount REAL, -- After eating, before confirming the meal, the user enters the total amount ingested (in grams or approximate percentage). The leftovers are then automatically calculated (total_amount - ingested_amount), and the proportional amount of each ingredient is automatically saved to the fridge for later reuse.
