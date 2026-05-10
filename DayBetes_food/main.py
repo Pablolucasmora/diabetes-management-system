@@ -15,12 +15,14 @@ from DayBetes_food.config import (
 )
 from DayBetes_food.database.db_init import init_db
 from DayBetes_food.database.connection import get_connection
-from DayBetes_food.routes.auth_routes import setup_auth_routes
-from DayBetes_food.routes.food_routes import setup_food_routes
-from DayBetes_food.routes.main_routes import setup_main_routes
-from DayBetes_food.routes.cart_routes import setup_cart_routes
-from DayBetes_food.routes.stats_routes import setup_stats_routes
-from DayBetes_food.routes.settings_routes import setup_settings_routes
+from DayBetes_food.routes import (
+    setup_auth_routes,
+    setup_food_routes,
+    setup_main_routes,
+    setup_cart_routes,
+    setup_stats_routes,
+    setup_settings_routes,
+)
 
 
 app, rt = fast_app(
