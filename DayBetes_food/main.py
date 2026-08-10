@@ -8,6 +8,7 @@ from DayBetes_food.auth.security import generate_token
 from DayBetes_food.auth.service import get_session_with_user, is_csrf_valid, refresh_session
 from DayBetes_food.config import (
     CSRF_COOKIE_NAME,
+    DB_INIT_ON_STARTUP,
     SESSION_COOKIE_NAME,
     SESSION_COOKIE_SAMESITE,
     SESSION_COOKIE_SECURE,
@@ -119,7 +120,8 @@ async def add_asset_cache_headers(request, call_next):
 # --- COMPONENT INITIALIZATION ---
 
 def _init_db_on_startup():
-    init_db()
+    if DB_INIT_ON_STARTUP:
+        init_db()
 
 if hasattr(app, "on_event"):
     app.on_event("startup")(_init_db_on_startup)

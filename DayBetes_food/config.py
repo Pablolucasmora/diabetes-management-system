@@ -20,6 +20,7 @@ def _as_int(name: str, default: int) -> int:
 
 
 APP_ENV = os.getenv("APP_ENV", "development")
+DB_INIT_ON_STARTUP = _as_bool(os.getenv("DB_INIT_ON_STARTUP"), APP_ENV == "development")
 
 SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "daybetes_session")
 CSRF_COOKIE_NAME = os.getenv("CSRF_COOKIE_NAME", "daybetes_csrf")

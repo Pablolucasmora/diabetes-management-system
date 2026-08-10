@@ -62,7 +62,14 @@ def _execute_query_many(connection, query: str, params: dict = None, commit: boo
         return []
 
 
-def _build_update_query(table: str, params: dict, where_field: str = "id") -> Optional[str]:
+def _build_update_query(
+    table: str,
+    params: dict,
+    where_field: str = "id",
+    auto_fields: dict = None,
+    raw_fields: dict = None,
+    null_fields: set[str] = None,
+) -> Optional[str]:
     """
     Builds a generic and safe UPDATE query.
     Automatically filters the WHERE field to not update it in the SET
@@ -72,16 +79,41 @@ def _build_update_query(table: str, params: dict, where_field: str = "id") -> Op
         table: Table name
         params: Dictionary with all fields and values
         where_field: Field for WHERE (default: "id")
+        auto_fields: Fields always included in SET with normal param values
+                     (e.g. {"is_active": True}). Values go as %(key)s parameters.
+        raw_fields: Fields always included in SET with raw SQL expressions
+                    (e.g. {"updated_at": "NOW()"}). Expressions go as literal
+                    text in the query, NOT as parameters.
+        null_fields: Fields explicitly allowed to be set to NULL when their
+                     value in params is None. Fields not included here keep
+                     the existing behavior and are skipped when None.
     
     Returns:
         Generated SQL query, or None if there are no valid fields to update.
     """
-    fields = [k for k, v in params.items() if k != where_field and v is not None]
-    
-    if not fields:
+    explicit_null_fields = {
+        field
+        for field in (null_fields or set())
+        if field in params and field != where_field
+    }
+    fields = [
+        k
+        for k, v in params.items()
+        if k != where_field and (v is not None or k in explicit_null_fields)
+    ]
+
+    fields_set = set(fields)
+    auto_list = [k for k in (auto_fields or {}).keys() if k not in fields_set and k != where_field]
+    raw_parts = [f"{k} = {v}" for k, v in (raw_fields or {}).items()]
+
+    if not fields and not auto_list and not raw_parts:
         return None
-        
-    set_clause = ", ".join([f"{field} = %({field})s" for field in fields])
+
+    set_parts = [f"{field} = %({field})s" for field in fields]
+    set_parts.extend([f"{field} = %({field})s" for field in auto_list])
+    set_parts.extend(raw_parts)
+
+    set_clause = ", ".join(set_parts)
     return f"UPDATE {table} SET {set_clause} WHERE {where_field} = %({where_field})s RETURNING {where_field};"
 
 
@@ -99,28 +131,69 @@ def _pg_trgm_enabled(connection) -> bool:
     return _HAS_PG_TRGM
 
 
-def _add_fuzzy_name_condition(connection, conditions: list, params: dict, column: str, search: Optional[str]) -> None:
+def _build_fuzzy_search(
+    connection,
+    column: str,
+    search: Optional[str],
+    param_prefix: str = "search",
+) -> tuple[str, dict, str]:
     normalized = (search or "").strip()
     if not normalized:
-        return
+        return "", {}, "1"
+
     normalized_lower = normalized.lower()
     compact_search = re.sub(r"(.)\1+", r"\1", normalized_lower)
+    param = lambda name: f"{param_prefix}_{name}"
+    params = {
+        param("norm"): normalized_lower,
+        param("like"): f"%{normalized}%",
+        param("prefix"): f"{normalized_lower}%",
+        param("compact_like"): f"%{compact_search}%",
+        param("threshold"): TRGM_SIMILARITY_THRESHOLD,
+    }
+
     if _pg_trgm_enabled(connection):
-        conditions.append(
-            f"({column} ILIKE %(search_like)s "
-            f"OR lower({column}) %% %(search_norm)s "
-            f"OR similarity(lower({column}), %(search_norm)s) >= %(search_threshold)s "
-            f"OR regexp_replace(lower({column}), '(.)\\1+', '\\1', 'g') ILIKE %(search_compact_like)s)"
+        condition = (
+            f"({column} ILIKE %({param('like')})s "
+            f"OR lower({column}) %% %({param('norm')})s "
+            f"OR similarity(lower({column}), %({param('norm')})s) >= %({param('threshold')})s "
+            f"OR regexp_replace(lower({column}), '(.)\\1+', '\\1', 'g') ILIKE %({param('compact_like')})s)"
         )
-        params["search_norm"] = normalized_lower
-        params["search_threshold"] = TRGM_SIMILARITY_THRESHOLD
+        order = (
+            f"CASE "
+            f"WHEN lower({column}) = %({param('norm')})s THEN 0 "
+            f"WHEN lower({column}) LIKE %({param('prefix')})s THEN 1 "
+            f"ELSE 2 END, "
+            f"similarity(lower({column}), %({param('norm')})s) DESC, {column}"
+        )
     else:
-        conditions.append(
-            f"({column} ILIKE %(search_like)s "
-            f"OR regexp_replace(lower({column}), '(.)\\1+', '\\1', 'g') ILIKE %(search_compact_like)s)"
+        condition = (
+            f"({column} ILIKE %({param('like')})s "
+            f"OR regexp_replace(lower({column}), '(.)\\1+', '\\1', 'g') ILIKE %({param('compact_like')})s)"
         )
-    params["search_like"] = f"%{normalized}%"
-    params["search_compact_like"] = f"%{compact_search}%"
+        order = (
+            f"CASE "
+            f"WHEN lower({column}) = %({param('norm')})s THEN 0 "
+            f"WHEN lower({column}) LIKE %({param('prefix')})s THEN 1 "
+            f"ELSE 2 END, {column}"
+        )
+
+    return condition, params, order
+
+
+def _add_fuzzy_name_condition(
+    connection,
+    conditions: list,
+    params: dict,
+    column: str,
+    search: Optional[str],
+    param_prefix: str = "search",
+) -> None:
+    condition, search_params, _ = _build_fuzzy_search(connection, column, search, param_prefix=param_prefix)
+    if not condition:
+        return
+    conditions.append(condition)
+    params.update(search_params)
 
 
 # ============================================
@@ -150,6 +223,27 @@ def update_password_hash(connection, user_id: int, new_hash: str) -> None:
 # ============================================
 # CATALOG
 # ============================================
+
+_NULLABLE_CATALOG_FIELDS = {
+    "brand",
+    "initial_state",
+    "nutriscore",
+    "nova",
+    "yuka",
+    "default_portion",
+    "calories_100g",
+    "carbs_100g",
+    "sugars_100g",
+    "fats_100g",
+    "saturated_100g",
+    "proteins_100g",
+    "fiber_100g",
+    "caffeine",
+    "alcohol",
+    "barcode",
+    "cooking_factor",
+}
+
 
 def normalize_brand_name(brand_name: str) -> str:
     clean_name = " ".join((brand_name or "").strip().split())
@@ -182,14 +276,8 @@ def add_food_brand(connection, brand_name: str) -> bool:
 
 
 def get_food_brand_suggestions(connection, search: str = "", limit: int = 8) -> list[str]:
-    normalized = (search or "").strip()
-    params = {
-        "q": normalized,
-        "q_like": f"%{normalized}%",
-        "q_prefix": f"{normalized.lower()}%",
-        "q_lower": normalized.lower(),
-        "limit": max(1, min(int(limit or 8), 25)),
-    }
+    search_condition, search_params, search_order = _build_fuzzy_search(connection, "name", search)
+    params = {**search_params, "limit": max(1, min(int(limit or 8), 25))}
     query = """
         WITH source AS (
             SELECT DISTINCT trim(brand) AS name
@@ -202,29 +290,17 @@ def get_food_brand_suggestions(connection, search: str = "", limit: int = 8) -> 
         )
         SELECT name
         FROM source
-        WHERE (%(q)s = '' OR name ILIKE %(q_like)s)
-        ORDER BY
-            CASE
-                WHEN lower(name) = %(q_lower)s THEN 0
-                WHEN lower(name) LIKE %(q_prefix)s THEN 1
-                ELSE 2
-            END,
-            name
+        WHERE {search_condition}
+        ORDER BY {search_order}
         LIMIT %(limit)s;
-    """
+    """.format(search_condition=search_condition or "TRUE", search_order=search_order)
     rows = _execute_query_many(connection, query, params, commit=False)
     return [str(row["name"]) for row in rows if row and row.get("name")]
 
 
 def get_subtype_suggestions(connection, search: str = "", limit: int = 50) -> list[str]:
-    normalized = (search or "").strip()
-    params = {
-        "q": normalized,
-        "q_like": f"%{normalized}%",
-        "q_prefix": f"{normalized.lower()}%",
-        "q_lower": normalized.lower(),
-        "limit": max(1, min(int(limit or 50), 500)),
-    }
+    search_condition, search_params, search_order = _build_fuzzy_search(connection, "name", search)
+    params = {**search_params, "limit": max(1, min(int(limit or 50), 500))}
     query = """
         WITH source AS (
             SELECT DISTINCT trim(subtype) AS name
@@ -237,28 +313,16 @@ def get_subtype_suggestions(connection, search: str = "", limit: int = 50) -> li
         )
         SELECT name
         FROM source
-        WHERE (%(q)s = '' OR name ILIKE %(q_like)s)
-        ORDER BY
-            CASE
-                WHEN lower(name) = %(q_lower)s THEN 0
-                WHEN lower(name) LIKE %(q_prefix)s THEN 1
-                ELSE 2
-            END,
-            name
+        WHERE {search_condition}
+        ORDER BY {search_order}
         LIMIT %(limit)s;
-    """
+    """.format(search_condition=search_condition or "TRUE", search_order=search_order)
     rows = _execute_query_many(connection, query, params, commit=False)
     return [str(row["name"]) for row in rows if row and row.get("name")]
 
 def get_category_suggestions(connection, search: str = "", limit: int = 50) -> list[str]:
-    normalized = (search or "").strip()
-    params = {
-        "q": normalized,
-        "q_like": f"%{normalized}%",
-        "q_prefix": f"{normalized.lower()}%",
-        "q_lower": normalized.lower(),
-        "limit": max(1, min(int(limit or 50), 500)),
-    }
+    search_condition, search_params, search_order = _build_fuzzy_search(connection, "name", search)
+    params = {**search_params, "limit": max(1, min(int(limit or 50), 500))}
     query = """
         WITH defaults AS (
             SELECT unnest(ARRAY[
@@ -277,44 +341,30 @@ def get_category_suggestions(connection, search: str = "", limit: int = 50) -> l
         )
         SELECT name
         FROM source
-        WHERE (%(q)s = '' OR name ILIKE %(q_like)s)
-        ORDER BY
-            CASE
-                WHEN lower(name) = %(q_lower)s THEN 0
-                WHEN lower(name) LIKE %(q_prefix)s THEN 1
-                ELSE 2
-            END,
-            name
+        WHERE {search_condition}
+        ORDER BY {search_order}
         LIMIT %(limit)s;
-    """
+    """.format(search_condition=search_condition or "TRUE", search_order=search_order)
     rows = _execute_query_many(connection, query, params, commit=False)
     return [str(row["name"]) for row in rows if row and row.get("name")]
 
 
 def get_manual_origin_suggestions(connection, search: str = "", limit: int = 50) -> list[str]:
-    normalized = (search or "").strip()
-    params = {
-        "q": normalized,
-        "q_like": f"%{normalized}%",
-        "q_prefix": f"{normalized.lower()}%",
-        "q_lower": normalized.lower(),
-        "limit": max(1, min(int(limit or 50), 500)),
-    }
+    search_condition, search_params, search_order = _build_fuzzy_search(connection, "name", search)
+    params = {**search_params, "limit": max(1, min(int(limit or 50), 500))}
     query = """
-        SELECT DISTINCT trim(origin) AS name
-        FROM manual_intake
-        WHERE origin IS NOT NULL
-          AND trim(origin) <> ''
-          AND (%(q)s = '' OR origin ILIKE %(q_like)s)
-        ORDER BY
-            CASE
-                WHEN lower(trim(origin)) = %(q_lower)s THEN 0
-                WHEN lower(trim(origin)) LIKE %(q_prefix)s THEN 1
-                ELSE 2
-            END,
-            trim(origin)
+        WITH source AS (
+            SELECT DISTINCT trim(origin) AS name
+            FROM manual_intake
+            WHERE origin IS NOT NULL
+              AND trim(origin) <> ''
+        )
+        SELECT name
+        FROM source
+        WHERE {search_condition}
+        ORDER BY {search_order}
         LIMIT %(limit)s;
-    """
+    """.format(search_condition=search_condition or "TRUE", search_order=search_order)
     rows = _execute_query_many(connection, query, params, commit=False)
     return [str(row["name"]) for row in rows if row and row.get("name")]
 
@@ -330,19 +380,23 @@ def add_catalog_item(connection, data: dict) -> Optional[int]:
             nutriscore, nova, yuka, default_portion,
             calories_100g, carbs_100g, sugars_100g, fats_100g,
             saturated_100g, proteins_100g, fiber_100g,
-            caffeine, alcohol, barcode, cooking_factor, favorite, is_private
+            caffeine, alcohol, barcode, cooking_factor, favorite, is_private,
+            created_at, updated_at
         )
         VALUES (
             %(created_by)s, %(origin_root_id)s, %(name)s, %(brand)s, %(category)s, %(subtype)s, %(initial_state)s,
             %(nutriscore)s, %(nova)s, %(yuka)s, %(default_portion)s,
             %(calories_100g)s, %(carbs_100g)s, %(sugars_100g)s, %(fats_100g)s,
             %(saturated_100g)s, %(proteins_100g)s, %(fiber_100g)s,
-            %(caffeine)s, %(alcohol)s, %(barcode)s, %(cooking_factor)s, %(favorite)s, %(is_private)s
+            %(caffeine)s, %(alcohol)s, %(barcode)s, %(cooking_factor)s, %(favorite)s, %(is_private)s,
+            NOW(), NOW()
         )
         RETURNING id;
     """
     payload = dict(data or {})
     payload.setdefault("origin_root_id", None)
+    if payload.get("cooking_factor") is None:
+        payload["cooking_factor"] = 1.0
     if "brand" in payload:
         payload["brand"] = normalize_brand_name(payload.get("brand")) or None
     result = _execute_query(connection, query, payload)
@@ -376,6 +430,25 @@ def get_catalog_item_by_barcode(connection, barcode: str, viewer_user_id: int = 
     return _execute_query(connection, query, params, commit=False)
 
 
+def _add_entity_filters(
+    conditions: list,
+    params: dict,
+    owner_column: str,
+    users_id: int = None,
+    favorite: bool = None,
+    viewer_user_id: int = None,
+) -> None:
+    if users_id:
+        conditions.append(f"{owner_column} = %(users_id)s")
+        params["users_id"] = users_id
+    if favorite is not None:
+        conditions.append("favorite = %(favorite)s")
+        params["favorite"] = favorite
+    if viewer_user_id is not None:
+        conditions.append(f"(is_private = FALSE OR {owner_column} = %(viewer_user_id)s)")
+        params["viewer_user_id"] = viewer_user_id
+
+
 def get_all_catalog(
     connection,
     search: str = None,
@@ -390,20 +463,26 @@ def get_all_catalog(
 
     normalized = (search or "").strip()
     if normalized:
-        params["search_like"] = f"%{normalized}%"
-        conditions.append("(name ILIKE %(search_like)s OR COALESCE(brand, '') ILIKE %(search_like)s)")
+        name_condition, name_params, _ = _build_fuzzy_search(
+            connection, "name", normalized, param_prefix="catalog_name"
+        )
+        brand_condition, brand_params, _ = _build_fuzzy_search(
+            connection, "COALESCE(brand, '')", normalized, param_prefix="catalog_brand"
+        )
+        conditions.append(f"({name_condition} OR {brand_condition})")
+        params.update(name_params)
+        params.update(brand_params)
     if category:
         conditions.append("category = %(category)s")
         params["category"] = category
-    if users_id:
-        conditions.append("created_by = %(users_id)s")
-        params["users_id"] = users_id
-    if favorite is not None:
-        conditions.append("favorite = %(favorite)s")
-        params["favorite"] = favorite
-    if viewer_user_id is not None:
-        conditions.append("(is_private = FALSE OR created_by = %(viewer_user_id)s)")
-        params["viewer_user_id"] = viewer_user_id
+    _add_entity_filters(
+        conditions,
+        params,
+        owner_column="created_by",
+        users_id=users_id,
+        favorite=favorite,
+        viewer_user_id=viewer_user_id,
+    )
     
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     query = f"SELECT * FROM catalog {where_clause} ORDER BY name;"
@@ -457,7 +536,17 @@ def update_catalog_item(connection, catalog_id: int, data: dict) -> bool:
     if "brand" in payload:
         payload["brand"] = normalize_brand_name(payload.get("brand")) or None
     params = {**payload, "id": catalog_id}
-    query = _build_update_query("catalog", params)
+    null_fields = {
+        field
+        for field in _NULLABLE_CATALOG_FIELDS
+        if field in payload and payload[field] is None
+    }
+    query = _build_update_query(
+        "catalog",
+        params,
+        raw_fields={"updated_at": "NOW()"},
+        null_fields=null_fields,
+    )
     if not query:
         return False
 
@@ -518,20 +607,25 @@ def get_all_manual_intakes(
     conditions = []
     params = {}
     
-    if users_id:
-        conditions.append("created_by = %(users_id)s")
-        params["users_id"] = users_id
+    _add_entity_filters(
+        conditions,
+        params,
+        owner_column="created_by",
+        users_id=users_id,
+        favorite=favorite,
+        viewer_user_id=viewer_user_id,
+    )
     normalized = (search or "").strip()
     if normalized:
-        params["search_like"] = f"%{normalized}%"
-        conditions.append("(name ILIKE %(search_like)s OR COALESCE(origin, '') ILIKE %(search_like)s)")
-    if favorite is not None:
-        conditions.append("favorite = %(favorite)s")
-        params["favorite"] = favorite
-    if viewer_user_id is not None:
-        conditions.append("(is_private = FALSE OR created_by = %(viewer_user_id)s)")
-        params["viewer_user_id"] = viewer_user_id
-    
+        name_condition, name_params, _ = _build_fuzzy_search(
+            connection, "name", normalized, param_prefix="manual_name"
+        )
+        origin_condition, origin_params, _ = _build_fuzzy_search(
+            connection, "COALESCE(origin, '')", normalized, param_prefix="manual_origin"
+        )
+        conditions.append(f"({name_condition} OR {origin_condition})")
+        params.update(name_params)
+        params.update(origin_params)
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     query = f"SELECT * FROM manual_intake {where_clause} ORDER BY name;"
     
@@ -645,19 +739,18 @@ def get_all_recipes(
     conditions = []
     params = {}
     
-    if users_id:
-        conditions.append("users_id = %(users_id)s")
-        params["users_id"] = users_id
     if meal_type:
         conditions.append("meal_type = %(meal_type)s")
         params["meal_type"] = meal_type
     _add_fuzzy_name_condition(connection, conditions, params, "name", search)
-    if favorite is not None:
-        conditions.append("favorite = %(favorite)s")
-        params["favorite"] = favorite
-    if viewer_user_id is not None:
-        conditions.append("(is_private = FALSE OR users_id = %(viewer_user_id)s)")
-        params["viewer_user_id"] = viewer_user_id
+    _add_entity_filters(
+        conditions,
+        params,
+        owner_column="users_id",
+        users_id=users_id,
+        favorite=favorite,
+        viewer_user_id=viewer_user_id,
+    )
     
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     query = f"SELECT * FROM recipe {where_clause} ORDER BY name;"
@@ -701,29 +794,21 @@ def delete_recipe(connection, recipe_id: int) -> bool:
 
 
 def get_tag_suggestions(connection, search: str = "", limit: int = 100) -> list[str]:
-    normalized = (search or "").strip()
-    params = {
-        "q": normalized,
-        "q_like": f"%{normalized}%",
-        "q_prefix": f"{normalized.lower()}%",
-        "q_lower": normalized.lower(),
-        "limit": max(1, min(int(limit or 100), 500)),
-    }
+    search_condition, search_params, search_order = _build_fuzzy_search(connection, "name", search)
+    params = {**search_params, "limit": max(1, min(int(limit or 100), 500))}
     query = """
-        SELECT DISTINCT trim(name) AS name
-        FROM tags
-        WHERE name IS NOT NULL
-          AND trim(name) <> ''
-          AND (%(q)s = '' OR name ILIKE %(q_like)s)
-        ORDER BY
-            CASE
-                WHEN lower(trim(name)) = %(q_lower)s THEN 0
-                WHEN lower(trim(name)) LIKE %(q_prefix)s THEN 1
-                ELSE 2
-            END,
-            trim(name)
+        WITH source AS (
+            SELECT DISTINCT trim(name) AS name
+            FROM tags
+            WHERE name IS NOT NULL
+              AND trim(name) <> ''
+        )
+        SELECT name
+        FROM source
+        WHERE {search_condition}
+        ORDER BY {search_order}
         LIMIT %(limit)s;
-    """
+    """.format(search_condition=search_condition or "TRUE", search_order=search_order)
     rows = _execute_query_many(connection, query, params, commit=False)
     return [str(row["name"]) for row in rows if row and row.get("name")]
 

@@ -1,4 +1,7 @@
 class DBSchema:
+    extensions = """
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+    """
     
     users = """
     CREATE TABLE IF NOT EXISTS users (

@@ -1,0 +1,13 @@
+name: daybetes-tunnel
+
+services:
+  tunnel:
+    image: cloudflare/cloudflared:2026.2.0
+    container_name: diabetes_tunnel
+    restart: unless-stopped
+    command: tunnel --protocol http2 --config /etc/cloudflared/daybetes.yml run daybetes
+    volumes:
+      - ~/.cloudflared:/home/nonroot/.cloudflared:ro
+      - ./cloudflared/daybetes.yml:/etc/cloudflared/daybetes.yml:ro
+    extra_hosts:
+      - host.docker.internal:host-gateway

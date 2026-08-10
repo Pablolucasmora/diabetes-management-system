@@ -4,6 +4,7 @@ from DayBetes_food.components.cart.cart_shared import (
     CHECKBOX_CLS,
     MACRO_KEYS,
     MEAL_TYPES,
+    calculate_macro_summary_metrics,
     display_unit,
     group_portions,
     macro_color,
@@ -254,20 +255,20 @@ def EventHeader(event):
 
 def MacrosSummary(event, portions, compact: bool = False):
     total_amount = sum(float(p.get("amount_g") or 0.0) for p in portions)
-    inferred_amount_confidence_num = 0.0
-    inferred_quality_confidence_num = 0.0
+    inferred_metrics = calculate_macro_summary_metrics(portions)
+    total_calories = 0.0
     for portion in portions:
-        amount = float(portion.get("amount_g") or 0.0)
-        inferred_amount_confidence_num += amount * float(bool(portion.get("strictly_weighed")))
-        inferred_quality_confidence_num += amount * float(bool(portion.get("macros_quality")))
-    inferred_amount_confidence = (inferred_amount_confidence_num / total_amount) if total_amount > 0 else 0.0
-    inferred_quality_confidence = (inferred_quality_confidence_num / total_amount) if total_amount > 0 else 0.0
+        calories_100 = parse_source_macro(portion, "calories")
+        if calories_100 is None:
+            continue
+        total_calories += float(portion.get("amount_g") or 0.0) * float(calories_100) / 100.0
+
     amount_confidence = event.get("amount_confidence")
     quality_confidence = event.get("quality_confidence")
     if amount_confidence is None:
-        amount_confidence = inferred_amount_confidence
+        amount_confidence = inferred_metrics["amount_confidence"]
     if quality_confidence is None:
-        quality_confidence = inferred_quality_confidence
+        quality_confidence = inferred_metrics["quality_confidence"]
 
     compact_keys = {"carbs", "proteins", "fats", "fiber"}
     pills = []
@@ -280,16 +281,14 @@ def MacrosSummary(event, portions, compact: bool = False):
         if compact and macro_key not in compact_keys:
             continue
         total = 0.0
-        unknown_amount = 0.0
         for portion in portions:
             amount = float(portion.get("amount_g") or 0.0)
             macro_100 = parse_source_macro(portion, macro_key)
             if macro_100 is None:
-                unknown_amount += amount
                 continue
             total += amount * float(macro_100) / 100.0
 
-        inferred_uncertainty = (unknown_amount / total_amount) if total_amount > 0 else 0.0
+        inferred_uncertainty = inferred_metrics[uncertainty_key]
         uncertainty = event.get(uncertainty_key)
         if uncertainty is None:
             uncertainty = inferred_uncertainty
@@ -334,11 +333,11 @@ def MacrosSummary(event, portions, compact: bool = False):
         )
 
     header = (
-        Span(f"Total: {total_amount:.1f} g", cls="text-[10px] text-gray-700 md:text-xs")
+        Span(f"Total: {total_amount:.1f} g | {total_calories:.0f} kcal", cls="text-[10px] text-gray-700 md:text-xs")
         if compact
         else Div(
             H3("Meal macros", cls="font-semibold text-sm md:text-base"),
-            Span(f"Total: {total_amount:.1f} g", cls="text-xs md:text-sm text-gray-700"),
+            Span(f"Total: {total_amount:.1f} g | {total_calories:.0f} kcal", cls="text-xs md:text-sm text-gray-700"),
             cls="flex items-center justify-between gap-2"
         )
     )

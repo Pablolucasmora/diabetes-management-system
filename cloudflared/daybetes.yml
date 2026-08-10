@@ -1,0 +1,8 @@
+tunnel: 7211bcbd-d947-46f0-8d5a-e011e0e125da
+credentials-file: /home/nonroot/.cloudflared/7211bcbd-d947-46f0-8d5a-e011e0e125da.json
+protocol: http2
+
+ingress:
+  - hostname: daybetes.com
+    service: http://host.docker.internal:8000
+  - service: http_status:404

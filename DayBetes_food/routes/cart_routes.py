@@ -1,6 +1,7 @@
 from fasthtml.common import *
 from DayBetes_food.components.cart.cart_main import cart_main
 from DayBetes_food.components.cart.cart_components import MacrosSummary
+from DayBetes_food.components.cart.cart_shared import calculate_macro_summary_metrics
 from DayBetes_food.components.ui import render_fragment, render_page
 from datetime import datetime
 from DayBetes_food.database.connection import get_connection
@@ -93,6 +94,9 @@ def setup_cart_routes(rt):
 
     @rt("/cart/event/{event_id}/name")
     def post(request: Request, event_id: int, event_name: str = ""):
+        """
+        Update event meal name, returning the response to the request
+        """
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         clean_name = (event_name or "").strip()
@@ -263,6 +267,7 @@ def setup_cart_routes(rt):
                 ingested_amount = value
 
         with get_connection() as connection:
+            portions = get_portion_detail_by_event(connection, event_id)
             update_payload = {}
             if ingested_amount is not None:
                 update_payload["ingested_amount"] = ingested_amount
@@ -271,6 +276,7 @@ def setup_cart_routes(rt):
                     update_payload["total_amount"] = float(total_amount)
                 except (TypeError, ValueError):
                     pass
+            update_payload.update(calculate_macro_summary_metrics(portions))
             updated = update_intake_event(connection, event_id, update_payload) if update_payload else True
             finalized_zone = finalize_injection_zone_for_event(connection, event_id)
             changed = change_event_status(connection, event_id, "consumed")

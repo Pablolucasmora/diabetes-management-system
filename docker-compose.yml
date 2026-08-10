@@ -29,7 +29,6 @@ services:
       db:
         condition: service_started
 
-
   tailwind:
 
     build:
@@ -41,13 +40,3 @@ services:
     working_dir: /app
     tty: true
     command: tailwindcss -i DayBetes_food/static/css/input.css -o DayBetes_food/static/css/output.css --watch
-
-  tunnel:
-    image: cloudflare/cloudflared:latest
-    container_name: diabetes_tunnel
-    command: tunnel --config /home/nonroot/.cloudflared/config.yml run daybetes
-    volumes:
-      - ~/.cloudflared:/home/nonroot/.cloudflared
-    depends_on:
-      web:
-        condition: service_started

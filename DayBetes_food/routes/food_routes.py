@@ -637,7 +637,13 @@ def _next_copy_name(connection, entry_type: str, base_name: str, owner_user_id: 
     return f"{base} (copy {datetime.now().strftime('%Y%m%d%H%M%S')})"
 
 
-def _filtered_entries(connection, search: str = "", filter_value: str = "all", include_recipes: bool = True):
+def _filtered_entries(
+    connection,
+    search: str = "",
+    filter_value: str = "all",
+    include_recipes: bool = True,
+    entry_type: str | None = None,
+):
     user_id = get_current_user_id()
     has_search = bool((search or "").strip())
     viewer_id = user_id if user_id else -1
@@ -654,18 +660,25 @@ def _filtered_entries(connection, search: str = "", filter_value: str = "all", i
         return merged
 
     if filter_value == "food":
-        if has_search:
-            catalog_items = get_all_catalog(connection, search=search or None, viewer_user_id=viewer_id)
-            manual_items = get_all_manual_intakes(connection, search=search or None, viewer_user_id=viewer_id)
-        else:
-            catalog_items = _unique_by_id(
-                get_all_catalog(connection, favorite=True, viewer_user_id=viewer_id)
-                + (get_all_catalog(connection, users_id=user_id, viewer_user_id=viewer_id) if user_id else [])
-            )
-            manual_items = _unique_by_id(
-                get_all_manual_intakes(connection, favorite=True, viewer_user_id=viewer_id)
-                + (get_all_manual_intakes(connection, users_id=user_id, viewer_user_id=viewer_id) if user_id else [])
-            )
+        selected_types = {"catalog", "manual_intake"} if entry_type is None else {entry_type}
+        catalog_items = []
+        manual_items = []
+        if "catalog" in selected_types:
+            if has_search:
+                catalog_items = get_all_catalog(connection, search=search or None, viewer_user_id=viewer_id)
+            else:
+                catalog_items = _unique_by_id(
+                    get_all_catalog(connection, favorite=True, viewer_user_id=viewer_id)
+                    + (get_all_catalog(connection, users_id=user_id, viewer_user_id=viewer_id) if user_id else [])
+                )
+        if "manual_intake" in selected_types:
+            if has_search:
+                manual_items = get_all_manual_intakes(connection, search=search or None, viewer_user_id=viewer_id)
+            else:
+                manual_items = _unique_by_id(
+                    get_all_manual_intakes(connection, favorite=True, viewer_user_id=viewer_id)
+                    + (get_all_manual_intakes(connection, users_id=user_id, viewer_user_id=viewer_id) if user_id else [])
+                )
         entries = _sorted_food_entries(catalog_items, manual_items, [], viewer_user_id=user_id)
     elif filter_value == "recipes":
         if has_search:
@@ -677,11 +690,20 @@ def _filtered_entries(connection, search: str = "", filter_value: str = "all", i
             )
         entries = _sorted_food_entries([], [], recipes, viewer_user_id=user_id)
     elif filter_value == "favs":
-        catalog_items = get_all_catalog(connection, search=search or None, favorite=True, viewer_user_id=viewer_id)
-        manual_items = get_all_manual_intakes(connection, search=search or None, favorite=True, viewer_user_id=viewer_id)
+        selected_types = {"catalog", "manual_intake", "recipe"} if entry_type is None else {entry_type}
+        catalog_items = (
+            get_all_catalog(connection, search=search or None, favorite=True, viewer_user_id=viewer_id)
+            if "catalog" in selected_types
+            else []
+        )
+        manual_items = (
+            get_all_manual_intakes(connection, search=search or None, favorite=True, viewer_user_id=viewer_id)
+            if "manual_intake" in selected_types
+            else []
+        )
         recipes = (
             get_all_recipes(connection, search=search or None, favorite=True, viewer_user_id=viewer_id)
-            if include_recipes
+            if include_recipes and "recipe" in selected_types
             else []
         )
         entries = _sorted_food_entries(catalog_items, manual_items, recipes, viewer_user_id=user_id)
@@ -1195,7 +1217,7 @@ def setup_food_routes(rt):
                     "alcohol": source.get("alcohol"),
                     "barcode": source.get("barcode"),
                     "cooking_factor": source.get("cooking_factor"),
-                    "favorite": False,
+                    "favorite": True,
                     "is_private": False,
                 }
                 created_id = add_catalog_item(connection, payload)
@@ -1590,17 +1612,21 @@ def setup_food_routes(rt):
                 entries = _recipes_entries(connection, search=clean_search, recipes_mode=recipes_mode_norm)
             else:
                 mode = (search_mode or "recommended").strip().lower()
-                entries = _filtered_entries(connection, search=clean_search, filter_value=filter)
+                selected_entry_type = None
                 if filter == "food":
-                    desired_entry_type = "catalog" if food_mode_norm == "catalog" else "manual_intake"
-                    entries = [item for item in entries if item.get("entry_type") == desired_entry_type]
+                    selected_entry_type = "catalog" if food_mode_norm == "catalog" else "manual_intake"
                 elif filter == "favs":
-                    desired_entry_type = {
+                    selected_entry_type = {
                         "catalog": "catalog",
                         "manual": "manual_intake",
                         "recipes": "recipe",
                     }[favs_mode_norm]
-                    entries = [item for item in entries if item.get("entry_type") == desired_entry_type]
+                entries = _filtered_entries(
+                    connection,
+                    search=clean_search,
+                    filter_value=filter,
+                    entry_type=selected_entry_type,
+                )
 
         if not entries:
             return render_fragment(H2("No items", cls="text-gray-600"))
