@@ -152,6 +152,8 @@ def _ensure_default_user(cursor):
 
 
 def _ensure_catalog_schema(cursor):
+    if not _has_column(cursor, "catalog", "deleted_at"):
+        cursor.execute("ALTER TABLE catalog ADD COLUMN deleted_at TIMESTAMP NULL;")
     if not _has_column(cursor, "catalog", "default_portion"):
         return
     dtype = (_column_data_type(cursor, "catalog", "default_portion") or "").lower()
@@ -247,6 +249,7 @@ def _ensure_food_filter_indexes(cursor):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_created_by ON catalog (created_by);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_favorite ON catalog (favorite);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_visibility ON catalog (is_private, created_by);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_deleted_at ON catalog (deleted_at);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_created_by ON manual_intake (created_by);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_favorite ON manual_intake (favorite);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_visibility ON manual_intake (is_private, created_by);")
@@ -503,11 +506,11 @@ def init_db():
             cur.execute(table_sql)
 
         _ensure_trgm_search(cur)
-        _ensure_food_filter_indexes(cur)
         _ensure_tags_color_schema(cur)
         _ensure_food_name_origin_uniqueness(cur)
         _drop_legacy_category_check(cur)
         _ensure_catalog_schema(cur)
+        _ensure_food_filter_indexes(cur)
         _ensure_privacy_schema(cur)
         _ensure_copy_origin_schema(cur)
         _ensure_users_schema(cur)

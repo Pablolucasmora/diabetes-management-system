@@ -2977,6 +2977,7 @@ def FoodDetailPage(
     tags: list[dict] | list[str] | None = None,
     can_edit: bool = True,
     can_delete: bool = False,
+    is_archived: bool = False,
 ):
     base_unit = _display_base_unit(entry_type, entry)
     default_amount = max(1.0, _float_or_zero(summary.get("default_amount_g")) or 100.0)
@@ -3028,6 +3029,26 @@ def FoodDetailPage(
     action_button_label = "Log recipe" if recipe_mode else "Log food"
     meal_selector = MealSelector(connection, user_id=user_id or 0) if not recipe_mode else ""
     recipe_ingredients = RecipeIngredientsBlock(int(entry.get("id") or 0), recipe_portions or []) if recipe_mode else ""
+    action_button = (
+        Button(
+            action_button_label,
+            type="button",
+            cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-black text-white border-black",
+            hx_post=f"/food/log/{entry_type}/{entry['id']}",
+            hx_target=f"#{msg_id}",
+            hx_swap="innerHTML",
+            hx_push_url="false",
+            hx_include=f"{'#meal_selector, ' if not recipe_mode else ''}#{form_id}",
+            data_skip_page_loading="true",
+        )
+        if not is_archived
+        else Button(
+            "Archived: copy first",
+            type="button",
+            disabled=True,
+            cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-gray-300 text-gray-600 border-gray-300 cursor-not-allowed",
+        )
+    )
 
     return Div(
         Div(_food_back_button(), cls="w-full flex justify-start"),
@@ -3036,6 +3057,7 @@ def FoodDetailPage(
                 Div(
                     H1(entry.get("name") or "-", cls="text-2xl font-bold text-gray-900"),
                     P(subtitle, cls="text-sm text-gray-600"),
+                    P("Archived food: create a copy to use it.", cls="text-xs font-semibold text-amber-700") if is_archived else "",
                     (
                         Div(
                             *[
@@ -3276,17 +3298,7 @@ def FoodDetailPage(
                     }
                 ),
             ),
-            Button(
-                action_button_label,
-                type="button",
-                cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-black text-white border-black",
-                hx_post=f"/food/log/{entry_type}/{entry['id']}",
-                hx_target=f"#{msg_id}",
-                hx_swap="innerHTML",
-                hx_push_url="false",
-                hx_include=f"{'#meal_selector, ' if not recipe_mode else ''}#{form_id}",
-                data_skip_page_loading="true",
-            ),
+            action_button,
             cls="w-full grid grid-cols-2 gap-3",
         ),
         (
@@ -3460,13 +3472,22 @@ def RecipeIngredientPickerPage(recipe_entry: dict, foods: list[dict]):
 
 def FoodCard(food):
     add_path = f"/add_food/{food['id']}"
+    add_label = "+"
     if food["entry_type"] == "manual_intake":
         add_path = f"/add_manual_intake/{food['id']}"
     if food["entry_type"] == "recipe":
         add_path = f"/add_recipe/{food['id']}"
+    if food["entry_type"] == "catalog" and food.get("deleted_at") is not None:
+        add_path = f"/food/copy/catalog/{food['id']}"
+        add_label = "Copy"
 
     owner_suffix = " *" if food.get("is_owned") else ""
     name_text = f"{food['name']}{owner_suffix}"
+    archived_badge = (
+        Span("Archived", cls="text-[10px] font-semibold text-amber-700")
+        if food.get("entry_type") == "catalog" and food.get("deleted_at") is not None
+        else ""
+    )
     subtitle = ""
     if food.get("entry_type") == "catalog":
         subtitle = (food.get("brand") or "").strip()
@@ -3476,6 +3497,7 @@ def FoodCard(food):
     title_node = H1(
         Span(name_text),
         Span(f"({subtitle})", cls="text-xs text-gray-500 font-medium") if subtitle else "",
+        archived_badge,
         cls="text-left font-semibold hover:underline flex flex-wrap items-baseline gap-1",
     )
 
@@ -3487,7 +3509,7 @@ def FoodCard(food):
         ),
         Div(
             FavoriteButton(food["entry_type"], food["id"], bool(food.get("favorite"))),
-            AddButton(hx_post=add_path),
+            AddButton(label=add_label, hx_post=add_path),
             cls="flex items-center gap-2 ml-3",
         ),
         hx_get=f"/food/item/{food['entry_type']}/{food['id']}",

@@ -282,7 +282,8 @@ def get_food_brand_suggestions(connection, search: str = "", limit: int = 8) -> 
         WITH source AS (
             SELECT DISTINCT trim(brand) AS name
             FROM catalog
-            WHERE brand IS NOT NULL AND trim(brand) <> ''
+            WHERE deleted_at IS NULL
+              AND brand IS NOT NULL AND trim(brand) <> ''
             UNION
             SELECT DISTINCT trim(name) AS name
             FROM food_brands
@@ -305,7 +306,8 @@ def get_subtype_suggestions(connection, search: str = "", limit: int = 50) -> li
         WITH source AS (
             SELECT DISTINCT trim(subtype) AS name
             FROM catalog
-            WHERE subtype IS NOT NULL AND trim(subtype) <> ''
+            WHERE deleted_at IS NULL
+              AND subtype IS NOT NULL AND trim(subtype) <> ''
             UNION
             SELECT DISTINCT trim(subtype) AS name
             FROM manual_intake
@@ -335,7 +337,8 @@ def get_category_suggestions(connection, search: str = "", limit: int = 50) -> l
         source AS (
             SELECT DISTINCT trim(category) AS name
             FROM catalog
-            WHERE category IS NOT NULL AND trim(category) <> ''
+            WHERE deleted_at IS NULL
+              AND category IS NOT NULL AND trim(category) <> ''
             UNION
             SELECT name FROM defaults
         )
@@ -422,7 +425,8 @@ def get_catalog_item_by_barcode(connection, barcode: str, viewer_user_id: int = 
     query = f"""
         SELECT *
         FROM catalog
-        WHERE trim(barcode) = %(barcode)s
+        WHERE deleted_at IS NULL
+          AND trim(barcode) = %(barcode)s
           {visibility_clause}
         ORDER BY id
         LIMIT 1;
@@ -460,6 +464,14 @@ def get_all_catalog(
     """Gets all catalog items with optional filters."""
     conditions = []
     params = {}
+
+    if viewer_user_id is None:
+        conditions.append("deleted_at IS NULL")
+    else:
+        params["catalog_viewer_user_id"] = viewer_user_id
+        conditions.append(
+            "(deleted_at IS NULL OR (is_private = FALSE AND created_by <> %(catalog_viewer_user_id)s))"
+        )
 
     normalized = (search or "").strip()
     if normalized:
@@ -511,7 +523,8 @@ def catalog_name_brand_exists(
     query = f"""
         SELECT 1
         FROM catalog
-        WHERE lower(trim(name)) = lower(trim(%(name)s))
+        WHERE deleted_at IS NULL
+          AND lower(trim(name)) = lower(trim(%(name)s))
           AND lower(trim(COALESCE(brand, ''))) = lower(trim(COALESCE(%(brand)s, '')))
           {exclusion}
         LIMIT 1;
@@ -555,8 +568,15 @@ def update_catalog_item(connection, catalog_id: int, data: dict) -> bool:
 
 
 def delete_catalog_item(connection, catalog_id: int) -> bool:
-    """Deletes a catalog item by ID."""
-    query = "DELETE FROM catalog WHERE id = %(id)s RETURNING id;"
+    """Logically deletes a catalog item by ID."""
+    query = """
+        UPDATE catalog
+        SET deleted_at = NOW(),
+            updated_at = NOW()
+        WHERE id = %(id)s
+          AND deleted_at IS NULL
+        RETURNING id;
+    """
     result = _execute_query(connection, query, {"id": catalog_id})
     return result is not None
 
@@ -839,7 +859,8 @@ def get_rescue_entries_suggestions(connection, users_id: int, search: str = "", 
             FROM linked_tags lt
             INNER JOIN rescue_tag rt ON rt.id = lt.tag_id
             INNER JOIN catalog c ON c.id = lt.catalog_id
-            WHERE (c.is_private = FALSE OR c.created_by = %(users_id)s)
+            WHERE c.deleted_at IS NULL
+              AND (c.is_private = FALSE OR c.created_by = %(users_id)s)
               AND (%(q)s = '' OR c.name ILIKE %(q_like)s OR COALESCE(c.brand, '') ILIKE %(q_like)s)
         ),
         manual_rows AS (

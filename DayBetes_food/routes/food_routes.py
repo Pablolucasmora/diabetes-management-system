@@ -590,6 +590,12 @@ def _entry_owner_id(entry_type: str, entry: dict) -> int | None:
 def _can_view_entry(entry_type: str, entry: dict, viewer_user_id: int | None) -> bool:
     if not entry:
         return False
+    if entry_type == "catalog" and entry.get("deleted_at") is not None:
+        owner_id = _entry_owner_id(entry_type, entry)
+        if owner_id == viewer_user_id:
+            return False
+        if bool(entry.get("is_private")):
+            return False
     if not bool(entry.get("is_private")):
         return True
     owner_id = _entry_owner_id(entry_type, entry)
@@ -908,6 +914,8 @@ def setup_food_routes(rt):
                 origin = get_manual_intake(connection, int(origin_id))
             if not origin or not _can_view_entry(origin_type, origin, user_id):
                 return render_fragment(P("Rescue item not found.", cls="text-xs text-red-700"))
+            if origin_type == "catalog" and origin.get("deleted_at") is not None:
+                return render_fragment(P("This food is archived and must be copied first.", cls="text-xs text-red-700"))
             event_id = add_intake_event(
                 connection,
                 users_id=int(user_id),
@@ -960,11 +968,12 @@ def setup_food_routes(rt):
                 entry_type=entry_type,
                 entry=entry,
                 summary=summary,
-                recipe_portions=recipe_portions,
-                tags=tags,
-                can_edit=can_edit,
-                can_delete=can_delete,
-            ),
+                    recipe_portions=recipe_portions,
+                    tags=tags,
+                    can_edit=can_edit,
+                    can_delete=can_delete,
+                    is_archived=(entry_type == "catalog" and entry.get("deleted_at") is not None),
+                ),
             show_cart=False,
         )
 
@@ -1006,7 +1015,11 @@ def setup_food_routes(rt):
             amount_g = 100.0
             if entry_type == "catalog":
                 item = get_catalog_item(connection, entry_id)
-                if not item or not _can_view_entry("catalog", item, user_id):
+                if (
+                    not item
+                    or item.get("deleted_at") is not None
+                    or not _can_view_entry("catalog", item, user_id)
+                ):
                     return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
                 amount_g = max(1.0, float(item.get("default_portion") or 100.0))
             else:
@@ -1466,6 +1479,8 @@ def setup_food_routes(rt):
                 origin_item = get_recipe(connection, entry_id)
             if not origin_item or not _can_view_entry(entry_type, origin_item, user_id):
                 return render_fragment(P("Item not found.", cls="text-red-700"))
+            if entry_type == "catalog" and origin_item.get("deleted_at") is not None:
+                return render_fragment(P("This food is archived and must be copied first.", cls="text-red-700"))
 
             if intake_event_id and intake_event_id.isdigit() and int(intake_event_id) != 0:
                 event_id = int(intake_event_id)
@@ -1722,6 +1737,14 @@ def setup_food_routes(rt):
             if not user_id:
                 return HTMLResponse("No users", status_code=400)
 
+            catalog_item = get_catalog_item(connection, food_id)
+            if (
+                not catalog_item
+                or not _can_view_entry("catalog", catalog_item, user_id)
+                or catalog_item.get("deleted_at") is not None
+            ):
+                return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
+
             event_id = None
             if intake_event_id and intake_event_id.isdigit() and int(intake_event_id) != 0:
                 event_id = int(intake_event_id)
@@ -1732,9 +1755,6 @@ def setup_food_routes(rt):
                     state="planned",
                 )
 
-            catalog_item = get_catalog_item(connection, food_id)
-            if not catalog_item or not _can_view_entry("catalog", catalog_item, user_id):
-                return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
             portion_amount = 100
             if catalog_item.get("default_portion"):
                 portion_amount = catalog_item["default_portion"]
@@ -1887,7 +1907,7 @@ def setup_food_routes(rt):
             updated = False
             if entry_type == "catalog":
                 current = get_catalog_item(connection, entry_id)
-                if current and _can_view_entry("catalog", current, user_id):
+                if current and current.get("deleted_at") is None and _can_view_entry("catalog", current, user_id):
                     updated = update_catalog_favorite(connection, entry_id, not bool(current.get("favorite")))
                     current["favorite"] = not bool(current.get("favorite"))
             elif entry_type == "manual_intake":
