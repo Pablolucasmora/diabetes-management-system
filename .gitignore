@@ -6,6 +6,7 @@ venv/
 # Base de datos personal (Privacidad)
 *.db
 *.sqlite3
+*.dump
 
 # Archivos de datos brutos
 data/
