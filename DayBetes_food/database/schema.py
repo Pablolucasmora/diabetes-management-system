@@ -97,7 +97,9 @@ class DBSchema:
         cooking_factor REAL DEFAULT 1.0, -- Cooking factor, in case it is needed at some point to calculate the real raw weight
 
         is_private BOOLEAN NOT NULL DEFAULT FALSE, -- True: only creator can view it
-        deleted_at TIMESTAMP NULL -- Logical deletion timestamp
+        deleted_at TIMESTAMP NULL, -- Logical deletion timestamp
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     """
 

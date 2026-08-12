@@ -152,8 +152,18 @@ def _ensure_default_user(cursor):
 
 
 def _ensure_catalog_schema(cursor):
+    if not _has_column(cursor, "catalog", "created_at"):
+        cursor.execute("ALTER TABLE catalog ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;")
+    if not _has_column(cursor, "catalog", "updated_at"):
+        cursor.execute("ALTER TABLE catalog ADD COLUMN updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;")
     if not _has_column(cursor, "catalog", "deleted_at"):
         cursor.execute("ALTER TABLE catalog ADD COLUMN deleted_at TIMESTAMP NULL;")
+    cursor.execute("UPDATE catalog SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP);")
+    cursor.execute("UPDATE catalog SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP);")
+    cursor.execute("ALTER TABLE catalog ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;")
+    cursor.execute("ALTER TABLE catalog ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;")
+    cursor.execute("ALTER TABLE catalog ALTER COLUMN created_at SET NOT NULL;")
+    cursor.execute("ALTER TABLE catalog ALTER COLUMN updated_at SET NOT NULL;")
     if not _has_column(cursor, "catalog", "default_portion"):
         return
     dtype = (_column_data_type(cursor, "catalog", "default_portion") or "").lower()

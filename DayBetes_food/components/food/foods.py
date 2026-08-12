@@ -3508,7 +3508,11 @@ def FoodCard(food):
             cls="flex flex-col gap-0.5 min-w-0",
         ),
         Div(
-            FavoriteButton(food["entry_type"], food["id"], bool(food.get("favorite"))),
+            (
+                FavoriteButton(food["entry_type"], food["id"], bool(food.get("favorite")))
+                if not (food.get("entry_type") == "catalog" and food.get("deleted_at") is not None)
+                else ""
+            ),
             AddButton(label=add_label, hx_post=add_path),
             cls="flex items-center gap-2 ml-3",
         ),

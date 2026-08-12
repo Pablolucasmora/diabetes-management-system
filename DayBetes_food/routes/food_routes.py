@@ -494,47 +494,82 @@ def _recommended_entries(connection, search: str = "", days: int = 60) -> list[d
 
     catalog_items = get_all_catalog(connection, search=search_value, viewer_user_id=viewer_id)
     manual_items = get_all_manual_intakes(connection, search=search_value, viewer_user_id=viewer_id)
-    catalog_by_id = {int(item["id"]): item for item in catalog_items if item.get("id") is not None}
-    manual_by_id = {int(item["id"]): item for item in manual_items if item.get("id") is not None}
+    recipes = get_all_recipes(connection, search=search_value, viewer_user_id=viewer_id)
 
     if not viewer_user_id:
         return []
 
     rankings = get_consumed_food_usage_rankings(connection, users_id=viewer_user_id, days=days)
-    entries = []
+    usage_by_entry = {}
     for row in rankings:
-        entry_type = row.get("entry_type")
+        entry_type = str(row.get("entry_type") or "")
         try:
             entry_id = int(row.get("entry_id"))
         except (TypeError, ValueError):
             continue
+        usage_by_entry[(entry_type, entry_id)] = {
+            "usage_count": int(row.get("usage_count") or 0),
+            "rank_score": float(row.get("rank_score") or 0.0),
+        }
 
-        if entry_type == "catalog":
-            item = catalog_by_id.get(entry_id)
-            if not item:
+    def _search_relevance(item: dict) -> float:
+        if not search_value:
+            return 0.0
+        query = _normalize_text(search_value)
+        candidates = [item.get("name") or ""]
+        if item.get("entry_type") == "catalog":
+            candidates.append(item.get("brand") or "")
+        elif item.get("entry_type") == "manual_intake":
+            candidates.append(item.get("origin") or "")
+
+        best = 0.0
+        for raw_candidate in candidates:
+            candidate = _normalize_text(str(raw_candidate))
+            if not candidate:
                 continue
-            entries.append(
-                {
-                    "entry_type": "catalog",
-                    "is_owned": _is_owned_by_viewer("catalog", item, viewer_user_id),
-                    "usage_count": int(row.get("usage_count") or 0),
-                    "rank_score": float(row.get("rank_score") or 0.0),
-                    **item,
-                }
-            )
-        elif entry_type == "manual_intake":
-            item = manual_by_id.get(entry_id)
-            if not item:
+            if candidate == query:
+                score = 1000.0
+            elif candidate.startswith(query):
+                score = 800.0
+            elif query in candidate:
+                score = 600.0
+            else:
+                score = difflib.SequenceMatcher(None, query, candidate).ratio() * 300.0
+            best = max(best, score)
+        return best
+
+    entries = []
+    for entry_type, items in (
+        ("catalog", catalog_items),
+        ("manual_intake", manual_items),
+        ("recipe", recipes),
+    ):
+        for item in items:
+            try:
+                entry_id = int(item.get("id"))
+            except (TypeError, ValueError):
                 continue
-            entries.append(
-                {
-                    "entry_type": "manual_intake",
-                    "is_owned": _is_owned_by_viewer("manual_intake", item, viewer_user_id),
-                    "usage_count": int(row.get("usage_count") or 0),
-                    "rank_score": float(row.get("rank_score") or 0.0),
-                    **item,
-                }
-            )
+            usage = usage_by_entry.get((entry_type, entry_id), {})
+            enriched = {
+                "entry_type": entry_type,
+                "is_owned": _is_owned_by_viewer(entry_type, item, viewer_user_id),
+                "usage_count": int(usage.get("usage_count") or 0),
+                "rank_score": float(usage.get("rank_score") or 0.0),
+                "search_relevance": _search_relevance({"entry_type": entry_type, **item}),
+                **item,
+            }
+            entries.append(enriched)
+
+    entries.sort(
+        key=lambda item: (
+            -float(item.get("search_relevance") or 0.0) if search_value else 0.0,
+            -float(item.get("rank_score") or 0.0),
+            0 if item.get("favorite") else 1,
+            0 if item.get("is_owned") else 1,
+            (item.get("name") or "").lower(),
+            item.get("entry_type") or "",
+        )
+    )
     return entries
 
 
@@ -1301,7 +1336,8 @@ def setup_food_routes(rt):
             if not created_id:
                 return _error_msg("Could not create editable copy.")
             if entry_type == "catalog":
-                set_user_favorite(connection, int(user_id), "catalog", int(created_id), True)
+                if not set_user_favorite(connection, int(user_id), "catalog", int(created_id), True):
+                    return _error_msg("Could not save the copied food favorite.")
 
             target_type = "manual_intake" if entry_type == "manual_intake" else entry_type
             return HTMLResponse("", headers={"HX-Redirect": f"/food/edit/{target_type}/{created_id}/form"})
@@ -2034,6 +2070,8 @@ def setup_food_routes(rt):
                 return _error_msg("A catalog item with that name and brand already exists.")
             favorite_value = None if (favorite or "").strip() == "" else _to_bool(favorite)
             can_toggle_private = _can_toggle_private("catalog", current, user_id)
+            if (is_private or "").strip() and not can_toggle_private:
+                return _error_msg("Only the owner can change privacy.")
             payload = {
                 "name": clean_name,
                 "brand": normalized_brand or None,
@@ -2062,8 +2100,10 @@ def setup_food_routes(rt):
             updated = update_catalog_item(connection, entry_id, payload)
             if not updated:
                 return _error_msg("Catalog item could not be updated.")
-            if favorite_value is not None:
-                set_user_favorite(connection, int(user_id), "catalog", entry_id, bool(favorite_value))
+            if favorite_value is not None and not set_user_favorite(
+                connection, int(user_id), "catalog", entry_id, bool(favorite_value)
+            ):
+                return _error_msg("Could not save the favorite status.")
             set_entry_tags(connection, "catalog", entry_id, _parse_tags_json(tags_json))
             if normalized_brand:
                 add_food_brand(connection, normalized_brand)
@@ -2185,8 +2225,10 @@ def setup_food_routes(rt):
             updated = update_manual_intake(connection, entry_id, payload)
             if not updated:
                 return _error_msg("Manual intake could not be updated.")
-            if (favorite or "").strip() != "":
-                set_user_favorite(connection, int(user_id), "manual_intake", entry_id, _to_bool(favorite))
+            if (favorite or "").strip() != "" and not set_user_favorite(
+                connection, int(user_id), "manual_intake", entry_id, _to_bool(favorite)
+            ):
+                return _error_msg("Could not save the favorite status.")
             set_entry_tags(connection, "manual_intake", entry_id, _parse_tags_json(tags_json))
             return HTMLResponse("", headers={"HX-Redirect": f"/food/item/manual_intake/{entry_id}"})
 
@@ -2235,8 +2277,10 @@ def setup_food_routes(rt):
             )
             if not updated:
                 return _error_msg("Recipe could not be updated.")
-            if (favorite or "").strip() != "":
-                set_user_favorite(connection, int(user_id), "recipe", entry_id, _to_bool(favorite))
+            if (favorite or "").strip() != "" and not set_user_favorite(
+                connection, int(user_id), "recipe", entry_id, _to_bool(favorite)
+            ):
+                return _error_msg("Could not save the favorite status.")
             set_entry_tags(connection, "recipe", entry_id, _parse_tags_json(tags_json))
             return HTMLResponse("", headers={"HX-Redirect": f"/food/item/recipe/{entry_id}"})
 
@@ -2374,7 +2418,10 @@ def setup_food_routes(rt):
             created_id = add_catalog_item(connection, payload)
             if not created_id:
                 return _error_msg("Catalog item could not be created. Check required fields and uniqueness constraints.")
-            set_user_favorite(connection, int(user_id), "catalog", int(created_id), _to_bool(favorite))
+            if not set_user_favorite(
+                connection, int(user_id), "catalog", int(created_id), _to_bool(favorite)
+            ):
+                return _error_msg("Catalog item could not be created because its favorite status could not be saved.")
             set_entry_tags(connection, "catalog", int(created_id), _parse_tags_json(tags_json))
             if normalized_brand:
                 add_food_brand(connection, normalized_brand)
@@ -2487,7 +2534,10 @@ def setup_food_routes(rt):
             created_id = add_manual_intake(connection, payload)
             if not created_id:
                 return _error_msg("Manual intake could not be created. Check required fields and constraints.")
-            set_user_favorite(connection, int(user_id), "manual_intake", int(created_id), _to_bool(favorite))
+            if not set_user_favorite(
+                connection, int(user_id), "manual_intake", int(created_id), _to_bool(favorite)
+            ):
+                return _error_msg("Manual intake could not be created because its favorite status could not be saved.")
             set_entry_tags(connection, "manual_intake", int(created_id), _parse_tags_json(tags_json))
             return HTMLResponse("", headers={"HX-Redirect": "/food"})
 
@@ -2532,7 +2582,10 @@ def setup_food_routes(rt):
             )
             if not created_id:
                 return _error_msg("Recipe could not be created. Check required fields and constraints.")
-            set_user_favorite(connection, int(user_id), "recipe", int(created_id), _to_bool(favorite))
+            if not set_user_favorite(
+                connection, int(user_id), "recipe", int(created_id), _to_bool(favorite)
+            ):
+                return _error_msg("Recipe could not be created because its favorite status could not be saved.")
             set_entry_tags(connection, "recipe", int(created_id), _parse_tags_json(tags_json))
             return HTMLResponse("", headers={"HX-Redirect": f"/food/item/recipe/{created_id}"})
     

@@ -21,13 +21,36 @@ All functions follow the same pattern:
 """
 
 import re
+from enum import Enum
 from typing import Optional, Any
 
+from psycopg import sql
 from DayBetes_food.time_utils import local_today
 
 TRGM_SIMILARITY_THRESHOLD = 0.25
 APP_TIMEZONE_SQL = "Europe/Madrid"
 _HAS_PG_TRGM = None
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_ALLOWED_UPDATE_TABLES = {
+    "catalog",
+    "manual_intake",
+    "recipe",
+    "intake_event",
+    "portion_detail",
+}
+
+
+class RawSQL(Enum):
+    NOW = "NOW()"
+
+
+_RAW_SQL_EXPRESSIONS = {
+    RawSQL.NOW: sql.SQL("NOW()"),
+}
+
+
+class UnsupportedUpdateTarget(Exception):
+    """Raised when a dynamic UPDATE target is not controlled by the backend."""
 
 
 # ============================================
@@ -62,6 +85,48 @@ def _execute_query_many(connection, query: str, params: dict = None, commit: boo
         return []
 
 
+def _validate_update_request(
+    table: str,
+    params: dict,
+    where_field: str,
+    auto_fields: dict,
+    raw_fields: dict,
+    null_fields: set[str],
+) -> None:
+    if table not in _ALLOWED_UPDATE_TABLES:
+        raise UnsupportedUpdateTarget(f"Unsupported update table: {table!r}")
+
+    identifiers = [where_field]
+    identifiers.extend((params or {}).keys())
+    identifiers.extend((auto_fields or {}).keys())
+    identifiers.extend((raw_fields or {}).keys())
+    identifiers.extend(null_fields or set())
+    for field in identifiers:
+        if not isinstance(field, str) or not _IDENTIFIER_RE.fullmatch(field):
+            raise UnsupportedUpdateTarget(f"Invalid update identifier: {field!r}")
+
+    if where_field not in (params or {}):
+        raise UnsupportedUpdateTarget(f"Missing UPDATE key: {where_field!r}")
+
+    groups = {
+        "params": set((params or {}).keys()),
+        "auto_fields": set((auto_fields or {}).keys()),
+        "raw_fields": set((raw_fields or {}).keys()),
+    }
+    all_fields = set()
+    for group_name, fields in groups.items():
+        overlap = all_fields.intersection(fields)
+        if overlap:
+            raise UnsupportedUpdateTarget(
+                f"UPDATE fields appear in multiple groups: {sorted(overlap)!r}"
+            )
+        all_fields.update(fields)
+
+    for field, expression in (raw_fields or {}).items():
+        if not isinstance(expression, RawSQL) or expression not in _RAW_SQL_EXPRESSIONS:
+            raise UnsupportedUpdateTarget(f"Unsupported raw SQL expression for {field!r}")
+
+
 def _build_update_query(
     table: str,
     params: dict,
@@ -69,7 +134,7 @@ def _build_update_query(
     auto_fields: dict = None,
     raw_fields: dict = None,
     null_fields: set[str] = None,
-) -> Optional[str]:
+) -> Optional[sql.Composed]:
     """
     Builds a generic and safe UPDATE query.
     Automatically filters the WHERE field to not update it in the SET
@@ -81,9 +146,8 @@ def _build_update_query(
         where_field: Field for WHERE (default: "id")
         auto_fields: Fields always included in SET with normal param values
                      (e.g. {"is_active": True}). Values go as %(key)s parameters.
-        raw_fields: Fields always included in SET with raw SQL expressions
-                    (e.g. {"updated_at": "NOW()"}). Expressions go as literal
-                    text in the query, NOT as parameters.
+        raw_fields: Fields always included in SET with controlled RawSQL
+                    expressions (e.g. {"updated_at": RawSQL.NOW}).
         null_fields: Fields explicitly allowed to be set to NULL when their
                      value in params is None. Fields not included here keep
                      the existing behavior and are skipped when None.
@@ -91,30 +155,39 @@ def _build_update_query(
     Returns:
         Generated SQL query, or None if there are no valid fields to update.
     """
-    explicit_null_fields = {
-        field
-        for field in (null_fields or set())
-        if field in params and field != where_field
-    }
+    params = dict(params or {})
+    auto_fields = dict(auto_fields or {})
+    raw_fields = dict(raw_fields or {})
+    null_fields = set(null_fields or set())
+    _validate_update_request(table, params, where_field, auto_fields, raw_fields, null_fields)
+
+    for field, value in auto_fields.items():
+        params[field] = value
+
     fields = [
         k
         for k, v in params.items()
-        if k != where_field and (v is not None or k in explicit_null_fields)
+        if k != where_field and (v is not None or k in null_fields or k in auto_fields)
     ]
 
-    fields_set = set(fields)
-    auto_list = [k for k in (auto_fields or {}).keys() if k not in fields_set and k != where_field]
-    raw_parts = [f"{k} = {v}" for k, v in (raw_fields or {}).items()]
-
-    if not fields and not auto_list and not raw_parts:
+    if not fields and not raw_fields:
         return None
 
-    set_parts = [f"{field} = %({field})s" for field in fields]
-    set_parts.extend([f"{field} = %({field})s" for field in auto_list])
-    set_parts.extend(raw_parts)
-
-    set_clause = ", ".join(set_parts)
-    return f"UPDATE {table} SET {set_clause} WHERE {where_field} = %({where_field})s RETURNING {where_field};"
+    set_parts = [
+        sql.SQL("{} = {}").format(sql.Identifier(field), sql.Placeholder(field))
+        for field in fields
+    ]
+    set_parts.extend(
+        sql.SQL("{} = {}").format(sql.Identifier(field), _RAW_SQL_EXPRESSIONS[expression])
+        for field, expression in raw_fields.items()
+    )
+    return sql.SQL("UPDATE {} SET {} WHERE {} = {} RETURNING {};").format(
+        sql.Identifier(table),
+        sql.SQL(", ").join(set_parts),
+        sql.Identifier(where_field),
+        sql.Placeholder(where_field),
+        sql.Identifier(where_field),
+    )
 
 
 def _pg_trgm_enabled(connection) -> bool:
@@ -431,11 +504,10 @@ def get_catalog_item_by_barcode(connection, barcode: str, viewer_user_id: int = 
     clean = (barcode or "").strip()
     if not clean:
         return None
-    params = {"barcode": clean}
+    params = {"barcode": clean, "viewer_user_id": viewer_user_id}
     visibility_clause = ""
     if viewer_user_id is not None:
         visibility_clause = "AND (is_private = FALSE OR created_by = %(viewer_user_id)s)"
-        params["viewer_user_id"] = viewer_user_id
     query = f"""
         SELECT entity.*,
                EXISTS (
@@ -585,7 +657,7 @@ def update_catalog_item(connection, catalog_id: int, data: dict) -> bool:
     query = _build_update_query(
         "catalog",
         params,
-        raw_fields={"updated_at": "NOW()"},
+        raw_fields={"updated_at": RawSQL.NOW},
         null_fields=null_fields,
     )
     if not query:
