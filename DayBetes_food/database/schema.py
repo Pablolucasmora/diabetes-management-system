@@ -96,9 +96,8 @@ class DBSchema:
         barcode VARCHAR,
         cooking_factor REAL DEFAULT 1.0, -- Cooking factor, in case it is needed at some point to calculate the real raw weight
 
-         favorite BOOLEAN DEFAULT FALSE, -- To mark user favorites for easier access
-         is_private BOOLEAN NOT NULL DEFAULT FALSE, -- True: only creator can view it
-         deleted_at TIMESTAMP NULL -- Logical deletion timestamp
+        is_private BOOLEAN NOT NULL DEFAULT FALSE, -- True: only creator can view it
+        deleted_at TIMESTAMP NULL -- Logical deletion timestamp
     );
     """
 
@@ -128,7 +127,6 @@ class DBSchema:
             glycemic_index IN ('high', 'medium', 'low')
         ), -- Estimated glycemic index of the meal
         ig_confidence INTEGER CHECK (ig_confidence BETWEEN 1 AND 5), -- Confidence level with which the glycemic index value above was established
-        favorite BOOLEAN DEFAULT FALSE, -- Same as in catalog
         is_private BOOLEAN NOT NULL DEFAULT FALSE, -- True: only creator can view it
 
         UNIQUE (created_by, name, origin)
@@ -168,9 +166,25 @@ class DBSchema:
         ), -- Used to set this as the default value in intake_event, making it easier to reuse
         name VARCHAR(255) NOT NULL,
         notes TEXT,
-        favorite BOOLEAN DEFAULT FALSE,
         is_private BOOLEAN NOT NULL DEFAULT FALSE -- True: only owner can view it
     );
+    """
+
+    user_favorites = """
+    CREATE TABLE IF NOT EXISTS user_favorites (
+        id BIGSERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        catalog_id INTEGER REFERENCES catalog(id) ON DELETE CASCADE,
+        manual_intake_id INTEGER REFERENCES manual_intake(id) ON DELETE CASCADE,
+        recipe_id INTEGER REFERENCES recipe(id) ON DELETE CASCADE,
+        CHECK (num_nonnulls(catalog_id, manual_intake_id, recipe_id) = 1)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_user_favorites_catalog
+        ON user_favorites(user_id, catalog_id) WHERE catalog_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_user_favorites_manual
+        ON user_favorites(user_id, manual_intake_id) WHERE manual_intake_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_user_favorites_recipe
+        ON user_favorites(user_id, recipe_id) WHERE recipe_id IS NOT NULL;
     """
 
     linked_tags = """

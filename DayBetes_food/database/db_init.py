@@ -162,6 +162,36 @@ def _ensure_catalog_schema(cursor):
             "ALTER TABLE catalog ALTER COLUMN default_portion TYPE DOUBLE PRECISION USING default_portion::double precision;"
         )
 
+
+def _ensure_user_favorites_schema(cursor):
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_favorites (
+            id BIGSERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            catalog_id INTEGER REFERENCES catalog(id) ON DELETE CASCADE,
+            manual_intake_id INTEGER REFERENCES manual_intake(id) ON DELETE CASCADE,
+            recipe_id INTEGER REFERENCES recipe(id) ON DELETE CASCADE,
+            CHECK (num_nonnulls(catalog_id, manual_intake_id, recipe_id) = 1)
+        );
+        """
+    )
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_user_favorites_catalog ON user_favorites(user_id, catalog_id) WHERE catalog_id IS NOT NULL;"
+    )
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_user_favorites_manual ON user_favorites(user_id, manual_intake_id) WHERE manual_intake_id IS NOT NULL;"
+    )
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_user_favorites_recipe ON user_favorites(user_id, recipe_id) WHERE recipe_id IS NOT NULL;"
+    )
+    cursor.execute("DROP INDEX IF EXISTS idx_catalog_favorite;")
+    cursor.execute("DROP INDEX IF EXISTS idx_manual_favorite;")
+    cursor.execute("DROP INDEX IF EXISTS idx_recipe_favorite;")
+    cursor.execute("ALTER TABLE catalog DROP COLUMN IF EXISTS favorite;")
+    cursor.execute("ALTER TABLE manual_intake DROP COLUMN IF EXISTS favorite;")
+    cursor.execute("ALTER TABLE recipe DROP COLUMN IF EXISTS favorite;")
+
 def _drop_legacy_category_check(cursor):
     cursor.execute(
         """
@@ -247,14 +277,11 @@ def _ensure_trgm_search(cursor):
 
 def _ensure_food_filter_indexes(cursor):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_created_by ON catalog (created_by);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_favorite ON catalog (favorite);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_visibility ON catalog (is_private, created_by);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_deleted_at ON catalog (deleted_at);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_created_by ON manual_intake (created_by);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_favorite ON manual_intake (favorite);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_visibility ON manual_intake (is_private, created_by);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_users_id ON recipe (users_id);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_favorite ON recipe (favorite);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_visibility ON recipe (is_private, users_id);")
 
 
@@ -496,6 +523,7 @@ def init_db():
             DBSchema.fridge,
             DBSchema.tags,
             DBSchema.recipe,
+            DBSchema.user_favorites,
             DBSchema.linked_tags,
             DBSchema.intake_event,
             DBSchema.insulin_injections,
@@ -510,6 +538,7 @@ def init_db():
         _ensure_food_name_origin_uniqueness(cur)
         _drop_legacy_category_check(cur)
         _ensure_catalog_schema(cur)
+        _ensure_user_favorites_schema(cur)
         _ensure_food_filter_indexes(cur)
         _ensure_privacy_schema(cur)
         _ensure_copy_origin_schema(cur)

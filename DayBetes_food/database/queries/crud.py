@@ -383,7 +383,7 @@ def add_catalog_item(connection, data: dict) -> Optional[int]:
             nutriscore, nova, yuka, default_portion,
             calories_100g, carbs_100g, sugars_100g, fats_100g,
             saturated_100g, proteins_100g, fiber_100g,
-            caffeine, alcohol, barcode, cooking_factor, favorite, is_private,
+            caffeine, alcohol, barcode, cooking_factor, is_private,
             created_at, updated_at
         )
         VALUES (
@@ -391,7 +391,7 @@ def add_catalog_item(connection, data: dict) -> Optional[int]:
             %(nutriscore)s, %(nova)s, %(yuka)s, %(default_portion)s,
             %(calories_100g)s, %(carbs_100g)s, %(sugars_100g)s, %(fats_100g)s,
             %(saturated_100g)s, %(proteins_100g)s, %(fiber_100g)s,
-            %(caffeine)s, %(alcohol)s, %(barcode)s, %(cooking_factor)s, %(favorite)s, %(is_private)s,
+            %(caffeine)s, %(alcohol)s, %(barcode)s, %(cooking_factor)s, %(is_private)s,
             NOW(), NOW()
         )
         RETURNING id;
@@ -406,10 +406,24 @@ def add_catalog_item(connection, data: dict) -> Optional[int]:
     return result["id"] if result else None
 
 
-def get_catalog_item(connection, catalog_id: int) -> Optional[dict]:
+def get_catalog_item(connection, catalog_id: int, viewer_user_id: int = None) -> Optional[dict]:
     """Gets a catalog item by ID."""
-    query = "SELECT * FROM catalog WHERE id = %(id)s;"
-    return _execute_query(connection, query, {"id": catalog_id}, commit=False)
+    query = """
+        SELECT entity.*,
+               EXISTS (
+                   SELECT 1 FROM user_favorites uf
+                   WHERE uf.user_id = %(viewer_user_id)s
+                     AND uf.catalog_id = entity.id
+               ) AS favorite
+        FROM catalog entity
+        WHERE entity.id = %(id)s;
+    """
+    return _execute_query(
+        connection,
+        query,
+        {"id": catalog_id, "viewer_user_id": viewer_user_id},
+        commit=False,
+    )
 
 
 def get_catalog_item_by_barcode(connection, barcode: str, viewer_user_id: int = None) -> Optional[dict]:
@@ -423,12 +437,17 @@ def get_catalog_item_by_barcode(connection, barcode: str, viewer_user_id: int = 
         visibility_clause = "AND (is_private = FALSE OR created_by = %(viewer_user_id)s)"
         params["viewer_user_id"] = viewer_user_id
     query = f"""
-        SELECT *
-        FROM catalog
-        WHERE deleted_at IS NULL
-          AND trim(barcode) = %(barcode)s
+        SELECT entity.*,
+               EXISTS (
+                   SELECT 1 FROM user_favorites uf
+                   WHERE uf.user_id = %(viewer_user_id)s
+                     AND uf.catalog_id = entity.id
+               ) AS favorite
+        FROM catalog entity
+        WHERE entity.deleted_at IS NULL
+          AND trim(entity.barcode) = %(barcode)s
           {visibility_clause}
-        ORDER BY id
+        ORDER BY entity.id
         LIMIT 1;
     """
     return _execute_query(connection, query, params, commit=False)
@@ -439,18 +458,28 @@ def _add_entity_filters(
     params: dict,
     owner_column: str,
     users_id: int = None,
-    favorite: bool = None,
+    favorite_condition: str = None,
     viewer_user_id: int = None,
 ) -> None:
     if users_id:
         conditions.append(f"{owner_column} = %(users_id)s")
         params["users_id"] = users_id
-    if favorite is not None:
-        conditions.append("favorite = %(favorite)s")
-        params["favorite"] = favorite
+    if favorite_condition:
+        conditions.append(favorite_condition)
     if viewer_user_id is not None:
         conditions.append(f"(is_private = FALSE OR {owner_column} = %(viewer_user_id)s)")
         params["viewer_user_id"] = viewer_user_id
+
+
+def _favorite_filter_sql(target_column: str, favorite: bool, params: dict, viewer_user_id: int = None) -> str:
+    params["favorite_filter_user_id"] = viewer_user_id
+    operator = "EXISTS" if favorite else "NOT EXISTS"
+    return (
+        f"{operator} ("
+        "SELECT 1 FROM user_favorites uf "
+        f"WHERE uf.user_id = %(favorite_filter_user_id)s AND uf.{target_column} = entity.id"
+        ")"
+    )
 
 
 def get_all_catalog(
@@ -492,12 +521,17 @@ def get_all_catalog(
         params,
         owner_column="created_by",
         users_id=users_id,
-        favorite=favorite,
+        favorite_condition=(
+            _favorite_filter_sql("catalog_id", favorite, params, viewer_user_id)
+            if favorite is not None
+            else None
+        ),
         viewer_user_id=viewer_user_id,
     )
     
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-    query = f"SELECT * FROM catalog {where_clause} ORDER BY name;"
+    params["favorite_viewer_id"] = viewer_user_id
+    query = f"SELECT entity.*, EXISTS (SELECT 1 FROM user_favorites uf WHERE uf.user_id = %(favorite_viewer_id)s AND uf.catalog_id = entity.id) AS favorite FROM catalog entity {where_clause} ORDER BY entity.name;"
     
     return _execute_query_many(connection, query, params, commit=False)
 
@@ -533,19 +567,13 @@ def catalog_name_brand_exists(
     return row is not None
 
 
-def update_catalog_favorite(connection, catalog_id: int, favorite: bool) -> bool:
-    """Updates the favorite status of a catalog item."""
-    query = "UPDATE catalog SET favorite = %(favorite)s WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(connection, query, {"id": catalog_id, "favorite": favorite})
-    return result is not None
-
-
 def update_catalog_item(connection, catalog_id: int, data: dict) -> bool:
     """Updates a catalog item."""
     if not data:
         return False
 
     payload = dict(data or {})
+    payload.pop("favorite", None)
     if "brand" in payload:
         payload["brand"] = normalize_brand_name(payload.get("brand")) or None
     params = {**payload, "id": catalog_id}
@@ -581,6 +609,74 @@ def delete_catalog_item(connection, catalog_id: int) -> bool:
     return result is not None
 
 
+_FAVORITE_ENTRY_COLUMNS = {
+    "catalog": "catalog_id",
+    "manual_intake": "manual_intake_id",
+    "recipe": "recipe_id",
+}
+
+
+def toggle_user_favorite(connection, user_id: int, entry_type: str, entry_id: int) -> bool | None:
+    favorite_column = _FAVORITE_ENTRY_COLUMNS.get(entry_type)
+    if not favorite_column or not user_id or not entry_id:
+        return None
+    query = f"""
+        WITH deleted AS (
+            DELETE FROM user_favorites
+            WHERE user_id = %(user_id)s
+              AND {favorite_column} = %(entry_id)s
+            RETURNING id
+        ), inserted AS (
+            INSERT INTO user_favorites (user_id, {favorite_column})
+            SELECT %(user_id)s, %(entry_id)s
+            WHERE NOT EXISTS (SELECT 1 FROM deleted)
+            ON CONFLICT DO NOTHING
+            RETURNING id
+        )
+        SELECT FALSE AS favorite FROM deleted
+        UNION ALL
+        SELECT TRUE AS favorite FROM inserted;
+    """
+    row = _execute_query(
+        connection,
+        query,
+        {"user_id": user_id, "entry_id": entry_id},
+    )
+    return bool(row["favorite"]) if row else None
+
+
+def set_user_favorite(connection, user_id: int, entry_type: str, entry_id: int, favorite: bool) -> bool:
+    favorite_column = _FAVORITE_ENTRY_COLUMNS.get(entry_type)
+    if not favorite_column or not user_id or not entry_id:
+        return False
+    try:
+        with connection.cursor() as cursor:
+            if favorite:
+                cursor.execute(
+                    f"""
+                    INSERT INTO user_favorites (user_id, {favorite_column})
+                    VALUES (%(user_id)s, %(entry_id)s)
+                    ON CONFLICT DO NOTHING;
+                    """,
+                    {"user_id": user_id, "entry_id": entry_id},
+                )
+            else:
+                cursor.execute(
+                    f"""
+                    DELETE FROM user_favorites
+                    WHERE user_id = %(user_id)s
+                      AND {favorite_column} = %(entry_id)s;
+                    """,
+                    {"user_id": user_id, "entry_id": entry_id},
+                )
+        connection.commit()
+        return True
+    except Exception as e:
+        connection.rollback()
+        print(f"Error in query: {e}")
+        return False
+
+
 
 
 # ============================================
@@ -594,13 +690,13 @@ def add_manual_intake(connection, data: dict) -> Optional[int]:
             created_by, origin_root_id, name, description, subtype, origin,
             amount_g, calories_100g, carbs_100g, sugars_100g,
             fats_100g, saturated_100g, proteins_100g, fiber_100g,
-            caffeine, alcohol, glycemic_index, ig_confidence, favorite, is_private
+            caffeine, alcohol, glycemic_index, ig_confidence, is_private
         )
         VALUES (
             %(created_by)s, %(origin_root_id)s, %(name)s, %(description)s, %(subtype)s, %(origin)s,
             %(amount_g)s, %(calories_100g)s, %(carbs_100g)s, %(sugars_100g)s,
             %(fats_100g)s, %(saturated_100g)s, %(proteins_100g)s, %(fiber_100g)s,
-            %(caffeine)s, %(alcohol)s, %(glycemic_index)s, %(ig_confidence)s, %(favorite)s, %(is_private)s
+            %(caffeine)s, %(alcohol)s, %(glycemic_index)s, %(ig_confidence)s, %(is_private)s
         )
         RETURNING id;
     """
@@ -610,10 +706,24 @@ def add_manual_intake(connection, data: dict) -> Optional[int]:
     return result["id"] if result else None
 
 
-def get_manual_intake(connection, intake_id: int) -> Optional[dict]:
+def get_manual_intake(connection, intake_id: int, viewer_user_id: int = None) -> Optional[dict]:
     """Gets a manual intake by ID."""
-    query = "SELECT * FROM manual_intake WHERE id = %(id)s;"
-    return _execute_query(connection, query, {"id": intake_id}, commit=False)
+    query = """
+        SELECT entity.*,
+               EXISTS (
+                   SELECT 1 FROM user_favorites uf
+                   WHERE uf.user_id = %(viewer_user_id)s
+                     AND uf.manual_intake_id = entity.id
+               ) AS favorite
+        FROM manual_intake entity
+        WHERE entity.id = %(id)s;
+    """
+    return _execute_query(
+        connection,
+        query,
+        {"id": intake_id, "viewer_user_id": viewer_user_id},
+        commit=False,
+    )
 
 
 def get_all_manual_intakes(
@@ -632,7 +742,11 @@ def get_all_manual_intakes(
         params,
         owner_column="created_by",
         users_id=users_id,
-        favorite=favorite,
+        favorite_condition=(
+            _favorite_filter_sql("manual_intake_id", favorite, params, viewer_user_id)
+            if favorite is not None
+            else None
+        ),
         viewer_user_id=viewer_user_id,
     )
     normalized = (search or "").strip()
@@ -647,7 +761,8 @@ def get_all_manual_intakes(
         params.update(name_params)
         params.update(origin_params)
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-    query = f"SELECT * FROM manual_intake {where_clause} ORDER BY name;"
+    params["favorite_viewer_id"] = viewer_user_id
+    query = f"SELECT entity.*, EXISTS (SELECT 1 FROM user_favorites uf WHERE uf.user_id = %(favorite_viewer_id)s AND uf.manual_intake_id = entity.id) AS favorite FROM manual_intake entity {where_clause} ORDER BY entity.name;"
     
     return _execute_query_many(connection, query, params, commit=False)
 
@@ -690,7 +805,9 @@ def update_manual_intake(connection, intake_id: int, data: dict) -> bool:
     if not data:
         return False
     
-    params = {**data, "id": intake_id}
+    payload = dict(data or {})
+    payload.pop("favorite", None)
+    params = {**payload, "id": intake_id}
     query = _build_update_query("manual_intake", params)
     
     if not query:
@@ -725,8 +842,8 @@ def add_recipe(
 ) -> Optional[int]:
     """Creates a new recipe."""
     query = """
-        INSERT INTO recipe (users_id, origin_root_id, meal_type, name, notes, favorite, is_private)
-        VALUES (%(users_id)s, %(origin_root_id)s, %(meal_type)s, %(name)s, %(notes)s, %(favorite)s, %(is_private)s)
+        INSERT INTO recipe (users_id, origin_root_id, meal_type, name, notes, is_private)
+        VALUES (%(users_id)s, %(origin_root_id)s, %(meal_type)s, %(name)s, %(notes)s, %(is_private)s)
         RETURNING id;
     """
     result = _execute_query(connection, query, {
@@ -735,16 +852,29 @@ def add_recipe(
         "meal_type": meal_type,
         "name": name,
         "notes": notes,
-        "favorite": favorite,
         "is_private": is_private,
     })
     return result["id"] if result else None
 
 
-def get_recipe(connection, recipe_id: int) -> Optional[dict]:
+def get_recipe(connection, recipe_id: int, viewer_user_id: int = None) -> Optional[dict]:
     """Gets a recipe by ID."""
-    query = "SELECT * FROM recipe WHERE id = %(id)s;"
-    return _execute_query(connection, query, {"id": recipe_id}, commit=False)
+    query = """
+        SELECT entity.*,
+               EXISTS (
+                   SELECT 1 FROM user_favorites uf
+                   WHERE uf.user_id = %(viewer_user_id)s
+                     AND uf.recipe_id = entity.id
+               ) AS favorite
+        FROM recipe entity
+        WHERE entity.id = %(id)s;
+    """
+    return _execute_query(
+        connection,
+        query,
+        {"id": recipe_id, "viewer_user_id": viewer_user_id},
+        commit=False,
+    )
 
 
 def get_all_recipes(
@@ -768,12 +898,17 @@ def get_all_recipes(
         params,
         owner_column="users_id",
         users_id=users_id,
-        favorite=favorite,
+        favorite_condition=(
+            _favorite_filter_sql("recipe_id", favorite, params, viewer_user_id)
+            if favorite is not None
+            else None
+        ),
         viewer_user_id=viewer_user_id,
     )
     
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-    query = f"SELECT * FROM recipe {where_clause} ORDER BY name;"
+    params["favorite_viewer_id"] = viewer_user_id
+    query = f"SELECT entity.*, EXISTS (SELECT 1 FROM user_favorites uf WHERE uf.user_id = %(favorite_viewer_id)s AND uf.recipe_id = entity.id) AS favorite FROM recipe entity {where_clause} ORDER BY entity.name;"
     
     return _execute_query_many(connection, query, params, commit=False)
 
@@ -793,7 +928,6 @@ def update_recipe(
         "name": name, 
         "meal_type": meal_type, 
         "notes": notes, 
-        "favorite": favorite,
         "is_private": is_private,
     }
     

@@ -26,7 +26,8 @@ from DayBetes_food.database.queries.crud import (
     get_recipe_portions_by_origin,
     get_intake_event,
     update_catalog_item,
-    update_catalog_favorite,
+    toggle_user_favorite,
+    set_user_favorite,
     update_manual_intake,
     update_recipe,
     delete_catalog_item,
@@ -948,11 +949,11 @@ def setup_food_routes(rt):
             entry = None
             recipe_portions = None
             if entry_type == "catalog":
-                entry = get_catalog_item(connection, entry_id)
+                entry = get_catalog_item(connection, entry_id, viewer_user_id=user_id)
             elif entry_type == "manual_intake":
-                entry = get_manual_intake(connection, entry_id)
+                entry = get_manual_intake(connection, entry_id, viewer_user_id=user_id)
             elif entry_type == "recipe":
-                entry = get_recipe(connection, entry_id)
+                entry = get_recipe(connection, entry_id, viewer_user_id=user_id)
                 recipe_portions = get_portion_detail_by_recipe(connection, entry_id) if entry else []
             if not entry or not _can_view_entry(entry_type, entry, user_id):
                 return HTMLResponse(status_code=404)
@@ -1299,6 +1300,8 @@ def setup_food_routes(rt):
 
             if not created_id:
                 return _error_msg("Could not create editable copy.")
+            if entry_type == "catalog":
+                set_user_favorite(connection, int(user_id), "catalog", int(created_id), True)
 
             target_type = "manual_intake" if entry_type == "manual_intake" else entry_type
             return HTMLResponse("", headers={"HX-Redirect": f"/food/edit/{target_type}/{created_id}/form"})
@@ -1309,7 +1312,7 @@ def setup_food_routes(rt):
             user_id = get_current_user_id()
             entry = None
             if entry_type == "catalog":
-                entry = get_catalog_item(connection, entry_id)
+                entry = get_catalog_item(connection, entry_id, viewer_user_id=user_id)
                 if not entry or not _can_view_entry("catalog", entry, user_id):
                     return HTMLResponse(status_code=404)
                 if not _can_edit_entry("catalog", entry, user_id):
@@ -1333,7 +1336,7 @@ def setup_food_routes(rt):
                     show_cart=False,
                 )
             if entry_type == "manual_intake":
-                entry = get_manual_intake(connection, entry_id)
+                entry = get_manual_intake(connection, entry_id, viewer_user_id=user_id)
                 if not entry or not _can_view_entry("manual_intake", entry, user_id):
                     return HTMLResponse(status_code=404)
                 if not _can_edit_entry("manual_intake", entry, user_id):
@@ -1355,7 +1358,7 @@ def setup_food_routes(rt):
                     show_cart=False,
                 )
             if entry_type == "recipe":
-                entry = get_recipe(connection, entry_id)
+                entry = get_recipe(connection, entry_id, viewer_user_id=user_id)
                 if not entry or not _can_view_entry("recipe", entry, user_id):
                     return HTMLResponse(status_code=404)
                 if not _can_edit_entry("recipe", entry, user_id):
@@ -1904,29 +1907,24 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             user_id = get_current_user_id()
             current = None
-            updated = False
+            new_favorite = None
             if entry_type == "catalog":
-                current = get_catalog_item(connection, entry_id)
+                current = get_catalog_item(connection, entry_id, viewer_user_id=user_id)
                 if current and current.get("deleted_at") is None and _can_view_entry("catalog", current, user_id):
-                    updated = update_catalog_favorite(connection, entry_id, not bool(current.get("favorite")))
-                    current["favorite"] = not bool(current.get("favorite"))
+                    new_favorite = toggle_user_favorite(connection, user_id, entry_type, entry_id)
             elif entry_type == "manual_intake":
-                current = get_manual_intake(connection, entry_id)
+                current = get_manual_intake(connection, entry_id, viewer_user_id=user_id)
                 if current and _can_view_entry("manual_intake", current, user_id):
-                    new_value = not bool(current.get("favorite"))
-                    updated = update_manual_intake(connection, entry_id, {"favorite": new_value})
-                    current["favorite"] = new_value
+                    new_favorite = toggle_user_favorite(connection, user_id, entry_type, entry_id)
             elif entry_type == "recipe":
-                current = get_recipe(connection, entry_id)
+                current = get_recipe(connection, entry_id, viewer_user_id=user_id)
                 if current and _can_view_entry("recipe", current, user_id):
-                    new_value = not bool(current.get("favorite"))
-                    updated = update_recipe(connection, entry_id, favorite=new_value)
-                    current["favorite"] = new_value
+                    new_favorite = toggle_user_favorite(connection, user_id, entry_type, entry_id)
 
-            if not current or not updated:
+            if not current or new_favorite is None:
                 return HTMLResponse(status_code=400)
 
-            return render_fragment(FavoriteButton(entry_type, entry_id, bool(current.get("favorite"))))
+            return render_fragment(FavoriteButton(entry_type, entry_id, new_favorite))
 
     @rt("/food/edit/catalog/{entry_id}")
     def post(
@@ -2064,6 +2062,8 @@ def setup_food_routes(rt):
             updated = update_catalog_item(connection, entry_id, payload)
             if not updated:
                 return _error_msg("Catalog item could not be updated.")
+            if favorite_value is not None:
+                set_user_favorite(connection, int(user_id), "catalog", entry_id, bool(favorite_value))
             set_entry_tags(connection, "catalog", entry_id, _parse_tags_json(tags_json))
             if normalized_brand:
                 add_food_brand(connection, normalized_brand)
@@ -2185,6 +2185,8 @@ def setup_food_routes(rt):
             updated = update_manual_intake(connection, entry_id, payload)
             if not updated:
                 return _error_msg("Manual intake could not be updated.")
+            if (favorite or "").strip() != "":
+                set_user_favorite(connection, int(user_id), "manual_intake", entry_id, _to_bool(favorite))
             set_entry_tags(connection, "manual_intake", entry_id, _parse_tags_json(tags_json))
             return HTMLResponse("", headers={"HX-Redirect": f"/food/item/manual_intake/{entry_id}"})
 
@@ -2233,6 +2235,8 @@ def setup_food_routes(rt):
             )
             if not updated:
                 return _error_msg("Recipe could not be updated.")
+            if (favorite or "").strip() != "":
+                set_user_favorite(connection, int(user_id), "recipe", entry_id, _to_bool(favorite))
             set_entry_tags(connection, "recipe", entry_id, _parse_tags_json(tags_json))
             return HTMLResponse("", headers={"HX-Redirect": f"/food/item/recipe/{entry_id}"})
 
@@ -2370,6 +2374,7 @@ def setup_food_routes(rt):
             created_id = add_catalog_item(connection, payload)
             if not created_id:
                 return _error_msg("Catalog item could not be created. Check required fields and uniqueness constraints.")
+            set_user_favorite(connection, int(user_id), "catalog", int(created_id), _to_bool(favorite))
             set_entry_tags(connection, "catalog", int(created_id), _parse_tags_json(tags_json))
             if normalized_brand:
                 add_food_brand(connection, normalized_brand)
@@ -2482,6 +2487,7 @@ def setup_food_routes(rt):
             created_id = add_manual_intake(connection, payload)
             if not created_id:
                 return _error_msg("Manual intake could not be created. Check required fields and constraints.")
+            set_user_favorite(connection, int(user_id), "manual_intake", int(created_id), _to_bool(favorite))
             set_entry_tags(connection, "manual_intake", int(created_id), _parse_tags_json(tags_json))
             return HTMLResponse("", headers={"HX-Redirect": "/food"})
 
@@ -2526,6 +2532,7 @@ def setup_food_routes(rt):
             )
             if not created_id:
                 return _error_msg("Recipe could not be created. Check required fields and constraints.")
+            set_user_favorite(connection, int(user_id), "recipe", int(created_id), _to_bool(favorite))
             set_entry_tags(connection, "recipe", int(created_id), _parse_tags_json(tags_json))
             return HTMLResponse("", headers={"HX-Redirect": f"/food/item/recipe/{created_id}"})
     
