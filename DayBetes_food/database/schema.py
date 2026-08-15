@@ -130,8 +130,9 @@ class DBSchema:
         ), -- Estimated glycemic index of the meal
         ig_confidence INTEGER CHECK (ig_confidence BETWEEN 1 AND 5), -- Confidence level with which the glycemic index value above was established
         is_private BOOLEAN NOT NULL DEFAULT FALSE, -- True: only creator can view it
-
-        UNIQUE (created_by, name, origin)
+        deleted_at TIMESTAMP NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     """
 

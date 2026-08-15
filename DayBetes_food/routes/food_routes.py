@@ -3,6 +3,7 @@ from datetime import datetime
 from datetime import date
 import json
 import difflib
+import math
 import re
 import unicodedata
 from urllib import request as urlrequest
@@ -86,6 +87,78 @@ def _to_float(value: str):
         return None
 
 
+MANUAL_NUMERIC_LIMITS = {
+    "calories_100g": (0.0, 900.0),
+    "carbs_100g": (0.0, 100.0),
+    "sugars_100g": (0.0, 100.0),
+    "fats_100g": (0.0, 100.0),
+    "saturated_100g": (0.0, 100.0),
+    "proteins_100g": (0.0, 100.0),
+    "fiber_100g": (0.0, 100.0),
+    "caffeine": (0.0, 10000.0),
+    "alcohol": (0.0, 10000.0),
+}
+MANUAL_AMOUNT_LIMITS = (0.0, 5000.0)
+
+
+def _strict_float(value, label: str, minimum: float = None, maximum: float = None):
+    text = "" if value is None else str(value).strip().replace(",", ".")
+    if not text:
+        return None, None
+    try:
+        parsed = float(text)
+    except (TypeError, ValueError):
+        return None, f"{label} must be numeric."
+    if not math.isfinite(parsed):
+        return None, f"{label} must be a finite number."
+    if minimum is not None and parsed < minimum:
+        return None, f"{label} must be greater than or equal to {minimum:g}."
+    if maximum is not None and parsed > maximum:
+        return None, f"{label} must be less than or equal to {maximum:g}."
+    return parsed, None
+
+
+def _strict_int(value, label: str, minimum: int = None, maximum: int = None):
+    text = "" if value is None else str(value).strip()
+    if not text:
+        return None, None
+    try:
+        parsed = int(text)
+    except (TypeError, ValueError):
+        return None, f"{label} must be an integer."
+    if minimum is not None and parsed < minimum:
+        return None, f"{label} must be between {minimum} and {maximum}."
+    if maximum is not None and parsed > maximum:
+        return None, f"{label} must be between {minimum} and {maximum}."
+    return parsed, None
+
+
+def _validate_manual_nutrition(values: dict):
+    clean = {}
+    for field, (minimum, maximum) in MANUAL_NUMERIC_LIMITS.items():
+        value, error = _strict_float(values.get(field), field, minimum, maximum)
+        if error:
+            return None, error
+        clean[field] = value
+
+    fats = clean.get("fats_100g")
+    saturated = clean.get("saturated_100g")
+    if fats is not None and saturated is not None and saturated > fats:
+        return None, "Saturated fat cannot exceed total fat."
+    return clean, None
+
+
+def _validate_manual_fields(values: dict, ig_confidence):
+    clean, error = _validate_manual_nutrition(values)
+    if error:
+        return None, error
+    clean_ig, error = _strict_int(ig_confidence, "IG confidence", 1, 5)
+    if error:
+        return None, error
+    clean["ig_confidence"] = clean_ig
+    return clean, None
+
+
 def _to_int(value: str):
     normalized = (value or "").strip()
     if not normalized:
@@ -118,6 +191,13 @@ def _smart_macro_float(
     if _to_bool(smart_enabled) and not (smart_raw or "").strip():
         return None
     return _to_float(raw_value)
+
+
+def _smart_macro_values(smart_enabled: str, smart_raw: str, values: dict):
+    parsed = {key: _smart_macro_float(smart_enabled, smart_raw, value) for key, value in values.items()}
+    if _to_bool(smart_enabled) and (smart_raw or "").strip() and not any(value is not None for value in parsed.values()):
+        return None, "Smart macros format was not recognized."
+    return parsed, None
 
 
 def _to_str_or_none(value):
@@ -666,7 +746,7 @@ def _next_copy_name(connection, entry_type: str, base_name: str, owner_user_id: 
                 cursor.execute("SELECT 1 FROM catalog WHERE lower(name) = lower(%(name)s) LIMIT 1;", {"name": candidate})
             elif entry_type == "manual_intake":
                 cursor.execute(
-                    "SELECT 1 FROM manual_intake WHERE created_by = %(user_id)s AND lower(name) = lower(%(name)s) LIMIT 1;",
+                    "SELECT 1 FROM manual_intake WHERE created_by = %(user_id)s AND deleted_at IS NULL AND lower(name) = lower(%(name)s) LIMIT 1;",
                     {"user_id": owner_user_id, "name": candidate},
                 )
             else:
@@ -773,13 +853,14 @@ def _filtered_entries(
 
 
 
-def _error_msg(text: str):
+def _error_msg(text: str, status_code: int = 200):
     return render_fragment(
         Div(
             P("Error", cls="text-[11px] font-semibold text-red-800"),
             P(text, cls="text-xs text-red-700"),
             cls="web_container p-2 rounded-lg border border-red-200/70 bg-red-50/60",
-        )
+        ),
+        status_code=status_code,
     )
 
 
@@ -1450,7 +1531,8 @@ def setup_food_routes(rt):
                 deleted = delete_recipe(connection, entry_id)
 
             if not deleted:
-                return _error_msg("Could not delete this item. It may be in use.")
+                action = "archive" if entry_type == "manual_intake" else "delete"
+                return _error_msg(f"Could not {action} this item. It may not exist or you may not own it.")
             return HTMLResponse("", headers={"HX-Redirect": "/food"})
 
     @rt("/food/log/{entry_type}/{entry_id}")
@@ -1830,15 +1912,22 @@ def setup_food_routes(rt):
             if not user_id:
                 return HTMLResponse("No users", status_code=400)
 
-            event_id = None
-            if intake_event_id and intake_event_id.isdigit() and int(intake_event_id) != 0:
-                event_id = int(intake_event_id)
-            else:
-                event_id = add_intake_event(connection, users_id=user_id, state="planned")
-
             intake_item = get_manual_intake(connection, intake_id)
             if not intake_item or not _can_view_entry("manual_intake", intake_item, user_id):
                 return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
+
+            event_id = None
+            if intake_event_id and intake_event_id.isdigit() and int(intake_event_id) != 0:
+                event_id = int(intake_event_id)
+                event_data = get_intake_event(connection, event_id)
+                if (
+                    not event_data
+                    or int(event_data.get("users_id") or 0) != int(user_id)
+                    or event_data.get("state") != "planned"
+                ):
+                    return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
+            else:
+                event_id = add_intake_event(connection, users_id=user_id, state="planned")
 
             portion_amount = float(intake_item.get("amount_g") or 100.0)
             event_data = get_intake_event(connection, event_id)
@@ -2141,12 +2230,27 @@ def setup_food_routes(rt):
         if not clean_name or not amount_g:
             return _error_msg("Name, subtype and amount are required.")
 
-        try:
-            amount_value = float(amount_g)
-            if amount_value <= 0:
-                return _error_msg("Amount must be greater than zero.")
-        except (TypeError, ValueError):
-            return _error_msg("Amount must be numeric.")
+        amount_value, amount_error = _strict_float(
+            amount_g, "Amount", MANUAL_AMOUNT_LIMITS[0], MANUAL_AMOUNT_LIMITS[1]
+        )
+        if amount_error or amount_value <= 0:
+            return _error_msg(amount_error or "Amount must be greater than zero.", status_code=422)
+        nutrition, nutrition_error = _validate_manual_fields(
+            {
+                "calories_100g": calories_100g,
+                "carbs_100g": carbs_100g,
+                "sugars_100g": sugars_100g,
+                "fats_100g": fats_100g,
+                "saturated_100g": saturated_100g,
+                "proteins_100g": proteins_100g,
+                "fiber_100g": fiber_100g,
+                "caffeine": caffeine,
+                "alcohol": alcohol,
+            },
+            ig_confidence,
+        )
+        if nutrition_error:
+            return _error_msg(nutrition_error, status_code=422)
 
         with get_connection() as connection:
             current = get_manual_intake(connection, entry_id)
@@ -2207,17 +2311,8 @@ def setup_food_routes(rt):
                 "subtype": clean_subtype,
                 "origin": clean_origin,
                 "amount_g": amount_value,
-                "calories_100g": _to_float(calories_100g),
-                "carbs_100g": _to_float(carbs_100g),
-                "sugars_100g": _to_float(sugars_100g),
-                "fats_100g": _to_float(fats_100g),
-                "saturated_100g": _to_float(saturated_100g),
-                "proteins_100g": _to_float(proteins_100g),
-                "fiber_100g": _to_float(fiber_100g),
-                "caffeine": _to_float(caffeine),
-                "alcohol": _to_float(alcohol),
+                **nutrition,
                 "glycemic_index": clean_glycemic,
-                "ig_confidence": _to_int(ig_confidence),
                 "favorite": (None if (favorite or "").strip() == "" else _to_bool(favorite)),
             }
             if can_toggle_private:
@@ -2460,12 +2555,31 @@ def setup_food_routes(rt):
         if not clean_name or not amount_g:
             return _error_msg("Name, subtype and amount are required.")
 
-        try:
-            amount_value = float(amount_g)
-            if amount_value <= 0:
-                return _error_msg("Amount must be greater than zero.")
-        except (TypeError, ValueError):
-            return _error_msg("Amount must be numeric.")
+        amount_value, amount_error = _strict_float(
+            amount_g, "Amount", MANUAL_AMOUNT_LIMITS[0], MANUAL_AMOUNT_LIMITS[1]
+        )
+        if amount_error or amount_value <= 0:
+            return _error_msg(amount_error or "Amount must be greater than zero.", status_code=422)
+        smart_values, smart_error = _smart_macro_values(
+            manual_smart_macros_enabled,
+            manual_smart_macros_raw,
+            {
+                "calories_100g": calories_100g,
+                "carbs_100g": carbs_100g,
+                "sugars_100g": sugars_100g,
+                "fats_100g": fats_100g,
+                "saturated_100g": saturated_100g,
+                "proteins_100g": proteins_100g,
+                "fiber_100g": fiber_100g,
+            },
+        )
+        if smart_error:
+            return _error_msg(smart_error, status_code=422)
+        nutrition, nutrition_error = _validate_manual_fields(
+            {**smart_values, "caffeine": caffeine, "alcohol": alcohol}, ig_confidence
+        )
+        if nutrition_error:
+            return _error_msg(nutrition_error, status_code=422)
 
         with get_connection() as connection:
             user_id = get_current_user_id()
@@ -2517,17 +2631,8 @@ def setup_food_routes(rt):
                 "subtype": clean_subtype,
                 "origin": clean_origin,
                 "amount_g": amount_value,
-                "calories_100g": _smart_macro_float(manual_smart_macros_enabled, manual_smart_macros_raw, calories_100g),
-                "carbs_100g": _smart_macro_float(manual_smart_macros_enabled, manual_smart_macros_raw, carbs_100g),
-                "sugars_100g": _smart_macro_float(manual_smart_macros_enabled, manual_smart_macros_raw, sugars_100g),
-                "fats_100g": _smart_macro_float(manual_smart_macros_enabled, manual_smart_macros_raw, fats_100g),
-                "saturated_100g": _smart_macro_float(manual_smart_macros_enabled, manual_smart_macros_raw, saturated_100g),
-                "proteins_100g": _smart_macro_float(manual_smart_macros_enabled, manual_smart_macros_raw, proteins_100g),
-                "fiber_100g": _smart_macro_float(manual_smart_macros_enabled, manual_smart_macros_raw, fiber_100g),
-                "caffeine": _to_float(caffeine),
-                "alcohol": _to_float(alcohol),
+                **nutrition,
                 "glycemic_index": clean_glycemic,
-                "ig_confidence": _to_int(ig_confidence),
                 "favorite": _to_bool(favorite),
                 "is_private": _to_bool(is_private),
             }

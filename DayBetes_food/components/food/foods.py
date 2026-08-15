@@ -2999,12 +2999,12 @@ def FoodDetailPage(
     delete_confirm_id = f"delete_confirm_{entry_type}_{entry['id']}"
     delete_title = {
         "catalog": "Delete food",
-        "manual_intake": "Delete manual intake",
+        "manual_intake": "Archive manual intake",
         "recipe": "Delete recipe",
     }.get(entry_type, "Delete item")
     delete_question = {
         "catalog": "Are you sure you want to delete this food?",
-        "manual_intake": "Are you sure you want to delete this manual intake?",
+        "manual_intake": "Are you sure you want to archive this manual intake? It will be hidden from active food lists.",
         "recipe": "Are you sure you want to delete this recipe?",
     }.get(entry_type, "Are you sure you want to delete this item?")
 

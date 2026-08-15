@@ -1,4 +1,5 @@
 import os
+from psycopg import sql
 
 from DayBetes_food.auth.security import hash_password, normalize_identifier, sanitize_text
 from DayBetes_food.database.connection import get_connection
@@ -170,6 +171,168 @@ def _ensure_catalog_schema(cursor):
     if dtype in {"smallint", "integer", "bigint"}:
         cursor.execute(
             "ALTER TABLE catalog ALTER COLUMN default_portion TYPE DOUBLE PRECISION USING default_portion::double precision;"
+        )
+
+
+def _ensure_manual_numeric_constraints(cursor):
+    constraints = {
+        "chk_manual_amount_g_valid": "CHECK (((amount_g > (0)::double precision) AND (amount_g <= (5000)::double precision) AND (amount_g <> 'NaN'::real) AND (amount_g <> 'Infinity'::real) AND (amount_g <> '-Infinity'::real))) NOT VALID",
+        "chk_manual_calories_100g_valid": "CHECK (((calories_100g IS NULL) OR ((calories_100g >= (0)::double precision) AND (calories_100g <= (900)::double precision) AND (calories_100g <> 'NaN'::real) AND (calories_100g <> 'Infinity'::real) AND (calories_100g <> '-Infinity'::real)))) NOT VALID",
+        "chk_manual_carbs_100g_valid": "CHECK (((carbs_100g IS NULL) OR ((carbs_100g >= (0)::double precision) AND (carbs_100g <= (100)::double precision) AND (carbs_100g <> 'NaN'::real) AND (carbs_100g <> 'Infinity'::real) AND (carbs_100g <> '-Infinity'::real)))) NOT VALID",
+        "chk_manual_sugars_100g_valid": "CHECK (((sugars_100g IS NULL) OR ((sugars_100g >= (0)::double precision) AND (sugars_100g <= (100)::double precision) AND (sugars_100g <> 'NaN'::real) AND (sugars_100g <> 'Infinity'::real) AND (sugars_100g <> '-Infinity'::real)))) NOT VALID",
+        "chk_manual_fats_100g_valid": "CHECK (((fats_100g IS NULL) OR ((fats_100g >= (0)::double precision) AND (fats_100g <= (100)::double precision) AND (fats_100g <> 'NaN'::real) AND (fats_100g <> 'Infinity'::real) AND (fats_100g <> '-Infinity'::real)))) NOT VALID",
+        "chk_manual_saturated_100g_valid": "CHECK (((saturated_100g IS NULL) OR ((saturated_100g >= (0)::double precision) AND (saturated_100g <= (100)::double precision) AND (saturated_100g <> 'NaN'::real) AND (saturated_100g <> 'Infinity'::real) AND (saturated_100g <> '-Infinity'::real)))) NOT VALID",
+        "chk_manual_proteins_100g_valid": "CHECK (((proteins_100g IS NULL) OR ((proteins_100g >= (0)::double precision) AND (proteins_100g <= (100)::double precision) AND (proteins_100g <> 'NaN'::real) AND (proteins_100g <> 'Infinity'::real) AND (proteins_100g <> '-Infinity'::real)))) NOT VALID",
+        "chk_manual_fiber_100g_valid": "CHECK (((fiber_100g IS NULL) OR ((fiber_100g >= (0)::double precision) AND (fiber_100g <= (100)::double precision) AND (fiber_100g <> 'NaN'::real) AND (fiber_100g <> 'Infinity'::real) AND (fiber_100g <> '-Infinity'::real)))) NOT VALID",
+        "chk_manual_caffeine_valid": "CHECK (((caffeine IS NULL) OR ((caffeine >= (0)::double precision) AND (caffeine <= (10000)::double precision) AND (caffeine <> 'NaN'::real) AND (caffeine <> 'Infinity'::real) AND (caffeine <> '-Infinity'::real)))) NOT VALID",
+        "chk_manual_alcohol_valid": "CHECK (((alcohol IS NULL) OR ((alcohol >= (0)::double precision) AND (alcohol <= (10000)::double precision) AND (alcohol <> 'NaN'::real) AND (alcohol <> 'Infinity'::real) AND (alcohol <> '-Infinity'::real)))) NOT VALID",
+        "chk_manual_saturated_le_fats": "CHECK (((saturated_100g IS NULL) OR (fats_100g IS NULL) OR (saturated_100g <= fats_100g))) NOT VALID",
+    }
+    cursor.execute(
+        """
+        SELECT conname, pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint
+        WHERE conrelid = 'manual_intake'::regclass
+          AND conname = ANY(%(names)s);
+        """,
+        {"names": list(constraints)},
+    )
+    existing = {row["conname"]: (row.get("definition") or "").strip() for row in cursor.fetchall() or []}
+    for name, expected in constraints.items():
+        actual = existing.get(name)
+        if actual:
+            validated_expected = expected.removesuffix(" NOT VALID")
+            if actual not in (expected, validated_expected):
+                raise RuntimeError(f"Unexpected definition for {name}: {actual!r}")
+            continue
+        body = expected.removesuffix(" NOT VALID")
+        cursor.execute(
+            sql.SQL("ALTER TABLE manual_intake ADD CONSTRAINT {} {} NOT VALID;").format(
+                sql.Identifier(name), sql.SQL(body)
+            )
+        )
+
+
+def _ensure_manual_intake_schema(cursor):
+    """Keep the live manual_intake schema aligned with its canonical definition."""
+    for column, definition in (
+        ("deleted_at", "TIMESTAMP NULL"),
+        ("created_at", "TIMESTAMP"),
+        ("updated_at", "TIMESTAMP"),
+    ):
+        if not _has_column(cursor, "manual_intake", column):
+            cursor.execute(
+                sql.SQL("ALTER TABLE manual_intake ADD COLUMN {} {};").format(
+                    sql.Identifier(column), sql.SQL(definition)
+                )
+            )
+
+    # Legacy rows have no reliable creation time; the migration timestamp is only a backfill marker.
+    cursor.execute(
+        """
+        UPDATE manual_intake
+        SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP),
+            updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP);
+        """
+    )
+    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;")
+    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;")
+    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN created_at SET NOT NULL;")
+    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN updated_at SET NOT NULL;")
+    _ensure_manual_numeric_constraints(cursor)
+
+    if _has_column(cursor, "manual_intake", "slug"):
+        cursor.execute("ALTER TABLE manual_intake DROP COLUMN slug;")
+
+    cursor.execute(
+        """
+        SELECT conname, pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint
+        WHERE conrelid = 'manual_intake'::regclass
+          AND contype = 'u';
+        """
+    )
+    for row in cursor.fetchall() or []:
+        definition = (row.get("definition") or "").strip()
+        if definition == "UNIQUE (created_by, name, origin)":
+            cursor.execute(
+                sql.SQL("ALTER TABLE manual_intake DROP CONSTRAINT {};").format(
+                    sql.Identifier(row["conname"])
+                )
+            )
+
+    expected_active_indexdef = (
+        "CREATE UNIQUE INDEX uq_manual_created_name_origin_norm ON public.manual_intake "
+        "USING btree (created_by, lower(TRIM(BOTH FROM name)), "
+        "lower(TRIM(BOTH FROM COALESCE(origin, ''::character varying)))) "
+        "WHERE (deleted_at IS NULL)"
+    )
+    expected_legacy_indexdef = (
+        "CREATE UNIQUE INDEX uq_manual_created_name_origin_norm ON public.manual_intake "
+        "USING btree (created_by, lower(TRIM(BOTH FROM name)), "
+        "lower(TRIM(BOTH FROM COALESCE(origin, ''::character varying))))"
+    )
+    cursor.execute(
+        """
+        SELECT indexdef
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename = 'manual_intake'
+          AND indexname = 'uq_manual_created_name_origin_norm';
+        """
+    )
+    index_row = cursor.fetchone()
+    if index_row:
+        actual_indexdef = (index_row.get("indexdef") or "").strip()
+        if actual_indexdef == expected_legacy_indexdef:
+            cursor.execute("DROP INDEX uq_manual_created_name_origin_norm;")
+            index_row = None
+        elif actual_indexdef != expected_active_indexdef:
+            raise RuntimeError(
+                "Unexpected definition for uq_manual_created_name_origin_norm: "
+                f"{actual_indexdef!r}"
+            )
+    if not index_row:
+        cursor.execute(
+            """
+            CREATE UNIQUE INDEX uq_manual_created_name_origin_norm
+            ON manual_intake (
+                created_by,
+                lower(trim(name)),
+                lower(trim(coalesce(origin, '')))
+            )
+            WHERE deleted_at IS NULL;
+            """
+        )
+
+    cursor.execute(
+        """
+        SELECT indexdef
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename = 'manual_intake'
+          AND indexname = 'idx_manual_active_created_by';
+        """
+    )
+    active_owner_index = cursor.fetchone()
+    expected_owner_indexdef = (
+        "CREATE INDEX idx_manual_active_created_by ON public.manual_intake USING btree (created_by) "
+        "WHERE (deleted_at IS NULL)"
+    )
+    if active_owner_index:
+        actual_owner_indexdef = (active_owner_index.get("indexdef") or "").strip()
+        if actual_owner_indexdef != expected_owner_indexdef:
+            raise RuntimeError(
+                "Unexpected definition for idx_manual_active_created_by: "
+                f"{actual_owner_indexdef!r}"
+            )
+    else:
+        cursor.execute(
+            """
+            CREATE INDEX idx_manual_active_created_by
+            ON manual_intake (created_by)
+            WHERE deleted_at IS NULL;
+            """
         )
 
 
@@ -545,6 +708,7 @@ def init_db():
 
         _ensure_trgm_search(cur)
         _ensure_tags_color_schema(cur)
+        _ensure_manual_intake_schema(cur)
         _ensure_food_name_origin_uniqueness(cur)
         _drop_legacy_category_check(cur)
         _ensure_catalog_schema(cur)

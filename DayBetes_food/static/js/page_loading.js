@@ -161,7 +161,13 @@
       });
     });
 
-    document.body.addEventListener("htmx:responseError", function () {
+    document.body.addEventListener("htmx:responseError", function (event) {
+      var detail = event && event.detail ? event.detail : {};
+      var xhr = detail.xhr;
+      var target = detail.target;
+      if (xhr && xhr.status === 422 && target && xhr.responseText) {
+        target.innerHTML = xhr.responseText;
+      }
       pendingRequests = 0;
       setFoodListLoading(false);
       var main = byId("main_content");

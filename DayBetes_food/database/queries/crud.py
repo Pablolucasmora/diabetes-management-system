@@ -134,6 +134,7 @@ def _build_update_query(
     auto_fields: dict = None,
     raw_fields: dict = None,
     null_fields: set[str] = None,
+    extra_where: sql.Composed = None,
 ) -> Optional[sql.Composed]:
     """
     Builds a generic and safe UPDATE query.
@@ -181,11 +182,13 @@ def _build_update_query(
         sql.SQL("{} = {}").format(sql.Identifier(field), _RAW_SQL_EXPRESSIONS[expression])
         for field, expression in raw_fields.items()
     )
-    return sql.SQL("UPDATE {} SET {} WHERE {} = {} RETURNING {};").format(
+    extra_where_sql = sql.SQL(" AND ") + extra_where if extra_where else sql.SQL("")
+    return sql.SQL("UPDATE {} SET {} WHERE {} = {}{} RETURNING {};").format(
         sql.Identifier(table),
         sql.SQL(", ").join(set_parts),
         sql.Identifier(where_field),
         sql.Placeholder(where_field),
+        extra_where_sql,
         sql.Identifier(where_field),
     )
 
@@ -384,7 +387,8 @@ def get_subtype_suggestions(connection, search: str = "", limit: int = 50) -> li
             UNION
             SELECT DISTINCT trim(subtype) AS name
             FROM manual_intake
-            WHERE subtype IS NOT NULL AND trim(subtype) <> ''
+            WHERE deleted_at IS NULL
+              AND subtype IS NOT NULL AND trim(subtype) <> ''
         )
         SELECT name
         FROM source
@@ -432,7 +436,8 @@ def get_manual_origin_suggestions(connection, search: str = "", limit: int = 50)
         WITH source AS (
             SELECT DISTINCT trim(origin) AS name
             FROM manual_intake
-            WHERE origin IS NOT NULL
+            WHERE deleted_at IS NULL
+              AND origin IS NOT NULL
               AND trim(origin) <> ''
         )
         SELECT name
@@ -788,7 +793,8 @@ def get_manual_intake(connection, intake_id: int, viewer_user_id: int = None) ->
                      AND uf.manual_intake_id = entity.id
                ) AS favorite
         FROM manual_intake entity
-        WHERE entity.id = %(id)s;
+        WHERE entity.id = %(id)s
+          AND entity.deleted_at IS NULL;
     """
     return _execute_query(
         connection,
@@ -808,6 +814,7 @@ def get_all_manual_intakes(
     """Gets all manual intakes with optional filters."""
     conditions = []
     params = {}
+    conditions.append("entity.deleted_at IS NULL")
     
     _add_entity_filters(
         conditions,
@@ -863,6 +870,7 @@ def manual_intake_name_origin_exists(
         SELECT 1
         FROM manual_intake
         WHERE created_by = %(users_id)s
+          AND deleted_at IS NULL
           AND lower(trim(name)) = lower(trim(%(name)s))
           AND lower(trim(COALESCE(origin, ''))) = lower(trim(COALESCE(%(origin)s, '')))
           {exclusion}
@@ -880,7 +888,12 @@ def update_manual_intake(connection, intake_id: int, data: dict) -> bool:
     payload = dict(data or {})
     payload.pop("favorite", None)
     params = {**payload, "id": intake_id}
-    query = _build_update_query("manual_intake", params)
+    query = _build_update_query(
+        "manual_intake",
+        params,
+        raw_fields={"updated_at": RawSQL.NOW},
+        extra_where=sql.SQL("deleted_at IS NULL"),
+    )
     
     if not query:
         return False
@@ -890,8 +903,15 @@ def update_manual_intake(connection, intake_id: int, data: dict) -> bool:
 
 
 def delete_manual_intake(connection, intake_id: int) -> bool:
-    """Deletes a manual intake by ID."""
-    query = "DELETE FROM manual_intake WHERE id = %(id)s RETURNING id;"
+    """Archives a manual intake by ID."""
+    query = """
+        UPDATE manual_intake
+        SET deleted_at = NOW(),
+            updated_at = NOW()
+        WHERE id = %(id)s
+          AND deleted_at IS NULL
+        RETURNING id;
+    """
     result = _execute_query(connection, query, {"id": intake_id})
     return result is not None
 
@@ -1080,7 +1100,8 @@ def get_rescue_entries_suggestions(connection, users_id: int, search: str = "", 
             FROM linked_tags lt
             INNER JOIN rescue_tag rt ON rt.id = lt.tag_id
             INNER JOIN manual_intake m ON m.id = lt.manual_intake_id
-            WHERE (m.is_private = FALSE OR m.created_by = %(users_id)s)
+            WHERE m.deleted_at IS NULL
+              AND (m.is_private = FALSE OR m.created_by = %(users_id)s)
               AND (%(q)s = '' OR m.name ILIKE %(q_like)s OR COALESCE(m.origin, '') ILIKE %(q_like)s)
         )
         SELECT *

@@ -51,8 +51,8 @@ def _safe_fragment_to_html(fragment) -> str:
             return str(to_xml(cleaned))
         raise
 
-def render_fragment(fragment):
-    return HTMLResponse(_safe_fragment_to_html(fragment))
+def render_fragment(fragment, status_code: int = 200):
+    return HTMLResponse(_safe_fragment_to_html(fragment), status_code=status_code)
 
 def _base_html_shell(content_html: str) -> str:
     return f"""<!doctype html>
