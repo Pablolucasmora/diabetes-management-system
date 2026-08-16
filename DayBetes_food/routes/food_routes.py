@@ -1033,29 +1033,34 @@ def setup_food_routes(rt):
                 return render_fragment(P("Rescue item not found.", cls="text-xs text-red-700"))
             if origin_type == "catalog" and origin.get("deleted_at") is not None:
                 return render_fragment(P("This food is archived and must be copied first.", cls="text-xs text-red-700"))
-            event_id = add_intake_event(
-                connection,
-                users_id=int(user_id),
-                state="consumed",
-                meal_type="rescue",
-                meal_time=utc_dt,
-            )
-            if not event_id:
-                return render_fragment(P("Could not create rescue event.", cls="text-xs text-red-700"))
-            ok = add_portion_detail(
-                connection,
-                origin=origin_type,
-                origin_id=int(origin_id),
-                destination="intake_event",
-                destination_id=int(event_id),
-                amount_g=float(grams),
-                strictly_weighed=True,
-                macros_quality=True,
-                plate_amount=float(grams),
-                offset_minutes=0,
-            )
-            if not ok:
-                return render_fragment(P("Could not register rescue.", cls="text-xs text-red-700"))
+            try:
+                with connection.transaction():
+                    event_id = add_intake_event(
+                        connection,
+                        users_id=int(user_id),
+                        state="consumed",
+                        meal_type="rescue",
+                        meal_time=utc_dt,
+                        commit=False,
+                    )
+                    if not event_id:
+                        raise ValueError("Could not create rescue event.")
+                    if not add_portion_detail(
+                        connection,
+                        origin=origin_type,
+                        origin_id=int(origin_id),
+                        destination="intake_event",
+                        destination_id=int(event_id),
+                        amount_g=float(grams),
+                        strictly_weighed=True,
+                        macros_quality=True,
+                        plate_amount=float(grams),
+                        offset_minutes=0,
+                        commit=False,
+                    ):
+                        raise ValueError("Could not register rescue.")
+            except ValueError as error:
+                return render_fragment(P(str(error), cls="text-xs text-red-700"))
         return render_fragment(P("Rescue registered.", cls="text-xs text-green-700"))
 
     @rt("/food/item/{entry_type}/{entry_id}")
@@ -1149,11 +1154,18 @@ def setup_food_routes(rt):
             if existing:
                 keep = existing[0]
                 total_amount = sum(float(row.get("amount_g") or 0.0) for row in existing) + amount_g
-                updated = update_portion_detail_amount(connection, portion_id=int(keep["id"]), amount_g=total_amount)
-                deleted_ok = True
-                for duplicate in existing[1:]:
-                    deleted_ok = delete_portion_detail(connection, int(duplicate["id"])) and deleted_ok
-                ok = bool(updated and deleted_ok)
+                try:
+                    with connection.transaction():
+                        if not update_portion_detail_amount(
+                            connection, portion_id=int(keep["id"]), amount_g=total_amount, commit=False
+                        ):
+                            raise ValueError("Could not update ingredient.")
+                        for duplicate in existing[1:]:
+                            if not delete_portion_detail(connection, int(duplicate["id"]), commit=False):
+                                raise ValueError("Could not remove duplicate ingredient.")
+                    ok = True
+                except ValueError:
+                    ok = False
             else:
                 created = add_portion_detail(
                     connection,
@@ -1347,12 +1359,23 @@ def setup_food_routes(rt):
                     "alcohol": source.get("alcohol"),
                     "barcode": source.get("barcode"),
                     "cooking_factor": source.get("cooking_factor"),
-                    "favorite": True,
                     "is_private": False,
                 }
-                created_id = add_catalog_item(connection, payload)
-                if payload.get("brand"):
-                    add_food_brand(connection, str(payload["brand"]))
+                try:
+                    with connection.transaction():
+                        created_id = add_catalog_item(connection, payload, commit=False)
+                        if not created_id:
+                            raise ValueError("Could not create editable copy.")
+                        if payload.get("brand") and not add_food_brand(
+                            connection, str(payload["brand"]), commit=False
+                        ):
+                            raise ValueError("Could not save the copied food brand.")
+                        if not set_user_favorite(
+                            connection, int(user_id), "catalog", int(created_id), True, commit=False
+                        ):
+                            raise ValueError("Could not save the copied food favorite.")
+                except ValueError as error:
+                    return _error_msg(str(error))
             elif entry_type == "manual_intake":
                 payload = {
                     "created_by": int(user_id),
@@ -1373,53 +1396,59 @@ def setup_food_routes(rt):
                     "alcohol": source.get("alcohol"),
                     "glycemic_index": source.get("glycemic_index"),
                     "ig_confidence": source.get("ig_confidence"),
-                    "favorite": False,
                     "is_private": False,
                 }
-                created_id = add_manual_intake(connection, payload)
+                try:
+                    with connection.transaction():
+                        created_id = add_manual_intake(connection, payload, commit=False)
+                        if not created_id:
+                            raise ValueError("Could not create editable copy.")
+                except ValueError as error:
+                    return _error_msg(str(error))
             else:
-                created_id = add_recipe(
-                    connection,
-                    users_id=int(user_id),
-                    origin_root_id=root_id,
-                    name=copy_name,
-                    meal_type=source.get("meal_type"),
-                    notes=source.get("notes"),
-                    favorite=False,
-                    is_private=False,
-                )
-                if created_id:
-                    source_portions = get_portion_detail_by_recipe(connection, int(source["id"]))
-                    for portion in source_portions:
-                        origin = "catalog" if portion.get("catalog_id") else "manual_intake"
-                        origin_id = int(portion.get("catalog_id") or portion.get("manual_intake_id") or 0)
-                        amount_g = float(portion.get("amount_g") or 0.0)
-                        if origin_id <= 0:
-                            continue
-                        if amount_g <= 0:
-                            continue
-                        add_portion_detail(
+                try:
+                    with connection.transaction():
+                        created_id = add_recipe(
                             connection,
-                            origin=origin,
-                            origin_id=origin_id,
-                            destination="recipe",
-                            destination_id=int(created_id),
-                            amount_g=amount_g,
-                            cooking=portion.get("cooking"),
-                            conservation=portion.get("conservation"),
-                            final_state=portion.get("final_state"),
-                            strictly_weighed=portion.get("strictly_weighed"),
-                            macros_quality=portion.get("macros_quality"),
-                            plate_amount=portion.get("plate_amount"),
-                            is_cooked_weight=bool(portion.get("is_cooked_weight")),
+                            users_id=int(user_id),
+                            origin_root_id=root_id,
+                            name=copy_name,
+                            meal_type=source.get("meal_type"),
+                            notes=source.get("notes"),
+                            is_private=False,
+                            commit=False,
                         )
+                        if not created_id:
+                            raise ValueError("Could not create editable copy.")
+                        source_portions = get_portion_detail_by_recipe(connection, int(source["id"]))
+                        for portion in source_portions:
+                            origin = "catalog" if portion.get("catalog_id") else "manual_intake"
+                            origin_id = int(portion.get("catalog_id") or portion.get("manual_intake_id") or 0)
+                            amount_g = float(portion.get("amount_g") or 0.0)
+                            if origin_id <= 0 or amount_g <= 0:
+                                continue
+                            if not add_portion_detail(
+                                connection,
+                                origin=origin,
+                                origin_id=origin_id,
+                                destination="recipe",
+                                destination_id=int(created_id),
+                                amount_g=amount_g,
+                                cooking=portion.get("cooking"),
+                                conservation=portion.get("conservation"),
+                                final_state=portion.get("final_state"),
+                                strictly_weighed=portion.get("strictly_weighed"),
+                                macros_quality=portion.get("macros_quality"),
+                                plate_amount=portion.get("plate_amount"),
+                                is_cooked_weight=bool(portion.get("is_cooked_weight")),
+                                commit=False,
+                            ):
+                                raise ValueError("Could not copy recipe ingredients.")
+                except ValueError as error:
+                    return _error_msg(str(error))
 
             if not created_id:
                 return _error_msg("Could not create editable copy.")
-            if entry_type == "catalog":
-                if not set_user_favorite(connection, int(user_id), "catalog", int(created_id), True):
-                    return _error_msg("Could not save the copied food favorite.")
-
             target_type = "manual_intake" if entry_type == "manual_intake" else entry_type
             return HTMLResponse("", headers={"HX-Redirect": f"/food/edit/{target_type}/{created_id}/form"})
 
@@ -1603,112 +1632,84 @@ def setup_food_routes(rt):
             if entry_type == "catalog" and origin_item.get("deleted_at") is not None:
                 return render_fragment(P("This food is archived and must be copied first.", cls="text-red-700"))
 
-            if intake_event_id and intake_event_id.isdigit() and int(intake_event_id) != 0:
-                event_id = int(intake_event_id)
-            else:
-                event_id = add_intake_event(connection, users_id=user_id, state="planned")
+            try:
+                with connection.transaction():
+                    if intake_event_id and intake_event_id.isdigit() and int(intake_event_id) != 0:
+                        event_id = int(intake_event_id)
+                    else:
+                        event_id = add_intake_event(
+                            connection, users_id=user_id, state="planned", commit=False
+                        )
+                    if not event_id:
+                        raise ValueError("Could not create meal event.")
 
-            if not event_id:
-                return render_fragment(P("Could not create meal event.", cls="text-red-700"))
+                    event_data = get_intake_event(connection, event_id)
+                    offset_minutes = 0
+                    if event_data and event_data.get("meal_time"):
+                        delta = datetime.utcnow() - event_data["meal_time"]
+                        offset_minutes = int(delta.total_seconds() // 60)
 
-            event_data = get_intake_event(connection, event_id)
-            offset_minutes = 0
-            if event_data and event_data.get("meal_time"):
-                delta = datetime.utcnow() - event_data["meal_time"]
-                offset_minutes = int(delta.total_seconds() // 60)
-
-            created = []
-            if entry_type == "catalog":
-                created.append(
-                    add_portion_detail(
-                        connection,
-                        origin="catalog",
-                        origin_id=entry_id,
-                        destination="intake_event",
-                        destination_id=event_id,
-                        amount_g=parsed_amount,
-                        cooking=clean_cooking,
-                        final_state=clean_final_state,
-                        conservation=clean_conservation,
-                        strictly_weighed=True,
-                        macros_quality=True,
-                        plate_amount=parsed_amount,
-                        offset_minutes=offset_minutes,
-                    )
-                )
-            elif entry_type == "manual_intake":
-                created.append(
-                    add_portion_detail(
-                        connection,
-                        origin="manual_intake",
-                        origin_id=entry_id,
-                        destination="intake_event",
-                        destination_id=event_id,
-                        amount_g=parsed_amount,
-                        cooking=clean_cooking,
-                        final_state=clean_final_state,
-                        conservation=clean_conservation,
-                        strictly_weighed=True,
-                        macros_quality=True,
-                        plate_amount=parsed_amount,
-                        offset_minutes=offset_minutes,
-                    )
-                )
-            elif entry_type == "recipe":
-                recipe_rows = get_portion_detail_by_recipe(connection, entry_id)
-                total_recipe_amount = sum(float(row.get("amount_g") or 0.0) for row in recipe_rows)
-                if total_recipe_amount <= 0:
-                    return render_fragment(P("Recipe has no ingredients to log.", cls="text-red-700"))
-                factor = parsed_amount / total_recipe_amount
-                for row in recipe_rows:
-                    row_amount = float(row.get("amount_g") or 0.0) * factor
-                    if row_amount <= 0:
-                        continue
-                    if row.get("catalog_id"):
+                    created = []
+                    if entry_type in ("catalog", "manual_intake"):
                         created.append(
                             add_portion_detail(
                                 connection,
-                                origin="catalog",
-                                origin_id=int(row["catalog_id"]),
+                                origin=entry_type,
+                                origin_id=entry_id,
                                 destination="intake_event",
                                 destination_id=event_id,
-                                amount_g=row_amount,
-                                cooking=row.get("cooking"),
-                                conservation=row.get("conservation"),
-                                final_state=row.get("final_state"),
+                                amount_g=parsed_amount,
+                                cooking=clean_cooking,
+                                final_state=clean_final_state,
+                                conservation=clean_conservation,
                                 strictly_weighed=True,
                                 macros_quality=True,
-                                plate_amount=row_amount,
-                                is_cooked_weight=bool(row.get("is_cooked_weight")),
+                                plate_amount=parsed_amount,
                                 offset_minutes=offset_minutes,
+                                commit=False,
                             )
                         )
-                    elif row.get("manual_intake_id"):
-                        created.append(
-                            add_portion_detail(
-                                connection,
-                                origin="manual_intake",
-                                origin_id=int(row["manual_intake_id"]),
-                                destination="intake_event",
-                                destination_id=event_id,
-                                amount_g=row_amount,
-                                cooking=row.get("cooking"),
-                                conservation=row.get("conservation"),
-                                final_state=row.get("final_state"),
-                                strictly_weighed=True,
-                                macros_quality=True,
-                                plate_amount=row_amount,
-                                is_cooked_weight=bool(row.get("is_cooked_weight")),
-                                offset_minutes=offset_minutes,
+                    elif entry_type == "recipe":
+                        recipe_rows = get_portion_detail_by_recipe(connection, entry_id)
+                        total_recipe_amount = sum(float(row.get("amount_g") or 0.0) for row in recipe_rows)
+                        if total_recipe_amount <= 0:
+                            raise ValueError("Recipe has no ingredients to log.")
+                        factor = parsed_amount / total_recipe_amount
+                        for row in recipe_rows:
+                            row_amount = float(row.get("amount_g") or 0.0) * factor
+                            if row_amount <= 0:
+                                continue
+                            origin = "catalog" if row.get("catalog_id") else "manual_intake"
+                            origin_id = int(row.get("catalog_id") or row.get("manual_intake_id") or 0)
+                            if origin_id <= 0:
+                                continue
+                            created.append(
+                                add_portion_detail(
+                                    connection,
+                                    origin=origin,
+                                    origin_id=origin_id,
+                                    destination="intake_event",
+                                    destination_id=event_id,
+                                    amount_g=row_amount,
+                                    cooking=row.get("cooking"),
+                                    conservation=row.get("conservation"),
+                                    final_state=row.get("final_state"),
+                                    strictly_weighed=True,
+                                    macros_quality=True,
+                                    plate_amount=row_amount,
+                                    is_cooked_weight=bool(row.get("is_cooked_weight")),
+                                    offset_minutes=offset_minutes,
+                                    commit=False,
+                                )
                             )
-                        )
-            else:
-                return render_fragment(P("Unsupported entry type.", cls="text-red-700"))
+                    else:
+                        raise ValueError("Unsupported entry type.")
 
-            ok = bool(created) and all(created)
-            if ok:
-                return HTMLResponse("", headers={"HX-Redirect": "/food"})
-            return render_fragment(P("Could not log food.", cls="text-red-700"))
+                    if not created or not all(created):
+                        raise ValueError("Could not log food.")
+            except ValueError as error:
+                return render_fragment(P(str(error), cls="text-red-700"))
+            return HTMLResponse("", headers={"HX-Redirect": "/food"})
 
     @rt("/food/list")
     def get(
@@ -1866,38 +1867,42 @@ def setup_food_routes(rt):
             ):
                 return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
 
-            event_id = None
-            if intake_event_id and intake_event_id.isdigit() and int(intake_event_id) != 0:
-                event_id = int(intake_event_id)
-            else:
-                event_id = add_intake_event(
-                    connection,
-                    users_id=user_id,
-                    state="planned",
-                )
-
             portion_amount = 100
             if catalog_item.get("default_portion"):
                 portion_amount = catalog_item["default_portion"]
 
             portion_id = None
-            if event_id:
-                event_data = get_intake_event(connection, event_id)
-                offset_minutes = 0
-                if event_data and event_data.get("meal_time"):
-                    delta = datetime.utcnow() - event_data["meal_time"]
-                    offset_minutes = int(delta.total_seconds() // 60)
+            try:
+                with connection.transaction():
+                    if intake_event_id and intake_event_id.isdigit() and int(intake_event_id) != 0:
+                        event_id = int(intake_event_id)
+                    else:
+                        event_id = add_intake_event(
+                            connection, users_id=user_id, state="planned", commit=False
+                        )
+                    if not event_id:
+                        raise ValueError("Could not create meal event.")
+                    event_data = get_intake_event(connection, event_id)
+                    offset_minutes = 0
+                    if event_data and event_data.get("meal_time"):
+                        delta = datetime.utcnow() - event_data["meal_time"]
+                        offset_minutes = int(delta.total_seconds() // 60)
 
-                portion_id = add_portion_detail(
-                    connection,
-                    origin="catalog",
-                    origin_id=food_id,
-                    destination="intake_event",
-                    destination_id=event_id,
-                    amount_g=portion_amount,
-                    macros_quality=True,
-                    offset_minutes=offset_minutes,
-                )
+                    portion_id = add_portion_detail(
+                        connection,
+                        origin="catalog",
+                        origin_id=food_id,
+                        destination="intake_event",
+                        destination_id=event_id,
+                        amount_g=portion_amount,
+                        macros_quality=True,
+                        offset_minutes=offset_minutes,
+                        commit=False,
+                    )
+                    if not portion_id:
+                        raise ValueError("Could not add food.")
+            except ValueError:
+                portion_id = None
 
             headers = {"HX-Trigger": "addSuccess" if portion_id else "addError"}
             return HTMLResponse("", headers=headers)
@@ -1926,26 +1931,34 @@ def setup_food_routes(rt):
                     or event_data.get("state") != "planned"
                 ):
                     return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
-            else:
-                event_id = add_intake_event(connection, users_id=user_id, state="planned")
+            try:
+                with connection.transaction():
+                    if event_id is None:
+                        event_id = add_intake_event(connection, users_id=user_id, state="planned", commit=False)
+                    if not event_id:
+                        raise ValueError("Could not create meal event.")
+                    portion_amount = float(intake_item.get("amount_g") or 100.0)
+                    event_data = get_intake_event(connection, event_id)
+                    offset_minutes = 0
+                    if event_data and event_data.get("meal_time"):
+                        delta = datetime.utcnow() - event_data["meal_time"]
+                        offset_minutes = int(delta.total_seconds() // 60)
 
-            portion_amount = float(intake_item.get("amount_g") or 100.0)
-            event_data = get_intake_event(connection, event_id)
-            offset_minutes = 0
-            if event_data and event_data.get("meal_time"):
-                delta = datetime.utcnow() - event_data["meal_time"]
-                offset_minutes = int(delta.total_seconds() // 60)
-
-            portion_id = add_portion_detail(
-                connection,
-                origin="manual_intake",
-                origin_id=intake_id,
-                destination="intake_event",
-                destination_id=event_id,
-                amount_g=portion_amount,
-                macros_quality=True,
-                offset_minutes=offset_minutes,
-            )
+                    portion_id = add_portion_detail(
+                        connection,
+                        origin="manual_intake",
+                        origin_id=intake_id,
+                        destination="intake_event",
+                        destination_id=event_id,
+                        amount_g=portion_amount,
+                        macros_quality=True,
+                        offset_minutes=offset_minutes,
+                        commit=False,
+                    )
+                    if not portion_id:
+                        raise ValueError("Could not add manual intake.")
+            except ValueError:
+                portion_id = None
             headers = {"HX-Trigger": "addSuccess" if portion_id else "addError"}
             return HTMLResponse("", headers=headers)
 
@@ -1963,64 +1976,58 @@ def setup_food_routes(rt):
             if not recipe or not _can_view_entry("recipe", recipe, user_id):
                 return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
 
-            if intake_event_id and intake_event_id.isdigit() and int(intake_event_id) != 0:
-                event_id = int(intake_event_id)
-            else:
-                event_id = add_intake_event(
-                    connection,
-                    users_id=user_id,
-                    state="planned",
-                    meal_type=recipe.get("meal_type"),
-                    name=recipe.get("name"),
-                )
-
-            event_data = get_intake_event(connection, event_id)
-            offset_minutes = 0
-            if event_data and event_data.get("meal_time"):
-                delta = datetime.utcnow() - event_data["meal_time"]
-                offset_minutes = int(delta.total_seconds() // 60)
-
-            recipe_portions = get_portion_detail_by_recipe(connection, recipe_id)
-            created_ids = []
-            for row in recipe_portions:
-                if row.get("catalog_id"):
-                    created_ids.append(
-                        add_portion_detail(
+            try:
+                with connection.transaction():
+                    if intake_event_id and intake_event_id.isdigit() and int(intake_event_id) != 0:
+                        event_id = int(intake_event_id)
+                    else:
+                        event_id = add_intake_event(
                             connection,
-                            origin="catalog",
-                            origin_id=int(row["catalog_id"]),
-                            destination="intake_event",
-                            destination_id=event_id,
-                            amount_g=float(row.get("amount_g") or 0.0),
-                            cooking=row.get("cooking"),
-                            conservation=row.get("conservation"),
-                            final_state=row.get("final_state"),
-                            macros_quality=True,
-                            plate_amount=row.get("plate_amount"),
-                            is_cooked_weight=bool(row.get("is_cooked_weight")),
-                            offset_minutes=offset_minutes,
+                            users_id=user_id,
+                            state="planned",
+                            meal_type=recipe.get("meal_type"),
+                            name=recipe.get("name"),
+                            commit=False,
                         )
-                    )
-                elif row.get("manual_intake_id"):
-                    created_ids.append(
-                        add_portion_detail(
-                            connection,
-                            origin="manual_intake",
-                            origin_id=int(row["manual_intake_id"]),
-                            destination="intake_event",
-                            destination_id=event_id,
-                            amount_g=float(row.get("amount_g") or 0.0),
-                            cooking=row.get("cooking"),
-                            conservation=row.get("conservation"),
-                            final_state=row.get("final_state"),
-                            macros_quality=True,
-                            plate_amount=row.get("plate_amount"),
-                            is_cooked_weight=bool(row.get("is_cooked_weight")),
-                            offset_minutes=offset_minutes,
-                        )
-                    )
+                    if not event_id:
+                        raise ValueError("Could not create meal event.")
 
-            ok = bool(recipe_portions) and all(created_ids)
+                    event_data = get_intake_event(connection, event_id)
+                    offset_minutes = 0
+                    if event_data and event_data.get("meal_time"):
+                        delta = datetime.utcnow() - event_data["meal_time"]
+                        offset_minutes = int(delta.total_seconds() // 60)
+
+                    recipe_portions = get_portion_detail_by_recipe(connection, recipe_id)
+                    created_ids = []
+                    for row in recipe_portions:
+                        origin = "catalog" if row.get("catalog_id") else "manual_intake"
+                        origin_id = int(row.get("catalog_id") or row.get("manual_intake_id") or 0)
+                        if origin_id <= 0:
+                            continue
+                        created_ids.append(
+                            add_portion_detail(
+                                connection,
+                                origin=origin,
+                                origin_id=origin_id,
+                                destination="intake_event",
+                                destination_id=event_id,
+                                amount_g=float(row.get("amount_g") or 0.0),
+                                cooking=row.get("cooking"),
+                                conservation=row.get("conservation"),
+                                final_state=row.get("final_state"),
+                                macros_quality=True,
+                                plate_amount=row.get("plate_amount"),
+                                is_cooked_weight=bool(row.get("is_cooked_weight")),
+                                offset_minutes=offset_minutes,
+                                commit=False,
+                            )
+                        )
+                    if not recipe_portions or not created_ids or not all(created_ids):
+                        raise ValueError("Could not add recipe.")
+                    ok = True
+            except ValueError:
+                ok = False
             headers = {"HX-Trigger": "addSuccess" if ok else "addError"}
             return HTMLResponse("", headers=headers)
 
@@ -2182,20 +2189,34 @@ def setup_food_routes(rt):
                 "alcohol": _to_float(alcohol),
                 "barcode": barcode.strip() or None,
                 "cooking_factor": _to_float(cooking_factor),
-                "favorite": favorite_value,
             }
             if can_toggle_private:
                 payload["is_private"] = _to_bool(is_private)
-            updated = update_catalog_item(connection, entry_id, payload)
-            if not updated:
-                return _error_msg("Catalog item could not be updated.")
-            if favorite_value is not None and not set_user_favorite(
-                connection, int(user_id), "catalog", entry_id, bool(favorite_value)
-            ):
-                return _error_msg("Could not save the favorite status.")
-            set_entry_tags(connection, "catalog", entry_id, _parse_tags_json(tags_json))
-            if normalized_brand:
-                add_food_brand(connection, normalized_brand)
+            try:
+                with connection.transaction():
+                    if not update_catalog_item(connection, entry_id, payload, commit=False):
+                        raise ValueError("Catalog item could not be updated.")
+                    if favorite_value is not None and not set_user_favorite(
+                        connection,
+                        int(user_id),
+                        "catalog",
+                        entry_id,
+                        bool(favorite_value),
+                        commit=False,
+                    ):
+                        raise ValueError("Could not save the favorite status.")
+                    if not set_entry_tags(
+                        connection,
+                        "catalog",
+                        entry_id,
+                        _parse_tags_json(tags_json),
+                        commit=False,
+                    ):
+                        raise ValueError("Could not save the tags.")
+                    if normalized_brand and not add_food_brand(connection, normalized_brand, commit=False):
+                        raise ValueError("Could not save the brand.")
+            except ValueError as error:
+                return _error_msg(str(error))
             return HTMLResponse("", headers={"HX-Redirect": f"/food/item/catalog/{entry_id}"})
 
     @rt("/food/edit/manual/{entry_id}")
@@ -2317,14 +2338,29 @@ def setup_food_routes(rt):
             }
             if can_toggle_private:
                 payload["is_private"] = _to_bool(is_private)
-            updated = update_manual_intake(connection, entry_id, payload)
-            if not updated:
-                return _error_msg("Manual intake could not be updated.")
-            if (favorite or "").strip() != "" and not set_user_favorite(
-                connection, int(user_id), "manual_intake", entry_id, _to_bool(favorite)
-            ):
-                return _error_msg("Could not save the favorite status.")
-            set_entry_tags(connection, "manual_intake", entry_id, _parse_tags_json(tags_json))
+            try:
+                with connection.transaction():
+                    if not update_manual_intake(connection, entry_id, payload, commit=False):
+                        raise ValueError("Manual intake could not be updated.")
+                    if (favorite or "").strip() != "" and not set_user_favorite(
+                        connection,
+                        int(user_id),
+                        "manual_intake",
+                        entry_id,
+                        _to_bool(favorite),
+                        commit=False,
+                    ):
+                        raise ValueError("Could not save the favorite status.")
+                    if not set_entry_tags(
+                        connection,
+                        "manual_intake",
+                        entry_id,
+                        _parse_tags_json(tags_json),
+                        commit=False,
+                    ):
+                        raise ValueError("Could not save the tags.")
+            except ValueError as error:
+                return _error_msg(str(error))
             return HTMLResponse("", headers={"HX-Redirect": f"/food/item/manual_intake/{entry_id}"})
 
     @rt("/food/edit/recipe/{entry_id}")
@@ -2361,22 +2397,37 @@ def setup_food_routes(rt):
             if meal_type_error:
                 return _error_msg(meal_type_error)
             can_toggle_private = _can_toggle_private("recipe", current, user_id)
-            updated = update_recipe(
-                connection,
-                entry_id,
-                name=clean_name,
-                meal_type=clean_meal_type,
-                notes=notes.strip() or None,
-                favorite=(None if (favorite or "").strip() == "" else _to_bool(favorite)),
-                is_private=_to_bool(is_private) if can_toggle_private else None,
-            )
-            if not updated:
-                return _error_msg("Recipe could not be updated.")
-            if (favorite or "").strip() != "" and not set_user_favorite(
-                connection, int(user_id), "recipe", entry_id, _to_bool(favorite)
-            ):
-                return _error_msg("Could not save the favorite status.")
-            set_entry_tags(connection, "recipe", entry_id, _parse_tags_json(tags_json))
+            try:
+                with connection.transaction():
+                    if not update_recipe(
+                        connection,
+                        entry_id,
+                        name=clean_name,
+                        meal_type=clean_meal_type,
+                        notes=notes.strip() or None,
+                        is_private=_to_bool(is_private) if can_toggle_private else None,
+                        commit=False,
+                    ):
+                        raise ValueError("Recipe could not be updated.")
+                    if (favorite or "").strip() != "" and not set_user_favorite(
+                        connection,
+                        int(user_id),
+                        "recipe",
+                        entry_id,
+                        _to_bool(favorite),
+                        commit=False,
+                    ):
+                        raise ValueError("Could not save the favorite status.")
+                    if not set_entry_tags(
+                        connection,
+                        "recipe",
+                        entry_id,
+                        _parse_tags_json(tags_json),
+                        commit=False,
+                    ):
+                        raise ValueError("Could not save the tags.")
+            except ValueError as error:
+                return _error_msg(str(error))
             return HTMLResponse("", headers={"HX-Redirect": f"/food/item/recipe/{entry_id}"})
 
     @rt("/food/create/catalog")
@@ -2507,19 +2558,34 @@ def setup_food_routes(rt):
                 "alcohol": _to_float(alcohol),
                 "barcode": barcode.strip() or None,
                 "cooking_factor": _to_float(cooking_factor),
-                "favorite": _to_bool(favorite),
                 "is_private": _to_bool(is_private),
             }
-            created_id = add_catalog_item(connection, payload)
-            if not created_id:
-                return _error_msg("Catalog item could not be created. Check required fields and uniqueness constraints.")
-            if not set_user_favorite(
-                connection, int(user_id), "catalog", int(created_id), _to_bool(favorite)
-            ):
-                return _error_msg("Catalog item could not be created because its favorite status could not be saved.")
-            set_entry_tags(connection, "catalog", int(created_id), _parse_tags_json(tags_json))
-            if normalized_brand:
-                add_food_brand(connection, normalized_brand)
+            try:
+                with connection.transaction():
+                    created_id = add_catalog_item(connection, payload, commit=False)
+                    if not created_id:
+                        raise ValueError("Catalog item could not be created.")
+                    if not set_user_favorite(
+                        connection,
+                        int(user_id),
+                        "catalog",
+                        int(created_id),
+                        _to_bool(favorite),
+                        commit=False,
+                    ):
+                        raise ValueError("Catalog item favorite could not be saved.")
+                    if not set_entry_tags(
+                        connection,
+                        "catalog",
+                        int(created_id),
+                        _parse_tags_json(tags_json),
+                        commit=False,
+                    ):
+                        raise ValueError("Catalog item tags could not be saved.")
+                    if normalized_brand and not add_food_brand(connection, normalized_brand, commit=False):
+                        raise ValueError("Catalog brand could not be saved.")
+            except ValueError as error:
+                return _error_msg(str(error))
             return HTMLResponse("", headers={"HX-Redirect": "/food"})
 
     @rt("/food/create/manual")
@@ -2633,17 +2699,34 @@ def setup_food_routes(rt):
                 "amount_g": amount_value,
                 **nutrition,
                 "glycemic_index": clean_glycemic,
-                "favorite": _to_bool(favorite),
                 "is_private": _to_bool(is_private),
             }
-            created_id = add_manual_intake(connection, payload)
-            if not created_id:
-                return _error_msg("Manual intake could not be created. Check required fields and constraints.")
-            if not set_user_favorite(
-                connection, int(user_id), "manual_intake", int(created_id), _to_bool(favorite)
-            ):
-                return _error_msg("Manual intake could not be created because its favorite status could not be saved.")
-            set_entry_tags(connection, "manual_intake", int(created_id), _parse_tags_json(tags_json))
+
+            try:
+                with connection.transaction():
+                    created_id = add_manual_intake(connection, payload, commit=False)
+                    if not created_id:
+                        raise ValueError("Manual intake could not be created.")
+                    favorite_value = _to_bool(favorite)
+                    if not set_user_favorite(
+                        connection,
+                        int(user_id),
+                        "manual_intake",
+                        int(created_id),
+                        favorite_value,
+                        commit=False,
+                    ):
+                        raise ValueError("Manual intake favorite could not be saved.")
+                    if not set_entry_tags(
+                        connection,
+                        "manual_intake",
+                        int(created_id),
+                        _parse_tags_json(tags_json),
+                        commit=False,
+                    ):
+                        raise ValueError("Manual intake tags could not be saved.")
+            except ValueError as error:
+                return _error_msg(str(error))
             return HTMLResponse("", headers={"HX-Redirect": "/food"})
 
     @rt("/food/create/recipe")
@@ -2676,22 +2759,38 @@ def setup_food_routes(rt):
             )
             if meal_type_error:
                 return _error_msg(meal_type_error)
-            created_id = add_recipe(
-                connection,
-                users_id=user_id,
-                name=clean_name,
-                meal_type=clean_meal_type,
-                notes=notes.strip() or None,
-                favorite=_to_bool(favorite),
-                is_private=_to_bool(is_private),
-            )
-            if not created_id:
-                return _error_msg("Recipe could not be created. Check required fields and constraints.")
-            if not set_user_favorite(
-                connection, int(user_id), "recipe", int(created_id), _to_bool(favorite)
-            ):
-                return _error_msg("Recipe could not be created because its favorite status could not be saved.")
-            set_entry_tags(connection, "recipe", int(created_id), _parse_tags_json(tags_json))
+            try:
+                with connection.transaction():
+                    created_id = add_recipe(
+                        connection,
+                        users_id=user_id,
+                        name=clean_name,
+                        meal_type=clean_meal_type,
+                        notes=notes.strip() or None,
+                        is_private=_to_bool(is_private),
+                        commit=False,
+                    )
+                    if not created_id:
+                        raise ValueError("Recipe could not be created.")
+                    if not set_user_favorite(
+                        connection,
+                        int(user_id),
+                        "recipe",
+                        int(created_id),
+                        _to_bool(favorite),
+                        commit=False,
+                    ):
+                        raise ValueError("Recipe favorite could not be saved.")
+                    if not set_entry_tags(
+                        connection,
+                        "recipe",
+                        int(created_id),
+                        _parse_tags_json(tags_json),
+                        commit=False,
+                    ):
+                        raise ValueError("Recipe tags could not be saved.")
+            except ValueError as error:
+                return _error_msg(str(error))
             return HTMLResponse("", headers={"HX-Redirect": f"/food/item/recipe/{created_id}"})
     
     @rt("/meal_selector_input")

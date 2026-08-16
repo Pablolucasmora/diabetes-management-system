@@ -238,26 +238,27 @@ def setup_auth_routes(rt):
                 register_login_failure(connection, limiter_key_hash)
                 return _redirect_with_error("/auth/login", GENERIC_AUTH_ERROR)
 
-            if new_hash:
-                update_password_hash(connection, int(user["id"]), new_hash)
-
-            clear_login_failures(connection, limiter_key_hash)
-
-            
-            touch_user_login(connection, int(user["id"]))
-
             ip_hash = hash_token(_client_ip(request))
             ua_hash = hash_token(request.headers.get("user-agent", ""))
             session_token = generate_token()
             csrf_token = generate_token()
-            create_session(
-                connection,
-                user_id=int(user["id"]),
-                session_token=session_token,
-                csrf_token=csrf_token,
-                ip_hash=ip_hash,
-                user_agent_hash=ua_hash,
-            )
+            try:
+                with connection.transaction():
+                    if new_hash:
+                        update_password_hash(connection, int(user["id"]), new_hash, commit=False)
+                    clear_login_failures(connection, limiter_key_hash, commit=False)
+                    touch_user_login(connection, int(user["id"]), commit=False)
+                    create_session(
+                        connection,
+                        user_id=int(user["id"]),
+                        session_token=session_token,
+                        csrf_token=csrf_token,
+                        ip_hash=ip_hash,
+                        user_agent_hash=ua_hash,
+                        commit=False,
+                    )
+            except Exception:
+                return _redirect_with_error("/auth/login", "No se pudo iniciar la sesion")
 
         response = RedirectResponse(url="/menu", status_code=303)
         _set_auth_cookies(response, session_token=session_token, csrf_token=csrf_token)

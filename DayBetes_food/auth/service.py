@@ -17,7 +17,7 @@ def _utcnow() -> datetime:
     return datetime.utcnow()
 
 
-def create_user(connection, email: str, username: str, password_hash: str) -> Optional[int]:
+def create_user(connection, email: str, username: str, password_hash: str, commit: bool = True) -> Optional[int]:
     query = """
         INSERT INTO users (email, username, password_hash, is_active, created_at, updated_at)
         VALUES (%(email)s, %(username)s, %(password_hash)s, TRUE, NOW(), NOW())
@@ -31,10 +31,14 @@ def create_user(connection, email: str, username: str, password_hash: str) -> Op
                 "password_hash": password_hash,
             })
             user = cursor.fetchone()
-        connection.commit()
+        if commit:
+            connection.commit()
         return int(user["id"]) if user else None
     except Exception:
-        connection.rollback()
+        if commit:
+            connection.rollback()
+        if not commit:
+            raise
         return None
 
 
@@ -63,16 +67,17 @@ def get_user_by_id(connection, user_id: int) -> Optional[dict]:
         return cursor.fetchone()
 
 
-def touch_user_login(connection, user_id: int) -> None:
+def touch_user_login(connection, user_id: int, commit: bool = True) -> None:
     with connection.cursor() as cursor:
         cursor.execute(
             "UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = %(id)s;",
             {"id": user_id},
         )
-    connection.commit()
+    if commit:
+        connection.commit()
 
 
-def create_session(connection, user_id: int, session_token: str, csrf_token: str, ip_hash: str, user_agent_hash: str):
+def create_session(connection, user_id: int, session_token: str, csrf_token: str, ip_hash: str, user_agent_hash: str, commit: bool = True):
     now = _utcnow()
     expires_at = now + timedelta(seconds=SESSION_TTL_SECONDS)
     query = """
@@ -103,11 +108,12 @@ def create_session(connection, user_id: int, session_token: str, csrf_token: str
             },
         )
         row = cursor.fetchone()
-    connection.commit()
+    if commit:
+        connection.commit()
     return row
 
 
-def revoke_session(connection, session_token: str) -> None:
+def revoke_session(connection, session_token: str, commit: bool = True) -> None:
     with connection.cursor() as cursor:
         cursor.execute(
             """
@@ -117,7 +123,8 @@ def revoke_session(connection, session_token: str) -> None:
             """,
             {"token_hash": hash_token(session_token)},
         )
-    connection.commit()
+    if commit:
+        connection.commit()
 
 
 def get_session_with_user(connection, session_token: str) -> Optional[dict]:
@@ -149,7 +156,7 @@ def get_session_with_user(connection, session_token: str) -> Optional[dict]:
     return row
 
 
-def refresh_session(connection, session_id: int) -> None:
+def refresh_session(connection, session_id: int, commit: bool = True) -> None:
     now = _utcnow()
     expires_at = now + timedelta(seconds=SESSION_TTL_SECONDS)
     with connection.cursor() as cursor:
@@ -162,7 +169,8 @@ def refresh_session(connection, session_id: int) -> None:
             """,
             {"id": session_id, "now": now, "expires_at": expires_at},
         )
-    connection.commit()
+    if commit:
+        connection.commit()
 
 
 def is_csrf_valid(session_row: Optional[dict], csrf_token: str) -> bool:
@@ -203,22 +211,25 @@ def _upsert_rate_limit(connection, key_hash: str, attempts: int, first_attempt_a
         )
 
 
-def rate_limit_login_allowed(connection, limiter_key_hash: str) -> bool:
+def rate_limit_login_allowed(connection, limiter_key_hash: str, commit: bool = True) -> bool:
     now = _utcnow()
     row = _get_rate_limit(connection, limiter_key_hash)
     if row and row["blocked_until"] and row["blocked_until"] > now:
-        connection.commit()
+        if commit:
+            connection.commit()
         return False
-    connection.commit()
+    if commit:
+        connection.commit()
     return True
 
 
-def register_login_failure(connection, limiter_key_hash: str) -> None:
+def register_login_failure(connection, limiter_key_hash: str, commit: bool = True) -> None:
     now = _utcnow()
     row = _get_rate_limit(connection, limiter_key_hash)
     if not row:
         _upsert_rate_limit(connection, limiter_key_hash, 1, now, None)
-        connection.commit()
+        if commit:
+            connection.commit()
         return
 
     first_attempt_at = row["first_attempt_at"]
@@ -233,10 +244,12 @@ def register_login_failure(connection, limiter_key_hash: str) -> None:
         blocked_until = now + timedelta(seconds=AUTH_RATE_LIMIT_BLOCK_SECONDS)
 
     _upsert_rate_limit(connection, limiter_key_hash, attempts, first_attempt_at, blocked_until)
-    connection.commit()
+    if commit:
+        connection.commit()
 
 
-def clear_login_failures(connection, limiter_key_hash: str) -> None:
+def clear_login_failures(connection, limiter_key_hash: str, commit: bool = True) -> None:
     with connection.cursor() as cursor:
         cursor.execute("DELETE FROM auth_rate_limits WHERE key_hash = %(key)s;", {"key": limiter_key_hash})
-    connection.commit()
+    if commit:
+        connection.commit()

@@ -277,8 +277,22 @@ def setup_cart_routes(rt):
                 except (TypeError, ValueError):
                     pass
             update_payload.update(calculate_macro_summary_metrics(portions))
-            updated = update_intake_event(connection, event_id, update_payload) if update_payload else True
-            finalized_zone = finalize_injection_zone_for_event(connection, event_id)
-            changed = change_event_status(connection, event_id, "consumed")
+            try:
+                with connection.transaction():
+                    updated = (
+                        update_intake_event(connection, event_id, update_payload, commit=False)
+                        if update_payload
+                        else True
+                    )
+                    if not updated:
+                        raise ValueError("Could not update intake event")
+                    finalized_zone = finalize_injection_zone_for_event(connection, event_id, commit=False)
+                    if not finalized_zone:
+                        raise ValueError("Could not finalize injection zone")
+                    changed = change_event_status(connection, event_id, "consumed", commit=False)
+                    if not changed:
+                        raise ValueError("Could not change intake event status")
+            except Exception:
+                return _cart_response(connection, status=400)
 
             return _cart_response(connection, status=200 if (updated and finalized_zone and changed) else 400)

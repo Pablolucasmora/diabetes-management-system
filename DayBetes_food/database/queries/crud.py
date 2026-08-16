@@ -21,6 +21,7 @@ All functions follow the same pattern:
 """
 
 import re
+from contextlib import nullcontext
 from enum import Enum
 from typing import Optional, Any
 
@@ -57,7 +58,13 @@ class UnsupportedUpdateTarget(Exception):
 # GENERIC HELPERS
 # ============================================
 
-def _execute_query(connection, query: str, params: dict = None, commit: bool = True) -> Optional[Any]:
+def _execute_query(
+    connection,
+    query: str,
+    params: dict = None,
+    commit: bool = True,
+    rollback_on_error: bool = True,
+) -> Optional[Any]:
     """Generic helper to execute queries."""
     try:
         with connection.cursor() as cursor:
@@ -66,12 +73,21 @@ def _execute_query(connection, query: str, params: dict = None, commit: bool = T
                 connection.commit()
             return cursor.fetchone()
     except Exception as e:
-        connection.rollback()
+        if rollback_on_error:
+            connection.rollback()
         print(f"Error in query: {e}")
-        return None
+        if rollback_on_error:
+            return None
+        raise
 
 
-def _execute_query_many(connection, query: str, params: dict = None, commit: bool = True) -> list:
+def _execute_query_many(
+    connection,
+    query: str,
+    params: dict = None,
+    commit: bool = True,
+    rollback_on_error: bool = True,
+) -> list:
     """Generic helper to execute queries that return multiple rows."""
     try:
         with connection.cursor() as cursor:
@@ -80,9 +96,12 @@ def _execute_query_many(connection, query: str, params: dict = None, commit: boo
                 connection.commit()
             return cursor.fetchall()
     except Exception as e:
-        connection.rollback()
+        if rollback_on_error:
+            connection.rollback()
         print(f"Error in query: {e}")
-        return []
+        if rollback_on_error:
+            return []
+        raise
 
 
 def _validate_update_request(
@@ -288,12 +307,19 @@ def get_all_users(connection) -> list:
     query = "SELECT * FROM users ORDER BY created_at DESC;"
     return _execute_query_many(connection, query, commit=False)
 
-def update_password_hash(connection, user_id: int, new_hash: str) -> None:
-    with connection.cursor() as cur:
-        cur.execute(
-            "UPDATE users SET password_hash = %s, updated_at = NOW() WHERE id = %s",
-            (new_hash, user_id),
-        )
+def update_password_hash(connection, user_id: int, new_hash: str, commit: bool = True) -> None:
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET password_hash = %s, updated_at = NOW() WHERE id = %s",
+                (new_hash, user_id),
+            )
+        if commit:
+            connection.commit()
+    except Exception:
+        if commit:
+            connection.rollback()
+        raise
 
 
 # ============================================
@@ -329,7 +355,7 @@ def normalize_brand_name(brand_name: str) -> str:
     return " ".join(token[:1].upper() + token[1:] for token in lowered.split(" "))
 
 
-def add_food_brand(connection, brand_name: str) -> bool:
+def add_food_brand(connection, brand_name: str, commit: bool = True) -> bool:
     clean_name = normalize_brand_name(brand_name)
     if not clean_name:
         return False
@@ -343,11 +369,15 @@ def add_food_brand(connection, brand_name: str) -> bool:
                 """,
                 {"name": clean_name},
             )
-        connection.commit()
+        if commit:
+            connection.commit()
         return True
     except Exception as e:
-        connection.rollback()
+        if commit:
+            connection.rollback()
         print(f"Error in query: {e}")
+        if not commit:
+            raise
         return False
 
 
@@ -450,7 +480,7 @@ def get_manual_origin_suggestions(connection, search: str = "", limit: int = 50)
     return [str(row["name"]) for row in rows if row and row.get("name")]
 
 
-def add_catalog_item(connection, data: dict) -> Optional[int]:
+def add_catalog_item(connection, data: dict, commit: bool = True) -> Optional[int]:
     """
     Adds a new item to the catalog.
     data: dict with the food item fields
@@ -480,7 +510,7 @@ def add_catalog_item(connection, data: dict) -> Optional[int]:
         payload["cooking_factor"] = 1.0
     if "brand" in payload:
         payload["brand"] = normalize_brand_name(payload.get("brand")) or None
-    result = _execute_query(connection, query, payload)
+    result = _execute_query(connection, query, payload, commit=commit, rollback_on_error=commit)
     return result["id"] if result else None
 
 
@@ -644,7 +674,7 @@ def catalog_name_brand_exists(
     return row is not None
 
 
-def update_catalog_item(connection, catalog_id: int, data: dict) -> bool:
+def update_catalog_item(connection, catalog_id: int, data: dict, commit: bool = True) -> bool:
     """Updates a catalog item."""
     if not data:
         return False
@@ -668,11 +698,11 @@ def update_catalog_item(connection, catalog_id: int, data: dict) -> bool:
     if not query:
         return False
 
-    result = _execute_query(connection, query, params)
+    result = _execute_query(connection, query, params, commit=commit, rollback_on_error=commit)
     return result is not None
 
 
-def delete_catalog_item(connection, catalog_id: int) -> bool:
+def delete_catalog_item(connection, catalog_id: int, commit: bool = True) -> bool:
     """Logically deletes a catalog item by ID."""
     query = """
         UPDATE catalog
@@ -682,7 +712,9 @@ def delete_catalog_item(connection, catalog_id: int) -> bool:
           AND deleted_at IS NULL
         RETURNING id;
     """
-    result = _execute_query(connection, query, {"id": catalog_id})
+    result = _execute_query(
+        connection, query, {"id": catalog_id}, commit=commit, rollback_on_error=commit
+    )
     return result is not None
 
 
@@ -693,7 +725,13 @@ _FAVORITE_ENTRY_COLUMNS = {
 }
 
 
-def toggle_user_favorite(connection, user_id: int, entry_type: str, entry_id: int) -> bool | None:
+def toggle_user_favorite(
+    connection,
+    user_id: int,
+    entry_type: str,
+    entry_id: int,
+    commit: bool = True,
+) -> bool | None:
     favorite_column = _FAVORITE_ENTRY_COLUMNS.get(entry_type)
     if not favorite_column or not user_id or not entry_id:
         return None
@@ -718,11 +756,20 @@ def toggle_user_favorite(connection, user_id: int, entry_type: str, entry_id: in
         connection,
         query,
         {"user_id": user_id, "entry_id": entry_id},
+        commit=commit,
+        rollback_on_error=commit,
     )
     return bool(row["favorite"]) if row else None
 
 
-def set_user_favorite(connection, user_id: int, entry_type: str, entry_id: int, favorite: bool) -> bool:
+def set_user_favorite(
+    connection,
+    user_id: int,
+    entry_type: str,
+    entry_id: int,
+    favorite: bool,
+    commit: bool = True,
+) -> bool:
     favorite_column = _FAVORITE_ENTRY_COLUMNS.get(entry_type)
     if not favorite_column or not user_id or not entry_id:
         return False
@@ -746,11 +793,15 @@ def set_user_favorite(connection, user_id: int, entry_type: str, entry_id: int, 
                     """,
                     {"user_id": user_id, "entry_id": entry_id},
                 )
-        connection.commit()
+        if commit:
+            connection.commit()
         return True
     except Exception as e:
-        connection.rollback()
+        if commit:
+            connection.rollback()
         print(f"Error in query: {e}")
+        if not commit:
+            raise
         return False
 
 
@@ -760,7 +811,7 @@ def set_user_favorite(connection, user_id: int, entry_type: str, entry_id: int, 
 # MANUAL INTAKE
 # ============================================
 
-def add_manual_intake(connection, data: dict) -> Optional[int]:
+def add_manual_intake(connection, data: dict, commit: bool = True) -> Optional[int]:
     """Adds a new manual intake."""
     query = """
         INSERT INTO manual_intake (
@@ -779,7 +830,13 @@ def add_manual_intake(connection, data: dict) -> Optional[int]:
     """
     payload = dict(data or {})
     payload.setdefault("origin_root_id", None)
-    result = _execute_query(connection, query, payload)
+    result = _execute_query(
+        connection,
+        query,
+        payload,
+        commit=commit,
+        rollback_on_error=commit,
+    )
     return result["id"] if result else None
 
 
@@ -880,7 +937,7 @@ def manual_intake_name_origin_exists(
     return row is not None
 
 
-def update_manual_intake(connection, intake_id: int, data: dict) -> bool:
+def update_manual_intake(connection, intake_id: int, data: dict, commit: bool = True) -> bool:
     """Updates a manual intake."""
     if not data:
         return False
@@ -898,11 +955,17 @@ def update_manual_intake(connection, intake_id: int, data: dict) -> bool:
     if not query:
         return False
         
-    result = _execute_query(connection, query, params)
+    result = _execute_query(
+        connection,
+        query,
+        params,
+        commit=commit,
+        rollback_on_error=commit,
+    )
     return result is not None
 
 
-def delete_manual_intake(connection, intake_id: int) -> bool:
+def delete_manual_intake(connection, intake_id: int, commit: bool = True) -> bool:
     """Archives a manual intake by ID."""
     query = """
         UPDATE manual_intake
@@ -912,7 +975,13 @@ def delete_manual_intake(connection, intake_id: int) -> bool:
           AND deleted_at IS NULL
         RETURNING id;
     """
-    result = _execute_query(connection, query, {"id": intake_id})
+    result = _execute_query(
+        connection,
+        query,
+        {"id": intake_id},
+        commit=commit,
+        rollback_on_error=commit,
+    )
     return result is not None
 
 
@@ -928,9 +997,9 @@ def add_recipe(
     name: str,
     meal_type: str = None,
     notes: str = None,
-    favorite: bool = False,
     is_private: bool = False,
     origin_root_id: int = None,
+    commit: bool = True,
 ) -> Optional[int]:
     """Creates a new recipe."""
     query = """
@@ -945,7 +1014,7 @@ def add_recipe(
         "name": name,
         "notes": notes,
         "is_private": is_private,
-    })
+    }, commit=commit, rollback_on_error=commit)
     return result["id"] if result else None
 
 
@@ -1013,6 +1082,7 @@ def update_recipe(
     notes: str = None,
     favorite: bool = None,
     is_private: bool = None,
+    commit: bool = True,
 ) -> bool:
     """Updates a recipe."""
     params = {
@@ -1028,14 +1098,16 @@ def update_recipe(
     if not query:
         return False
         
-    result = _execute_query(connection, query, params)
+    result = _execute_query(connection, query, params, commit=commit, rollback_on_error=commit)
     return result is not None
 
 
-def delete_recipe(connection, recipe_id: int) -> bool:
+def delete_recipe(connection, recipe_id: int, commit: bool = True) -> bool:
     """Deletes a recipe by ID."""
     query = "DELETE FROM recipe WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(connection, query, {"id": recipe_id})
+    result = _execute_query(
+        connection, query, {"id": recipe_id}, commit=commit, rollback_on_error=commit
+    )
     return result is not None
 
 
@@ -1143,7 +1215,7 @@ def _tag_color_from_name(tag_name: str) -> str:
     return f"hsl({hue} 80% 90%)"
 
 
-def ensure_tag(connection, tag_name: str) -> Optional[int]:
+def ensure_tag(connection, tag_name: str, commit: bool = True) -> Optional[int]:
     clean = _normalize_tag_name(tag_name)
     if not clean:
         return None
@@ -1155,7 +1227,13 @@ def ensure_tag(connection, tag_name: str) -> Optional[int]:
             color = COALESCE(NULLIF(tags.color, ''), EXCLUDED.color)
         RETURNING id;
     """
-    row = _execute_query(connection, query, {"name": clean, "color": _tag_color_from_name(clean)})
+    row = _execute_query(
+        connection,
+        query,
+        {"name": clean, "color": _tag_color_from_name(clean)},
+        commit=commit,
+        rollback_on_error=commit,
+    )
     return int(row["id"]) if row and row.get("id") is not None else None
 
 
@@ -1173,7 +1251,13 @@ def get_entry_tags(connection, entry_type: str, entry_id: int) -> list[dict]:
     return _execute_query_many(connection, query, {"entry_id": entry_id}, commit=False)
 
 
-def set_entry_tags(connection, entry_type: str, entry_id: int, tag_names: list[str]) -> bool:
+def set_entry_tags(
+    connection,
+    entry_type: str,
+    entry_id: int,
+    tag_names: list[str],
+    commit: bool = True,
+) -> bool:
     entry_col = {"catalog": "catalog_id", "manual_intake": "manual_intake_id", "recipe": "recipe_id"}.get(entry_type)
     if not entry_col or not entry_id:
         return False
@@ -1215,11 +1299,15 @@ def set_entry_tags(connection, entry_type: str, entry_id: int, tag_names: list[s
                     """,
                     {"tag_id": int(tag_row["id"]), "entry_id": entry_id},
                 )
-        connection.commit()
+        if commit:
+            connection.commit()
         return True
     except Exception as e:
-        connection.rollback()
+        if commit:
+            connection.rollback()
         print(f"Error in query: {e}")
+        if not commit:
+            raise
         return False
 
 
@@ -1240,7 +1328,7 @@ def get_all_tags(connection, search: str = "", limit: int = 500) -> list[dict]:
     return _execute_query_many(connection, query, params, commit=False)
 
 
-def update_tag(connection, tag_id: int, name: str, color: str) -> bool:
+def update_tag(connection, tag_id: int, name: str, color: str, commit: bool = True) -> bool:
     clean_name = _normalize_tag_name(name)
     clean_color = " ".join((color or "").strip().split())
     if not clean_name or not clean_color:
@@ -1252,7 +1340,13 @@ def update_tag(connection, tag_id: int, name: str, color: str) -> bool:
         WHERE id = %(id)s
         RETURNING id;
     """
-    row = _execute_query(connection, query, {"id": tag_id, "name": clean_name, "color": clean_color})
+    row = _execute_query(
+        connection,
+        query,
+        {"id": tag_id, "name": clean_name, "color": clean_color},
+        commit=commit,
+        rollback_on_error=commit,
+    )
     return row is not None
 
 
@@ -1348,7 +1442,7 @@ def add_intake_event(connection, users_id: int, state: str, meal_type: str = Non
                        meal_time=None, eating_out: bool = False, insulin_dose: bool = True,
                        total_amount: float = None, ingested_amount: float = None,
                        amount_confidence: float = None, quality_confidence: float = None,
-                       notes: str = None, **kwargs) -> Optional[int]:
+                     notes: str = None, commit: bool = True, **kwargs) -> Optional[int]:
     """Creates a new intake event."""
 
     data = {
@@ -1386,7 +1480,7 @@ def add_intake_event(connection, users_id: int, state: str, meal_type: str = Non
         RETURNING id;
     """
 
-    result = _execute_query(connection, query, data)
+    result = _execute_query(connection, query, data, commit=commit, rollback_on_error=commit)
     return result["id"] if result else None
 
 def get_intake_event(connection, event_id: int) -> Optional[dict]:
@@ -1437,7 +1531,7 @@ def get_consumed_events(connection, users_id: int) -> list:
     return _execute_query_many(connection, query, {"users_id": users_id}, commit=False)
 
 
-def update_intake_event(connection, event_id: int, data: dict) -> bool:
+def update_intake_event(connection, event_id: int, data: dict, commit: bool = True) -> bool:
     """Updates an intake event."""
     if not data:
         return False
@@ -1448,28 +1542,32 @@ def update_intake_event(connection, event_id: int, data: dict) -> bool:
     if not query:
         return False
         
-    result = _execute_query(connection, query, params)
+    result = _execute_query(connection, query, params, commit=commit, rollback_on_error=commit)
     return result is not None
 
 
-def change_event_status(connection, event_id: int, new_state: str) -> bool:
+def change_event_status(connection, event_id: int, new_state: str, commit: bool = True) -> bool:
     """Changes the status of an intake event (planned -> consumed)."""
     if new_state not in ("planned", "consumed"):
         raise ValueError("Invalid state. Must be 'planned' or 'consumed'")
     
     query = "UPDATE intake_event SET state = %(state)s WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(connection, query, {"id": event_id, "state": new_state})
+    result = _execute_query(
+        connection, query, {"id": event_id, "state": new_state}, commit=commit, rollback_on_error=commit
+    )
     return result is not None
 
 
-def delete_intake_event(connection, event_id: int) -> bool:
+def delete_intake_event(connection, event_id: int, commit: bool = True) -> bool:
     """Deletes an intake event."""
     query = "DELETE FROM intake_event WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(connection, query, {"id": event_id})
+    result = _execute_query(
+        connection, query, {"id": event_id}, commit=commit, rollback_on_error=commit
+    )
     return result is not None
 
 
-def update_intake_event_name(connection, event_id: int, name: Optional[str]) -> bool:
+def update_intake_event_name(connection, event_id: int, name: Optional[str], commit: bool = True) -> bool:
     """Updates intake event name."""
     query = """
         UPDATE intake_event
@@ -1477,7 +1575,9 @@ def update_intake_event_name(connection, event_id: int, name: Optional[str]) -> 
         WHERE id = %(id)s
         RETURNING id;
     """
-    result = _execute_query(connection, query, {"id": event_id, "name": name})
+    result = _execute_query(
+        connection, query, {"id": event_id, "name": name}, commit=commit, rollback_on_error=commit
+    )
     return result is not None
 
 
@@ -1496,7 +1596,7 @@ VALID_INJECTION_ZONES = {
 }
 
 
-def set_injection_zone(connection, intake_event_id: int, zone: str) -> bool:
+def set_injection_zone(connection, intake_event_id: int, zone: str, commit: bool = True) -> bool:
     clean_zone = (zone or "").strip()
     if clean_zone not in VALID_INJECTION_ZONES:
         return False
@@ -1510,6 +1610,8 @@ def set_injection_zone(connection, intake_event_id: int, zone: str) -> bool:
         connection,
         query,
         {"intake_event_id": intake_event_id, "zone": clean_zone},
+        commit=commit,
+        rollback_on_error=commit,
     )
     return result is not None
 
@@ -1525,7 +1627,7 @@ def get_latest_injection_zone_for_event(connection, intake_event_id: int) -> Opt
     return row.get("injection_zone") if row else None
 
 
-def finalize_injection_zone_for_event(connection, intake_event_id: int) -> bool:
+def finalize_injection_zone_for_event(connection, intake_event_id: int, commit: bool = True) -> bool:
     event = get_intake_event(connection, intake_event_id)
     if not event:
         return False
@@ -1535,27 +1637,32 @@ def finalize_injection_zone_for_event(connection, intake_event_id: int) -> bool:
     if not bool(event.get("insulin_dose")):
         return True
     shot_time = event.get("meal_time")
-    cleanup = _execute_query(
-        connection,
-        "DELETE FROM insulin_injections WHERE intake_event_id = %(intake_event_id)s RETURNING id;",
-        {"intake_event_id": intake_event_id},
-    )
-    _ = cleanup
-    insert_query = """
-        INSERT INTO insulin_injections (users_id, intake_event_id, shot_time, insulin_type, basal_units, injection_zone)
-        VALUES (%(users_id)s, %(intake_event_id)s, COALESCE(%(shot_time)s, CURRENT_TIMESTAMP), 'rapid', NULL, %(zone)s)
-        RETURNING id;
-    """
-    inserted = _execute_query(
-        connection,
-        insert_query,
-        {
-            "users_id": event.get("users_id"),
-            "intake_event_id": intake_event_id,
-            "shot_time": shot_time,
-            "zone": zone,
-        },
-    )
+    with (connection.transaction() if commit else nullcontext()):
+        cleanup = _execute_query(
+            connection,
+            "DELETE FROM insulin_injections WHERE intake_event_id = %(intake_event_id)s RETURNING id;",
+            {"intake_event_id": intake_event_id},
+            commit=False,
+            rollback_on_error=False,
+        )
+        _ = cleanup
+        insert_query = """
+            INSERT INTO insulin_injections (users_id, intake_event_id, shot_time, insulin_type, basal_units, injection_zone)
+            VALUES (%(users_id)s, %(intake_event_id)s, COALESCE(%(shot_time)s, CURRENT_TIMESTAMP), 'rapid', NULL, %(zone)s)
+            RETURNING id;
+        """
+        inserted = _execute_query(
+            connection,
+            insert_query,
+            {
+                "users_id": event.get("users_id"),
+                "intake_event_id": intake_event_id,
+                "shot_time": shot_time,
+                "zone": zone,
+            },
+            commit=False,
+            rollback_on_error=False,
+        )
     return inserted is not None
 
 
@@ -1566,6 +1673,7 @@ def add_manual_injection_log(
     injection_zone: str,
     basal_units: float | None = None,
     shot_time=None,
+    commit: bool = True,
 ) -> bool:
     clean_type = (insulin_type or "").strip().lower()
     clean_zone = (injection_zone or "").strip()
@@ -1600,6 +1708,8 @@ def add_manual_injection_log(
             "injection_zone": clean_zone,
             "shot_time": shot_time,
         },
+        commit=commit,
+        rollback_on_error=commit,
     )
     return result is not None
 
@@ -1683,6 +1793,7 @@ def update_user_injection_log(
     injection_zone: str,
     shot_time,
     basal_units: float | None = None,
+    commit: bool = True,
 ) -> bool:
     clean_type = (insulin_type or "").strip().lower()
     clean_zone = (injection_zone or "").strip()
@@ -1724,11 +1835,13 @@ def update_user_injection_log(
             "injection_id": injection_id,
             "users_id": users_id,
         },
+        commit=commit,
+        rollback_on_error=commit,
     )
     return row is not None
 
 
-def delete_user_injection_log(connection, users_id: int, injection_id: int) -> bool:
+def delete_user_injection_log(connection, users_id: int, injection_id: int, commit: bool = True) -> bool:
     query = """
         DELETE FROM insulin_injections
         WHERE id = %(injection_id)s
@@ -1742,6 +1855,8 @@ def delete_user_injection_log(connection, users_id: int, injection_id: int) -> b
             "injection_id": injection_id,
             "users_id": users_id,
         },
+        commit=commit,
+        rollback_on_error=commit,
     )
     return row is not None
 
@@ -1770,6 +1885,7 @@ def add_portion_detail(
     plate_amount: float = None,
     is_cooked_weight: bool = False,
     offset_minutes: int = None,
+    commit: bool = True,
 ) -> Optional[int]:
     """Adds a record to portion_detail in a centralized way."""
     if origin not in ("catalog", "manual_intake"):
@@ -1816,7 +1932,7 @@ def add_portion_detail(
         RETURNING id;
     """
     
-    result = _execute_query(connection, query, data)
+    result = _execute_query(connection, query, data, commit=commit, rollback_on_error=commit)
     return result["id"] if result else None
 
 
@@ -1880,7 +1996,7 @@ def get_event_portion_rows_by_origin(connection, event_id: int, origin: str, ori
     )
 
 
-def delete_event_portion_group(connection, event_id: int, origin: str, origin_id: int) -> bool:
+def delete_event_portion_group(connection, event_id: int, origin: str, origin_id: int, commit: bool = True) -> bool:
     """Deletes all rows in an intake event group (same origin + origin_id)."""
     rows = get_event_portion_rows_by_origin(connection, event_id, origin, origin_id)
     if not rows:
@@ -1893,15 +2009,26 @@ def delete_event_portion_group(connection, event_id: int, origin: str, origin_id
                 {"ids": ids},
             )
             deleted = cursor.rowcount
-        connection.commit()
+        if commit:
+            connection.commit()
         return deleted == len(ids)
     except Exception as e:
-        connection.rollback()
+        if commit:
+            connection.rollback()
         print(f"Error in query: {e}")
+        if not commit:
+            raise
         return False
 
 
-def consolidate_event_portion_group_amount(connection, event_id: int, origin: str, origin_id: int, total_amount: float) -> bool:
+def consolidate_event_portion_group_amount(
+    connection,
+    event_id: int,
+    origin: str,
+    origin_id: int,
+    total_amount: float,
+    commit: bool = True,
+) -> bool:
     """Consolidates group rows into one row and sets the total amount."""
     rows = get_event_portion_rows_by_origin(connection, event_id, origin, origin_id)
     if not rows:
@@ -1916,7 +2043,8 @@ def consolidate_event_portion_group_amount(connection, event_id: int, origin: st
                 {"amount": total_amount, "id": keep_id},
             )
             if cursor.rowcount != 1:
-                connection.rollback()
+                if commit:
+                    connection.rollback()
                 return False
 
             if delete_ids:
@@ -1925,13 +2053,18 @@ def consolidate_event_portion_group_amount(connection, event_id: int, origin: st
                     {"ids": delete_ids},
                 )
                 if cursor.rowcount != len(delete_ids):
-                    connection.rollback()
+                    if commit:
+                        connection.rollback()
                     return False
-        connection.commit()
+        if commit:
+            connection.commit()
         return True
     except Exception as e:
-        connection.rollback()
+        if commit:
+            connection.rollback()
         print(f"Error in query: {e}")
+        if not commit:
+            raise
         return False
 
 
@@ -1942,6 +2075,7 @@ def update_event_portion_group_field(
     origin_id: int,
     field_name: str,
     field_value: Any,
+    commit: bool = True,
 ) -> bool:
     """Updates a whitelisted field for all rows in an intake event group."""
     origin_field = _PORTION_ORIGIN_COLUMNS.get(origin)
@@ -1966,11 +2100,15 @@ def update_event_portion_group_field(
                 params,
             )
             updated = cursor.rowcount
-        connection.commit()
+        if commit:
+            connection.commit()
         return updated > 0
     except Exception as e:
-        connection.rollback()
+        if commit:
+            connection.rollback()
         print(f"Error in query: {e}")
+        if not commit:
+            raise
         return False
 def get_portion_detail_by_events(connection, intake_event_ids: list[int]) -> list:
     """Gets all portions for multiple intake events in one query."""
@@ -2058,12 +2196,18 @@ def get_portion_detail(connection, portion_id: int) -> Optional[dict]:
     return _execute_query(connection, query, {"id": portion_id}, commit=False)
 
 
-def update_portion_detail_amount(connection, portion_id: int, amount_g: float) -> bool:
+def update_portion_detail_amount(connection, portion_id: int, amount_g: float, commit: bool = True) -> bool:
     """Updates amount_g for a portion_detail row."""
     if amount_g <= 0:
         raise ValueError("amount_g must be positive")
     query = "UPDATE portion_detail SET amount_g = %(amount_g)s WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(connection, query, {"id": portion_id, "amount_g": amount_g})
+    result = _execute_query(
+        connection,
+        query,
+        {"id": portion_id, "amount_g": amount_g},
+        commit=commit,
+        rollback_on_error=commit,
+    )
     return result is not None
 
 
@@ -2075,6 +2219,7 @@ def update_portion_detail_fields(
     final_state: str = None,
     strictly_weighed: bool = None,
     macros_quality: bool = None,
+    commit: bool = True,
 ) -> bool:
     """Updates editable metadata fields for a portion_detail row."""
     params = {
@@ -2088,14 +2233,16 @@ def update_portion_detail_fields(
     query = _build_update_query("portion_detail", params)
     if not query:
         return False
-    result = _execute_query(connection, query, params)
+    result = _execute_query(connection, query, params, commit=commit, rollback_on_error=commit)
     return result is not None
 
 
-def delete_portion_detail(connection, portion_id: int) -> bool:
+def delete_portion_detail(connection, portion_id: int, commit: bool = True) -> bool:
     """Deletes one portion_detail row by id."""
     query = "DELETE FROM portion_detail WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(connection, query, {"id": portion_id})
+    result = _execute_query(
+        connection, query, {"id": portion_id}, commit=commit, rollback_on_error=commit
+    )
     return result is not None
 
 
