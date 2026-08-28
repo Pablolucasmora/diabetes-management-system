@@ -75,12 +75,21 @@ def parse_source_macro(portion, macro_key: str):
     return catalog_value if catalog_value is not None else manual_value
 
 
+def portion_intake_amount(portion) -> float:
+    """Return the amount served for event-level nutrition calculations."""
+    plate_amount = portion.get("plate_amount")
+    if plate_amount is not None:
+        return float(plate_amount)
+    # Older rows and recipe portions may not have plate_amount populated.
+    return float(portion.get("amount_g") or 0.0)
+
+
 def calculate_macro_summary_metrics(portions) -> dict:
-    total_amount = sum(float(p.get("amount_g") or 0.0) for p in portions)
+    total_amount = sum(portion_intake_amount(p) for p in portions)
     amount_confidence_num = 0.0
     quality_confidence_num = 0.0
     for portion in portions:
-        amount = float(portion.get("amount_g") or 0.0)
+        amount = portion_intake_amount(portion)
         amount_confidence_num += amount * float(bool(portion.get("strictly_weighed")))
         quality_confidence_num += amount * float(bool(portion.get("macros_quality")))
 
@@ -92,7 +101,7 @@ def calculate_macro_summary_metrics(portions) -> dict:
     for macro_key, _, uncertainty_key in MACRO_KEYS:
         unknown_amount = 0.0
         for portion in portions:
-            amount = float(portion.get("amount_g") or 0.0)
+            amount = portion_intake_amount(portion)
             if parse_source_macro(portion, macro_key) is None:
                 unknown_amount += amount
         metrics[uncertainty_key] = (unknown_amount / total_amount) if total_amount > 0 else 0.0

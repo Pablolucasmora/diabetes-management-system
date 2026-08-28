@@ -24,6 +24,10 @@ Las funciones de `routes/`:
 
 Las rutas no deben contener SQL ni duplicar reglas de persistencia. Una ruta puede decidir qué código HTTP corresponde, pero no debe decidir cómo se construye una query.
 
+Una ruta puede llamar directamente a un CRUD cuando la operación es una única lectura o escritura sin reglas de negocio adicionales. Se introduce un servicio cuando hay coordinación de varias operaciones, una transacción compuesta, una regla de negocio no trivial o una operación que deba reutilizarse desde más de un endpoint.
+
+Cada unidad de trabajo tiene un único coordinador raíz. Si la ruta delega la operación en un servicio, la ruta le entrega la coordinación de la unidad de trabajo y el servicio se convierte en su propietario; no se crean coordinadores paralelos para la misma operación.
+
 ### 1.2 Servicios
 
 Las funciones de `services/` contienen casos de uso reutilizables que combinan varias operaciones o reglas de negocio.
@@ -38,7 +42,7 @@ Un servicio:
 
 Un endpoint puede llamar directamente a `database/queries/` cuando la operación es una única lectura o escritura sin reglas de negocio adicionales. Se introduce un servicio cuando hay coordinación de varias operaciones, una transacción compuesta, una regla de negocio no trivial o una operación que deba reutilizarse desde más de un endpoint.
 
-Si un servicio recibe una conexión, la usa como parte de la unidad de trabajo existente. No abre otra conexión salvo que su contrato documente explícitamente que es el coordinador raíz.
+Si un servicio recibe una conexión, la usa como parte de la unidad de trabajo existente. No abre otra conexión salvo que su contrato documente explícitamente que es el coordinador raíz. Un servicio nunca abre una conexión adicional para consultar datos que podría obtener mediante la conexión recibida.
 
 ### 1.3 Queries y CRUD
 
@@ -70,11 +74,15 @@ Los componentes deben ser puros respecto a la base de datos:
 
 El componente `render_page()` y cualquier helper equivalente tampoco debe abrir conexiones implícitamente. La ruta o el servicio coordinador debe poseer la conexión y pasar al componente todos los datos necesarios.
 
+La prohibición incluye consultas indirectas: un componente no puede llamar a una función que internamente consulte la base de datos. Los componentes reciben modelos, dataclasses o datos de presentación ya preparados.
+
 ## 2. Ciclo de vida de conexiones y transacciones
 
 ### 2.1 Dueño de la conexión
 
-Una petición HTTP utiliza una única conexión por unidad de trabajo. El endpoint o servicio coordinador raíz es el único dueño de esa conexión y es responsable de cerrarla.
+Una unidad de trabajo es el conjunto de lecturas y escrituras que deben observar una misma realidad de datos y compartir un mismo resultado transaccional. Una petición HTTP puede contener más de una unidad de trabajo independiente, pero cada unidad de trabajo utiliza una única conexión.
+
+El endpoint o servicio coordinador raíz es el único dueño de la conexión de su unidad de trabajo y es responsable de cerrarla. Si una petición necesita realizar operaciones independientes, cada una debe tener un boundary explícito; no se reutiliza una conexión abierta accidentalmente por otra capa.
 
 Reglas:
 
@@ -84,15 +92,18 @@ Reglas:
 - No abrir conexiones dentro de componentes, mappers o helpers de presentación.
 - No mantener conexiones en variables globales ni en `ContextVar`.
 - Un componente no puede ocultar una lectura de base de datos durante el renderizado.
+- El middleware, la ruta, el servicio y el renderizado no deben abrir conexiones duplicadas para la misma unidad de trabajo.
 
 ### 2.2 Operaciones simples
 
 Toda función CRUD de escritura acepta `commit: bool = True`.
 
-- `commit=True`: el CRUD puede confirmar su operación cuando termina correctamente.
-- `commit=False`: el CRUD participa en una transacción propiedad del llamador y no confirma ni revierte la transacción.
+- `commit=True`: el CRUD es propietario de una operación simple y debe confirmar su operación cuando termina correctamente. Si falla, puede revertir su propia operación y propagar o traducir el error según su contrato.
+- `commit=False`: el CRUD participa en una transacción propiedad del llamador y no confirma ni revierte la transacción bajo ningún concepto.
 - Las funciones de solo lectura siempre llaman a los helpers de query con `commit=False`.
 - El valor de `commit` se propaga hasta el helper que ejecuta el cursor.
+
+`commit=False` expresa ownership, no ausencia de transacción. Una lectura puede ejecutarse dentro de una transacción implícita de Psycopg o dentro de la transacción compuesta del llamador; la función simplemente no decide cuándo finaliza.
 
 Se mantiene este parámetro explícito aunque Psycopg 3 permita anidar `connection.transaction()` mediante savepoints. Un savepoint anidado no equivale a confirmar una operación y puede ocultar quién es el propietario real de la transacción. La convención `commit=True/False` hace visible el ownership, garantiza que una operación compuesta sea todo-o-nada y evita que un CRUD introduzca límites transaccionales implícitos.
 
@@ -123,6 +134,8 @@ Todas las escrituras de la operación compuesta deben confirmar o revertir junta
 - Los cursores directos siguen exactamente estas mismas reglas.
 - `db_init.py` es bootstrap de esquema y mantiene su propia transacción de arranque; queda fuera de las transacciones CRUD de la aplicación.
 
+No se considera válido llamar a un CRUD con `commit=True` desde una operación compuesta para “dejar confirmado” uno de sus pasos. Si se necesita esa semántica, debe diseñarse como una unidad de trabajo diferente o mediante un savepoint explícito documentado. Los savepoints no sustituyen el ownership de la transacción externa ni realizan un commit real.
+
 ### 2.5 Errores dentro de una transacción propia
 
 Los helpers genéricos deben distinguir los dos modos:
@@ -132,6 +145,15 @@ Los helpers genéricos deben distinguir los dos modos:
 
 Un error de infraestructura nunca se convierte silenciosamente en un resultado exitoso.
 
+Los errores de aplicación se clasifican así:
+
+- `ValidationError`: entrada o combinación de valores inválida.
+- `NotFoundError`: el recurso no existe o no es visible para el contexto autorizado.
+- `ConflictError`: unicidad, versión obsoleta o conflicto de estado.
+- Excepción SQL/infraestructura: fallo técnico que debe propagarse hasta el boundary correspondiente.
+
+El coordinador no debe convertir indiscriminadamente todas estas categorías en `ValueError`.
+
 ## 3. Tipado de datos, firmas y nomenclatura
 
 ### 3.1 Dataclasses
@@ -140,10 +162,23 @@ Se abandona el uso de diccionarios planos como contrato entre capas.
 
 - Toda conversión de una fila SQL a un objeto de dominio debe usar una dataclass de lectura.
 - Todo payload que viaje de una ruta a un servicio o CRUD debe usar una dataclass de comando/update.
+- Una dataclass de request representa datos HTTP ya parseados y validados, pero no debe cruzar directamente a la capa de persistencia.
+- Una dataclass de comando representa la intención del caso de uso y no conoce headers, cookies ni nombres de campos específicos de un formulario.
+- Una dataclass de lectura/dominio representa datos que salen de persistencia y puede utilizarse para renderizar o serializar una respuesta.
+- Una dataclass de update representa únicamente los campos modificables de una entidad.
 - Las dataclasses centralizan conversión de `REAL`, `Decimal`, `NULL`, fechas y booleanos.
 - Los campos opcionales deben declararse como opcionales; no representar opcionalidad mediante claves ausentes ambiguas.
 - Los datos HTTP se convierten a dataclass después de validar la entrada y antes de llamar al servicio/CRUD.
 - Las respuestas JSON pueden serializar dataclasses mediante un mapper explícito; no se devuelve directamente una fila de psycopg.
+
+La separación mínima recomendada es:
+
+```text
+HTTP input -> Request dataclass -> Command/Update dataclass -> CRUD
+SQL row -> mapper -> Read/Domain dataclass -> component o respuesta JSON
+```
+
+No es obligatorio crear una dataclass distinta cuando dos capas tienen exactamente el mismo contrato, pero esa equivalencia debe ser deliberada y no consecuencia de pasar un diccionario o un objeto HTTP sin transformar.
 
 Ejemplo:
 
@@ -171,7 +206,7 @@ class RecipeUpdate:
 
 Usar los siguientes verbos:
 
-- `create_<entity>`: crea una fila y devuelve su ID u objeto creado.
+- `create_<entity>`: crea una fila y devuelve siempre su ID en los CRUD base. Un servicio puede recuperar y devolver la dataclass completa si el caso de uso lo necesita.
 - `get_<entity>`: obtiene una entidad individual y devuelve su dataclass o `None` si no es visible/no existe según el contrato de lectura.
 - `list_<entities>`: devuelve siempre `list`; una lista vacía significa “sin resultados”.
 - `update_<entity>`: modifica una entidad existente.
@@ -191,31 +226,124 @@ No introducir `add_`, `fetch_`, `find_`, `remove_` o `save_` para operaciones eq
 - No usar `False` indistintamente para “ID inexistente”, “sin permiso”, “ya archivado” y “fallo SQL”.
 - Dentro de una operación compuesta, un `False` inesperado se convierte en excepción para provocar rollback.
 
+Un update parcial debe representar de forma inequívoca tres estados: campo ausente (no modificar), campo presente con `None` (guardar `NULL` cuando el campo lo permita) y sentinel `CLEAR` (borrado explícito cuando el contrato lo diferencie). No se puede recuperar esta distinción leyendo una clave opcional de un `dict` sin un contrato adicional.
+
 ### 3.5 Parámetros
 
-- Usar `user_id` en Python, aunque la columna heredada se llame `users_id`.
+- Usar `user_id` en todo el código Python: nombres de parámetros, variables locales, claves de payloads, parámetros SQL, campos de dataclasses y nombres expuestos por los mappers, aunque la columna física heredada se llame `users_id`.
+- El literal `users_id` solo puede aparecer en SQL, `schema.py`, migraciones/bootstrap y documentación que describa el esquema físico. Cuando una fila SQL se expone fuera de la capa de persistencia, debe mapearse a `user_id` o seleccionarse mediante un alias `users_id AS user_id`.
+- No renombrar automáticamente `created_by`: representa el actor/creador y no es necesariamente equivalente al propietario actual `user_id`.
 - Usar nombres explícitos: `catalog_id`, `manual_intake_id`, `recipe_id`, `intake_event_id`.
 - No usar un parámetro genérico `id` cuando el concepto pueda confundirse.
 - Mantener el orden: `connection`, contexto de usuario, identificador de entidad, payload, opciones como `commit`, `limit` y `offset`.
 - Los updates de entidad reciben un payload dataclass. Las operaciones especializadas pueden tener argumentos explícitos si ejecutan una acción distinta, no si son otro update equivalente.
 - No usar `**kwargs` para campos de tablas; los campos aceptados deben estar tipados y validados.
+- Las funciones que reciben una conexión deben usar el tipo común de conexión del proyecto cuando exista; no crear wrappers incompatibles por módulo.
 
 ## 4. Constantes de dominio
 
 ### 4.1 Fuente única de verdad
 
-Valores cerrados como tipos de comida, zonas de inyección, tipos de insulina, estados de eventos, estados físicos y opciones de índice glucémico deben definirse mediante `enum.Enum` en un módulo central, por ejemplo `domain/constants.py`.
+Un valor se modela como enumeración cuando pertenece a un conjunto cerrado y conocido de opciones. Ejemplos: tipos de comida, zonas de inyección, tipos de insulina, estados de eventos, Nutriscore y modos internos de navegación. Los estados físicos del alimento, los métodos de cocción y los métodos de conservación son actualmente ampliables y se tratan como catálogos, no como enums.
 
-Reglas:
+Los enums de dominio se declaran en un módulo central, por ejemplo `DayBetes_food/domain/constants.py`. Ese módulo no debe importar rutas, componentes ni la base de datos.
 
+Cada concepto tiene un único enum. No se crean listas paralelas del mismo concepto en `routes/`, `components/`, `crud.py` y `schema.py`.
+
+### 4.2 Implementación obligatoria
+
+Los enums persistibles deben ser compatibles con texto para poder validarse y serializarse de forma predecible:
+
+```python
+from enum import Enum, unique
+
+
+@unique
+class MealType(str, Enum):
+    BREAKFAST = "breakfast"
+    BRUNCH = "brunch"
+    LUNCH = "lunch"
+    AFTERNOON_SNACK = "afternoon_snack"
+    DINNER = "dinner"
+    SNACK = "snack"
+    RESCUE = "rescue"
+```
+
+Reglas de implementación:
+
+- El nombre de la clase usa PascalCase y describe el concepto singular: `MealType`, `InsulinType`, `EventState`.
+- Los miembros usan MAYÚSCULAS con guion bajo: `AFTERNOON_SNACK`.
+- Los valores (`.value`) son los códigos estables que se almacenan o transmiten: minúsculas, ASCII y `snake_case` cuando corresponda.
+- Los valores persistidos no se renombran por motivos cosméticos. Cambiar un valor requiere migración de datos.
+- `@unique` es obligatorio para impedir aliases accidentales.
+- Las etiquetas visibles al usuario no forman parte del valor persistido. Se mantienen en un mapper o diccionario de presentación separado.
+- Los enums no contienen lógica de rutas, SQL, HTML ni traducciones dependientes de un componente.
+
+### 4.3 Uso entre capas
+
+- Los endpoints convierten el texto recibido a enum en el boundary de entrada:
+
+```python
+try:
+    meal_type = MealType(raw_meal_type)
+except ValueError as exc:
+    raise ValidationError("Invalid meal type") from exc
+```
+
+- Un valor no perteneciente al enum produce un error de validación (`422`), no un fallback silencioso.
+- Los servicios reciben enums ya validados, no strings arbitrarios.
+- Las dataclasses de dominio usan el tipo enum, no `str`, para campos cerrados.
+- Al construir parámetros SQL se usa siempre `enum_value.value`.
+- Al leer SQL, el mapper convierte el código persistido de nuevo al enum. Un valor desconocido debe producir un error de integridad/configuración, no ignorarse.
+- Los componentes generan sus opciones recorriendo el enum y usan un mapper independiente para las etiquetas.
 - Los endpoints y componentes no escriben literales sueltos como `"rapid"`, `"basal"`, `"planned"` o `"consumed"`.
-- Las validaciones consumen los enums centrales.
-- Los servicios y queries reciben enums o valores ya normalizados.
-- Al persistir se usa explícitamente `.value`.
-- El esquema SQL y sus constraints deben reflejar los valores del enum.
-- Cambiar un valor requiere actualizar el enum, el esquema/migración, las validaciones, los componentes y los tests.
 
-### 4.2 Constantes de configuración
+### 4.4 Refuerzo en la base de datos
+
+La base de datos debe reflejar los valores cerrados mediante un `CHECK` explícito o una restricción equivalente:
+
+```sql
+CHECK (state IN ('planned', 'consumed'))
+```
+
+La lista del `CHECK` debe coincidir exactamente con los valores `.value` del enum. PostgreSQL no se considera la fuente de verdad del concepto: el enum central define el contrato de aplicación y el constraint SQL lo refuerza.
+
+Añadir, eliminar o cambiar un valor requiere revisar conjuntamente:
+
+1. El enum central.
+2. El schema y la migración.
+3. Los mappers y dataclasses.
+4. Las validaciones y servicios.
+5. Los formularios y etiquetas visibles.
+6. Los datos existentes afectados.
+7. Los tests de aceptación y persistencia.
+
+### 4.5 Enumeraciones abiertas
+
+Un valor que el usuario, un administrador o una fuente externa pueda ampliar no se modela como `Enum` de Python ni como `CHECK` cerrado.
+
+Debe almacenarse en una tabla de catálogo con, como mínimo:
+
+- identificador;
+- código estable;
+- etiqueta visible;
+- indicador `is_active`;
+- timestamps cuando proceda.
+
+Los valores iniciales pueden cargarse mediante bootstrap o migración, pero añadir uno nuevo debe ser un cambio de datos, no un cambio obligatorio de código.
+
+En esta categoría entran actualmente estados físicos inicial/final, métodos de cocción y métodos de conservación. Las listas Python existentes solo pueden actuar como datos iniciales mientras se completa el catálogo.
+
+### 4.6 Enumeraciones técnicas
+
+Las whitelists internas también son conjuntos cerrados, aunque el usuario no los introduzca. Ejemplos: tablas permitidas para updates, campos actualizables, tipos de entidad y expresiones SQL raw.
+
+- Deben centralizarse igual que los enums de dominio.
+- Se validan antes de construir SQL o seleccionar una estrategia.
+- No se exponen como opciones editables al usuario.
+- Añadir un valor requiere revisar seguridad, queries y tests.
+
+### 4.7 Constantes de configuración
 
 Límites, tamaños de página, ventanas temporales y nombres de cookies se definen una sola vez en configuración. No repetir números mágicos en endpoints o componentes.
 
@@ -268,6 +396,10 @@ Está prohibido hacer un `SELECT` por ID, obtener el registro y comprobar poster
 
 ## 6. Concurrencia e idempotencia
 
+Esta sección define cómo debe comportarse el sistema cuando dos peticiones acceden o modifican los mismos datos al mismo tiempo, o cuando una petición se repite por reintento del navegador, HTMX, una red inestable o un cliente externo.
+
+No todas las entidades necesitan el mismo nivel de protección. En cada operación se identifica primero el tipo de colisión posible y después se aplica la estrategia mínima que garantice la integridad requerida. La existencia inicial de un único usuario no elimina los reintentos, los dobles envíos ni las peticiones simultáneas desde varias pestañas.
+
 ### 6.1 Unicidad
 
 La base de datos es la autoridad definitiva sobre unicidad.
@@ -275,27 +407,99 @@ La base de datos es la autoridad definitiva sobre unicidad.
 - No usar el patrón “comprobar si existe en Python y después insertar” como garantía de unicidad.
 - Las comprobaciones previas solo pueden mejorar el mensaje de usuario; nunca sustituyen una constraint.
 - Todo conflicto de constraint se traduce a `ConflictError` y posteriormente a HTTP `409`.
+- La condición de unicidad debe incluir todos los campos que formen parte del concepto de duplicado.
+- Las comparaciones que ignoren mayúsculas, espacios o valores vacíos deben usar un índice de expresión coherente con la normalización aplicada por Python.
+- En entidades con soft-delete, los índices únicos deben ser parciales y contener `WHERE deleted_at IS NULL`.
+- La unicidad debe contemplar también el contexto del propietario cuando el recurso sea privado por usuario.
+- Toda constraint de unicidad debe tener un nombre estable y documentar qué regla de negocio protege.
 
-### 6.2 `ON CONFLICT`
+### 6.2 Tratamiento de conflictos de unicidad
+
+Una violación de unicidad no se convierte en un error genérico:
+
+- El CRUD o servicio identifica el conflicto como `ConflictError`.
+- El endpoint lo traduce a HTTP `409`.
+- El mensaje no revela datos privados de otro usuario.
+- No se ejecuta una inserción alternativa automática sin documentar su semántica.
+- Dentro de una operación compuesta, el conflicto provoca rollback de toda la operación.
+
+Cuando una operación puede terminar correctamente creando una fila o encontrando una fila equivalente ya existente, el resultado no se representa con un `bool` ambiguo:
+
+```python
+from enum import Enum
+
+
+class CreationResult(str, Enum):
+    CREATED = "created"
+    ALREADY_EXISTED = "already_existed"
+```
+
+El CRUD devuelve `CreationResult` o una dataclass que lo contenga. El servicio decide si `ALREADY_EXISTED` es éxito idempotente, `409` o una actualización, según el contrato de la operación.
+
+### 6.3 `ON CONFLICT`
 
 Las operaciones repetibles o susceptibles de peticiones duplicadas usan SQL nativo:
 
 - `ON CONFLICT DO NOTHING` cuando repetir debe ser un no-op.
 - `ON CONFLICT DO UPDATE` cuando repetir debe actualizar el mismo recurso.
 - La operación debe documentar si devuelve el estado anterior o posterior.
+- `DO UPDATE` solo modifica los campos incluidos en el comando y no destruye valores que la petición no pretendía cambiar.
+- Las operaciones repetibles deben producir el mismo estado final ante el mismo comando.
 
 Las operaciones toggle deben evitarse para acciones que puedan reintentarse. Preferir `set_favorite(value)` frente a `toggle_favorite()` cuando el cliente pueda repetir la petición.
 
-### 6.3 Operaciones compuestas
+### 6.4 Idempotencia y reintentos
+
+Una operación es idempotente cuando ejecutarla varias veces produce el mismo estado final que ejecutarla una sola vez.
+
+Cada operación repetible debe definir uno de estos comportamientos:
+
+- repetición como no-op correcto;
+- actualización del mismo recurso al mismo estado;
+- conflicto `409`;
+- error por estado incompatible.
+
+Deshabilitar botones en el frontend evita algunos dobles envíos, pero nunca sustituye la protección del servidor.
+
+Las idempotency keys se reservan para operaciones expuestas a clientes externos, webhooks o reintentos distribuidos que no puedan resolverse con constraints, estados condicionales y `ON CONFLICT`. Si se implementan, se asocian al usuario y operación, se almacenan durante el periodo de reintento y una reutilización con parámetros distintos produce conflicto.
+
+### 6.5 Operaciones compuestas
 
 Las operaciones que modifican varias tablas usan una única transacción. Si necesitan garantizar exclusión o evitar lecturas obsoletas, deben documentar el nivel de aislamiento o el bloqueo utilizado.
 
-### 6.4 Actualizaciones concurrentes del mismo recurso
+Reglas:
+
+- El coordinador abre `connection.transaction()`.
+- Todos los CRUD internos reciben `commit=False`.
+- Los resultados inesperados se convierten inmediatamente en excepciones.
+- Un fallo revierte todas las escrituras de la operación.
+- No se confirma una tabla y se continúa con otra fuera de la transacción.
+- La operación documenta qué ocurre si una parte ya estaba aplicada.
+
+### 6.6 Lectura seguida de escritura
+
+El patrón “leer estado, comprobar en Python y escribir” puede permitir que dos peticiones tomen la misma decisión. Cuando sea posible, la condición debe formar parte del `UPDATE`:
+
+```sql
+UPDATE intake_event
+SET state = %(new_state)s,
+    updated_at = NOW()
+WHERE id = %(event_id)s
+  AND users_id = %(user_id)s
+  AND state = 'planned'
+RETURNING id;
+```
+
+En una entidad sin versionado, si este `UPDATE` devuelve cero filas se sabe que la operación no se aplicó, pero no se puede distinguir si el estado incompatible era anterior o resultado de una carrera concurrente. En ese caso se devuelve el conflicto de negocio definido por la operación, normalmente `409`, sin afirmar que se haya detectado una carrera concreta.
+
+### 6.7 Actualizaciones concurrentes del mismo recurso
 
 `ON CONFLICT` resuelve colisiones de creación, pero no evita que dos clientes sobrescriban silenciosamente el mismo recurso.
 
 - Las entidades con transiciones críticas o snapshots clínicos deben usar control de concurrencia optimista.
 - Se preferirá una columna `version INTEGER NOT NULL DEFAULT 1` que se incremente en cada update.
+- En una entidad versionada, primero se obtiene la fila visible y autorizada junto con su versión.
+- El estado de negocio se valida sobre esa fila ya leída.
 - El update debe incluir la versión esperada en el `WHERE` y devolver la nueva versión:
 
 ```sql
@@ -309,12 +513,83 @@ RETURNING id, version;
 ```
 
 - Si no se actualiza ninguna fila por una versión obsoleta, se lanza `ConflictError` y el endpoint devuelve `409`.
+- Si el update no devuelve fila, una comprobación protegida por ownership distingue `NotFoundError` de `ConflictError`; nunca se consulta el recurso sin filtros de visibilidad.
+- Cualquier escritura que cambie la versión entre la lectura y el update se considera conflicto, independientemente de cuándo ocurriera.
+- La versión se incrementa en cada actualización relevante. Si se modifican hijos de un agregado crítico, el coordinador decide si también incrementa la versión de la raíz.
 - Para datos no críticos puede aceptarse “última escritura gana”, pero debe quedar documentado por entidad; no es el comportamiento implícito por defecto.
 - No usar `updated_at` como versión si su precisión o zona horaria no garantizan detectar dos escrituras cercanas. Si se usa temporalmente, debe documentarse como deuda de migración.
 
+### 6.8 Locks y aislamiento
+
+Se puede utilizar `SELECT ... FOR UPDATE` cuando una operación necesite leer una fila, calcular un nuevo estado y mantenerla protegida durante ese cálculo.
+
+- Debe ejecutarse dentro de una transacción explícita.
+- Debe utilizar la misma conexión durante toda la operación.
+- Debe aplicar ownership y visibilidad.
+- Debe mantener el lock el menor tiempo posible.
+- Las operaciones que bloqueen varias filas deben adquirirlas siempre en el mismo orden.
+- No se usan locks por reflejo cuando un update condicional o el control optimista es suficiente.
+- El nivel de aislamiento se modifica solo para una operación justificada, no globalmente.
+
+### 6.9 Agregados y tablas relacionadas
+
+Una tabla sin propietario directo, como `portion_detail`, hereda ownership y consistencia de su aggregate root:
+
+- la query valida el ownership del destino mediante `JOIN` o `EXISTS`;
+- el origen se valida aparte según sea público, propio o no visible;
+- la modificación del hijo y cualquier actualización de la raíz comparten transacción;
+- una modificación del hijo no puede modificar indirectamente el agregado de otro usuario;
+- si la raíz usa `version`, se documenta si las modificaciones de hijos incrementan esa versión.
+
+### 6.10 Última escritura gana
+
+“Última escritura gana” solo se permite para datos donde perder una modificación concurrente sea aceptable, como preferencias visuales o filtros de interfaz.
+
+No se acepta por defecto para estados clínicos, dosis, cantidades consumidas, snapshots, eventos confirmados ni históricos. Cada excepción debe documentarse por campo u operación.
+
+### 6.11 Nivel de aplicación
+
+Durante la primera fase, con un único usuario, no es obligatorio añadir `version` a todas las tablas ni crear una infraestructura global de idempotency keys. Sí son obligatorios desde el principio:
+
+- constraints de unicidad;
+- `ON CONFLICT` cuando corresponda;
+- transacciones para operaciones compuestas;
+- estados condicionales en transiciones sensibles;
+- protección frente a dobles envíos y reintentos básicos.
+
+El versionado optimista, locks explícitos e idempotency keys se incorporan cuando la operación sea crítica o cuando se habilite concurrencia real entre clientes.
+
+### 6.12 Tests de concurrencia
+
+Las operaciones sensibles deben probar:
+
+- inserciones simultáneas con el mismo valor único;
+- repetición de la misma petición;
+- repetición con parámetros distintos;
+- update con versión correcta;
+- update con versión obsoleta;
+- transición de estado repetida;
+- rollback después de un fallo intermedio;
+- ownership bajo concurrencia;
+- soft-delete y recreación del mismo valor;
+- traducción correcta de conflictos a `409`.
+
+Los tests que dependan de constraints, locks o aislamiento deben ejecutarse contra PostgreSQL real.
+
 ## 7. Validación y normalización de entrada
 
-El servidor es la autoridad final. HTML y JavaScript solo mejoran la experiencia.
+La validación garantiza que los datos que llegan al dominio tienen una estructura, tipo y significado válidos antes de ejecutar una operación de persistencia. El servidor es siempre la autoridad final. HTML y JavaScript solo mejoran la experiencia de usuario.
+
+### 7.1 Pipeline obligatorio
+
+Toda entrada debe seguir este orden:
+
+```text
+Petición HTTP -> extracción -> normalización -> parseo -> validación individual
+-> validación cruzada del payload -> dataclass Request/Command -> servicio o CRUD
+```
+
+No se ejecutan queries ni se modifican datos durante la validación sintáctica o del payload. Las reglas que dependan del estado actual de la base de datos pertenecen al servicio o caso de uso y se ejecutan después de construir el comando limpio.
 
 - Validar en helpers reutilizables, no mediante lógica ad-hoc por endpoint.
 - Normalizar espacios antes de comprobar campos obligatorios.
@@ -325,7 +600,23 @@ El servidor es la autoridad final. HTML y JavaScript solo mejoran la experiencia
 - Los identificadores se validan antes de ejecutar SQL.
 - La misma regla de negocio debe existir en servidor y, cuando sea útil, reflejarse en el formulario.
 
-### 7.1 Campos parciales y limpieza explícita
+### 7.2 Normalización frente a validación
+
+La normalización transforma representaciones equivalentes en una forma común, como `"  Tortilla  "` a `"Tortilla"` o `"12,5"` a un número. La validación decide si esa representación es admisible.
+
+No se debe convertir silenciosamente una entrada inválida en un valor válido: `"abc"` no se convierte en `0`, `"maybe"` no se convierte en `False` y una opción desconocida no se convierte en `None`.
+
+### 7.3 Cadenas
+
+- Aplicar `strip()` antes de comprobar obligatoriedad.
+- Normalizar espacios internos solo cuando el dominio lo permita.
+- Definir una longitud máxima por campo.
+- Rechazar cadenas vacías en campos obligatorios.
+- Convertir cadenas vacías a `None` en campos opcionales, salvo contrato contrario.
+- No truncar silenciosamente.
+- Usar la misma normalización en Python y en los índices SQL de duplicados.
+
+### 7.4 Campos obligatorios, opcionales y parciales
 
 Se distinguen tres estados:
 
@@ -333,7 +624,84 @@ Se distinguen tres estados:
 - campo presente vacío: normalizar según el tipo, normalmente `None`;
 - sentinel `CLEAR`: borrar explícitamente un valor nullable.
 
-El sentinel se define en un módulo común. No se crean variantes como `"__clear__"`, `"clear"` o cadenas equivalentes por formulario.
+Para JSON se distinguen así:
+
+- `{}`: campo ausente;
+- `{"field": ""}`: campo presente vacío;
+- `{"field": null}`: campo presente con `None`;
+- `{"field": "__clear__"}`: token de transporte convertido al sentinel interno `CLEAR`.
+
+Los formularios HTML no tienen un valor nativo `null`:
+
+- control ausente: campo ausente;
+- control presente vacío: cadena vacía;
+- la cadena `"null"` no representa `None`;
+- `<campo>__clear=1` solicita limpieza explícita y se convierte a `CLEAR`.
+
+Si se envían simultáneamente un valor y `<campo>__clear=1`, el request es inválido y devuelve `422`. El token JSON y el campo auxiliar HTML se interpretan únicamente en el parser central; los endpoints no crean variantes locales.
+
+### 7.5 Números
+
+Todos los números pasan por un parser común que valida formato, separador decimal, signo, finitud, rango, precisión y escala cuando proceda. No se aceptan `NaN`, `Infinity`, `-Infinity`, contenido parcial ni valores fuera del rango de negocio.
+
+Para campos clínicos, dosis, snapshots o cálculos terapéuticos se usa `Decimal` en Python y `NUMERIC` en PostgreSQL. Los campos existentes `REAL` se convierten en el boundary mediante un helper, sin mezclar arbitrariamente `float` y `Decimal`.
+
+El redondeo se decide por contrato y se realiza en un único punto: almacenamiento, cálculo, presentación o exportación. No se redondean individualmente los sumandos si el resultado debe coincidir con el redondeo de la suma.
+
+### 7.6 Booleanos
+
+Los booleanos solo aceptan el conjunto definido por el transporte. No se permite `value = raw_value == "true"`, porque cualquier valor desconocido se convertiría en `False`.
+
+El parser central define los valores aceptados, por ejemplo `{"true"}` y `{"false"}`. Si los formularios necesitan `on`, `1` u `off`, se declaran una sola vez en ese parser. Cualquier otro valor produce `422`. La ausencia de un checkbox tiene un significado definido por el contrato y no se interpreta automáticamente como `False` en updates parciales.
+
+### 7.7 Enums y opciones cerradas
+
+Los valores cerrados se convierten mediante los enums centrales. Un valor desconocido produce `422`, no un fallback. Los componentes generan sus opciones recorriendo el enum y los servicios reciben el valor ya validado. Las opciones abiertas se validan contra sus tablas de catálogo.
+
+### 7.8 Identificadores, fechas y horas
+
+- Los identificadores de URL, formularios y HTMX se validan antes de ejecutar SQL.
+- Un ID mal formado produce `400` o `422`; un ID válido sin recurso visible produce `404`.
+- No convertir IDs inválidos en `0` o `None`.
+- Las fechas y horas usan un formato único y se convierten en el boundary HTTP.
+- La entrada local se convierte a UTC mediante helpers comunes.
+- No se mezclan conversiones manuales con conversiones de helpers comunes.
+
+### 7.9 Validación cruzada del payload
+
+Comprueba relaciones entre campos del propio request y no necesita consultar la base de datos. Ejemplos: dosis basal obligatoria para `basal`, dosis basal nula para `rapid`, `offset_minutes` solo para eventos, cantidad ingerida no superior a la total, grasas saturadas no superiores a grasas y `CLEAR` solo para campos nullable.
+
+### 7.10 Reglas de negocio dependientes de la base de datos
+
+Las reglas que necesitan conocer el estado actual de la base de datos no pertenecen al parser de entrada. Comprobar que una receta tiene ingredientes, que un evento sigue planificado, que una fila no está archivada, que la versión coincide o que existe ownership pertenece al servicio o caso de uso.
+
+El flujo es:
+
+```text
+HTTP -> payload validado -> Command -> servicio consulta estado
+-> regla de negocio -> CRUD/transacción
+```
+
+No se introduce SQL dentro de un validador sintáctico. La seguridad y el estado deben comprobarse también en las queries mutadoras.
+
+### 7.11 Request, Command y Update
+
+- `Request`: datos HTTP ya parseados y validados.
+- `Command`: intención de un caso de uso, sin headers, cookies ni nombres de formulario.
+- `Update`: únicamente campos modificables de una entidad.
+- Un CRUD no recibe una dataclass específica de HTTP.
+- Un update parcial declara el significado de campo ausente, `None` y `CLEAR`.
+- No se pasa un diccionario HTTP directamente al CRUD o a `_build_update_query()`.
+
+### 7.12 Ownership
+
+La validación de formato no sustituye la autorización. El usuario de seguridad procede del contexto autenticado, nunca del payload. El flujo es validar ID, obtener usuario, comprobar visibilidad y ownership en SQL, y aplicar la misma condición en la escritura.
+
+### 7.13 Frontend y tests
+
+Los atributos `required`, `min`, `max`, `step`, `pattern` y la validación JavaScript son ayudas de UX. Desactivar JavaScript o enviar una petición manual no debe permitir datos inválidos.
+
+Los helpers deben probar valores válidos, ausentes, vacíos, formatos inválidos, rangos, signos, `NaN`, infinitos, booleanos y enums desconocidos, `CLEAR` y combinaciones incompatibles. Las reglas dependientes de PostgreSQL, estado, ownership o constraints se prueban como tests de servicio o integración.
 
 ## 8. Configuración, logging y servicios externos
 

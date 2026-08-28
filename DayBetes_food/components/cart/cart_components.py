@@ -10,6 +10,7 @@ from DayBetes_food.components.cart.cart_shared import (
     macro_color,
     macro_text_color,
     parse_source_macro,
+    portion_intake_amount,
     portion_name,
     unit_amount,
 )
@@ -254,14 +255,14 @@ def EventHeader(event):
 
 
 def MacrosSummary(event, portions, compact: bool = False):
-    total_amount = sum(float(p.get("amount_g") or 0.0) for p in portions)
+    total_amount = sum(portion_intake_amount(p) for p in portions)
     inferred_metrics = calculate_macro_summary_metrics(portions)
     total_calories = 0.0
     for portion in portions:
         calories_100 = parse_source_macro(portion, "calories")
         if calories_100 is None:
             continue
-        total_calories += float(portion.get("amount_g") or 0.0) * float(calories_100) / 100.0
+        total_calories += portion_intake_amount(portion) * float(calories_100) / 100.0
 
     amount_confidence = event.get("amount_confidence")
     quality_confidence = event.get("quality_confidence")
@@ -282,7 +283,7 @@ def MacrosSummary(event, portions, compact: bool = False):
             continue
         total = 0.0
         for portion in portions:
-            amount = float(portion.get("amount_g") or 0.0)
+            amount = portion_intake_amount(portion)
             macro_100 = parse_source_macro(portion, macro_key)
             if macro_100 is None:
                 continue

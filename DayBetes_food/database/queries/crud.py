@@ -1896,6 +1896,10 @@ def add_portion_detail(
         raise ValueError("amount_g must be positive")
     if offset_minutes is not None and destination != "intake_event":
         raise ValueError("offset_minutes only for intake_event")
+    if plate_amount is None:
+        plate_amount = amount_g
+    if plate_amount < 0:
+        raise ValueError("plate_amount must be non-negative")
 
     data = {
         "amount_g": amount_g,
@@ -2039,7 +2043,12 @@ def consolidate_event_portion_group_amount(
     try:
         with connection.cursor() as cursor:
             cursor.execute(
-                "UPDATE portion_detail SET amount_g = %(amount)s WHERE id = %(id)s;",
+                """
+                UPDATE portion_detail
+                SET amount_g = %(amount)s,
+                    plate_amount = %(amount)s
+                WHERE id = %(id)s;
+                """,
                 {"amount": total_amount, "id": keep_id},
             )
             if cursor.rowcount != 1:
