@@ -705,99 +705,419 @@ Los helpers deben probar valores válidos, ausentes, vacíos, formatos inválido
 
 ## 8. Configuración, logging y servicios externos
 
+Esta sección define cómo se configura la aplicación, cómo se registran los eventos operativos y cómo se integran fuentes externas.
+
+Las convenciones de errores pertenecen a `conventions/error_conventions.md`. Las unidades, conversiones y precisión pertenecen a `conventions/measurement_conventions.md`. La concurrencia y los reintentos de operaciones mutadoras siguen la sección 6.
+
 ### 8.1 Configuración
 
-- Las variables obligatorias, como credenciales de base de datos y secretos, se validan al arrancar.
-- Si faltan o son inválidas, la aplicación no arranca.
-- Las variables opcionales tienen defaults documentados.
-- Una variable presente pero inválida no se sustituye silenciosamente por el default; produce error de configuración.
-- La configuración de desarrollo, test y producción debe ser explícita.
-- Las opciones de inicialización automática de base de datos no deben quedar habilitadas accidentalmente en producción.
+Toda la configuración se carga y valida al iniciar la aplicación, en `DayBetes_food/config.py` o en el módulo central que lo sustituya. Las rutas, servicios y queries consumen valores ya parseados y no llaman directamente a `os.getenv()`.
 
-### 8.2 Logging
+La aplicación distingue como mínimo `development`, `test` y `production`. Un entorno desconocido produce error de configuración y no se activan defaults de desarrollo en producción.
 
-- Usar el módulo `logging`, nunca `print()` para eventos operativos o errores.
-- Usar niveles `DEBUG`, `INFO`, `WARNING`, `ERROR` y `CRITICAL` según la gravedad.
-- Incluir contexto útil: operación, entidad, identificador técnico y usuario cuando sea seguro.
-- Nunca registrar contraseñas, tokens, cookies, hashes, secretos ni datos médicos detallados.
-- Una excepción inesperada debe registrarse con traceback en el boundary adecuado, no repetirse en todas las capas.
+Las variables obligatorias, como `DATABASE_URL` y secretos de autenticación:
 
-### 8.3 Servicios externos
+- deben existir y no estar vacías;
+- deben tener formato válido;
+- impiden arrancar si faltan o son inválidas;
+- no se sustituyen por valores de ejemplo;
+- no se muestran en logs ni respuestas;
+- producen un error de arranque con severidad `CRITICAL`.
 
-Toda llamada HTTP externa debe:
+Las variables opcionales solo pueden tener defaults documentados y seguros. Una variable presente pero inválida no se reemplaza silenciosamente por el default.
+
+Los parsers centralizados deben validar estrictamente booleanos, enteros, decimales, URLs y enums. Los límites de sesiones, rate limiting, timeouts y paginación se definen una sola vez en configuración.
+
+La configuración de desarrollo, test y producción no se mezcla. La inicialización automática del esquema no debe activarse accidentalmente en producción.
+
+### 8.2 Secretos y cookies
+
+Los secretos incluyen contraseñas, peppers, tokens, cookies, claves API, claves privadas y URLs con credenciales.
+
+- No se guardan en el repositorio.
+- No se incluyen en `repr()` de dataclasses, excepciones o respuestas.
+- No se escriben en logs, ni siquiera parcialmente si pudieran reconstruirse.
+- `.env` se reserva para desarrollo local y permanece fuera del control de versiones.
+- Producción utiliza el mecanismo de secretos del entorno de despliegue.
+
+La configuración de sesión centraliza nombre de cookie, `Secure`, `HttpOnly`, `SameSite`, `Path`, duración, refresco y revocación. Las cookies no contienen datos médicos ni datos de usuario en texto plano.
+
+### 8.3 Logging
+
+El proyecto utiliza el módulo estándar `logging`. Está prohibido usar `print()` para errores, warnings, arranque, migraciones, llamadas externas o eventos de seguridad.
+
+Cada módulo obtiene un logger con `logging.getLogger(__name__)`. La configuración de handlers, formato y niveles se realiza en un único punto.
+
+Niveles:
+
+- `DEBUG`: diagnóstico de bajo nivel sin datos sensibles.
+- `INFO`: eventos operativos relevantes y métricas de bajo volumen.
+- `WARNING`: anomalías recuperables, rate limiting y degradaciones.
+- `ERROR`: fallos que impiden completar una operación.
+- `CRITICAL`: fallos que impiden arrancar o continuar de forma segura.
+
+Las validaciones rechazadas, recursos inexistentes y conflictos esperables no se registran individualmente en `INFO` si pueden generar ruido. En tráfico elevado se usan `DEBUG` o métricas agregadas.
+
+Un log puede incluir `request_id`, código interno, operación, módulo, entidad, ID técnico, usuario cuando sea seguro, status y duración. Nunca incluye contraseñas, tokens, cookies, hashes, peppers, claves API, payloads completos ni datos médicos detallados.
+
+Una excepción se registra con traceback una sola vez en el boundary que la convierte en respuesta, según `error_conventions.md`. Las capas inferiores añaden contexto y propagan, pero no duplican el log.
+
+### 8.4 Correlación de peticiones
+
+Toda petición tiene un `request_id` generado por el servidor si no existe.
+
+- El mismo ID aparece en logs, respuestas de error y llamadas externas relacionadas.
+- Las respuestas incluyen `X-Request-ID`.
+- Las respuestas JSON lo incluyen según `error_conventions.md`.
+- No se utiliza como mecanismo de autenticación.
+- No contiene tokens, datos médicos ni identificadores sensibles.
+- Un valor proporcionado por el cliente se valida y solo sirve para trazabilidad.
+
+### 8.5 Servicios externos
+
+Toda integración externa se implementa mediante un adapter o cliente dedicado. Una ruta no construye directamente llamadas HTTP a proveedores.
+
+El adapter define:
+
+- URL y método;
+- autenticación y headers;
+- timeout;
+- formato de entrada;
+- formato esperado de salida;
+- validación;
+- errores;
+- reintentos;
+- cache;
+- conversión a dataclasses internas.
+
+Toda llamada externa debe:
 
 - tener timeout explícito y configurable;
 - validar el status HTTP antes de interpretar el cuerpo;
+- comprobar el `Content-Type` cuando proceda;
 - validar la estructura JSON recibida;
 - capturar errores de red, timeout y parseo;
-- definir si admite reintentos, con límite y backoff;
+- convertirse a dataclass interna antes de entrar en el dominio;
+- convertir unidades según `measurement_conventions.md`;
+- marcar la fuente como `imported`;
 - registrar el fallo internamente sin datos sensibles;
-- devolver al usuario un mensaje genérico y estable.
+- devolver al usuario un mensaje genérico y estable según `error_conventions.md`.
+
+Una respuesta `200` no garantiza que el contenido sea válido, completo o esté expresado en la unidad esperada.
+
+### 8.6 Timeouts y errores externos
+
+Cuando la librería lo permita, se distinguen timeout de conexión, timeout de lectura y timeout total. Nunca se espera indefinidamente.
+
+Un timeout o error de red se convierte en `ExternalServiceError`. No se convierte en una lista vacía, un valor cero ni una respuesta de éxito.
+
+El usuario no recibe el nombre técnico del proveedor, traceback, URL interna ni detalle de la excepción.
+
+### 8.7 Reintentos
+
+Los reintentos se definen por integración y operación. Solo se permiten si el fallo es transitorio, existe un límite, se aplica backoff y la operación es segura de repetir.
+
+No se reintenta automáticamente ante errores de validación, `400`, `401`, `403`, `409` ni operaciones mutadoras no idempotentes.
+
+Los reintentos de operaciones mutadoras siguen las reglas de idempotencia de la sección 6 y pueden requerir idempotency keys. No se implementan reintentos genéricos en un cliente compartido sin conocer la semántica de la operación.
+
+### 8.8 Rate limiting externo
+
+Si un proveedor externo limita las peticiones, el adapter debe detectar la respuesta, respetar `Retry-After` cuando exista, aplicar backoff y evitar reintentos inmediatos.
+
+El fallo se registra con el proveedor y la operación, sin datos sensibles, y se devuelve un error genérico. La política concreta se documenta en el adapter.
+
+### 8.9 Degradación controlada
+
+Si un servicio externo no está disponible:
+
+- no se bloquea indefinidamente la petición;
+- no se guarda un registro incompleto como si fuera correcto;
+- no se sustituyen datos por ceros;
+- no se confunde una respuesta vacía con un fallo;
+- se puede utilizar cache solo si está documentada y marcada;
+- se informa al usuario con un mensaje genérico;
+- la aplicación continúa funcionando si la integración no es esencial.
+
+Un fallback no puede cambiar silenciosamente el significado de los datos.
+
+### 8.10 Cache externo
+
+Si se utiliza cache:
+
+- la clave incluye todos los parámetros relevantes;
+- tiene expiración;
+- no mezcla datos privados;
+- diferencia respuesta vacía de error;
+- conserva fuente y timestamp;
+- se invalida cuando proceda;
+- no sustituye a la base de datos principal;
+- no altera la semántica transaccional.
+
+Los datos cacheados se validan de nuevo antes de persistirse.
+
+### 8.11 Tests
+
+La configuración debe probar ausencia, vacío, formato inválido, rango inválido, defaults, entorno desconocido y secretos en logs.
+
+El logging debe comprobar `request_id`, niveles, ausencia de secretos y ausencia de duplicación de tracebacks.
+
+Las integraciones externas deben probar timeout, error de conexión, status no exitoso, JSON inválido, estructura incompleta, unidad desconocida, conversión, reintentos, rate limiting, cache y degradación.
+
+### 8.12 Checklist de auditoría
+
+Para cada configuración o integración se comprueba:
+
+- ¿Está centralizada?
+- ¿Tiene tipo, rango y default definido?
+- ¿Falla rápido si es obligatoria?
+- ¿Separa entornos?
+- ¿Puede activar desarrollo en producción?
+- ¿Contiene secretos en logs o respuestas?
+- ¿Usa `logging`?
+- ¿Tiene `request_id`?
+- ¿Registra excepciones una sola vez?
+- ¿Existe un adapter para el proveedor?
+- ¿Tiene timeout?
+- ¿Valida status, Content-Type y estructura?
+- ¿Convierte unidades según `measurement_conventions.md`?
+- ¿Marca la fuente?
+- ¿Los reintentos son seguros?
+- ¿La operación es idempotente?
+- ¿Existe degradación controlada?
+- ¿Hay tests de fallo y recuperación?
 
 ## 9. Endpoints, HTTP y HTMX
 
-### 9.1 Códigos HTTP
+### 9.1 Contrato del endpoint
 
-- `200`: operación o lectura correcta.
-- `201`: creación correcta cuando la respuesta sea una API HTTP convencional.
-- `303`: redirección posterior a un `POST` tradicional.
-- `400`: petición malformada que no puede interpretarse.
-- `401`: usuario no autenticado.
-- `403`: autenticado pero sin permiso, salvo recursos cuya existencia deba ocultarse.
-- `404`: recurso inexistente, archivado no visible o ajeno cuando no se deba revelar.
-- `409`: conflicto de unicidad, estado o concurrencia.
-- `429`: petición rechazada por rate limiting.
-- `422`: entrada bien formada pero inválida según las reglas de negocio.
-- `500`: fallo inesperado de infraestructura.
+Cada endpoint debe tener una responsabilidad principal y un contrato explícito de:
 
-No devolver `200` con un mensaje de error salvo una decisión HTMX documentada para un fragmento visual que necesite reemplazarse con una respuesta no exitosa. Esa decisión debe aplicarse igual a todas las acciones equivalentes.
+- método HTTP;
+- ruta y parámetros;
+- categoría de acceso;
+- datos de entrada y transporte;
+- servicio o CRUD utilizado;
+- unidad de trabajo y ownership de conexión;
+- formato de respuesta;
+- comportamiento de éxito;
+- comportamiento ante repetición.
 
-### 9.2 Estructura de errores
+La decisión entre llamar directamente a CRUD o delegar en un servicio sigue la sección 1.2. Las reglas de excepciones, códigos de error, mensajes y estructuras de error pertenecen exclusivamente a `conventions/error_conventions.md`. Las reglas de validación pertenecen a la sección 7; ownership a la sección 5; transacciones a la sección 2; e idempotencia a la sección 6.
 
-Los errores HTML devuelven siempre el componente común de error. No mezclar texto plano, HTML arbitrario y cuerpos vacíos para el mismo tipo de acción.
+### 9.2 Métodos y rutas
 
-Los endpoints JSON usan esta estructura:
+- `GET` solo realiza lecturas.
+- `POST` se utiliza para creaciones y acciones de negocio mutadoras.
+- `PUT` representa sustitución completa únicamente si el endpoint lo documenta.
+- `PATCH` representa actualización parcial únicamente si el endpoint lo documenta.
+- `DELETE` se utiliza para borrado físico o eliminación de relaciones según el contrato.
+- El soft-delete se expone mediante una acción `archive_<entity>` o una ruta equivalente explícita.
 
-```json
-{
-  "error": {
-    "code": "validation_error",
-    "message": "...",
-    "fields": {}
-  }
-}
-```
+No se utiliza `GET` para modificar datos. Las rutas usan nombres de recursos claros, parámetros específicos como `event_id` o `recipe_id` y no reciben `user_id` como fuente de autorización.
 
-Los códigos internos (`validation_error`, `not_found`, `conflict`, `infrastructure_error`) son estables. El texto visible puede localizarse o mejorar sin cambiar el código.
+### 9.3 Canales y formato de respuesta
 
-### 9.3 HTMX
+Un endpoint debe declarar si devuelve HTML completo, fragmento HTML o JSON. No se mezclan formatos arbitrariamente.
 
-- Una acción equivalente usa el mismo `hx_target`, `hx_swap`, eventos y estados de éxito/error.
-- Los errores de validación tienen un target visible y estable.
-- El refresco posterior ocurre solo si `event.detail.successful` es verdadero.
-- Una navegación posterior a una petición HTMX usa `HX-Redirect` de forma uniforme.
-- `HX-Trigger` se reserva para eventos documentados y usa nombres estables.
-- No mezclar `HX-Redirect`, `HX-Location` y fragmentos intercambiados para el mismo flujo sin una razón documentada.
-- Los botones de envío se deshabilitan o muestran estado de carga para evitar dobles peticiones.
+| Situación | HTML tradicional | HTMX | JSON |
+|---|---|---|---|
+| Navegación correcta | HTML completo | fragmento o `HX-Redirect` | no aplica |
+| Creación correcta | `303` o HTML según contrato | fragmento, evento o `HX-Redirect` | `201` o `200` |
+| Validación visual | página/formulario según contrato | `200` + fragmento mínimo de error | `422` estructurado |
+| Error no visual | según `error_conventions.md` | según `error_conventions.md` | según `error_conventions.md` |
+
+Todos los errores y sus formatos se definen en `conventions/error_conventions.md`. Esta tabla solo define el canal de transporte.
+
+### 9.4 Códigos de éxito y redirecciones
+
+- `200` indica una respuesta correcta con contenido o fragmento.
+- `201` indica creación correcta en una API HTTP convencional.
+- `204` indica éxito sin cuerpo cuando el cliente no necesita fragmento, evento ni mensaje.
+- `303` se utiliza después de un `POST` tradicional cuando la operación termina en navegación.
+- Una petición HTMX que termina en navegación utiliza `HX-Redirect`.
+
+Los códigos de error no se redefinen aquí; se aplican desde `error_conventions.md`.
+
+### 9.5 HTMX
+
+Cada acción HTMX debe definir:
+
+- si exige el header `HX-Request`;
+- `hx-target` esperado;
+- `hx-swap` esperado;
+- fragmento devuelto en éxito;
+- fragmento mínimo de validación si falla la entrada;
+- eventos `HX-Trigger`, si existen;
+- navegación posterior, si existe.
+
+Las acciones equivalentes deben usar el mismo patrón.
+
+#### Validación HTMX
+
+Los errores de validación que deban mostrarse dentro de un formulario utilizan deliberadamente:
+
+- status HTTP `200`;
+- un fragmento HTML mínimo;
+- un target visible y estable;
+- el componente común de error;
+- ningún redirect ni evento de éxito.
+
+Esta excepción existe para que HTMX inserte el mensaje directamente en el formulario. No se extiende automáticamente a autenticación, autorización, recurso inexistente, conflicto, rate limiting o infraestructura, que conservan sus status semánticos según `error_conventions.md`.
+
+El fragmento mínimo no debe reconstruir la página completa ni ejecutar consultas adicionales innecesarias.
+
+#### Targets y swaps
+
+- `innerHTML`: reemplaza el contenido de un contenedor.
+- `outerHTML`: reemplaza el propio componente.
+- `none`: no intercambia cuerpo; solo se usa si el contrato depende de headers/eventos o de un refresco posterior.
+- `beforeend`: añade contenido y solo se usa cuando la operación es una adición.
+
+El target debe tener un ID estable y una responsabilidad visual única. No se cambia el target entre acciones equivalentes sin actualizar el contrato y los tests.
+
+El refresco posterior solo ocurre cuando `event.detail.successful` es verdadero. En los errores de validación HTMX con status `200`, el frontend debe distinguir el fragmento de error mediante el target o contrato específico y no tratarlo como una operación de éxito global.
+
+#### Eventos HTMX
+
+- `HX-Trigger` se reserva para eventos documentados.
+- Los nombres de eventos son estables y describen el hecho ocurrido, no una implementación interna.
+- Un evento de éxito no se emite en una respuesta de validación fallida.
+- No mezclar `HX-Redirect`, `HX-Location` y fragmentos intercambiados para el mismo flujo sin una decisión documentada.
+
+### 9.6 Entrada, estados de carga y repetición
+
+La entrada se extrae y valida según la sección 7 antes de crear el `Request` o `Command`. El usuario autenticado procede del contexto de sesión.
+
+Los botones que disparan escrituras deben deshabilitarse o mostrar estado de carga. Esta protección mejora la UX, pero no sustituye las reglas de idempotencia de la sección 6.
+
+Cada endpoint mutador debe documentar qué ocurre si se repite la petición: no-op, mismo resultado, conflicto `409` o error por estado incompatible.
+
+### 9.7 Paginación
+
+Los endpoints paginados utilizan una única convención:
+
+- `limit`: máximo de elementos;
+- `offset`: desplazamiento;
+- `page`: solo cuando el endpoint utiliza páginas explícitas;
+- cursor: solo cuando el endpoint documenta paginación por cursor.
+
+Los valores se validan, se limitan y no pueden ser negativos. Los resultados tienen orden estable. No se mezclan `page`, `offset` y cursor en el mismo endpoint sin un contrato explícito.
+
+### 9.8 Observabilidad y tests HTTP
+
+Los endpoints utilizan la correlación definida en la sección 8.4 y aplican el formato de respuesta de errores de `error_conventions.md`.
+
+Cada endpoint debe probar, según corresponda:
+
+- método HTTP;
+- autenticación y acceso;
+- validación;
+- ownership;
+- éxito y formato de respuesta;
+- status HTTP;
+- `hx-target`, `hx-swap` y headers HTMX;
+- redirect;
+- repetición de petición;
+- conflicto;
+- error inesperado;
+- rollback en operaciones compuestas.
 
 ## 10. Tipos de datos, fechas y números
 
-### 10.1 Fechas
+Esta sección define la representación técnica de fechas y números dentro del código. El significado de cada campo, su unidad canónica, precisión de negocio y reglas de redondeo pertenecen exclusivamente a `conventions/measurement_conventions.md`.
 
-- La aplicación usa una única representación temporal.
-- Los timestamps se almacenan en UTC.
-- Las columnas temporales se llaman `created_at`, `updated_at`, `deleted_at`, `expires_at` o el nombre de dominio equivalente definido en el esquema.
-- La conversión entre UTC y zona local ocurre en los boundaries de presentación o entrada, no en cada componente de forma arbitraria.
-- No mezclar `NOW()`, `datetime.utcnow()` y timestamps locales sin una política explícita.
+### 10.1 Mapa de tipos
 
-### 10.2 Números nutricionales
+La conversión entre PostgreSQL, Python y los contratos externos sigue este mapa:
 
-- Los campos nutricionales existentes que usan `REAL` mantienen ese tipo durante las correcciones actuales.
-- Todo campo nuevo que participe en cálculos de dosis de insulina, snapshots clínicos o decisiones terapéuticas usa `NUMERIC` con una escala explícita desde su creación, y se representa como `Decimal` en Python.
-- El resto de campos nutricionales nuevos puede seguir temporalmente `REAL` mientras no participe en esos cálculos y hasta aprobar una migración global a `NUMERIC(6,2)` u otra precisión.
-- Los campos existentes `REAL` que participen en cálculos clínicos deben migrarse prioritariamente a `NUMERIC`; esa migración puede ejecutarse separada de la corrección funcional, pero no debe tratarse como una deuda indefinida.
-- No mezclar una migración de precisión numérica con una corrección de comportamiento en el mismo cambio salvo que la corrección dependa directamente de la precisión.
-- La migración a `NUMERIC` queda documentada como deuda técnica independiente.
+| PostgreSQL | Python | JSON/HTML |
+|---|---|---|
+| `INTEGER`, `BIGINT` | `int` | número |
+| `REAL`, `DOUBLE PRECISION` heredado | `float` | número aproximado |
+| `NUMERIC` | `Decimal` | string decimal exacto |
+| `BOOLEAN` | `bool` | booleano |
+| `TIMESTAMP` UTC heredado | `datetime` mediante mapper | ISO 8601 en boundary |
+| `TIMESTAMPTZ` | `datetime` aware | ISO 8601 en boundary |
+| `NULL` | `None` | `null` cuando el contrato lo permita |
+
+No se mezclan `float` y `Decimal` en una misma operación. Cuando una migración obligue a convertir un valor heredado `float` a `Decimal`, se utiliza una conversión controlada y documentada, no `Decimal(float_value)` directamente.
+
+### 10.2 Autoridad de unidades y precisión
+
+- `measurement_conventions.md` decide la unidad, precisión, escala, redondeo y significado de cada campo.
+- Esta sección decide únicamente cómo se representa y se transporta ese valor técnicamente.
+- Un cambio de unidad o precisión requiere seguir la migración documentada en `measurement_conventions.md` y en la sección 10.5.
+- No cambiar el tipo de una columna solo para corregir una etiqueta visual.
+- No añadir una conversión local en una ruta si ya existe un mapper o helper central.
+
+### 10.3 Números y cálculos
+
+- Los campos existentes `REAL` pueden seguir usando `float` durante la fase de recopilación y análisis exploratorio.
+- Los campos nuevos que participen en dosis, snapshots clínicos o decisiones terapéuticas usan `NUMERIC` con escala explícita y `Decimal` en Python.
+- Los cálculos clínicos no convierten `Decimal` a `float` para ahorrar trabajo.
+- Los campos `REAL` que pasen a tener uso clínico se migran prioritariamente siguiendo la sección 10.5.
+- `None` se conserva como ausencia de dato; no se convierte automáticamente a cero.
+- Los cálculos usan la unidad canónica, nunca una unidad de presentación.
+- El redondeo se realiza en el punto definido por `measurement_conventions.md`.
+- Las comparaciones de `float` utilizan tolerancia explícita; no se usa igualdad directa.
+
+### 10.4 Fechas y zonas horarias
+
+Las fechas y horas se almacenan en UTC según `measurement_conventions.md`. La implementación se realiza en boundaries y helpers comunes:
+
+- La entrada del usuario se interpreta en la zona horaria de la aplicación.
+- El dominio nuevo utiliza `datetime` aware en UTC.
+- Las columnas heredadas `TIMESTAMP` sin zona reciben un UTC naive únicamente en el mapper de persistencia.
+- La conversión aware UTC a naive UTC ocurre solo al escribir en una columna heredada sin zona.
+- La conversión naive UTC a aware UTC ocurre solo al leer una columna heredada.
+- La presentación convierte UTC a la zona local del usuario.
+- No usar `datetime.utcnow()` ni `datetime.now()` sin zona en código nuevo.
+- No depender de la zona horaria del sistema operativo o de la sesión PostgreSQL.
+- Usar helpers centrales como `utc_now()`, `local_to_utc()` y `utc_to_local()`.
+
+Los formatos JSON de fecha y hora utilizan ISO 8601 con offset explícito. Los timestamps UTC se serializan con `Z` o `+00:00`; no se envían fechas ambiguas sin zona.
+
+### 10.5 Migraciones de tipos
+
+Cambiar `REAL` a `NUMERIC`, o `TIMESTAMP` a `TIMESTAMPTZ`, es una migración de datos y no un cambio aislado de schema.
+
+Antes de ejecutarla se debe:
+
+1. Identificar columnas, tablas, queries, mappers y dataclasses afectadas.
+2. Definir precisión, escala, zona y redondeo.
+3. Detectar y limpiar valores inválidos.
+4. Definir la expresión `USING` de conversión.
+5. Convertir datos existentes sin perder `NULL`.
+6. Actualizar constraints y defaults.
+7. Actualizar Python, serialización y cálculos.
+8. Revisar índices y funciones SQL.
+9. Añadir tests de equivalencia y límites.
+10. Verificar muestras antes y después.
+
+No se mezcla una migración de tipo con una corrección funcional salvo que la corrección dependa directamente de la precisión o de la zona horaria.
+
+### 10.6 Serialización de `Decimal`
+
+`Decimal` no se serializa automáticamente con `json.dumps()`. Para conservar la precisión exacta, los valores `Decimal` se serializan como strings decimales en JSON:
+
+```json
+{
+  "basal_units": "8.50"
+}
+```
+
+Reglas:
+
+- El formato decimal debe ser estable y no usar notación científica salvo que el contrato lo defina.
+- La escala visible debe seguir la precisión documentada del campo.
+- El cliente no debe interpretar automáticamente un valor clínico string como `float` sin conocer el contrato.
+- HTML puede formatear el valor para presentación, pero no modifica el valor de dominio.
+- Un endpoint puede devolver un número JSON únicamente si el contrato declara que la precisión exacta no es relevante.
+- No convertir globalmente todos los `Decimal` a `float` en un encoder genérico.
+- Las respuestas y requests JSON deben probar valores normales, `NULL`, escalas y números grandes.
+
+El mapper es responsable de convertir entre `Decimal` y el formato del transporte. Las rutas no deben implementar conversiones independientes.
 
 ## 11. Base de datos, soft-delete y auditoría
 

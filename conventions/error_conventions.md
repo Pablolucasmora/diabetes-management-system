@@ -142,7 +142,10 @@ Ejemplos:
 - dosis fuera de rango;
 - combinación incompatible de campos.
 
-Respuesta: HTTP `422`.
+Respuesta:
+
+- JSON y HTML tradicional: HTTP `422`.
+- HTMX cuando el error debe insertarse visualmente en un formulario: HTTP `200` con el fragmento mínimo de error definido en `code_conventions.md:9.5`.
 
 ### 3.3 `authentication_required`
 
@@ -335,8 +338,8 @@ El componente debe:
 Reglas HTMX:
 
 - Los errores de validación apuntan a un target visible y estable.
-- El status HTTP debe conservar la categoría del error, normalmente `422`.
-- El frontend debe estar configurado para procesar y mostrar respuestas `4xx` cuando el contrato utilice ese comportamiento.
+- Los errores de validación visual HTMX utilizan HTTP `200` y el fragmento mínimo definido en `code_conventions.md:9.5`.
+- Los errores HTMX que no sean validación visual conservan el status semántico de su categoría.
 - Un `HX-Trigger` de error solo se envía si el evento está documentado.
 - Una respuesta de navegación utiliza `HX-Redirect`, no un fragmento de error ambiguo.
 - No devolver un cuerpo vacío para un error que el usuario necesita ver.

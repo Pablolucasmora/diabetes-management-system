@@ -161,11 +161,13 @@ Los campos `caffeine` y `alcohol` deben confirmarse con la fuente de datos antes
 
 ### 5.2 Cálculo para una cantidad concreta
 
-Para obtener un nutriente correspondiente a una cantidad `amount_g`:
+Para obtener un nutriente correspondiente a una cantidad de alimento:
 
 ```text
-nutriente_total = nutriente_100g * amount_g / 100
+nutriente_total = nutriente_100g * cantidad_g / 100
 ```
+
+En un `intake_event`, `cantidad_g` es `plate_amount`. `amount_g` solo se utiliza cuando el cálculo representa la cantidad del ingrediente utilizado o cuando el contexto no es un cálculo de ingesta.
 
 El cálculo debe utilizar el valor almacenado sin redondear previamente.
 
@@ -173,7 +175,7 @@ Ejemplo:
 
 ```text
 carbs_100g = 20.4 g/100 g
-amount_g = 75 g
+plate_amount = 75 g
 total = 20.4 * 75 / 100 = 15.3 g
 ```
 
@@ -229,6 +231,136 @@ uncertainty = 1 - confidence
 ```
 
 Si una fórmula utiliza una de las dos magnitudes, debe indicarlo explícitamente.
+
+### 6.3 Peso utilizado para los cálculos del evento
+
+Las métricas de confianza e incertidumbre de un `intake_event` se ponderan por el peso que se ha servido o se ha previsto ingerir, no por la cantidad total utilizada para preparar el ingrediente.
+
+El peso canónico es `portion_detail.plate_amount`.
+
+```text
+event_intake_weight = suma de plate_amount de sus porciones
+```
+
+`amount_g` representa la cantidad del ingrediente utilizada o cocinada. `plate_amount` representa la cantidad asignada al plato o comida que se va a ingerir. No deben intercambiarse en cálculos de consumo.
+
+Para datos históricos que todavía no tengan `plate_amount`, el código puede utilizar temporalmente `amount_g` como fallback de compatibilidad. Ese fallback no cambia la definición oficial y debe eliminarse cuando los datos antiguos hayan sido completados o migrados.
+
+`ingested_amount` representa lo que finalmente se consumió y se utiliza para cálculos específicos de consumo real. No sustituye automáticamente a `plate_amount` en las métricas de composición del plato planificado.
+
+### 6.4 `amount_confidence`
+
+`amount_confidence` indica qué proporción del peso servido fue pesada estrictamente.
+
+```text
+amount_confidence =
+    suma de plate_amount de porciones con strictly_weighed = true
+    ---------------------------------------------------------------
+    suma de plate_amount de todas las porciones
+```
+
+Ejemplo:
+
+| Porción | `plate_amount` | `strictly_weighed` |
+|---|---:|---|
+| Arroz | 100 g | `true` |
+| Salsa | 50 g | `false` |
+
+```text
+amount_confidence = 100 / 150 = 0.6667
+```
+
+El valor no indica si la información nutricional es correcta. Solo indica la confianza en la cantidad servida.
+
+### 6.5 `quality_confidence`
+
+`quality_confidence` indica qué proporción del peso servido tiene información nutricional marcada como fiable mediante `macros_quality = true`.
+
+```text
+quality_confidence =
+    suma de plate_amount de porciones con macros_quality = true
+    ------------------------------------------------------------
+    suma de plate_amount de todas las porciones
+```
+
+Este indicador representa la calidad declarada del origen nutricional, no una probabilidad estadística. Un valor puede existir y seguir siendo estimado o poco fiable.
+
+### 6.6 Incertidumbre por nutriente
+
+Cada campo `*_uncertainty` se calcula de forma independiente para cada nutriente:
+
+```text
+nutrient_uncertainty =
+    suma de plate_amount de porciones sin valor para ese nutriente
+    ---------------------------------------------------------------
+    suma de plate_amount de todas las porciones
+```
+
+Ejemplo:
+
+| Porción | Peso servido | Hidratos |
+|---|---:|---|
+| Arroz | 100 g | conocido |
+| Plato manual | 50 g | `NULL` |
+| Aceite | 10 g | `NULL` |
+
+```text
+total = 160 g
+unknown_carbs = 60 g
+carbs_uncertainty = 60 / 160 = 0.375
+```
+
+El resultado significa que el `37.5 %` del peso servido no tiene un valor de hidratos registrado. No significa que el total de hidratos tenga exactamente un `37.5 %` de error.
+
+Un nutriente con valor `0` se considera conocido. Solo se considera desconocido cuando el valor es `NULL` o no existe en la fuente aplicable.
+
+### 6.7 Diferencia entre confianza, calidad e incertidumbre
+
+Las métricas tienen significados distintos:
+
+| Campo | Qué mide |
+|---|---|
+| `amount_confidence` | proporción pesada estrictamente |
+| `quality_confidence` | proporción con macros marcados como fiables |
+| `carbs_uncertainty` | proporción sin hidratos registrados |
+| `sugars_uncertainty` | proporción sin azúcares registrados |
+| `fats_uncertainty` | proporción sin grasas registradas |
+| `saturated_uncertainty` | proporción sin grasas saturadas registradas |
+| `proteins_uncertainty` | proporción sin proteínas registradas |
+| `fiber_uncertainty` | proporción sin fibra registrada |
+
+No se debe asumir automáticamente que:
+
+```text
+quality_confidence = 1 - nutrient_uncertainty
+```
+
+Una porción puede tener un valor nutricional estimado: en ese caso puede reducir `quality_confidence` sin aumentar `*_uncertainty`, porque el valor existe. Del mismo modo, un nutriente puede estar ausente únicamente en una parte de la comida.
+
+Estas métricas no son todavía intervalos estadísticos, desviaciones estándar ni márgenes de error clínicos. Son indicadores de completitud y calidad del registro para ayudar al análisis posterior.
+
+### 6.8 Eventos sin peso calculable
+
+Si un evento no tiene ninguna porción con `plate_amount` válido, sus proporciones no pueden calcularse matemáticamente.
+
+La implementación actual conserva `0.0` por compatibilidad para las métricas del evento, pero ese valor no debe interpretarse como “incertidumbre cero” ni como “confianza cero” sin consultar también la existencia de peso válido.
+
+La solución futura preferida es impedir confirmar un evento sin cantidades válidas o almacenar `NULL` para métricas no calculables.
+
+### 6.9 Momento del cálculo
+
+Las métricas se calculan a partir de las porciones actuales del evento y se almacenan como un snapshot en `intake_event` cuando la operación de confirmación lo requiere.
+
+Si las porciones cambian antes de confirmar o si una operación posterior modifica el peso servido, las métricas deben recalcularse en la misma unidad de trabajo. No se deben mantener valores derivados antiguos después de cambiar sus datos de origen.
+
+El cálculo de los nutrientes totales del evento utiliza igualmente `plate_amount`:
+
+```text
+nutriente_total_evento =
+    suma de (nutriente_100g * plate_amount / 100)
+```
+
+El redondeo se realiza únicamente en la presentación según las reglas de este documento.
 
 ## 7. Factor de cocinado
 
@@ -372,6 +504,33 @@ unknown     = origen desconocido
 La fuente no sustituye al valor. Un dato puede ser `estimated` y tener igualmente un valor numérico válido.
 
 Cuando una fuente externa proporcione una unidad distinta, se conserva la fuente original en metadatos si es necesario y se guarda el valor convertido en la unidad canónica.
+
+### 12.1 Contrato de importación
+
+Cuando un valor proceda de Open Food Facts, LibreView, Apple Health u otra fuente externa, se debe conservar, cuando el modelo lo permita:
+
+```text
+source = imported
+source_name = nombre del proveedor
+source_field = campo original
+source_unit = unidad original
+canonical_unit = unidad DayBetes
+conversion_version = versión de la conversión
+measured_at = momento de medición
+imported_at = momento de importación
+```
+
+Reglas:
+
+- La unidad original se identifica antes de convertir.
+- Si la unidad no puede identificarse con seguridad, el dato no se persiste como válido.
+- La conversión se realiza una sola vez en el adapter de integración.
+- El resto del sistema trabaja únicamente con la unidad canónica.
+- `source_unit` no sustituye a `canonical_unit`.
+- El valor convertido no se presenta como si hubiera sido medido directamente por DayBetes.
+- Si el proveedor cambia el significado o la unidad de un campo, se incrementa `conversion_version`.
+- `measured_at` y `imported_at` son momentos distintos y no deben intercambiarse.
+- La procedencia debe conservarse aunque el dato se transforme o se utilice en un cálculo derivado.
 
 ## 13. Datos originales y derivados
 
