@@ -2205,7 +2205,7 @@ def setup_food_routes(rt):
                         commit=False,
                     ):
                         raise ValueError("Could not save the favorite status.")
-                    if not set_entry_tags(
+                    if (tags_json or "").strip() and not set_entry_tags(
                         connection,
                         "catalog",
                         entry_id,
@@ -2351,7 +2351,7 @@ def setup_food_routes(rt):
                         commit=False,
                     ):
                         raise ValueError("Could not save the favorite status.")
-                    if not set_entry_tags(
+                    if (tags_json or "").strip() and not set_entry_tags(
                         connection,
                         "manual_intake",
                         entry_id,
@@ -2418,7 +2418,7 @@ def setup_food_routes(rt):
                         commit=False,
                     ):
                         raise ValueError("Could not save the favorite status.")
-                    if not set_entry_tags(
+                    if (tags_json or "").strip() and not set_entry_tags(
                         connection,
                         "recipe",
                         entry_id,
@@ -2574,7 +2574,7 @@ def setup_food_routes(rt):
                         commit=False,
                     ):
                         raise ValueError("Catalog item favorite could not be saved.")
-                    if not set_entry_tags(
+                    if (tags_json or "").strip() and not set_entry_tags(
                         connection,
                         "catalog",
                         int(created_id),
@@ -2717,7 +2717,7 @@ def setup_food_routes(rt):
                         commit=False,
                     ):
                         raise ValueError("Manual intake favorite could not be saved.")
-                    if not set_entry_tags(
+                    if (tags_json or "").strip() and not set_entry_tags(
                         connection,
                         "manual_intake",
                         int(created_id),
@@ -2781,7 +2781,7 @@ def setup_food_routes(rt):
                         commit=False,
                     ):
                         raise ValueError("Recipe favorite could not be saved.")
-                    if not set_entry_tags(
+                    if (tags_json or "").strip() and not set_entry_tags(
                         connection,
                         "recipe",
                         int(created_id),

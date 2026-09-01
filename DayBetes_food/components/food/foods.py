@@ -727,6 +727,9 @@ def _tag_badge_style(tag_name: str) -> str:
     )
 
 
+TAGS_UI_ENABLED = False
+
+
 def _tags_multiselect_input(
     tag_options: list[str] | None = None,
     selected_tags: list[str] | None = None,
@@ -735,6 +738,8 @@ def _tags_multiselect_input(
     field_name: str = "tags_json",
     input_style: str = "",
 ):
+    if not TAGS_UI_ENABLED:
+        return ""
     options = sorted({(x or "").strip() for x in (tag_options or []) if (x or "").strip()})
     selected = []
     seen = set()
@@ -2069,7 +2074,7 @@ def _create_page_shell(title: str, form, result_id: str):
         Div(id=result_id, cls="text-xs w-full"),
         _form_draft_bootstrap_script(),
         _searchable_autocomplete_bootstrap_script(),
-        _tags_multiselect_bootstrap_script(),
+        _tags_multiselect_bootstrap_script() if TAGS_UI_ENABLED else "",
         Script(src="/js/smart_macros.js?v=2", defer="defer"),
         data_hide_cart="true",
         cls="""
@@ -2306,7 +2311,7 @@ def _edit_page_shell(form, result_id: str):
         Div(id=result_id, cls="text-xs w-full"),
         _form_draft_bootstrap_script(),
         _searchable_autocomplete_bootstrap_script(),
-        _tags_multiselect_bootstrap_script(),
+        _tags_multiselect_bootstrap_script() if TAGS_UI_ENABLED else "",
         data_hide_cart="true",
         cls="""
             flex flex-col items-center
@@ -3077,7 +3082,7 @@ def FoodDetailPage(
                             ],
                             cls="flex flex-wrap gap-1.5 pt-1",
                         )
-                        if tags
+                        if TAGS_UI_ENABLED and tags
                         else ""
                     ),
                     cls="flex flex-col gap-1",

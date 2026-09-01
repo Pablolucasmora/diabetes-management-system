@@ -682,6 +682,16 @@ def _ensure_insulin_injections_schema(cursor):
     )
 
 
+def _remove_legacy_user_sessions(cursor):
+    """Remove the unused session table superseded by auth_sessions."""
+    cursor.execute("DROP TABLE IF EXISTS user_sessions;")
+
+
+def _remove_legacy_user_hidden_catalog(cursor):
+    """Remove the unused per-user catalog hiding table."""
+    cursor.execute("DROP TABLE IF EXISTS user_hidden_catalog;")
+
+
 def init_db():
     conn = get_connection()
     cur = conn.cursor()
@@ -718,6 +728,8 @@ def init_db():
         _ensure_copy_origin_schema(cur)
         _ensure_users_schema(cur)
         _ensure_insulin_injections_schema(cur)
+        _remove_legacy_user_sessions(cur)
+        _remove_legacy_user_hidden_catalog(cur)
         _ensure_default_user(cur)
 
         conn.commit()

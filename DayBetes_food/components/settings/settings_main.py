@@ -41,15 +41,6 @@ def settings_main(connection, current_user=None):
                 ),
             ),
             Button(
-                "Tags",
-                type="button",
-                cls="web_button food_entry flex items-center justify-between cursor-pointer text-left mt-2",
-                hx_get="/settings/tags",
-                hx_target="#main_content",
-                hx_swap="innerHTML",
-                hx_push_url="true",
-            ),
-            Button(
                 "Injection log",
                 type="button",
                 cls="web_button food_entry flex items-center justify-between cursor-pointer text-left",
