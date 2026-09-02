@@ -782,6 +782,9 @@
       border-color: color-mix(in oklab, var(--color-gray-500) 30%, transparent);
     }
   }
+  .border-red-200 {
+    border-color: var(--color-red-200);
+  }
   .border-red-200\/70 {
     border-color: color-mix(in srgb, oklch(88.5% 0.062 18.334) 70%, transparent);
     @supports (color: color-mix(in lab, red, red)) {
@@ -847,6 +850,9 @@
   }
   .bg-green-400 {
     background-color: var(--color-green-400);
+  }
+  .bg-red-50 {
+    background-color: var(--color-red-50);
   }
   .bg-red-50\/60 {
     background-color: color-mix(in srgb, oklch(97.1% 0.013 17.38) 60%, transparent);

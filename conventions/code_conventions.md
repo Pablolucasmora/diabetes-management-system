@@ -556,8 +556,13 @@ Durante la primera fase, con un único usuario, no es obligatorio añadir `versi
 - transacciones para operaciones compuestas;
 - estados condicionales en transiciones sensibles;
 - protección frente a dobles envíos y reintentos básicos.
+- constraints de integridad para valores imposibles;
+- unicidad compatible con soft-delete;
+- ownership preparado en el modelo y las queries;
+- timestamps y unidades coherentes;
+- migraciones idempotentes y verificables.
 
-El versionado optimista, locks explícitos e idempotency keys se incorporan cuando la operación sea crítica o cuando se habilite concurrencia real entre clientes.
+La auditoría clínica completa, los snapshots inmutables, el versionado optimista general, los locks explícitos y las idempotency keys globales se incorporan cuando la operación sea crítica o cuando se habilite concurrencia real entre clientes. Esta es la política de fases común para concurrencia y persistencia; no se duplica en la sección 11.
 
 ### 6.12 Tests de concurrencia
 
@@ -1121,15 +1126,78 @@ El mapper es responsable de convertir entre `Decimal` y el formato del transport
 
 ## 11. Base de datos, soft-delete y auditoría
 
-### 11.1 Timestamps y soft-delete
+La base de datos es la última barrera de integridad del sistema. Las validaciones de Python mejoran los mensajes y la experiencia, pero no sustituyen constraints, índices, claves foráneas ni transacciones.
 
-- Las entidades archivables tienen `deleted_at` nullable.
-- Las lecturas normales excluyen archivados mediante `deleted_at IS NULL`.
-- Las operaciones de archivado se llaman `archive_<entity>` y las de restauración `restore_<entity>`.
-- Las entidades no archivables usan `delete_<entity>` y documentan por qué el borrado físico es correcto.
-- `updated_at` se actualiza automáticamente mediante trigger o mediante un helper central obligatorio.
+La semántica de unidades, precisión y valores pertenece a `measurement_conventions.md`. Los errores producidos por constraints siguen `error_conventions.md`. Las estrategias de concurrencia e idempotencia siguen la sección 6.
 
-### 11.2 Unicidad y soft-delete
+### 11.1 Definición de propiedad y ciclo de vida
+
+Cada tabla debe documentar explícitamente:
+
+- su propietario, si lo tiene;
+- la columna física que identifica al propietario;
+- si esa columna representa propietario actual, creador o actor;
+- si es pública, privada o mixta;
+- si es archivable, no archivable, histórica o dependiente;
+- quién puede crear, leer, modificar, archivar, restaurar y borrar;
+- qué ocurre cuando se elimina el usuario propietario.
+
+`created_by` significa creador/actor y no se interpreta automáticamente como propietario actual. Solo puede utilizarse como filtro de ownership en una tabla cuando el contrato de esa tabla documente explícitamente que creador y propietario son la misma persona. Si se permiten transferencias o recursos compartidos, debe existir una columna de propietario separada.
+
+Los nombres físicos heredados pueden variar entre tablas, pero la capa Python debe usar `user_id` según la sección 3.5 y los mappers deben declarar la correspondencia física.
+
+### 11.2 Entidades archivables y no archivables
+
+Cada entidad se clasifica antes de implementar sus operaciones:
+
+- **Archivable**: conserva la fila y utiliza `deleted_at`.
+- **Non-archivable**: permite borrado físico porque no necesita preservar el registro.
+- **Historical**: conserva el registro y puede requerir auditoría o prohibir el borrado normal.
+- **Dependent**: su ciclo de vida depende de un aggregate root.
+
+La clasificación no se deduce del verbo de una función. Debe documentarse por tabla y reflejarse en CRUD, endpoints, FKs e índices.
+
+### 11.3 Soft-delete
+
+Una entidad archivable utiliza un campo nullable `deleted_at`.
+
+- `NULL` significa registro activo.
+- Un timestamp significa registro archivado.
+- Archivar es una actualización, no un `DELETE` físico.
+- Restaurar elimina `deleted_at` y comprueba de nuevo los conflictos de unicidad.
+- Archivar actualiza también `updated_at`.
+- Las lecturas normales excluyen archivados.
+- Las consultas que incluyan archivados deben indicarlo explícitamente en su nombre o parámetros.
+- Sugerencias, búsquedas, listados y joins deben respetar el filtro activo por defecto.
+- Los endpoints no deben obtener una fila archivada para filtrarla después en Python.
+
+Las operaciones se llaman `archive_<entity>` y `restore_<entity>`. Las entidades no archivables utilizan `delete_<entity>` y documentan por qué el borrado físico es correcto.
+
+### 11.4 Lecturas y escrituras con visibilidad
+
+Una query debe declarar su intención de visibilidad: solo activos, solo archivados, todos o visibles para un usuario.
+
+Para una entidad cuyo propietario físico sea `owner_column`, una lectura de recursos públicos y propios sigue este patrón:
+
+```sql
+WHERE entity.id = %(entity_id)s
+  AND entity.deleted_at IS NULL
+  AND (
+      entity.owner_column = %(user_id)s
+      OR entity.is_private = FALSE
+  )
+```
+
+`owner_column` representa la columna propietaria real de la tabla; no se escribe literalmente si no existe. Para una escritura, la visibilidad pública nunca concede permiso:
+
+```sql
+WHERE entity.id = %(entity_id)s
+  AND entity.owner_column = %(user_id)s
+```
+
+El owner column real debe aplicarse dentro de SQL y estar documentado por tabla. La lógica detallada de ownership y agregados sigue la sección 5 y la sección 6.9.
+
+### 11.5 Unicidad y soft-delete
 
 Toda restricción `UNIQUE` sobre una entidad archivable debe implementarse como índice único parcial:
 
@@ -1141,30 +1209,76 @@ WHERE deleted_at IS NULL;
 
 Así, una fila archivada no bloquea la creación de una fila activa equivalente. Esta regla se aplica a unicidad simple, compuesta y normalizada por expresiones.
 
-### 11.3 SQL seguro
+La condición de unicidad debe coincidir con la normalización de Python. Una comprobación previa puede mejorar el mensaje, pero nunca sustituye la constraint ni `ON CONFLICT`.
 
-- Todo valor dinámico viaja como parámetro.
-- Está prohibido interpolar valores de usuario con f-strings.
-- Los nombres dinámicos de tablas o columnas usan `psycopg.sql.Identifier` y una whitelist explícita.
+### 11.6 Constraints de integridad
+
+Las reglas importantes deben reforzarse en PostgreSQL:
+
+- rangos numéricos;
+- valores cerrados;
+- cantidades positivas;
+- relaciones obligatorias;
+- exactamente una alternativa no nula;
+- coherencia entre columnas;
+- unicidad;
+- estados válidos.
+
+Los constraints nuevos tienen nombres explícitos y siguen estos patrones:
+
+- `ck_<tabla>_<regla>`;
+- `uq_<tabla>_<columnas>`;
+- `fk_<tabla>_<columna>_<tabla_referenciada>`;
+- `trg_<tabla>_<evento>`.
+
+Ejemplo correcto:
+
+```text
+fk_recipe_user_id_users
+```
+
+Un constraint debe coincidir con la validación Python y tener tests de aceptación y rechazo.
+
+### 11.7 Índices
+
+Los índices se crean para consultas y relaciones reales:
+
+- las FKs utilizadas en joins frecuentes deben revisarse para indexación;
+- los filtros por propietario deben tener índices adecuados;
+- los listados activos pueden usar índices parciales;
+- los índices de expresión deben coincidir con la normalización de duplicados;
+- no se crean índices duplicados sin justificarlo;
+- después de una migración se revisan las queries críticas.
+
+Los índices deben seguir `idx_<tabla>_<columnas>` o `uq_<tabla>_<columnas>` y documentar qué consulta soportan cuando no sea evidente.
+
+### 11.8 Claves foráneas
+
+Toda FK documenta su relación y su política de borrado:
+
+- `RESTRICT`: impide borrar datos con dependencias relevantes;
+- `CASCADE`: elimina dependencias sin significado independiente;
+- `SET NULL`: conserva el registro y elimina una referencia opcional;
+- `NO ACTION`: solo se usa con comportamiento diferido deliberadamente elegido.
+
+La política se decide por ciclo de vida, no por comodidad. Para datos históricos o clínicos se prioriza conservar información mediante `RESTRICT` o `SET NULL`; `CASCADE` requiere justificar qué histórico destruye.
+
+### 11.9 SQL seguro e integridad declarativa
+
+- Todo valor dinámico viaja como parámetro; nunca se interpola con f-strings ni concatenación.
+- Los nombres dinámicos de tabla o columna usan `psycopg.sql.Identifier` junto con una whitelist central definida en la sección 4.6.
 - Los updates dinámicos usan `_build_update_query()` o el helper central que lo sustituya.
 - Las queries de lectura con filtros opcionales reutilizan helpers comunes.
 - Los listados tienen orden estable, incluyendo el ID como desempate.
 - Los límites y offsets se normalizan en un helper común.
 
-### 11.4 Constraints, índices y FKs
+Las constraints e índices son parte del contrato de persistencia y deben existir en la base de datos junto con las comprobaciones correspondientes en Python. La clasificación de whitelists internas como enumeraciones técnicas se define en la sección 4.6.
 
-- Índices: `idx_<tabla>_<columnas>`.
-- Índices únicos: `uq_<tabla>_<columnas>`.
-- Checks: `ck_<tabla>_<regla>`.
-- Foreign keys: `fk_<tabla>_<columna>_<tabla_referenciada>`.
-- Triggers: `trg_<tabla>_<evento>`.
-- Nombrar explícitamente constraints nuevos; no depender de nombres generados por PostgreSQL.
-- Toda FK documenta `RESTRICT`, `CASCADE` o `SET NULL` según el ciclo de vida del dato.
-- Las restricciones importantes existen en la base de datos además de validarse en Python.
+### 11.10 Auditoría de cambios
 
-### 11.5 Auditoría
+La auditoría de cambios conserva la historia de modificaciones de datos; no es el logging técnico de la aplicación.
 
-Las operaciones que lo requieran deben conservar como mínimo actor y timestamp. Para datos clínicos o históricos, la decisión de auditoría debe especificar:
+Las tablas o campos que requieran trazabilidad deben especificar:
 
 - entidad y operación;
 - actor;
@@ -1173,24 +1287,103 @@ Las operaciones que lo requieran deben conservar como mínimo actor y timestamp.
 - valores anterior y nuevo si se necesita reconstrucción;
 - política de retención.
 
+Para datos clínicos, históricos o que alimenten modelos, se debe distinguir entre valor original, valor corregido e información calculada. La auditoría debe incluir `request_id` cuando exista, siguiendo `error_conventions.md`.
+
+La auditoría puede implementarse mediante tabla histórica, trigger o servicio centralizado. La estrategia elegida debe ser única por caso y debe documentar si cubre escrituras realizadas fuera de la aplicación.
+
+### 11.11 Borrado físico
+
+El borrado físico solo se permite cuando la entidad está declarada como no archivable y no destruye información histórica necesaria.
+
+Antes de utilizar `DELETE` se revisan FKs, cascadas, favoritos, etiquetas, porciones, snapshots y auditoría. No se utiliza el borrado físico para resolver conflictos de unicidad ni para ocultar un error de ownership.
+
 ## 12. Migraciones y evolución del esquema
 
-El esquema debe evolucionar de forma explícita y verificable.
+El esquema debe evolucionar de forma explícita, idempotente y verificable. Un cambio de esquema incluye también los datos, queries, dataclasses, mappers, endpoints y tests que dependan de él.
 
-- `schema.py` representa la definición declarativa esperada.
-- `db_init.py` puede mantenerse como bootstrap pragmático durante el TFG, pero no debe ocultar migraciones fallidas.
-- Todo cambio manual de esquema se refleja simétricamente en `schema.py` y en el bootstrap/migración correspondiente.
-- Las operaciones de bootstrap y migración deben ser idempotentes.
-- Una migración debe tener una finalidad identificable y no mezclar cambios funcionales no relacionados.
-- Las migraciones destructivas requieren una decisión explícita, respaldo y documentación.
-- Si una migración tolera un fallo parcial mediante savepoint, debe dejar claramente indicado si el sistema puede continuar de forma segura.
-- No continuar aparentando inicialización correcta después de fallar una modificación obligatoria del esquema.
+### 12.1 Fuentes y responsabilidades
+
+- `schema.py` representa la definición declarativa esperada para instalaciones nuevas.
+- `db_init.py` puede mantener bootstrap y migraciones pragmáticas durante el TFG.
+- Cada migración debe tener una finalidad identificable y no mezclar cambios funcionales no relacionados.
+- Un cambio aplicado manualmente a PostgreSQL debe reflejarse en `schema.py` y en el bootstrap/migración.
+- La base de datos real debe poder compararse con la definición esperada.
+- La migración no se considera completa hasta que el código que la consume también esté actualizado.
+
+Mientras no exista un sistema de migraciones versionadas independiente, las funciones de `db_init.py` deben seguir el patrón `_ensure_<feature>_schema` y ser idempotentes. Si el proyecto requiere despliegues con historial formal, se introducirá una tabla de versiones o herramienta de migraciones como decisión separada.
+
+### 12.2 Idempotencia
+
+Una migración idempotente puede ejecutarse más de una vez sin duplicar objetos, perder datos ni producir un estado diferente.
+
+- Usar `IF NOT EXISTS` o comprobaciones equivalentes cuando sea seguro.
+- Comprobar la definición existente antes de modificarla.
+- No asumir que la ausencia de una tabla implica que no existen datos relacionados.
+- No crear índices duplicados con nombres alternativos para ocultar una migración incompleta.
+- No tratar un error de “ya existe” como éxito si la definición puede ser incorrecta.
+- Si una migración detecta una definición incompatible, debe fallar y exigir una decisión explícita.
+
+### 12.3 Procedimiento obligatorio
+
+Antes de ejecutar un cambio de esquema:
+
+1. Definir la decisión de modelo, ciclo de vida y compatibilidad.
+2. Identificar tablas, columnas, FKs, índices, constraints y triggers afectados.
+3. Identificar queries, mappers, dataclasses, endpoints y componentes afectados.
+4. Definir cómo se conservan, convierten o eliminan los datos existentes.
+5. Definir el comportamiento para `NULL`, valores antiguos e índices únicos.
+6. Preparar una migración idempotente.
+7. Actualizar `schema.py` y el bootstrap/mecanismo de migración.
+8. Actualizar código y tests dependientes.
+9. Ejecutar la migración en una base de datos de prueba con datos representativos.
+10. Verificar esquema, constraints, índices y muestras de datos antes y después.
+11. Verificar que la aplicación puede arrancar y ejecutar las operaciones afectadas.
+
+### 12.4 Datos y migraciones destructivas
+
+- Una migración destructiva requiere decisión explícita y estrategia de recuperación.
+- No eliminar una columna antes de migrar sus consumidores.
+- No borrar filas para hacer que una constraint nueva “entre” sin documentar qué se pierde.
+- Las conversiones de tipo deben definir la expresión `USING`, precisión, redondeo y tratamiento de valores inválidos.
+- Los cambios `REAL` a `NUMERIC` y `TIMESTAMP` a `TIMESTAMPTZ` siguen además la sección 10.5.
+- Los datos clínicos, históricos o importados deben conservar su trazabilidad cuando el cambio lo requiera.
+
+### 12.5 Fallos y transacciones de migración
+
+- Las migraciones se ejecutan dentro de la transacción que corresponda al bootstrap.
+- Un savepoint solo puede tolerar un fallo si se demuestra que continuar es seguro.
+- Una migración obligatoria fallida aborta el arranque o deja el sistema marcado como no actualizado.
+- No imprimir un warning y continuar como si el esquema fuese correcto.
+- El resultado final debe ser inequívoco: aplicada, omitida de forma segura y documentada, o abortada.
+- Las operaciones que PostgreSQL no permita ejecutar de forma transaccional deben documentar su estrategia específica.
 
 ## 13. Política de testing quirúrgico
 
-Se prioriza la cobertura de comportamiento crítico sobre la cantidad de líneas cubiertas.
+Se prioriza la cobertura de comportamiento crítico sobre la cantidad de líneas cubiertas. Los tests deben detectar regresiones de contrato, seguridad, integridad y cálculos, no únicamente comprobar que las funciones se ejecutan.
 
-### 13.1 Tests obligatorios por CRUD o caso de uso
+### 13.1 Estructura y nomenclatura
+
+La estructura recomendada es:
+
+```text
+tests/
+├── unit/
+├── integration/
+├── routes/
+├── database/
+└── fixtures/
+```
+
+Los archivos usan `test_<modulo>.py` y las funciones describen el comportamiento:
+
+```text
+test_update_event_rejects_foreign_owner
+test_confirm_event_rolls_back_when_injection_fails
+```
+
+Si el proyecto adopta `pytest`, la configuración y dependencias de tests deben documentarse. No se debe exigir una herramienta que no esté instalada o declarada en el proyecto.
+
+### 13.2 Tests obligatorios por CRUD o caso de uso
 
 Cuando se modifique una tabla o función de persistencia, probar según corresponda:
 
@@ -1205,7 +1398,9 @@ Cuando se modifique una tabla o función de persistencia, probar según correspo
 - repetición de la misma petición;
 - filtrado de soft-delete.
 
-### 13.2 Tests de dominio
+Además, cada operación debe probar su contrato de retorno: `None`, lista vacía, `False`, `NotFoundError`, `ConflictError` y excepciones de infraestructura no deben intercambiarse.
+
+### 13.3 Tests de dominio
 
 Priorizar:
 
@@ -1216,17 +1411,70 @@ Priorizar:
 - algoritmos de estadísticas;
 - parsing y validación numérica.
 
-### 13.3 Tests de integración
+Los tests de unidades y conversiones siguen `measurement_conventions.md`. Los tests de excepciones y formatos de error siguen `error_conventions.md`.
 
-Cuando la regla dependa de PostgreSQL, usar tests de integración para comprobar:
+### 13.4 Tests de integración
 
-- constraints y conflictos concurrentes;
+Los tests de integración deben utilizar PostgreSQL real cuando la regla dependa de:
+
+- constraints;
 - índices únicos parciales;
-- cascadas, `RESTRICT` y `SET NULL`;
-- rollback real de transacciones;
-- filtros de propietario y soft-delete.
+- FKs y cascadas;
+- locks;
+- versiones;
+- tipos `NUMERIC` o fechas;
+- rollback.
 
-Las validaciones puramente visuales pueden hacerse manualmente durante el TFG, pero las respuestas HTMX críticas deben tener al menos una prueba de status, target/evento esperado y mensaje de error.
+No sustituir estos tests por mocks de cursor, porque un mock no comprueba el comportamiento real de PostgreSQL.
+
+### 13.5 Tests HTTP y HTMX
+
+Los endpoints deben probar:
+
+- método HTTP;
+- autenticación;
+- ownership;
+- validación;
+- status;
+- formato HTML/JSON;
+- `hx-target`, `hx-swap` y headers HTMX;
+- redirecciones;
+- `200 + fragmento mínimo` para validación HTMX;
+- errores no visuales según `error_conventions.md`;
+- repetición de peticiones;
+- respuesta ante conflictos.
+
+### 13.6 Tests de migraciones
+
+Cada migración debe probar:
+
+- ejecución sobre una base vacía;
+- ejecución sobre una base existente;
+- segunda ejecución sin efectos duplicados;
+- datos antiguos válidos;
+- datos antiguos inválidos;
+- preservación de `NULL`;
+- constraints e índices esperados;
+- comportamiento de rollback o fallo;
+- compatibilidad del código posterior.
+
+### 13.7 Tests externos y de configuración
+
+Los adapters externos deben probar timeout, error de red, status no exitoso, JSON inválido, unidades desconocidas, reintentos y degradación. La configuración debe probar valores ausentes, inválidos, defaults y entornos inseguros.
+
+### 13.8 Política pragmática por fases
+
+Durante la fase de recopilación personal se priorizan:
+
+- cálculos de cantidades y macros;
+- incertidumbres;
+- validación numérica;
+- autenticación y ownership;
+- transacciones y rollback;
+- constraints y soft-delete;
+- errores HTTP y HTMX críticos.
+
+Las pruebas puramente visuales pueden hacerse manualmente durante el TFG, pero toda regla de datos, seguridad, transacción o contrato HTTP debe tener una prueba automatizada.
 
 ## 14. Procedimiento obligatorio de auditoría por tabla
 
@@ -1243,7 +1491,11 @@ Para cada tabla se revisará siempre en este orden:
 9. Endpoints consumidores, autenticación, códigos HTTP y respuestas HTMX.
 10. Formularios, validación cliente/servidor y mensajes de usuario.
 11. Concurrencia, idempotencia y conflictos de unicidad.
-12. Tests de resultados vacíos, validación, permisos, rollback y concurrencia.
+12. Ciclo de vida declarado: archivable, no archivable, histórico o dependiente.
+13. Política `ON DELETE`, impacto sobre históricos y posibilidad de borrado físico.
+14. Auditoría requerida, actor, timestamps, valores originales y `request_id`.
+15. Tests de resultados vacíos, validación, permisos, rollback y concurrencia.
+16. Coincidencia entre `schema.py`, migraciones/bootstrap y esquema real.
 
 Cada hallazgo se clasifica como una de estas categorías:
 
