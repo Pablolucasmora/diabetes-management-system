@@ -120,6 +120,8 @@ def _ensure_users_schema(cursor):
 
     cursor.execute("ALTER TABLE users ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;")
     cursor.execute("ALTER TABLE users ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;")
+    cursor.execute("ALTER TABLE users ALTER COLUMN created_at SET NOT NULL;")
+    cursor.execute("ALTER TABLE users ALTER COLUMN updated_at SET NOT NULL;")
     cursor.execute("ALTER TABLE users ALTER COLUMN username SET NOT NULL;")
     cursor.execute("ALTER TABLE users ALTER COLUMN password_hash SET NOT NULL;")
 
@@ -192,6 +194,12 @@ def _ensure_default_user(cursor):
             "password_hash": hash_password(DEFAULT_USER_PASSWORD),
         },
     )
+
+
+def _remove_legacy_user_columns(cursor):
+    """Remove user columns superseded by the canonical fields."""
+    cursor.execute("ALTER TABLE users DROP COLUMN IF EXISTS name;")
+    cursor.execute("ALTER TABLE users DROP COLUMN IF EXISTS registration_date;")
 
 
 def _ensure_catalog_schema(cursor):
@@ -772,6 +780,7 @@ def init_db():
         _ensure_insulin_injections_schema(cur)
         _remove_legacy_user_sessions(cur)
         _remove_legacy_user_hidden_catalog(cur)
+        _remove_legacy_user_columns(cur)
         _ensure_default_user(cur)
 
         conn.commit()

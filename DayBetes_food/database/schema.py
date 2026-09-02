@@ -9,6 +9,7 @@ class DBSchema:
         email VARCHAR(255) NOT NULL,
         username VARCHAR(50) NOT NULL,
         password_hash TEXT NOT NULL,
+        category VARCHAR(255) CHECK (category IN ('admin', 'common')),
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
         last_login_at TIMESTAMP,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
