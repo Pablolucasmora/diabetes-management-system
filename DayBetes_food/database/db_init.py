@@ -763,6 +763,35 @@ def _remove_legacy_user_hidden_catalog(cursor):
     cursor.execute("DROP TABLE IF EXISTS user_hidden_catalog;")
 
 
+def _ensure_auth_sessions_schema(cursor):
+    """Convert legacy auth session timestamps to timezone-aware values."""
+    for column in ("created_at", "last_seen_at", "expires_at", "revoked_at"):
+        data_type = (_column_data_type(cursor, "auth_sessions", column) or "").lower()
+        if data_type == "timestamp without time zone":
+            if column == "created_at":
+                cursor.execute(
+                    "ALTER TABLE auth_sessions ALTER COLUMN created_at TYPE TIMESTAMPTZ "
+                    "USING created_at AT TIME ZONE 'UTC';"
+                )
+            elif column == "last_seen_at":
+                cursor.execute(
+                    "ALTER TABLE auth_sessions ALTER COLUMN last_seen_at TYPE TIMESTAMPTZ "
+                    "USING last_seen_at AT TIME ZONE 'UTC';"
+                )
+            elif column == "expires_at":
+                cursor.execute(
+                    "ALTER TABLE auth_sessions ALTER COLUMN expires_at TYPE TIMESTAMPTZ "
+                    "USING expires_at AT TIME ZONE 'UTC';"
+                )
+            else:
+                cursor.execute(
+                    "ALTER TABLE auth_sessions ALTER COLUMN revoked_at TYPE TIMESTAMPTZ "
+                    "USING revoked_at AT TIME ZONE 'UTC';"
+                )
+        elif data_type != "timestamp with time zone":
+            raise RuntimeError(f"Unexpected auth_sessions.{column} type: {data_type!r}")
+
+
 def init_db():
     conn = get_connection()
     cur = conn.cursor()
@@ -798,6 +827,7 @@ def init_db():
         _ensure_privacy_schema(cur)
         _ensure_copy_origin_schema(cur)
         _ensure_users_schema(cur)
+        _ensure_auth_sessions_schema(cur)
         _ensure_insulin_injections_schema(cur)
         _remove_legacy_user_sessions(cur)
         _remove_legacy_user_hidden_catalog(cur)

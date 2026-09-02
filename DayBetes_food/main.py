@@ -1,5 +1,5 @@
 from fasthtml.common import *
-from datetime import datetime
+from datetime import datetime, timezone
 from html import escape
 import logging
 import re
@@ -149,13 +149,13 @@ async def auth_security_middleware(request: Request, call_next):
             session_row = get_session_with_user(connection, session_cookie)
             if session_row:
                 request.state.user = {
-                    "id": session_row["user_id"],
-                    "email": session_row["email"],
-                    "username": session_row["username"],
+                    "id": session_row.user_id,
+                    "email": session_row.email,
+                    "username": session_row.username,
                 }
-                last_seen = session_row.get("last_seen_at")
-                if last_seen and (datetime.utcnow() - last_seen).total_seconds() >= SESSION_REFRESH_SECONDS:
-                    refresh_session(connection, int(session_row["id"]))
+                last_seen = session_row.last_seen_at
+                if last_seen and (datetime.now(timezone.utc) - last_seen).total_seconds() >= SESSION_REFRESH_SECONDS:
+                    refresh_session(connection, session_row.id)
 
     csrf_exempt = request.url.path in AUTH_POST_EXEMPT_PATHS
     if request.method in UNSAFE_METHODS and not csrf_exempt:

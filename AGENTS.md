@@ -15,3 +15,27 @@
 - El agente debe acordar con el usuario la nueva convención antes de proceder con cambios, ediciones, escrituras o refactorizaciones que dependan de ella.
 - Una vez aprobada, la nueva convención debe documentarse en el archivo adecuado dentro de `conventions/` antes o junto con la implementación.
 - No se debe inventar una convención local dentro de un módulo, endpoint, tabla o función para evitar consultar esta decisión.
+
+## Registro de decisiones
+
+- Cuando el usuario indique explícitamente que se complete
+  `conventions/decisions.md` con una decisión ya acordada, el
+  agente debe añadir una entrada nueva al final del archivo con
+  este formato exacto:
+
+  ## YYYY-MM-DD — <título corto>
+
+  **Origen**: <tabla/hallazgo que la disparó, o "n/a">
+  **Contexto**: ...
+  **Alternativas consideradas**:
+  - ...
+  **Decisión**: ...
+  **Convención actualizada**: <archivo.md sección X> o "ninguna"
+
+- El agente no debe registrar una decisión en decisions.md por
+  iniciativa propia ni como parte automática de resolver una
+  carencia de convención — solo cuando el usuario lo pida
+  explícitamente para esa decisión.
+- Si la decisión modifica un criterio ya registrado anteriormente,
+  la entrada nueva debe referenciar la fecha de la decisión previa
+  en vez de editarla o eliminarla.

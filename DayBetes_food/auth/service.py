@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from psycopg.errors import UniqueViolation
@@ -13,6 +13,8 @@ from DayBetes_food.auth.models import (
     CreateUserCommand,
     UserAuthRead,
     UserRead,
+    AuthSessionRead,
+    auth_session_read_from_row,
     user_auth_read_from_row,
     user_read_from_row,
 )
@@ -24,7 +26,7 @@ GENERIC_AUTH_ERROR = "Credenciales no validas"
 
 
 def _utcnow() -> datetime:
-    return datetime.utcnow()
+    return datetime.now(timezone.utc)
 
 
 def create_user(connection, command: CreateUserCommand, commit: bool = True) -> int:
@@ -148,7 +150,7 @@ def revoke_session(connection, session_token: str, commit: bool = True) -> None:
         connection.commit()
 
 
-def get_session_with_user(connection, session_token: str) -> Optional[dict]:
+def get_session_with_user(connection, session_token: str) -> Optional[AuthSessionRead]:
     token_hash = hash_token(session_token)
     query = """
         SELECT
@@ -174,7 +176,7 @@ def get_session_with_user(connection, session_token: str) -> Optional[dict]:
     now = _utcnow()
     if row["revoked_at"] is not None or row["expires_at"] <= now or not row["is_active"]:
         return None
-    return row
+    return auth_session_read_from_row(row)
 
 
 def refresh_session(connection, session_id: int, commit: bool = True) -> None:
@@ -194,13 +196,13 @@ def refresh_session(connection, session_id: int, commit: bool = True) -> None:
         connection.commit()
 
 
-def is_csrf_valid(session_row: Optional[dict], csrf_token: str) -> bool:
+def is_csrf_valid(session_row: Optional[AuthSessionRead], csrf_token: str) -> bool:
     if not csrf_token:
         return False
     token_hash = hash_token(csrf_token)
     if session_row is None:
         return True
-    return token_hash == session_row["csrf_token_hash"]
+    return token_hash == session_row.csrf_token_hash
 
 
 def _get_rate_limit(connection, key_hash: str) -> Optional[dict]:
