@@ -123,8 +123,50 @@ def _ensure_users_schema(cursor):
     cursor.execute("ALTER TABLE users ALTER COLUMN username SET NOT NULL;")
     cursor.execute("ALTER TABLE users ALTER COLUMN password_hash SET NOT NULL;")
 
-    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username ON users (username);")
-    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email ON users (email);")
+    cursor.execute(
+        """
+        SELECT lower(btrim(email)) AS normalized_email
+        FROM users
+        GROUP BY lower(btrim(email))
+        HAVING count(*) > 1
+        LIMIT 1;
+        """
+    )
+    if cursor.fetchone():
+        raise RuntimeError("Duplicate users.email values after normalization")
+
+    cursor.execute(
+        """
+        SELECT lower(btrim(username)) AS normalized_username
+        FROM users
+        GROUP BY lower(btrim(username))
+        HAVING count(*) > 1
+        LIMIT 1;
+        """
+    )
+    if cursor.fetchone():
+        raise RuntimeError("Duplicate users.username values after normalization")
+
+    cursor.execute("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_mail_key;")
+    cursor.execute("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key;")
+    cursor.execute("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_username_key;")
+
+    cursor.execute("DROP INDEX IF EXISTS idx_users_email_unique;")
+    cursor.execute("DROP INDEX IF EXISTS uq_users_email;")
+    cursor.execute("DROP INDEX IF EXISTS uq_users_username;")
+
+    cursor.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email_normalized
+            ON users (lower(btrim(email)));
+        """
+    )
+    cursor.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username_normalized
+            ON users (lower(btrim(username)));
+        """
+    )
 
     if _has_column(cursor, "users", "password"):
         cursor.execute("ALTER TABLE users DROP COLUMN password;")

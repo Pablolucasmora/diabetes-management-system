@@ -1,13 +1,23 @@
 from datetime import datetime, timedelta
 from typing import Optional
 
+from psycopg.errors import UniqueViolation
+
 from DayBetes_food.config import (
     AUTH_RATE_LIMIT_ATTEMPTS,
     AUTH_RATE_LIMIT_BLOCK_SECONDS,
     AUTH_RATE_LIMIT_WINDOW_SECONDS,
     SESSION_TTL_SECONDS,
 )
+from DayBetes_food.auth.models import (
+    CreateUserCommand,
+    UserAuthRead,
+    UserRead,
+    user_auth_read_from_row,
+    user_read_from_row,
+)
 from DayBetes_food.auth.security import hash_token, normalize_identifier
+from DayBetes_food.errors import ConflictError, InfrastructureError
 
 
 GENERIC_AUTH_ERROR = "Credenciales no validas"
@@ -17,7 +27,7 @@ def _utcnow() -> datetime:
     return datetime.utcnow()
 
 
-def create_user(connection, email: str, username: str, password_hash: str, commit: bool = True) -> Optional[int]:
+def create_user(connection, command: CreateUserCommand, commit: bool = True) -> int:
     query = """
         INSERT INTO users (email, username, password_hash, is_active, created_at, updated_at)
         VALUES (%(email)s, %(username)s, %(password_hash)s, TRUE, NOW(), NOW())
@@ -26,23 +36,31 @@ def create_user(connection, email: str, username: str, password_hash: str, commi
     try:
         with connection.cursor() as cursor:
             cursor.execute(query, {
-                "email": normalize_identifier(email),
-                "username": normalize_identifier(username),
-                "password_hash": password_hash,
+                "email": command.email,
+                "username": command.username,
+                "password_hash": command.password_hash,
             })
             user = cursor.fetchone()
         if commit:
             connection.commit()
-        return int(user["id"]) if user else None
-    except Exception:
+        if not user:
+            raise InfrastructureError("User INSERT returned no identifier")
+        return int(user["id"])
+    except UniqueViolation as exc:
         if commit:
             connection.rollback()
-        if not commit:
-            raise
-        return None
+        raise ConflictError("User email or username already exists") from exc
+    except InfrastructureError:
+        if commit:
+            connection.rollback()
+        raise
+    except Exception as exc:
+        if commit:
+            connection.rollback()
+        raise InfrastructureError("Could not create user") from exc
 
 
-def get_user_by_identifier(connection, identifier: str) -> Optional[dict]:
+def get_user_by_identifier(connection, identifier: str) -> Optional[UserAuthRead]:
     normalized = normalize_identifier(identifier)
     query = """
         SELECT id, email, username, password_hash, is_active
@@ -52,10 +70,11 @@ def get_user_by_identifier(connection, identifier: str) -> Optional[dict]:
     """
     with connection.cursor() as cursor:
         cursor.execute(query, {"identifier": normalized})
-        return cursor.fetchone()
+        row = cursor.fetchone()
+    return user_auth_read_from_row(row) if row else None
 
 
-def get_user_by_id(connection, user_id: int) -> Optional[dict]:
+def get_user_by_id(connection, user_id: int) -> Optional[UserRead]:
     query = """
         SELECT id, email, username, is_active
         FROM users
@@ -64,7 +83,8 @@ def get_user_by_id(connection, user_id: int) -> Optional[dict]:
     """
     with connection.cursor() as cursor:
         cursor.execute(query, {"id": user_id})
-        return cursor.fetchone()
+        row = cursor.fetchone()
+    return user_read_from_row(row) if row else None
 
 
 def touch_user_login(connection, user_id: int, commit: bool = True) -> None:

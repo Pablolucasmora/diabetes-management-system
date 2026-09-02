@@ -14,6 +14,7 @@ from DayBetes_food.auth.security import (
     sanitize_text,
     verify_password,
 )
+from DayBetes_food.auth.models import CreateUserCommand
 from DayBetes_food.auth.service import (
     GENERIC_AUTH_ERROR,
     clear_login_failures,
@@ -43,7 +44,7 @@ def _client_ip(request: Request) -> str:
     return ""
 
 
-def _form_shell(title: str, action: str, csrf_token: str, fields_html: str, submit_text: str, alt_text: str, alt_href: str, error: str = ""):
+def _form_shell(title: str, action: str, csrf_token: str, fields_html: str, submit_text: str, alt_text: str, alt_href: str, error: str = "", status_code: int = 200):
     safe_title = escape(title)
     safe_action = escape(action)
     safe_csrf = escape(csrf_token or "")
@@ -84,11 +85,40 @@ def _form_shell(title: str, action: str, csrf_token: str, fields_html: str, subm
       </body>
     </html>
     """
-    return HTMLResponse(html)
+    return HTMLResponse(html, status_code=status_code)
 
 
 def _redirect_with_error(path: str, message: str):
     return RedirectResponse(url=f"{path}?error={quote_plus(message)}", status_code=303)
+
+
+def _registration_form(request: Request, error: str = "", status_code: int = 200):
+    return _form_shell(
+        title="Crear cuenta",
+        action="/auth/register/submit",
+        csrf_token=getattr(request.state, "csrf_token", ""),
+        fields_html="""
+            <input name="username" placeholder="Usuario (3-32 caracteres)" required="required"
+              class="web_input border border-white rounded-lg px-3 py-2 text-sm">
+            <input type="email" name="email" placeholder="Email" required="required"
+              class="web_input border border-white rounded-lg px-3 py-2 text-sm">
+            <p class="text-xs text-gray-600">
+              Usuario: 3-32 caracteres, solo letras, numeros y guion bajo (_).
+            </p>
+            <input type="password" name="password" placeholder="Contrasena segura" required="required"
+              class="web_input border border-white rounded-lg px-3 py-2 text-sm">
+            <input type="password" name="password_confirm" placeholder="Repite contrasena" required="required"
+              class="web_input border border-white rounded-lg px-3 py-2 text-sm">
+            <p class="text-xs text-gray-600">
+              Minimo 12 caracteres y al menos 3 de 4: mayusculas, minusculas, numeros y simbolos.
+            </p>
+        """,
+        submit_text="Registrarse",
+        alt_text="Ya tienes cuenta? Inicia sesion",
+        alt_href="/auth/login",
+        error=error,
+        status_code=status_code,
+    )
 
 
 def _set_auth_cookies(response, session_token: str, csrf_token: str):
@@ -149,32 +179,7 @@ def setup_auth_routes(rt):
         if getattr(req.state, "user", None):
             return RedirectResponse(url="/menu", status_code=303)
 
-        csrf_token = getattr(req.state, "csrf_token", "")
-        return _form_shell(
-            title="Crear cuenta",
-            action="/auth/register/submit",
-            csrf_token=csrf_token,
-            fields_html="""
-                <input name="username" placeholder="Usuario (3-32 caracteres)" required="required"
-                  class="web_input border border-white rounded-lg px-3 py-2 text-sm">
-                <input type="email" name="email" placeholder="Email" required="required"
-                  class="web_input border border-white rounded-lg px-3 py-2 text-sm">
-                <p class="text-xs text-gray-600">
-                  Usuario: 3-32 caracteres, solo letras, numeros y guion bajo (_).
-                </p>
-                <input type="password" name="password" placeholder="Contrasena segura" required="required"
-                  class="web_input border border-white rounded-lg px-3 py-2 text-sm">
-                <input type="password" name="password_confirm" placeholder="Repite contrasena" required="required"
-                  class="web_input border border-white rounded-lg px-3 py-2 text-sm">
-                <p class="text-xs text-gray-600">
-                  Minimo 12 caracteres y al menos 3 de 4: mayusculas, minusculas, numeros y simbolos.
-                </p>
-            """,
-            submit_text="Registrarse",
-            alt_text="Ya tienes cuenta? Inicia sesion",
-            alt_href="/auth/login",
-            error=req.query_params.get("error", ""),
-        )
+        return _registration_form(req, error=req.query_params.get("error", ""))
 
     @rt("/auth/register/submit")
     def post(
@@ -204,9 +209,14 @@ def setup_auth_routes(rt):
             )
 
         with get_connection() as connection:
-            user_id = create_user(connection, email=email, username=username, password_hash=hash_password(password))
-            if not user_id:
-                return _redirect_with_error("/auth/register", "No se pudo crear la cuenta")
+            create_user(
+                connection,
+                CreateUserCommand(
+                    email=email,
+                    username=username,
+                    password_hash=hash_password(password),
+                ),
+            )
         return RedirectResponse(
             url="/auth/login?error=Cuenta+creada.+Inicia+sesion+para+continuar",
             status_code=303,
@@ -233,7 +243,7 @@ def setup_auth_routes(rt):
                 register_login_failure(connection, limiter_key_hash)
                 return _redirect_with_error("/auth/login", GENERIC_AUTH_ERROR)
 
-            is_valid, new_hash = verify_password(user.get("password_hash"), password or "")
+            is_valid, new_hash = verify_password(user.password_hash, password or "")
             if not is_valid:
                 register_login_failure(connection, limiter_key_hash)
                 return _redirect_with_error("/auth/login", GENERIC_AUTH_ERROR)
@@ -245,12 +255,12 @@ def setup_auth_routes(rt):
             try:
                 with connection.transaction():
                     if new_hash:
-                        update_password_hash(connection, int(user["id"]), new_hash, commit=False)
+                        update_password_hash(connection, user.id, new_hash, commit=False)
                     clear_login_failures(connection, limiter_key_hash, commit=False)
-                    touch_user_login(connection, int(user["id"]), commit=False)
+                    touch_user_login(connection, user.id, commit=False)
                     create_session(
                         connection,
-                        user_id=int(user["id"]),
+                        user_id=user.id,
                         session_token=session_token,
                         csrf_token=csrf_token,
                         ip_hash=ip_hash,

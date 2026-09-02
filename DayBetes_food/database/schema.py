@@ -6,14 +6,18 @@ class DBSchema:
     users = """
     CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
-        email VARCHAR(255) UNIQUE NOT NULL,
-        username VARCHAR(50) UNIQUE NOT NULL,
+        email VARCHAR(255) NOT NULL,
+        username VARCHAR(50) NOT NULL,
         password_hash TEXT NOT NULL,
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
         last_login_at TIMESTAMP,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email_normalized
+        ON users (lower(btrim(email)));
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username_normalized
+        ON users (lower(btrim(username)));
     """
 
     auth_sessions = """

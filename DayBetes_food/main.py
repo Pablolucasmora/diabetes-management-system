@@ -1,5 +1,9 @@
 from fasthtml.common import *
 from datetime import datetime
+from html import escape
+import logging
+import re
+import uuid
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import JSONResponse
 
@@ -16,6 +20,7 @@ from DayBetes_food.config import (
 )
 from DayBetes_food.database.db_init import init_db
 from DayBetes_food.database.connection import get_connection
+from DayBetes_food.errors import AppError, InfrastructureError, ValidationError
 from DayBetes_food.routes import (
     setup_auth_routes,
     setup_food_routes,
@@ -31,6 +36,88 @@ app, rt = fast_app(
     htmlkw={"lang": "en"},
     static_path='DayBetes_food/static',
 )
+
+logger = logging.getLogger(__name__)
+
+
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def _request_id(request: Request) -> str:
+    supplied = request.headers.get("X-Request-ID", "").strip()
+    return supplied if _REQUEST_ID_RE.fullmatch(supplied) else uuid.uuid4().hex
+
+
+def _error_html(message: str, *, fragment: bool) -> str:
+    safe_message = escape(message)
+    if fragment:
+        return (
+            '<div class="web_container p-3 rounded-xl border border-red-200 '
+            'bg-red-50 text-sm text-red-700">'
+            f"{safe_message}</div>"
+        )
+    return (
+        '<!doctype html><html lang="es"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1.0">'
+        f"<title>{safe_message}</title></head><body>{_error_html(message, fragment=True)}</body></html>"
+    )
+
+
+def _error_response(request: Request, error: AppError, request_id: str):
+    is_json = "application/json" in request.headers.get("accept", "").lower()
+    is_htmx = request.headers.get("HX-Request") == "true"
+    headers = {"X-Request-ID": request_id}
+    status_code = 200 if is_htmx and isinstance(error, ValidationError) else error.status_code
+    if is_json:
+        return JSONResponse(
+            {
+                "error": {
+                    "code": error.code,
+                    "message": error.public_message,
+                    "fields": error.fields,
+                },
+                "request_id": request_id,
+            },
+            status_code=error.status_code,
+            headers=headers,
+        )
+    return HTMLResponse(
+        _error_html(error.public_message, fragment=is_htmx),
+        status_code=status_code,
+        headers=headers,
+    )
+
+
+async def _handle_app_error(request: Request, error: AppError):
+    request_id = _request_id(request)
+    if error.log_level == "error":
+        cause = error.__cause__
+        if cause is not None:
+            logger.error(
+                "Application error",
+                exc_info=(type(cause), cause, cause.__traceback__),
+                extra={"error_code": error.code, "request_id": request_id},
+            )
+        else:
+            logger.error(
+                "Application error",
+                extra={"error_code": error.code, "request_id": request_id},
+            )
+    return _error_response(request, error, request_id)
+
+
+async def _handle_unexpected_error(request: Request, error: Exception):
+    request_id = _request_id(request)
+    logger.error(
+        "Unexpected application error",
+        exc_info=(type(error), error, error.__traceback__),
+        extra={"error_code": "infrastructure_error", "request_id": request_id},
+    )
+    return _error_response(request, InfrastructureError(), request_id)
+
+
+app.add_exception_handler(AppError, _handle_app_error)
+app.add_exception_handler(Exception, _handle_unexpected_error)
 
 app.add_middleware(GZipMiddleware, minimum_size=512)
 
