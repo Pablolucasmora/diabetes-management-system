@@ -11,9 +11,9 @@ class DBSchema:
         password_hash TEXT NOT NULL,
         category VARCHAR(255) CHECK (category IN ('admin', 'common')),
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
-        last_login_at TIMESTAMP,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        last_login_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email_normalized
         ON users (lower(btrim(email)));

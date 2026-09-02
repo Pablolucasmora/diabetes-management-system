@@ -427,7 +427,13 @@ Si en el futuro se necesita almacenar una dosis asociada al evento, debe crearse
 
 ### 9.1 Almacenamiento
 
-Todos los timestamps se almacenan en UTC. La aplicación no debe depender de la zona horaria del sistema operativo o de la sesión de PostgreSQL.
+Todos los instantes se almacenan como `TIMESTAMPTZ` y representan UTC. La aplicación no debe depender de la zona horaria del sistema operativo o de la sesión de PostgreSQL.
+
+Los eventos relevantes para análisis histórico conservan además la zona IANA aplicable en el momento del evento mediante un campo `timezone_at_event`, por ejemplo `Europe/Madrid`. `TIMESTAMPTZ` conserva el instante universal, pero no el nombre de la zona original.
+
+Las comparaciones de intervalos, retrasos y orden temporal se realizan sobre el instante UTC. Los análisis de hora local convierten cada instante usando su `timezone_at_event`, no la zona actual del usuario ni una zona fija de presentación.
+
+El offset numérico no sustituye a la zona IANA. Puede conservarse adicionalmente cuando sea necesario reproducir exactamente la representación original, pero la zona IANA es el dato canónico para resolver cambios históricos y horario de verano.
 
 ### 9.2 Conversión
 
@@ -531,6 +537,8 @@ Reglas:
 - Si el proveedor cambia el significado o la unidad de un campo, se incrementa `conversion_version`.
 - `measured_at` y `imported_at` son momentos distintos y no deben intercambiarse.
 - La procedencia debe conservarse aunque el dato se transforme o se utilice en un cálculo derivado.
+
+`source`, `measured_at`, `imported_at` y `request_id` pertenecen a la trazabilidad de mediciones, datos clínicos importados o transformaciones relevantes. No son campos obligatorios de las cuentas de usuario ni deben añadirse a `users` por defecto.
 
 ## 13. Datos originales y derivados
 

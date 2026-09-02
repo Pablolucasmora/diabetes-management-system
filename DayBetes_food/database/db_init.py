@@ -50,19 +50,40 @@ def _ensure_users_schema(cursor):
         cursor.execute("ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE;")
 
     if not _has_column(cursor, "users", "last_login_at"):
-        cursor.execute("ALTER TABLE users ADD COLUMN last_login_at TIMESTAMP;")
+        cursor.execute("ALTER TABLE users ADD COLUMN last_login_at TIMESTAMPTZ;")
 
     if not _has_column(cursor, "users", "created_at"):
-        cursor.execute("ALTER TABLE users ADD COLUMN created_at TIMESTAMP;")
+        cursor.execute("ALTER TABLE users ADD COLUMN created_at TIMESTAMPTZ;")
 
     if not _has_column(cursor, "users", "updated_at"):
-        cursor.execute("ALTER TABLE users ADD COLUMN updated_at TIMESTAMP;")
+        cursor.execute("ALTER TABLE users ADD COLUMN updated_at TIMESTAMPTZ;")
 
     if _has_column(cursor, "users", "registration_date"):
         cursor.execute("UPDATE users SET created_at = COALESCE(created_at, registration_date, CURRENT_TIMESTAMP);")
     else:
         cursor.execute("UPDATE users SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP);")
     cursor.execute("UPDATE users SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP);")
+
+    for column in ("last_login_at", "created_at", "updated_at"):
+        data_type = (_column_data_type(cursor, "users", column) or "").lower()
+        if data_type == "timestamp without time zone":
+            if column == "last_login_at":
+                cursor.execute(
+                    "ALTER TABLE users ALTER COLUMN last_login_at TYPE TIMESTAMPTZ "
+                    "USING last_login_at AT TIME ZONE 'UTC';"
+                )
+            elif column == "created_at":
+                cursor.execute(
+                    "ALTER TABLE users ALTER COLUMN created_at TYPE TIMESTAMPTZ "
+                    "USING created_at AT TIME ZONE 'UTC';"
+                )
+            else:
+                cursor.execute(
+                    "ALTER TABLE users ALTER COLUMN updated_at TYPE TIMESTAMPTZ "
+                    "USING updated_at AT TIME ZONE 'UTC';"
+                )
+        elif data_type != "timestamp with time zone":
+            raise RuntimeError(f"Unexpected users.{column} type: {data_type!r}")
 
     if _has_column(cursor, "users", "name"):
         cursor.execute(

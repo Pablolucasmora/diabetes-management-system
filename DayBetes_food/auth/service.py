@@ -65,7 +65,8 @@ def get_user_by_identifier(connection, identifier: str) -> Optional[UserAuthRead
     query = """
         SELECT id, email, username, password_hash, is_active
         FROM users
-        WHERE lower(email) = %(identifier)s OR lower(username) = %(identifier)s
+        WHERE lower(btrim(email)) = %(identifier)s
+           OR lower(btrim(username)) = %(identifier)s
         LIMIT 1;
     """
     with connection.cursor() as cursor:
