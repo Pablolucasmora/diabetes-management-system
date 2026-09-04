@@ -50,7 +50,7 @@ Cada campo cuantitativo debe definir:
 - precisión de cálculo;
 - precisión de presentación;
 - regla de redondeo;
-- tolerancia permitida en tests.
+    - tolerancia permitida en comparaciones.
 
 La interfaz puede mostrar menos decimales que los almacenados. La presentación no debe alterar el valor usado en cálculos posteriores.
 
@@ -605,8 +605,7 @@ Antes de cambiarla se debe:
 6. actualizar dataclasses y mappers;
 7. actualizar componentes y formularios;
 8. revisar cálculos derivados;
-9. actualizar tests y exportaciones;
-10. verificar muestras antes y después.
+9. verificar muestras antes y después.
 
 Nunca cambiar únicamente el texto de una etiqueta si el valor almacenado sigue estando en la unidad anterior.
 
@@ -628,6 +627,5 @@ Para cada campo cuantitativo se debe comprobar:
 - ¿Se utiliza en cálculos clínicos o solo descriptivos?
 - ¿Se distingue de los valores derivados?
 - ¿Hay fórmulas duplicadas en Python, SQL o JavaScript?
-- ¿Existen tests de conversión y límites?
 
 Un campo no se considera listo para análisis hasta que estas preguntas tengan respuestas documentadas.

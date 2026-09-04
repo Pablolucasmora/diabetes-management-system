@@ -282,7 +282,7 @@ Reglas:
 - No se utilizan nombres internos de columnas si el formulario usa otro contrato, salvo que sean iguales por diseño.
 - Un campo puede tener un único mensaje principal y una lista de códigos si se necesita más detalle.
 - Los mensajes técnicos no se envían al cliente.
-- El orden de los errores debe ser estable para facilitar la interfaz y los tests.
+- El orden de los errores debe ser estable para facilitar la interfaz.
 - Los errores globales se representan con una clave como `"_form"` o mediante el mensaje general definido por el componente.
 
 ## 6. Formato JSON
@@ -464,30 +464,7 @@ Durante la fase de recopilación personal, no es obligatorio implementar todos l
 
 Los handlers avanzados para múltiples transportes, traducciones y métricas detalladas pueden incorporarse progresivamente sin cambiar los códigos internos.
 
-## 13. Tests
-
-Cada error debe probarse en dos niveles:
-
-### 13.1 Tests de dominio y servicios
-
-- excepción correcta;
-- código correcto;
-- contexto interno correcto;
-- rollback cuando corresponda;
-- ausencia de filtración de datos.
-
-### 13.2 Tests de endpoints
-
-- status HTTP correcto;
-- estructura JSON o HTML correcta;
-- mensaje público correcto;
-- campos de validación correctos;
-- headers HTMX correctos;
-- traducción de `NotFoundError` a `404`;
-- traducción de `ConflictError` a `409`;
-- traducción de errores inesperados a `500`.
-
-## 14. Checklist de auditoría de errores
+## 13. Checklist de auditoría de errores
 
 Para cada función o endpoint se comprobará:
 
@@ -503,6 +480,4 @@ Para cada función o endpoint se comprobará:
 - ¿La respuesta JSON/HTML/HTMX tiene el formato estándar?
 - ¿Se filtra algún detalle sensible?
 - ¿Se registra el error una sola vez?
-- ¿Hay tests para los caminos de error?
-
-No se considera terminada una operación hasta que su contrato de éxito y sus contratos de error estén documentados y probados.
+No se considera terminada una operación hasta que su contrato de éxito y sus contratos de error estén documentados.

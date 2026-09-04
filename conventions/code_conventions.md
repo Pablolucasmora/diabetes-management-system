@@ -6,6 +6,8 @@ Durante una auditoría de tabla, módulo o Pull Request, este documento es el cr
 
 Las convenciones se aplican inmediatamente al código nuevo. El código existente se adapta progresivamente por tabla o módulo, sin mezclar en una misma corrección cambios funcionales no relacionados.
 
+Durante la fase de desarrollo personal (TFG, un único desarrollador, un único usuario) no se exige una suite de tests automatizados. La verificación manual del comportamiento afectado es suficiente antes de dar por cerrada una tabla o módulo. Esta decisión se revisará cuando el proyecto salga de esta fase; no debe señalarse como convención faltante en auditorías mientras siga vigente.
+
 ## 1. Capas y responsabilidades
 
 El proyecto se divide estrictamente en cuatro responsabilidades. Una capa inferior no debe conocer detalles de una capa superior.
@@ -153,6 +155,8 @@ Los errores de aplicación se clasifican así:
 - Excepción SQL/infraestructura: fallo técnico que debe propagarse hasta el boundary correspondiente.
 
 El coordinador no debe convertir indiscriminadamente todas estas categorías en `ValueError`.
+
+**Para saber más sobre las convenciones de errores leer `error_conventions.md`**
 
 ## 3. Tipado de datos, firmas y nomenclatura
 
@@ -316,7 +320,7 @@ Añadir, eliminar o cambiar un valor requiere revisar conjuntamente:
 4. Las validaciones y servicios.
 5. Los formularios y etiquetas visibles.
 6. Los datos existentes afectados.
-7. Los tests de aceptación y persistencia.
+7. La validación de aceptación y persistencia.
 
 ### 4.5 Enumeraciones abiertas
 
@@ -332,7 +336,7 @@ Debe almacenarse en una tabla de catálogo con, como mínimo:
 
 Los valores iniciales pueden cargarse mediante bootstrap o migración, pero añadir uno nuevo debe ser un cambio de datos, no un cambio obligatorio de código.
 
-En esta categoría entran actualmente estados físicos inicial/final, métodos de cocción y métodos de conservación. Las listas Python existentes solo pueden actuar como datos iniciales mientras se completa el catálogo.
+En esta categoría entran actualmente subtipos de comida, marcas de comida, origen de comida manual, estados físicos inicial/final, métodos de cocción y métodos de conservación. Las listas Python existentes solo pueden actuar como datos iniciales mientras se completa el catálogo.
 
 ### 4.6 Enumeraciones técnicas
 
@@ -341,7 +345,7 @@ Las whitelists internas también son conjuntos cerrados, aunque el usuario no lo
 - Deben centralizarse igual que los enums de dominio.
 - Se validan antes de construir SQL o seleccionar una estrategia.
 - No se exponen como opciones editables al usuario.
-- Añadir un valor requiere revisar seguridad, queries y tests.
+- Añadir un valor requiere revisar seguridad y queries.
 
 ### 4.7 Constantes de configuración
 
@@ -564,23 +568,6 @@ Durante la primera fase, con un único usuario, no es obligatorio añadir `versi
 
 La auditoría clínica completa, los snapshots inmutables, el versionado optimista general, los locks explícitos y las idempotency keys globales se incorporan cuando la operación sea crítica o cuando se habilite concurrencia real entre clientes. Esta es la política de fases común para concurrencia y persistencia; no se duplica en la sección 11.
 
-### 6.12 Tests de concurrencia
-
-Las operaciones sensibles deben probar:
-
-- inserciones simultáneas con el mismo valor único;
-- repetición de la misma petición;
-- repetición con parámetros distintos;
-- update con versión correcta;
-- update con versión obsoleta;
-- transición de estado repetida;
-- rollback después de un fallo intermedio;
-- ownership bajo concurrencia;
-- soft-delete y recreación del mismo valor;
-- traducción correcta de conflictos a `409`.
-
-Los tests que dependan de constraints, locks o aislamiento deben ejecutarse contra PostgreSQL real.
-
 ## 7. Validación y normalización de entrada
 
 La validación garantiza que los datos que llegan al dominio tienen una estructura, tipo y significado válidos antes de ejecutar una operación de persistencia. El servidor es siempre la autoridad final. HTML y JavaScript solo mejoran la experiencia de usuario.
@@ -702,11 +689,9 @@ No se introduce SQL dentro de un validador sintáctico. La seguridad y el estado
 
 La validación de formato no sustituye la autorización. El usuario de seguridad procede del contexto autenticado, nunca del payload. El flujo es validar ID, obtener usuario, comprobar visibilidad y ownership en SQL, y aplicar la misma condición en la escritura.
 
-### 7.13 Frontend y tests
+### 7.13 Frontend
 
 Los atributos `required`, `min`, `max`, `step`, `pattern` y la validación JavaScript son ayudas de UX. Desactivar JavaScript o enviar una petición manual no debe permitir datos inválidos.
-
-Los helpers deben probar valores válidos, ausentes, vacíos, formatos inválidos, rangos, signos, `NaN`, infinitos, booleanos y enums desconocidos, `CLEAR` y combinaciones incompatibles. Las reglas dependientes de PostgreSQL, estado, ownership o constraints se prueban como tests de servicio o integración.
 
 ## 8. Configuración, logging y servicios externos
 
@@ -861,15 +846,7 @@ Si se utiliza cache:
 
 Los datos cacheados se validan de nuevo antes de persistirse.
 
-### 8.11 Tests
-
-La configuración debe probar ausencia, vacío, formato inválido, rango inválido, defaults, entorno desconocido y secretos en logs.
-
-El logging debe comprobar `request_id`, niveles, ausencia de secretos y ausencia de duplicación de tracebacks.
-
-Las integraciones externas deben probar timeout, error de conexión, status no exitoso, JSON inválido, estructura incompleta, unidad desconocida, conversión, reintentos, rate limiting, cache y degradación.
-
-### 8.12 Checklist de auditoría
+### 8.11 Checklist de auditoría
 
 Para cada configuración o integración se comprueba:
 
@@ -890,7 +867,6 @@ Para cada configuración o integración se comprueba:
 - ¿Los reintentos son seguros?
 - ¿La operación es idempotente?
 - ¿Existe degradación controlada?
-- ¿Hay tests de fallo y recuperación?
 
 ## 9. Endpoints, HTTP y HTMX
 
@@ -979,7 +955,7 @@ El fragmento mínimo no debe reconstruir la página completa ni ejecutar consult
 - `none`: no intercambia cuerpo; solo se usa si el contrato depende de headers/eventos o de un refresco posterior.
 - `beforeend`: añade contenido y solo se usa cuando la operación es una adición.
 
-El target debe tener un ID estable y una responsabilidad visual única. No se cambia el target entre acciones equivalentes sin actualizar el contrato y los tests.
+El target debe tener un ID estable y una responsabilidad visual única. No se cambia el target entre acciones equivalentes sin actualizar el contrato.
 
 El refresco posterior solo ocurre cuando `event.detail.successful` es verdadero. En los errores de validación HTMX con status `200`, el frontend debe distinguir el fragmento de error mediante el target o contrato específico y no tratarlo como una operación de éxito global.
 
@@ -1009,24 +985,9 @@ Los endpoints paginados utilizan una única convención:
 
 Los valores se validan, se limitan y no pueden ser negativos. Los resultados tienen orden estable. No se mezclan `page`, `offset` y cursor en el mismo endpoint sin un contrato explícito.
 
-### 9.8 Observabilidad y tests HTTP
+### 9.8 Observabilidad HTTP
 
 Los endpoints utilizan la correlación definida en la sección 8.4 y aplican el formato de respuesta de errores de `error_conventions.md`.
-
-Cada endpoint debe probar, según corresponda:
-
-- método HTTP;
-- autenticación y acceso;
-- validación;
-- ownership;
-- éxito y formato de respuesta;
-- status HTTP;
-- `hx-target`, `hx-swap` y headers HTMX;
-- redirect;
-- repetición de petición;
-- conflicto;
-- error inesperado;
-- rollback en operaciones compuestas.
 
 ## 10. Tipos de datos, fechas y números
 
@@ -1097,8 +1058,7 @@ Antes de ejecutarla se debe:
 6. Actualizar constraints y defaults.
 7. Actualizar Python, serialización y cálculos.
 8. Revisar índices y funciones SQL.
-9. Añadir tests de equivalencia y límites.
-10. Verificar muestras antes y después.
+9. Verificar muestras antes y después.
 
 No se mezcla una migración de tipo con una corrección funcional salvo que la corrección dependa directamente de la precisión o de la zona horaria.
 
@@ -1237,7 +1197,7 @@ Ejemplo correcto:
 fk_recipe_user_id_users
 ```
 
-Un constraint debe coincidir con la validación Python y tener tests de aceptación y rechazo.
+Un constraint debe coincidir con la validación Python.
 
 ### 11.7 Índices
 
@@ -1299,7 +1259,7 @@ Antes de utilizar `DELETE` se revisan FKs, cascadas, favoritos, etiquetas, porci
 
 ## 12. Migraciones y evolución del esquema
 
-El esquema debe evolucionar de forma explícita, idempotente y verificable. Un cambio de esquema incluye también los datos, queries, dataclasses, mappers, endpoints y tests que dependan de él.
+El esquema debe evolucionar de forma explícita, idempotente y verificable. Un cambio de esquema incluye también los datos, queries, dataclasses, mappers y endpoints que dependan de él.
 
 ### 12.1 Fuentes y responsabilidades
 
@@ -1334,10 +1294,9 @@ Antes de ejecutar un cambio de esquema:
 5. Definir el comportamiento para `NULL`, valores antiguos e índices únicos.
 6. Preparar una migración idempotente.
 7. Actualizar `schema.py` y el bootstrap/mecanismo de migración.
-8. Actualizar código y tests dependientes.
-9. Ejecutar la migración en una base de datos de prueba con datos representativos.
-10. Verificar esquema, constraints, índices y muestras de datos antes y después.
-11. Verificar que la aplicación puede arrancar y ejecutar las operaciones afectadas.
+8. Actualizar código dependiente.
+9. Verificar esquema, constraints, índices y muestras de datos antes y después.
+10. Verificar que la aplicación puede arrancar y ejecutar las operaciones afectadas.
 
 ### 12.4 Datos y migraciones destructivas
 
@@ -1357,126 +1316,7 @@ Antes de ejecutar un cambio de esquema:
 - El resultado final debe ser inequívoco: aplicada, omitida de forma segura y documentada, o abortada.
 - Las operaciones que PostgreSQL no permita ejecutar de forma transaccional deben documentar su estrategia específica.
 
-## 13. Política de testing quirúrgico
-
-Se prioriza la cobertura de comportamiento crítico sobre la cantidad de líneas cubiertas. Los tests deben detectar regresiones de contrato, seguridad, integridad y cálculos, no únicamente comprobar que las funciones se ejecutan.
-
-### 13.1 Estructura y nomenclatura
-
-La estructura recomendada es:
-
-```text
-tests/
-├── unit/
-├── integration/
-├── routes/
-├── database/
-└── fixtures/
-```
-
-Los archivos usan `test_<modulo>.py` y las funciones describen el comportamiento:
-
-```text
-test_update_event_rejects_foreign_owner
-test_confirm_event_rolls_back_when_injection_fails
-```
-
-Si el proyecto adopta `pytest`, la configuración y dependencias de tests deben documentarse. No se debe exigir una herramienta que no esté instalada o declarada en el proyecto.
-
-### 13.2 Tests obligatorios por CRUD o caso de uso
-
-Cuando se modifique una tabla o función de persistencia, probar según corresponda:
-
-- resultado correcto;
-- lista vacía;
-- `NotFoundError` o recurso no visible;
-- validación inválida;
-- ownership y permisos;
-- conflicto de unicidad;
-- rollback de operaciones compuestas;
-- comportamiento con `commit=False`;
-- repetición de la misma petición;
-- filtrado de soft-delete.
-
-Además, cada operación debe probar su contrato de retorno: `None`, lista vacía, `False`, `NotFoundError`, `ConflictError` y excepciones de infraestructura no deben intercambiarse.
-
-### 13.3 Tests de dominio
-
-Priorizar:
-
-- cálculos de macros e insulina;
-- conversiones de unidades y fechas;
-- reglas de estados de eventos;
-- normalización de nombres;
-- algoritmos de estadísticas;
-- parsing y validación numérica.
-
-Los tests de unidades y conversiones siguen `measurement_conventions.md`. Los tests de excepciones y formatos de error siguen `error_conventions.md`.
-
-### 13.4 Tests de integración
-
-Los tests de integración deben utilizar PostgreSQL real cuando la regla dependa de:
-
-- constraints;
-- índices únicos parciales;
-- FKs y cascadas;
-- locks;
-- versiones;
-- tipos `NUMERIC` o fechas;
-- rollback.
-
-No sustituir estos tests por mocks de cursor, porque un mock no comprueba el comportamiento real de PostgreSQL.
-
-### 13.5 Tests HTTP y HTMX
-
-Los endpoints deben probar:
-
-- método HTTP;
-- autenticación;
-- ownership;
-- validación;
-- status;
-- formato HTML/JSON;
-- `hx-target`, `hx-swap` y headers HTMX;
-- redirecciones;
-- `200 + fragmento mínimo` para validación HTMX;
-- errores no visuales según `error_conventions.md`;
-- repetición de peticiones;
-- respuesta ante conflictos.
-
-### 13.6 Tests de migraciones
-
-Cada migración debe probar:
-
-- ejecución sobre una base vacía;
-- ejecución sobre una base existente;
-- segunda ejecución sin efectos duplicados;
-- datos antiguos válidos;
-- datos antiguos inválidos;
-- preservación de `NULL`;
-- constraints e índices esperados;
-- comportamiento de rollback o fallo;
-- compatibilidad del código posterior.
-
-### 13.7 Tests externos y de configuración
-
-Los adapters externos deben probar timeout, error de red, status no exitoso, JSON inválido, unidades desconocidas, reintentos y degradación. La configuración debe probar valores ausentes, inválidos, defaults y entornos inseguros.
-
-### 13.8 Política pragmática por fases
-
-Durante la fase de recopilación personal se priorizan:
-
-- cálculos de cantidades y macros;
-- incertidumbres;
-- validación numérica;
-- autenticación y ownership;
-- transacciones y rollback;
-- constraints y soft-delete;
-- errores HTTP y HTMX críticos.
-
-Las pruebas puramente visuales pueden hacerse manualmente durante el TFG, pero toda regla de datos, seguridad, transacción o contrato HTTP debe tener una prueba automatizada.
-
-## 14. Procedimiento obligatorio de auditoría por tabla
+## 13. Procedimiento obligatorio de auditoría por tabla
 
 Para cada tabla se revisará siempre en este orden:
 
@@ -1494,8 +1334,7 @@ Para cada tabla se revisará siempre en este orden:
 12. Ciclo de vida declarado: archivable, no archivable, histórico o dependiente.
 13. Política `ON DELETE`, impacto sobre históricos y posibilidad de borrado físico.
 14. Auditoría requerida, actor, timestamps, valores originales y `request_id`.
-15. Tests de resultados vacíos, validación, permisos, rollback y concurrencia.
-16. Coincidencia entre `schema.py`, migraciones/bootstrap y esquema real.
+15. Coincidencia entre `schema.py`, migraciones/bootstrap y esquema real.
 
 Cada hallazgo se clasifica como una de estas categorías:
 
@@ -1504,4 +1343,6 @@ Cada hallazgo se clasifica como una de estas categorías:
 - decisión pendiente de producto o modelo;
 - deuda técnica que puede aplicarse solo a código nuevo.
 
-No se refactoriza una tabla hasta decidir la convención aplicable y el alcance de migración. Las correcciones deben mantener una única fuente de verdad y actualizar código, esquema, tests y documentación cuando corresponda.
+No se refactoriza una tabla hasta decidir la convención aplicable y el alcance de migración. Las correcciones deben mantener una única fuente de verdad y actualizar código, esquema y documentación cuando corresponda.
+
+Si una tabla revela la necesidad de un patrón que todavía no existe en ningún punto del proyecto (por ejemplo enums centrales, capa `services/`, versionado optimista o adapters de servicios externos), el hallazgo se clasifica como "decisión pendiente de producto o modelo" o "deuda técnica" y se documenta, pero esa infraestructura nueva no se construye dentro de la auditoría de esa tabla salvo que el usuario lo pida explícitamente para ese caso. El objetivo de cada auditoría es dejar la tabla coherente y correcta, no adelantar arquitectura que ninguna otra tabla necesita todavía.
