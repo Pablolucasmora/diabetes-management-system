@@ -20,6 +20,7 @@ All functions follow the same pattern:
 - Return ID or result, or None on error
 """
 
+import logging
 import re
 from contextlib import nullcontext
 from enum import Enum
@@ -27,6 +28,8 @@ from typing import Optional, Any
 
 from psycopg import sql
 from DayBetes_food.time_utils import local_today
+
+logger = logging.getLogger(__name__)
 
 TRGM_SIMILARITY_THRESHOLD = 0.25
 APP_TIMEZONE_SQL = "Europe/Madrid"
@@ -75,8 +78,7 @@ def _execute_query(
     except Exception as e:
         if rollback_on_error:
             connection.rollback()
-        print(f"Error in query: {e}")
-        if rollback_on_error:
+            logger.error("Error in query: %s", e, exc_info=True)
             return None
         raise
 
@@ -98,8 +100,7 @@ def _execute_query_many(
     except Exception as e:
         if rollback_on_error:
             connection.rollback()
-        print(f"Error in query: {e}")
-        if rollback_on_error:
+            logger.error("Error in query: %s", e, exc_info=True)
             return []
         raise
 
@@ -375,10 +376,9 @@ def add_food_brand(connection, brand_name: str, commit: bool = True) -> bool:
     except Exception as e:
         if commit:
             connection.rollback()
-        print(f"Error in query: {e}")
-        if not commit:
-            raise
-        return False
+            logger.error("Error in query: %s", e, exc_info=True)
+            return False
+        raise
 
 
 def get_food_brand_suggestions(connection, search: str = "", limit: int = 8) -> list[str]:
@@ -799,10 +799,9 @@ def set_user_favorite(
     except Exception as e:
         if commit:
             connection.rollback()
-        print(f"Error in query: {e}")
-        if not commit:
-            raise
-        return False
+            logger.error("Error in query: %s", e, exc_info=True)
+            return False
+        raise
 
 
 
@@ -1305,10 +1304,9 @@ def set_entry_tags(
     except Exception as e:
         if commit:
             connection.rollback()
-        print(f"Error in query: {e}")
-        if not commit:
-            raise
-        return False
+            logger.error("Error in query: %s", e, exc_info=True)
+            return False
+        raise
 
 
 def get_all_tags(connection, search: str = "", limit: int = 500) -> list[dict]:
@@ -2019,10 +2017,9 @@ def delete_event_portion_group(connection, event_id: int, origin: str, origin_id
     except Exception as e:
         if commit:
             connection.rollback()
-        print(f"Error in query: {e}")
-        if not commit:
-            raise
-        return False
+            logger.error("Error in query: %s", e, exc_info=True)
+            return False
+        raise
 
 
 def consolidate_event_portion_group_amount(
@@ -2071,10 +2068,9 @@ def consolidate_event_portion_group_amount(
     except Exception as e:
         if commit:
             connection.rollback()
-        print(f"Error in query: {e}")
-        if not commit:
-            raise
-        return False
+            logger.error("Error in query: %s", e, exc_info=True)
+            return False
+        raise
 
 
 def update_event_portion_group_field(
@@ -2115,10 +2111,9 @@ def update_event_portion_group_field(
     except Exception as e:
         if commit:
             connection.rollback()
-        print(f"Error in query: {e}")
-        if not commit:
-            raise
-        return False
+            logger.error("Error in query: %s", e, exc_info=True)
+            return False
+        raise
 def get_portion_detail_by_events(connection, intake_event_ids: list[int]) -> list:
     """Gets all portions for multiple intake events in one query."""
     if not intake_event_ids:

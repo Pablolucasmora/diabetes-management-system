@@ -124,7 +124,7 @@ app.add_middleware(GZipMiddleware, minimum_size=512)
 STATIC_CACHE_CONTROL = "public, max-age=604800"
 ASSET_PREFIXES = ("/css/", "/js/", "/images/")
 PUBLIC_PATH_PREFIXES = ("/auth", "/css", "/js", "/images", "/favicon", "/robots.txt")
-AUTH_POST_EXEMPT_PATHS = {"/auth/login/submit", "/auth/register/submit", "/auth/logout"}
+AUTH_POST_EXEMPT_PATHS = {"/auth/login/submit", "/auth/register/submit"}
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 

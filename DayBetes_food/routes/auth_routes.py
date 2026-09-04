@@ -1,7 +1,11 @@
+import logging
+
 from fasthtml.common import *
 from html import escape
 from urllib.parse import quote_plus
 from DayBetes_food.database.queries.crud import update_password_hash
+
+logger = logging.getLogger(__name__)
 
 from DayBetes_food.auth.security import (
     generate_token,
@@ -15,12 +19,14 @@ from DayBetes_food.auth.security import (
     verify_password,
 )
 from DayBetes_food.auth.models import CreateUserCommand
+from DayBetes_food.errors import ConflictError
 from DayBetes_food.auth.service import (
     GENERIC_AUTH_ERROR,
     clear_login_failures,
     create_session,
     create_user,
     get_user_by_identifier,
+    purge_expired_sessions,
     register_login_failure,
     revoke_session,
     touch_user_login,
@@ -208,15 +214,19 @@ def setup_auth_routes(rt):
                 "Contrasena no valida: minimo 12 caracteres y 3 de 4 tipos (mayusculas, minusculas, numeros, simbolos)",
             )
 
-        with get_connection() as connection:
-            create_user(
-                connection,
-                CreateUserCommand(
-                    email=email,
-                    username=username,
-                    password_hash=hash_password(password),
-                ),
-            )
+        try:
+            with get_connection() as connection:
+                create_user(
+                    connection,
+                    CreateUserCommand(
+                        email=email,
+                        username=username,
+                        password_hash=hash_password(password),
+                    ),
+                )
+        except ConflictError:
+            return _redirect_with_error("/auth/register", "Ese email o usuario ya esta registrado")
+
         return RedirectResponse(
             url="/auth/login?error=Cuenta+creada.+Inicia+sesion+para+continuar",
             status_code=303,
@@ -234,6 +244,7 @@ def setup_auth_routes(rt):
         limiter_key_hash = hash_token(f"{identifier}:{_client_ip(request)}")
 
         with get_connection() as connection:
+            purge_expired_sessions(connection)
             if not rate_limit_login_allowed(connection, limiter_key_hash):
                 return _redirect_with_error("/auth/login", GENERIC_AUTH_ERROR)
 
@@ -268,6 +279,7 @@ def setup_auth_routes(rt):
                         commit=False,
                     )
             except Exception:
+                logger.error("Login transaction failed for user_id=%s", user.id, exc_info=True)
                 return _redirect_with_error("/auth/login", "No se pudo iniciar la sesion")
 
         response = RedirectResponse(url="/menu", status_code=303)
