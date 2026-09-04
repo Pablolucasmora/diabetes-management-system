@@ -7,19 +7,33 @@ from DayBetes_food.config import (
     AUTH_RATE_LIMIT_ATTEMPTS,
     AUTH_RATE_LIMIT_BLOCK_SECONDS,
     AUTH_RATE_LIMIT_WINDOW_SECONDS,
+    SESSION_RETENTION_SECONDS,
     SESSION_TTL_SECONDS,
 )
 from DayBetes_food.auth.models import (
+    AuthSessionCreated,
     CreateUserCommand,
     UserAuthRead,
     UserRead,
     AuthSessionRead,
-    auth_session_read_from_row,
+    CreateAuthSessionCommand,
     user_auth_read_from_row,
     user_read_from_row,
 )
 from DayBetes_food.auth.security import hash_token, normalize_identifier
-from DayBetes_food.errors import ConflictError, InfrastructureError
+from DayBetes_food.errors import AppError, ConflictError, InfrastructureError
+from DayBetes_food.database.queries.auth_sessions import (
+    create_auth_session,
+    get_auth_session_with_user as query_get_auth_session_with_user,
+    purge_auth_sessions,
+    refresh_auth_session,
+    revoke_auth_session,
+)
+from DayBetes_food.database.queries.auth_rate_limits import (
+    delete_auth_rate_limit,
+    get_auth_rate_limit,
+    upsert_auth_rate_limit,
+)
 
 
 GENERIC_AUTH_ERROR = "Credenciales no validas"
@@ -100,100 +114,98 @@ def touch_user_login(connection, user_id: int, commit: bool = True) -> None:
         connection.commit()
 
 
-def create_session(connection, user_id: int, session_token: str, csrf_token: str, ip_hash: str, user_agent_hash: str, commit: bool = True):
+def create_session(
+    connection,
+    user_id: int,
+    session_token: str,
+    csrf_token: str,
+    ip_hash: str,
+    user_agent_hash: str,
+    commit: bool = True,
+) -> AuthSessionCreated:
     now = _utcnow()
     expires_at = now + timedelta(seconds=SESSION_TTL_SECONDS)
-    query = """
-        INSERT INTO auth_sessions (
-            user_id, session_token_hash, csrf_token_hash,
-            ip_hash, user_agent_hash,
-            created_at, last_seen_at, expires_at
-        )
-        VALUES (
-            %(user_id)s, %(session_token_hash)s, %(csrf_token_hash)s,
-            %(ip_hash)s, %(user_agent_hash)s,
-            %(created_at)s, %(last_seen_at)s, %(expires_at)s
-        )
-        RETURNING id, expires_at;
-    """
-    with connection.cursor() as cursor:
-        cursor.execute(
-            query,
-            {
-                "user_id": user_id,
-                "session_token_hash": hash_token(session_token),
-                "csrf_token_hash": hash_token(csrf_token),
-                "ip_hash": ip_hash,
-                "user_agent_hash": user_agent_hash,
-                "created_at": now,
-                "last_seen_at": now,
-                "expires_at": expires_at,
-            },
-        )
-        row = cursor.fetchone()
-    if commit:
-        connection.commit()
-    return row
+    command = CreateAuthSessionCommand(
+        user_id=user_id,
+        session_token_hash=hash_token(session_token),
+        csrf_token_hash=hash_token(csrf_token),
+        ip_hash=ip_hash,
+        user_agent_hash=user_agent_hash,
+        created_at=now,
+        last_seen_at=now,
+        expires_at=expires_at,
+    )
+    try:
+        return create_auth_session(connection, command, commit=commit)
+    except AppError:
+        raise
+    except Exception as exc:
+        # Solo se traduce a InfrastructureError cuando este servicio es
+        # dueño de la operación (commit=True). En modo caller-owned se
+        # propaga tal cual para que decida el coordinador de la
+        # transacción compuesta.
+        if not commit:
+            raise
+        raise InfrastructureError("Could not create authentication session") from exc
 
 
-def revoke_session(connection, session_token: str, commit: bool = True) -> None:
-    with connection.cursor() as cursor:
-        cursor.execute(
-            """
-            UPDATE auth_sessions
-            SET revoked_at = NOW()
-            WHERE session_token_hash = %(token_hash)s AND revoked_at IS NULL;
-            """,
-            {"token_hash": hash_token(session_token)},
-        )
-    if commit:
-        connection.commit()
+def revoke_session(connection, session_token: str, commit: bool = True) -> bool:
+    try:
+        return revoke_auth_session(connection, hash_token(session_token), commit=commit)
+    except AppError:
+        raise
+    except Exception as exc:
+        if not commit:
+            raise
+        raise InfrastructureError("Could not revoke authentication session") from exc
 
 
 def get_session_with_user(connection, session_token: str) -> Optional[AuthSessionRead]:
-    token_hash = hash_token(session_token)
-    query = """
-        SELECT
-            s.id,
-            s.user_id,
-            s.csrf_token_hash,
-            s.expires_at,
-            s.revoked_at,
-            s.last_seen_at,
-            u.email,
-            u.username,
-            u.is_active
-        FROM auth_sessions s
-        JOIN users u ON u.id = s.user_id
-        WHERE s.session_token_hash = %(token_hash)s
-        LIMIT 1;
-    """
-    with connection.cursor() as cursor:
-        cursor.execute(query, {"token_hash": token_hash})
-        row = cursor.fetchone()
-    if not row:
+    session_row = query_get_auth_session_with_user(connection, hash_token(session_token))
+    if session_row is None:
         return None
     now = _utcnow()
-    if row["revoked_at"] is not None or row["expires_at"] <= now or not row["is_active"]:
+    if (
+        session_row.revoked_at is not None
+        or session_row.expires_at <= now
+        or not session_row.is_active
+    ):
         return None
-    return auth_session_read_from_row(row)
+    return session_row
 
 
-def refresh_session(connection, session_id: int, commit: bool = True) -> None:
+def refresh_session(connection, session_id: int, commit: bool = True) -> bool:
     now = _utcnow()
     expires_at = now + timedelta(seconds=SESSION_TTL_SECONDS)
-    with connection.cursor() as cursor:
-        cursor.execute(
-            """
-            UPDATE auth_sessions
-            SET last_seen_at = %(now)s,
-                expires_at = %(expires_at)s
-            WHERE id = %(id)s;
-            """,
-            {"id": session_id, "now": now, "expires_at": expires_at},
+    try:
+        return refresh_auth_session(
+            connection,
+            session_id,
+            now,
+            expires_at,
+            commit=commit,
         )
-    if commit:
-        connection.commit()
+    except AppError:
+        raise
+    except Exception as exc:
+        if not commit:
+            raise
+        raise InfrastructureError("Could not refresh authentication session") from exc
+
+
+def purge_expired_sessions(connection, commit: bool = True) -> int:
+    try:
+        return purge_auth_sessions(
+            connection,
+            SESSION_RETENTION_SECONDS,
+            commit=commit,
+        )
+    except AppError:
+        raise
+    except Exception as exc:
+        if not commit:
+            raise
+        raise InfrastructureError("Could not purge expired sessions") from exc
 
 
 def is_csrf_valid(session_row: Optional[AuthSessionRead], csrf_token: str) -> bool:
@@ -205,52 +217,20 @@ def is_csrf_valid(session_row: Optional[AuthSessionRead], csrf_token: str) -> bo
     return token_hash == session_row.csrf_token_hash
 
 
-def _get_rate_limit(connection, key_hash: str) -> Optional[dict]:
-    with connection.cursor() as cursor:
-        cursor.execute(
-            "SELECT key_hash, attempts, first_attempt_at, blocked_until FROM auth_rate_limits WHERE key_hash = %(key)s FOR UPDATE;",
-            {"key": key_hash},
-        )
-        return cursor.fetchone()
-
-
-def _upsert_rate_limit(connection, key_hash: str, attempts: int, first_attempt_at: datetime, blocked_until: Optional[datetime]):
-    with connection.cursor() as cursor:
-        cursor.execute(
-            """
-            INSERT INTO auth_rate_limits (key_hash, attempts, first_attempt_at, blocked_until)
-            VALUES (%(key_hash)s, %(attempts)s, %(first_attempt_at)s, %(blocked_until)s)
-            ON CONFLICT (key_hash)
-            DO UPDATE SET attempts = EXCLUDED.attempts,
-                          first_attempt_at = EXCLUDED.first_attempt_at,
-                          blocked_until = EXCLUDED.blocked_until;
-            """,
-            {
-                "key_hash": key_hash,
-                "attempts": attempts,
-                "first_attempt_at": first_attempt_at,
-                "blocked_until": blocked_until,
-            },
-        )
-
-
 def rate_limit_login_allowed(connection, limiter_key_hash: str, commit: bool = True) -> bool:
     now = _utcnow()
-    row = _get_rate_limit(connection, limiter_key_hash)
-    if row and row["blocked_until"] and row["blocked_until"] > now:
-        if commit:
-            connection.commit()
-        return False
+    row = get_auth_rate_limit(connection, limiter_key_hash)
+    allowed = not (row and row["blocked_until"] and row["blocked_until"] > now)
     if commit:
         connection.commit()
-    return True
+    return allowed
 
 
 def register_login_failure(connection, limiter_key_hash: str, commit: bool = True) -> None:
     now = _utcnow()
-    row = _get_rate_limit(connection, limiter_key_hash)
+    row = get_auth_rate_limit(connection, limiter_key_hash)
     if not row:
-        _upsert_rate_limit(connection, limiter_key_hash, 1, now, None)
+        upsert_auth_rate_limit(connection, limiter_key_hash, 1, now, None, commit=False)
         if commit:
             connection.commit()
         return
@@ -266,13 +246,10 @@ def register_login_failure(connection, limiter_key_hash: str, commit: bool = Tru
     if attempts >= AUTH_RATE_LIMIT_ATTEMPTS:
         blocked_until = now + timedelta(seconds=AUTH_RATE_LIMIT_BLOCK_SECONDS)
 
-    _upsert_rate_limit(connection, limiter_key_hash, attempts, first_attempt_at, blocked_until)
+    upsert_auth_rate_limit(connection, limiter_key_hash, attempts, first_attempt_at, blocked_until, commit=False)
     if commit:
         connection.commit()
 
 
 def clear_login_failures(connection, limiter_key_hash: str, commit: bool = True) -> None:
-    with connection.cursor() as cursor:
-        cursor.execute("DELETE FROM auth_rate_limits WHERE key_hash = %(key)s;", {"key": limiter_key_hash})
-    if commit:
-        connection.commit()
+    delete_auth_rate_limit(connection, limiter_key_hash, commit=commit)

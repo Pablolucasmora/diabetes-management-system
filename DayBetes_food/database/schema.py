@@ -9,6 +9,13 @@ class DBSchema:
         email VARCHAR(255) NOT NULL,
         username VARCHAR(50) NOT NULL,
         password_hash TEXT NOT NULL,
+        -- Reservada a propósito: no la usa ningún endpoint, servicio ni
+        -- query todavía. Se deja preparada para un futuro sistema de
+        -- roles/permisos (p.ej. distinguir cuentas admin de cuentas
+        -- normales) sin tener que migrar el esquema cuando haga falta.
+        -- No implementar lógica de autorización basada en esta columna
+        -- sin antes documentar la decisión (ver CLAUDE.md, convenciones
+        -- faltantes).
         category VARCHAR(255) CHECK (category IN ('admin', 'common')),
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
         last_login_at TIMESTAMPTZ,
@@ -24,26 +31,36 @@ class DBSchema:
     auth_sessions = """
     CREATE TABLE IF NOT EXISTS auth_sessions (
         id BIGSERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        session_token_hash CHAR(64) UNIQUE NOT NULL,
+        user_id INTEGER NOT NULL,
+        session_token_hash CHAR(64) NOT NULL,
         csrf_token_hash CHAR(64) NOT NULL,
         ip_hash CHAR(64),
         user_agent_hash CHAR(64),
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         last_seen_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         expires_at TIMESTAMPTZ NOT NULL,
-        revoked_at TIMESTAMPTZ
+        revoked_at TIMESTAMPTZ,
+        CONSTRAINT fk_auth_sessions_user_id_users
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        CONSTRAINT uq_auth_sessions_session_token_hash
+            UNIQUE (session_token_hash),
+        CONSTRAINT ck_auth_sessions_expiry_after_creation CHECK (expires_at > created_at),
+        CONSTRAINT ck_auth_sessions_last_seen_after_creation CHECK (last_seen_at >= created_at),
+        CONSTRAINT ck_auth_sessions_revoked_after_creation CHECK (revoked_at IS NULL OR revoked_at >= created_at)
     );
     CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_auth_sessions_revoked_at ON auth_sessions(revoked_at);
     """
 
     auth_rate_limits = """
     CREATE TABLE IF NOT EXISTS auth_rate_limits (
         key_hash CHAR(64) PRIMARY KEY,
         attempts INTEGER NOT NULL DEFAULT 0,
-        first_attempt_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        blocked_until TIMESTAMP
+        first_attempt_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        blocked_until TIMESTAMPTZ,
+        CONSTRAINT ck_auth_rate_limits_attempts_non_negative CHECK (attempts >= 0),
+        CONSTRAINT ck_auth_rate_limits_blocked_after_first CHECK (blocked_until IS NULL OR blocked_until >= first_attempt_at)
     );
     """
 

@@ -1,9 +1,12 @@
+import logging
 import os
 from psycopg import sql
 
 from DayBetes_food.auth.security import hash_password, normalize_identifier, sanitize_text
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.database.schema import DBSchema
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_USER_EMAIL = normalize_identifier(os.getenv("DEFAULT_USER_EMAIL", "default@daybetes.local"))
 DEFAULT_USER_USERNAME = normalize_identifier(os.getenv("DEFAULT_USER_USERNAME", "default_user"))
@@ -516,7 +519,7 @@ def _ensure_trgm_search(cursor):
     except Exception as exc:
         cursor.execute("ROLLBACK TO SAVEPOINT trgm_setup;")
         cursor.execute("RELEASE SAVEPOINT trgm_setup;")
-        print(f"Warning: pg_trgm setup skipped: {exc}")
+        logger.warning("pg_trgm setup skipped: %s", exc)
 
 
 def _ensure_food_filter_indexes(cursor):
@@ -596,7 +599,7 @@ def _ensure_food_name_origin_uniqueness(cursor):
     except Exception as exc:
         cursor.execute("ROLLBACK TO SAVEPOINT food_name_origin_uniqueness;")
         cursor.execute("RELEASE SAVEPOINT food_name_origin_uniqueness;")
-        print(f"Warning: food uniqueness migration skipped: {exc}")
+        logger.warning("food uniqueness migration skipped: %s", exc)
 
 
 def _ensure_insulin_injections_schema(cursor):
@@ -791,6 +794,120 @@ def _ensure_auth_sessions_schema(cursor):
         elif data_type != "timestamp with time zone":
             raise RuntimeError(f"Unexpected auth_sessions.{column} type: {data_type!r}")
 
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_auth_sessions_revoked_at ON auth_sessions(revoked_at);")
+    cursor.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid = 'auth_sessions'::regclass
+                  AND conname = 'auth_sessions_user_id_fkey'
+            ) AND NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid = 'auth_sessions'::regclass
+                  AND conname = 'fk_auth_sessions_user_id_users'
+            ) THEN
+                ALTER TABLE auth_sessions
+                RENAME CONSTRAINT auth_sessions_user_id_fkey TO fk_auth_sessions_user_id_users;
+            END IF;
+
+            IF EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid = 'auth_sessions'::regclass
+                  AND conname = 'auth_sessions_session_token_hash_key'
+            ) AND NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid = 'auth_sessions'::regclass
+                  AND conname = 'uq_auth_sessions_session_token_hash'
+            ) THEN
+                ALTER TABLE auth_sessions
+                RENAME CONSTRAINT auth_sessions_session_token_hash_key TO uq_auth_sessions_session_token_hash;
+            END IF;
+        END $$;
+        """
+    )
+    cursor.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conrelid = 'auth_sessions'::regclass
+                  AND conname = 'ck_auth_sessions_expiry_after_creation'
+            ) THEN
+                ALTER TABLE auth_sessions
+                ADD CONSTRAINT ck_auth_sessions_expiry_after_creation
+                CHECK (expires_at > created_at);
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conrelid = 'auth_sessions'::regclass
+                  AND conname = 'ck_auth_sessions_last_seen_after_creation'
+            ) THEN
+                ALTER TABLE auth_sessions
+                ADD CONSTRAINT ck_auth_sessions_last_seen_after_creation
+                CHECK (last_seen_at >= created_at);
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conrelid = 'auth_sessions'::regclass
+                  AND conname = 'ck_auth_sessions_revoked_after_creation'
+            ) THEN
+                ALTER TABLE auth_sessions
+                ADD CONSTRAINT ck_auth_sessions_revoked_after_creation
+                CHECK (revoked_at IS NULL OR revoked_at >= created_at);
+            END IF;
+        END $$;
+        """
+    )
+
+
+def _ensure_auth_rate_limits_schema(cursor):
+    """Convert legacy rate-limit timestamps to timezone-aware values and
+    add the integrity constraints missing from earlier deployments."""
+    for column in ("first_attempt_at", "blocked_until"):
+        data_type = (_column_data_type(cursor, "auth_rate_limits", column) or "").lower()
+        if data_type == "timestamp without time zone":
+            cursor.execute(
+                sql.SQL(
+                    "ALTER TABLE auth_rate_limits ALTER COLUMN {column} TYPE TIMESTAMPTZ "
+                    "USING {column} AT TIME ZONE 'UTC';"
+                ).format(column=sql.Identifier(column))
+            )
+        elif data_type != "timestamp with time zone":
+            raise RuntimeError(f"Unexpected auth_rate_limits.{column} type: {data_type!r}")
+
+    cursor.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conrelid = 'auth_rate_limits'::regclass
+                  AND conname = 'ck_auth_rate_limits_attempts_non_negative'
+            ) THEN
+                ALTER TABLE auth_rate_limits
+                ADD CONSTRAINT ck_auth_rate_limits_attempts_non_negative
+                CHECK (attempts >= 0);
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conrelid = 'auth_rate_limits'::regclass
+                  AND conname = 'ck_auth_rate_limits_blocked_after_first'
+            ) THEN
+                ALTER TABLE auth_rate_limits
+                ADD CONSTRAINT ck_auth_rate_limits_blocked_after_first
+                CHECK (blocked_until IS NULL OR blocked_until >= first_attempt_at);
+            END IF;
+        END $$;
+        """
+    )
+
 
 def init_db():
     conn = get_connection()
@@ -828,6 +945,7 @@ def init_db():
         _ensure_copy_origin_schema(cur)
         _ensure_users_schema(cur)
         _ensure_auth_sessions_schema(cur)
+        _ensure_auth_rate_limits_schema(cur)
         _ensure_insulin_injections_schema(cur)
         _remove_legacy_user_sessions(cur)
         _remove_legacy_user_hidden_catalog(cur)
@@ -835,10 +953,14 @@ def init_db():
         _ensure_default_user(cur)
 
         conn.commit()
-        print("Database initialized successfully.")
+        logger.info("Database initialized successfully.")
     except Exception as e:
         conn.rollback()
-        print(f"Error initializing database: {e}")
+        # Fallo de arranque (sección 12.5 de code_conventions.md): una
+        # migración obligatoria fallida aborta el arranque, no continúa
+        # como si el esquema fuese correcto.
+        logger.critical("Error initializing database: %s", e, exc_info=True)
+        raise
     finally:
         cur.close()
         conn.close()

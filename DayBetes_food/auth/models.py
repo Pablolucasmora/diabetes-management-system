@@ -24,6 +24,24 @@ class CreateUserCommand:
 
 
 @dataclass(frozen=True)
+class CreateAuthSessionCommand:
+    user_id: int
+    session_token_hash: str = field(repr=False)
+    csrf_token_hash: str = field(repr=False)
+    ip_hash: str = field(repr=False)
+    user_agent_hash: str = field(repr=False)
+    created_at: datetime
+    last_seen_at: datetime
+    expires_at: datetime
+
+
+@dataclass(frozen=True)
+class AuthSessionCreated:
+    id: int
+    expires_at: datetime
+
+
+@dataclass(frozen=True)
 class AuthSessionRead:
     id: int
     user_id: int
