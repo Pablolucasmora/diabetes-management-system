@@ -508,8 +508,8 @@ def _ensure_trgm_search(cursor):
             "ON recipe USING gin (lower(name) gin_trgm_ops);"
         )
         cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_catalog_brand_trgm "
-            "ON catalog USING gin (lower(brand) gin_trgm_ops);"
+            "CREATE INDEX IF NOT EXISTS idx_food_brands_label_trgm "
+            "ON food_brands USING gin (lower(label) gin_trgm_ops);"
         )
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_manual_origin_trgm "
@@ -585,8 +585,8 @@ def _ensure_food_name_origin_uniqueness(cursor):
     try:
         cursor.execute(
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS uq_catalog_name_brand_norm
-            ON catalog (lower(trim(name)), lower(trim(COALESCE(brand, ''))));
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_catalog_name_brand_id_norm
+            ON catalog (lower(btrim(name)), COALESCE(brand_id, 0));
             """
         )
         cursor.execute(
@@ -601,6 +601,193 @@ def _ensure_food_name_origin_uniqueness(cursor):
         cursor.execute("RELEASE SAVEPOINT food_name_origin_uniqueness;")
         logger.warning("food uniqueness migration skipped: %s", exc)
 
+
+
+def _ensure_food_brands_schema(cursor):
+    """Migrate food_brands schema from legacy (name) to new (code, label, is_active, created_by, updated_at)."""
+    
+    # (A) food_brands: forma nueva
+    if _has_column(cursor, "food_brands", "name"):
+        cursor.execute("ALTER TABLE food_brands RENAME COLUMN name TO label;")
+    
+    cursor.execute("ALTER TABLE food_brands ADD COLUMN IF NOT EXISTS code VARCHAR(255);")
+    cursor.execute("ALTER TABLE food_brands ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;")
+    cursor.execute("ALTER TABLE food_brands ADD COLUMN IF NOT EXISTS created_by INTEGER;")
+    cursor.execute("ALTER TABLE food_brands ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;")
+    
+    cursor.execute(
+        """
+        ALTER TABLE food_brands
+            ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at AT TIME ZONE 'UTC';
+        """
+    )
+    
+    # Populate code from label
+    cursor.execute(
+        r"""
+        UPDATE food_brands
+        SET code = regexp_replace(btrim(lower(label)), '\s+', ' ', 'g')
+        WHERE code IS NULL;
+        """
+    )
+    
+    # (B) Deduplication by code
+    cursor.execute(
+        """
+        DELETE FROM food_brands a USING food_brands b
+        WHERE a.code = b.code AND a.id > b.id;
+        """
+    )
+    
+    cursor.execute("ALTER TABLE food_brands ALTER COLUMN code SET NOT NULL;")
+    cursor.execute("ALTER TABLE food_brands ALTER COLUMN label SET NOT NULL;")
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_food_brands_code ON food_brands (code);")
+    
+    # Drop legacy unique constraint on name/label if exists
+    cursor.execute(
+        """
+        SELECT con.conname
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+        WHERE rel.relname = 'food_brands'
+          AND con.contype = 'u'
+          AND pg_get_constraintdef(con.oid) ILIKE 'UNIQUE (label)%';
+        """
+    )
+    for row in cursor.fetchall() or []:
+        legacy_constraint = row.get("conname")
+        if legacy_constraint:
+            cursor.execute(f'ALTER TABLE food_brands DROP CONSTRAINT IF EXISTS "{legacy_constraint}";')
+    
+    # Add constraints if they don't exist
+    cursor.execute(
+        """
+        SELECT con.conname
+        FROM pg_constraint con
+        WHERE con.conname = 'fk_food_brands_created_by_users';
+        """
+    )
+    if not cursor.fetchone():
+        cursor.execute(
+            """
+            ALTER TABLE food_brands
+            ADD CONSTRAINT fk_food_brands_created_by_users
+                FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
+            """
+        )
+    
+    cursor.execute(
+        """
+        SELECT con.conname
+        FROM pg_constraint con
+        WHERE con.conname = 'ck_food_brands_code_normalized';
+        """
+    )
+    if not cursor.fetchone():
+        cursor.execute(
+            r"""
+            ALTER TABLE food_brands
+            ADD CONSTRAINT ck_food_brands_code_normalized
+                CHECK (code = regexp_replace(btrim(lower(code)), '\s+', ' ', 'g'));
+            """
+        )
+    
+    cursor.execute(
+        """
+        SELECT con.conname
+        FROM pg_constraint con
+        WHERE con.conname = 'ck_food_brands_label_not_blank';
+        """
+    )
+    if not cursor.fetchone():
+        cursor.execute(
+            """
+            ALTER TABLE food_brands
+            ADD CONSTRAINT ck_food_brands_label_not_blank
+                CHECK (btrim(label) <> '');
+            """
+        )
+    
+    # (C) catalog.brand_id
+    cursor.execute("ALTER TABLE catalog ADD COLUMN IF NOT EXISTS brand_id INTEGER;")
+    
+    # (D) High of brands that only exist in catalog
+    cursor.execute(
+        r"""
+        WITH raw AS (
+            SELECT regexp_replace(btrim(lower(brand)), '\s+', ' ', 'g') AS code,
+                   btrim(regexp_replace(brand, '\s+', ' ', 'g'))        AS label,
+                   count(*) AS uses, min(id) AS first_id
+            FROM catalog
+            WHERE brand IS NOT NULL AND btrim(brand) <> ''
+            GROUP BY 1, 2
+        ), chosen AS (
+            SELECT DISTINCT ON (code) code, label
+            FROM raw
+            ORDER BY code, uses DESC, first_id ASC
+        )
+        INSERT INTO food_brands (code, label, created_at, updated_at)
+        SELECT code, label, NOW(), NOW() FROM chosen
+        ON CONFLICT (code) DO NOTHING;
+        """
+    )
+    
+    # (E) Populate the FK
+    cursor.execute(
+        r"""
+        UPDATE catalog c
+        SET brand_id = fb.id
+        FROM food_brands fb
+        WHERE c.brand_id IS NULL
+          AND c.brand IS NOT NULL AND btrim(c.brand) <> ''
+          AND fb.code = regexp_replace(btrim(lower(c.brand)), '\s+', ' ', 'g');
+        """
+    )
+    
+    # (F) Hard verification before destroying
+    cursor.execute(
+        """
+        SELECT count(*) FROM catalog
+        WHERE brand IS NOT NULL AND btrim(brand) <> '' AND brand_id IS NULL;
+        """
+    )
+    orphaned = cursor.fetchone()[0]
+    if orphaned > 0:
+        raise ValueError(
+            f"Migration failed: {orphaned} rows in catalog have brand text but no brand_id. "
+            "This indicates a bug in the migration logic."
+        )
+    
+    # (G) Integrity and indexes
+    cursor.execute(
+        """
+        SELECT con.conname
+        FROM pg_constraint con
+        WHERE con.conname = 'fk_catalog_brand_id_food_brands';
+        """
+    )
+    if not cursor.fetchone():
+        cursor.execute(
+            """
+            ALTER TABLE catalog ADD CONSTRAINT fk_catalog_brand_id_food_brands
+                FOREIGN KEY (brand_id) REFERENCES food_brands(id) ON DELETE SET NULL;
+            """
+        )
+    
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_brand_id ON catalog (brand_id);")
+
+    # Replace the old uniqueness constraint
+    cursor.execute("DROP INDEX IF EXISTS uq_catalog_name_brand_norm;")
+    cursor.execute("DROP INDEX IF EXISTS idx_catalog_brand_trgm;")
+    cursor.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_catalog_name_brand_id_norm
+        ON catalog (lower(btrim(name)), COALESCE(brand_id, 0));
+        """
+    )
+    
+    # (H) Destruction of the column, at last
+    cursor.execute("ALTER TABLE catalog DROP COLUMN IF EXISTS brand;")
 
 def _ensure_insulin_injections_schema(cursor):
     cursor.execute(
@@ -933,6 +1120,7 @@ def init_db():
         for table_sql in tables:
             cur.execute(table_sql)
 
+        _ensure_food_brands_schema(cur)
         _ensure_trgm_search(cur)
         _ensure_tags_color_schema(cur)
         _ensure_manual_intake_schema(cur)

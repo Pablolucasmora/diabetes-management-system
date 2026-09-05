@@ -36,7 +36,8 @@ from DayBetes_food.database.queries.crud import (
     delete_recipe,
     add_manual_intake,
     add_recipe,
-    add_food_brand,
+    create_food_brand,
+    get_food_brand_id_by_label,
     get_food_brand_suggestions,
     get_category_suggestions,
     get_subtype_suggestions,
@@ -51,7 +52,6 @@ from DayBetes_food.database.queries.crud import (
     update_portion_detail_amount,
     update_portion_detail_fields,
     delete_portion_detail,
-    normalize_brand_name,
 )
 from DayBetes_food.components.food.foods import (
     GLYCEMIC_INDEX_OPTIONS,
@@ -1340,7 +1340,7 @@ def setup_food_routes(rt):
                     "created_by": int(user_id),
                     "origin_root_id": root_id,
                     "name": copy_name,
-                    "brand": source.get("brand"),
+                    "brand_id": source.get("brand_id"),
                     "category": source.get("category"),
                     "subtype": source.get("subtype"),
                     "initial_state": source.get("initial_state"),
@@ -1366,10 +1366,6 @@ def setup_food_routes(rt):
                         created_id = add_catalog_item(connection, payload, commit=False)
                         if not created_id:
                             raise ValueError("Could not create editable copy.")
-                        if payload.get("brand") and not add_food_brand(
-                            connection, str(payload["brand"]), commit=False
-                        ):
-                            raise ValueError("Could not save the copied food brand.")
                         if not set_user_favorite(
                             connection, int(user_id), "catalog", int(created_id), True, commit=False
                         ):
@@ -2161,16 +2157,18 @@ def setup_food_routes(rt):
             if nutriscore_error:
                 return _error_msg(nutriscore_error)
 
-            normalized_brand = normalize_brand_name(clean_brand or "")
-            if catalog_name_brand_exists(connection, name=clean_name, brand=normalized_brand, exclude_id=entry_id):
-                return _error_msg("A catalog item with that name and brand already exists.")
+            brand_id = None
+            if clean_brand:
+                brand_id = get_food_brand_id_by_label(connection, clean_brand)
+                if brand_id is None and not _to_bool(brand__added):
+                    return _error_msg("Invalid brand. Use Add to create a new value.")
             favorite_value = None if (favorite or "").strip() == "" else _to_bool(favorite)
             can_toggle_private = _can_toggle_private("catalog", current, user_id)
             if (is_private or "").strip() and not can_toggle_private:
                 return _error_msg("Only the owner can change privacy.")
             payload = {
                 "name": clean_name,
-                "brand": normalized_brand or None,
+                "brand_id": brand_id,
                 "category": clean_category,
                 "subtype": clean_subtype,
                 "initial_state": clean_initial_state,
@@ -2194,6 +2192,11 @@ def setup_food_routes(rt):
                 payload["is_private"] = _to_bool(is_private)
             try:
                 with connection.transaction():
+                    if clean_brand and brand_id is None:
+                        brand_id = create_food_brand(connection, clean_brand, created_by=user_id, commit=False)
+                        payload["brand_id"] = brand_id
+                    if catalog_name_brand_exists(connection, name=clean_name, brand_id=brand_id, exclude_id=entry_id):
+                        raise ValueError("A catalog item with that name and brand already exists.")
                     if not update_catalog_item(connection, entry_id, payload, commit=False):
                         raise ValueError("Catalog item could not be updated.")
                     if favorite_value is not None and not set_user_favorite(
@@ -2213,8 +2216,6 @@ def setup_food_routes(rt):
                         commit=False,
                     ):
                         raise ValueError("Could not save the tags.")
-                    if normalized_brand and not add_food_brand(connection, normalized_brand, commit=False):
-                        raise ValueError("Could not save the brand.")
             except ValueError as error:
                 return _error_msg(str(error))
             return HTMLResponse("", headers={"HX-Redirect": f"/food/item/catalog/{entry_id}"})
@@ -2533,13 +2534,15 @@ def setup_food_routes(rt):
             user_id = get_current_user_id()
             if not user_id:
                 return _error_msg("No users found.")
-            normalized_brand = normalize_brand_name(clean_brand or "")
-            if catalog_name_brand_exists(connection, name=clean_name, brand=normalized_brand):
-                return _error_msg("A catalog item with that name and brand already exists.")
+            brand_id = None
+            if clean_brand:
+                brand_id = get_food_brand_id_by_label(connection, clean_brand)
+                if brand_id is None and not _to_bool(brand__added):
+                    return _error_msg("Invalid brand. Use Add to create a new value.")
             payload = {
                 "created_by": user_id,
                 "name": clean_name,
-                "brand": normalized_brand or None,
+                "brand_id": brand_id,
                 "category": clean_category,
                 "subtype": clean_subtype,
                 "initial_state": clean_initial_state,
@@ -2562,6 +2565,11 @@ def setup_food_routes(rt):
             }
             try:
                 with connection.transaction():
+                    if clean_brand and brand_id is None:
+                        brand_id = create_food_brand(connection, clean_brand, created_by=user_id, commit=False)
+                        payload["brand_id"] = brand_id
+                    if catalog_name_brand_exists(connection, name=clean_name, brand_id=brand_id):
+                        raise ValueError("A catalog item with that name and brand already exists.")
                     created_id = add_catalog_item(connection, payload, commit=False)
                     if not created_id:
                         raise ValueError("Catalog item could not be created.")
@@ -2582,8 +2590,6 @@ def setup_food_routes(rt):
                         commit=False,
                     ):
                         raise ValueError("Catalog item tags could not be saved.")
-                    if normalized_brand and not add_food_brand(connection, normalized_brand, commit=False):
-                        raise ValueError("Catalog brand could not be saved.")
             except ValueError as error:
                 return _error_msg(str(error))
             return HTMLResponse("", headers={"HX-Redirect": "/food"})

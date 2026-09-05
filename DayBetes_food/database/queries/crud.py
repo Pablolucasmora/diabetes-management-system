@@ -328,7 +328,7 @@ def update_password_hash(connection, user_id: int, new_hash: str, commit: bool =
 # ============================================
 
 _NULLABLE_CATALOG_FIELDS = {
-    "brand",
+    "brand_id",
     "initial_state",
     "nutriscore",
     "nova",
@@ -348,61 +348,78 @@ _NULLABLE_CATALOG_FIELDS = {
 }
 
 
-def normalize_brand_name(brand_name: str) -> str:
-    clean_name = " ".join((brand_name or "").strip().split())
-    if not clean_name:
-        return ""
-    lowered = clean_name.lower()
-    return " ".join(token[:1].upper() + token[1:] for token in lowered.split(" "))
+def clean_brand_label(brand_name: str) -> str:
+    """Etiqueta visible: solo trim y colapso de espacios (decisión 0.1)."""
+    return " ".join((brand_name or "").strip().split())
 
 
-def add_food_brand(connection, brand_name: str, commit: bool = True) -> bool:
-    clean_name = normalize_brand_name(brand_name)
-    if not clean_name:
-        return False
+def brand_code(brand_name: str) -> str:
+    """Clave estable. Debe coincidir con ck_food_brands_code_normalized."""
+    return clean_brand_label(brand_name).lower()
+
+
+def create_food_brand(connection, label: str, created_by: int = None, commit: bool = True) -> int:
+    """Create a food brand and return its ID. Raises ValidationError if validation fails."""
+    from DayBetes_food.errors import ValidationError
+    
+    clean_label = clean_brand_label(label)
+    code = brand_code(label)
+    if not code:
+        raise ValidationError("Brand name is required.")
     try:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO food_brands (name)
-                VALUES (%(name)s)
-                ON CONFLICT (name) DO NOTHING;
+                INSERT INTO food_brands (code, label, created_by, created_at, updated_at)
+                VALUES (%(code)s, %(label)s, %(created_by)s, NOW(), NOW())
+                ON CONFLICT (code) DO NOTHING
+                RETURNING id;
                 """,
-                {"name": clean_name},
+                {"code": code, "label": clean_label, "created_by": created_by},
             )
+            row = cursor.fetchone()
+            if row is None:  # ya existía: se conserva su label original
+                cursor.execute("SELECT id FROM food_brands WHERE code = %(code)s;", {"code": code})
+                row = cursor.fetchone()
         if commit:
             connection.commit()
-        return True
-    except Exception as e:
+        return int(row["id"])
+    except Exception:
         if commit:
             connection.rollback()
-            logger.error("Error in query: %s", e, exc_info=True)
-            return False
         raise
 
 
-def get_food_brand_suggestions(connection, search: str = "", limit: int = 8) -> list[str]:
-    search_condition, search_params, search_order = _build_fuzzy_search(connection, "name", search)
-    params = {**search_params, "limit": max(1, min(int(limit or 8), 25))}
+def get_food_brand_id_by_label(connection, label: str) -> Optional[int]:
+    """Get the ID of a food brand by its label text. Returns None if not found."""
+    code = brand_code(label)
+    if not code:
+        return None
+    row = _execute_query(
+        connection,
+        "SELECT id FROM food_brands WHERE code = %(code)s;",
+        {"code": code},
+        commit=False,
+    )
+    return int(row["id"]) if row else None
+
+
+def get_food_brand_suggestions(connection, search: str = "", limit: int = 50) -> list[str]:
+    search_condition, search_params, search_order = _build_fuzzy_search(connection, "label", search)
+    params = {**search_params, "limit": max(1, min(int(limit or 50), 500))}
     query = """
-        WITH source AS (
-            SELECT DISTINCT trim(brand) AS name
-            FROM catalog
-            WHERE deleted_at IS NULL
-              AND brand IS NOT NULL AND trim(brand) <> ''
-            UNION
-            SELECT DISTINCT trim(name) AS name
-            FROM food_brands
-            WHERE name IS NOT NULL AND trim(name) <> ''
-        )
-        SELECT name
-        FROM source
-        WHERE {search_condition}
+        SELECT label
+        FROM food_brands
+        WHERE is_active = TRUE
+          AND {search_condition}
         ORDER BY {search_order}
         LIMIT %(limit)s;
-    """.format(search_condition=search_condition or "TRUE", search_order=search_order)
+    """.format(
+        search_condition=search_condition or "TRUE",
+        search_order=search_order if search_condition else "label",
+    )
     rows = _execute_query_many(connection, query, params, commit=False)
-    return [str(row["name"]) for row in rows if row and row.get("name")]
+    return [str(row["label"]) for row in rows if row and row.get("label")]
 
 
 def get_subtype_suggestions(connection, search: str = "", limit: int = 50) -> list[str]:
@@ -487,7 +504,7 @@ def add_catalog_item(connection, data: dict, commit: bool = True) -> Optional[in
     """
     query = """
         INSERT INTO catalog (
-            created_by, origin_root_id, name, brand, category, subtype, initial_state,
+            created_by, origin_root_id, name, brand_id, category, subtype, initial_state,
             nutriscore, nova, yuka, default_portion,
             calories_100g, carbs_100g, sugars_100g, fats_100g,
             saturated_100g, proteins_100g, fiber_100g,
@@ -495,7 +512,7 @@ def add_catalog_item(connection, data: dict, commit: bool = True) -> Optional[in
             created_at, updated_at
         )
         VALUES (
-            %(created_by)s, %(origin_root_id)s, %(name)s, %(brand)s, %(category)s, %(subtype)s, %(initial_state)s,
+            %(created_by)s, %(origin_root_id)s, %(name)s, %(brand_id)s, %(category)s, %(subtype)s, %(initial_state)s,
             %(nutriscore)s, %(nova)s, %(yuka)s, %(default_portion)s,
             %(calories_100g)s, %(carbs_100g)s, %(sugars_100g)s, %(fats_100g)s,
             %(saturated_100g)s, %(proteins_100g)s, %(fiber_100g)s,
@@ -506,10 +523,9 @@ def add_catalog_item(connection, data: dict, commit: bool = True) -> Optional[in
     """
     payload = dict(data or {})
     payload.setdefault("origin_root_id", None)
+    payload.setdefault("brand_id", None)
     if payload.get("cooking_factor") is None:
         payload["cooking_factor"] = 1.0
-    if "brand" in payload:
-        payload["brand"] = normalize_brand_name(payload.get("brand")) or None
     result = _execute_query(connection, query, payload, commit=commit, rollback_on_error=commit)
     return result["id"] if result else None
 
@@ -517,13 +533,14 @@ def add_catalog_item(connection, data: dict, commit: bool = True) -> Optional[in
 def get_catalog_item(connection, catalog_id: int, viewer_user_id: int = None) -> Optional[dict]:
     """Gets a catalog item by ID."""
     query = """
-        SELECT entity.*,
+        SELECT entity.*, fb.label AS brand,
                EXISTS (
                    SELECT 1 FROM user_favorites uf
                    WHERE uf.user_id = %(viewer_user_id)s
                      AND uf.catalog_id = entity.id
                ) AS favorite
         FROM catalog entity
+        LEFT JOIN food_brands fb ON fb.id = entity.brand_id
         WHERE entity.id = %(id)s;
     """
     return _execute_query(
@@ -544,13 +561,14 @@ def get_catalog_item_by_barcode(connection, barcode: str, viewer_user_id: int = 
     if viewer_user_id is not None:
         visibility_clause = "AND (is_private = FALSE OR created_by = %(viewer_user_id)s)"
     query = f"""
-        SELECT entity.*,
+        SELECT entity.*, fb.label AS brand,
                EXISTS (
                    SELECT 1 FROM user_favorites uf
                    WHERE uf.user_id = %(viewer_user_id)s
                      AND uf.catalog_id = entity.id
                ) AS favorite
         FROM catalog entity
+        LEFT JOIN food_brands fb ON fb.id = entity.brand_id
         WHERE entity.deleted_at IS NULL
           AND trim(entity.barcode) = %(barcode)s
           {visibility_clause}
@@ -615,7 +633,7 @@ def get_all_catalog(
             connection, "name", normalized, param_prefix="catalog_name"
         )
         brand_condition, brand_params, _ = _build_fuzzy_search(
-            connection, "COALESCE(brand, '')", normalized, param_prefix="catalog_brand"
+            connection, "COALESCE(fb.label, '')", normalized, param_prefix="catalog_brand"
         )
         conditions.append(f"({name_condition} OR {brand_condition})")
         params.update(name_params)
@@ -638,7 +656,7 @@ def get_all_catalog(
     
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     params["favorite_viewer_id"] = viewer_user_id
-    query = f"SELECT entity.*, EXISTS (SELECT 1 FROM user_favorites uf WHERE uf.user_id = %(favorite_viewer_id)s AND uf.catalog_id = entity.id) AS favorite FROM catalog entity {where_clause} ORDER BY entity.name;"
+    query = f"SELECT entity.*, fb.label AS brand, EXISTS (SELECT 1 FROM user_favorites uf WHERE uf.user_id = %(favorite_viewer_id)s AND uf.catalog_id = entity.id) AS favorite FROM catalog entity LEFT JOIN food_brands fb ON fb.id = entity.brand_id {where_clause} ORDER BY entity.name;"
     
     return _execute_query_many(connection, query, params, commit=False)
 
@@ -646,16 +664,15 @@ def get_all_catalog(
 def catalog_name_brand_exists(
     connection,
     name: str,
-    brand: str | None = None,
+    brand_id: int | None = None,
     exclude_id: int | None = None,
 ) -> bool:
     normalized_name = " ".join((name or "").strip().split())
-    normalized_brand = normalize_brand_name(brand or "")
     if not normalized_name:
         return False
     params = {
         "name": normalized_name,
-        "brand": normalized_brand,
+        "brand_id": brand_id,
     }
     exclusion = ""
     if exclude_id is not None:
@@ -665,8 +682,8 @@ def catalog_name_brand_exists(
         SELECT 1
         FROM catalog
         WHERE deleted_at IS NULL
-          AND lower(trim(name)) = lower(trim(%(name)s))
-          AND lower(trim(COALESCE(brand, ''))) = lower(trim(COALESCE(%(brand)s, '')))
+          AND lower(btrim(name)) = lower(btrim(%(name)s))
+          AND COALESCE(brand_id, 0) = COALESCE(%(brand_id)s, 0)
           {exclusion}
         LIMIT 1;
     """
@@ -681,8 +698,7 @@ def update_catalog_item(connection, catalog_id: int, data: dict, commit: bool = 
 
     payload = dict(data or {})
     payload.pop("favorite", None)
-    if "brand" in payload:
-        payload["brand"] = normalize_brand_name(payload.get("brand")) or None
+    # brand_id llega ya resuelto desde la ruta
     params = {**payload, "id": catalog_id}
     null_fields = {
         field
@@ -1150,15 +1166,16 @@ def get_rescue_entries_suggestions(connection, users_id: int, search: str = "", 
                 'catalog'::text AS entry_type,
                 c.id AS entry_id,
                 c.name AS name,
-                COALESCE(c.brand, '') AS subtitle,
+                COALESCE(fb.label, '') AS subtitle,
                 COALESCE(c.default_portion, 100.0) AS serving_g,
                 NULL::double precision AS available_g
             FROM linked_tags lt
             INNER JOIN rescue_tag rt ON rt.id = lt.tag_id
             INNER JOIN catalog c ON c.id = lt.catalog_id
+            LEFT JOIN food_brands fb ON fb.id = c.brand_id
             WHERE c.deleted_at IS NULL
               AND (c.is_private = FALSE OR c.created_by = %(users_id)s)
-              AND (%(q)s = '' OR c.name ILIKE %(q_like)s OR COALESCE(c.brand, '') ILIKE %(q_like)s)
+              AND (%(q)s = '' OR c.name ILIKE %(q_like)s OR COALESCE(fb.label, '') ILIKE %(q_like)s)
         ),
         manual_rows AS (
             SELECT

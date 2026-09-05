@@ -67,9 +67,20 @@ class DBSchema:
     food_brands = """
     CREATE TABLE IF NOT EXISTS food_brands (
         id SERIAL PRIMARY KEY,
-        name VARCHAR(255) UNIQUE NOT NULL,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        code VARCHAR(255) NOT NULL,          -- clave estable normalizada
+        label VARCHAR(255) NOT NULL,         -- etiqueta visible, tal cual la escribe el usuario
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_by INTEGER,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT fk_food_brands_created_by_users
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+        CONSTRAINT ck_food_brands_code_normalized
+            CHECK (code = regexp_replace(btrim(lower(code)), '\\s+', ' ', 'g')),
+        CONSTRAINT ck_food_brands_label_not_blank
+            CHECK (btrim(label) <> '')
     );
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_food_brands_code ON food_brands (code);
     """
 
     insulin_injections = """
@@ -91,7 +102,7 @@ class DBSchema:
         created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         origin_root_id INTEGER REFERENCES catalog(id) ON DELETE SET NULL,
         name VARCHAR(255) NOT NULL, -- Product name
-        brand VARCHAR(255), -- Brand name
+        brand_id INTEGER, -- FK a food_brands; NULL = sin marca
         category VARCHAR(100) NOT NULL,
         subtype VARCHAR(100) NOT NULL, -- More specific food category (e.g. yogurt, milk, biscuit, turkey, sweet potato, avocado...). This variable will also be used in the future to estimate macros based on meals of the same subtype for which we have nutritional info.
         initial_state VARCHAR(50) CHECK (
@@ -121,7 +132,9 @@ class DBSchema:
         is_private BOOLEAN NOT NULL DEFAULT FALSE, -- True: only creator can view it
         deleted_at TIMESTAMP NULL, -- Logical deletion timestamp
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT fk_catalog_brand_id_food_brands
+            FOREIGN KEY (brand_id) REFERENCES food_brands(id) ON DELETE SET NULL
     );
     """
 
@@ -134,7 +147,7 @@ class DBSchema:
         description TEXT, -- Description of the dish (optional), which will be used to more precisely determine its nutritional info if an AI is integrated
         subtype VARCHAR(100) NOT NULL, -- More specific product category, same as in catalog. This variable will also be used in the future to estimate macros based on meals of the same subtype for which we have nutritional info.
         origin VARCHAR(255), -- Where it comes from: grandma's, Burger King, Saona, Big Twins, Subway... (to allow reuse when visiting the same place again). These meals should be updatable each time the user consumes from that place in case something has changed.
-        
+
         amount_g REAL NOT NULL,
         calories_100g REAL,
         carbs_100g REAL,
@@ -143,10 +156,10 @@ class DBSchema:
         saturated_100g REAL,
         proteins_100g REAL,
         fiber_100g REAL,
-        
+
         caffeine REAL,
         alcohol REAL,
-        
+
         glycemic_index VARCHAR(20) CHECK (
             glycemic_index IN ('high', 'medium', 'low')
         ), -- Estimated glycemic index of the meal

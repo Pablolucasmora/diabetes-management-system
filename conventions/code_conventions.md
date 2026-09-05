@@ -8,6 +8,8 @@ Las convenciones se aplican inmediatamente al código nuevo. El código existent
 
 Durante la fase de desarrollo personal (TFG, un único desarrollador, un único usuario) no se exige una suite de tests automatizados. La verificación manual del comportamiento afectado es suficiente antes de dar por cerrada una tabla o módulo. Esta decisión se revisará cuando el proyecto salga de esta fase; no debe señalarse como convención faltante en auditorías mientras siga vigente.
 
+
+**IMPORTANTE RECORDAR QUE TODO EL CÓDIGO ESCRITO DEBE DE SER EN INGLÉS, COMO SE HA IDO HACIENDO DURANTE EL PROYECTO, LO ÚNICO QUE HAY QUE HABLAR CON EL USUARIO SOBRE EN QUE IDIOMA HAY QUE HACERLO Y QUE ES UNA COSA QUE SE VERÁ EN UN FUTURO ES EL TEMA DE LAS LISTAS Y TEXTO DE LA INTERFAZ (LISTAS DE CATEGORIAS DE ALIMENTOS, ESTADOS DE LOS ALIMENTOS...) QUE HABRÁ QUE VER SI PONERLO TODO EN UN IDIOMA, SI SE PODRÁ ELEGIR EL IDIOMA...**
 ## 1. Capas y responsabilidades
 
 El proyecto se divide estrictamente en cuatro responsabilidades. Una capa inferior no debe conocer detalles de una capa superior.
@@ -336,7 +338,7 @@ Debe almacenarse en una tabla de catálogo con, como mínimo:
 
 Los valores iniciales pueden cargarse mediante bootstrap o migración, pero añadir uno nuevo debe ser un cambio de datos, no un cambio obligatorio de código.
 
-En esta categoría entran actualmente subtipos de comida, marcas de comida, origen de comida manual, estados físicos inicial/final, métodos de cocción y métodos de conservación. Las listas Python existentes solo pueden actuar como datos iniciales mientras se completa el catálogo.
+En esta categoría entran actualmente 5. Las listas Python existentes solo pueden actuar como datos iniciales mientras se completa el catálogo.
 
 ### 4.6 Enumeraciones técnicas
 
