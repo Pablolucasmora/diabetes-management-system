@@ -72,3 +72,33 @@ Si ya existe audit_tabla.md de una pasada anterior sobre esta misma
 tabla, contrástalo primero: qué hallazgos ya no reproduces (márcalos
 como resueltos, no los borres), cuáles siguen abiertos, y qué
 hallazgos nuevos aparecen.
+
+## Si el usuario resuelve una decisión pendiente durante la auditoría
+
+Si mientras auditas la tabla el usuario te comunica directamente la
+resolución de una decisión pendiente o una ambigüedad de
+conventions/ (del tipo que tú mismo señalarías como "Decisión
+pendiente" en un hallazgo), no la des simplemente por resuelta en el
+hallazgo: regístrala primero, con el mismo procedimiento que usa el
+agente propose en su Modo 3:
+
+1. Añade una entrada a `conventions/decisions.md` (créalo si no
+   existe) con el formato estándar de ese archivo.
+2. Decide si la decisión es repetible o específica de esta tabla,
+   con el mismo criterio de la introducción de `code_conventions.md`.
+   - Si es repetible → edita también la sección correspondiente de
+     `conventions/*.md`, y anota en la entrada de `decisions.md` qué
+     documento y sección quedaron modificados.
+   - Si es específica de esta tabla → la entrada en `decisions.md`
+     es autosuficiente; no tocas `conventions/*.md`.
+   - Si no tienes claro cuál de los dos casos es, pregunta al
+     usuario antes de escribir en `conventions/*.md`. Registrar en
+     `decisions.md` sí puedes hacerlo siempre.
+3. Solo entonces sigues con la auditoría, ya con la decisión resuelta
+   disponible para redactar el hallazgo correspondiente.
+
+Nunca generas tú una decisión nueva por iniciativa propia: solo
+registras y, cuando aplica, formalizas la que el usuario te ha dado
+explícitamente. Una instrucción sobre tu propio comportamiento (no
+sobre producto o convención) no se escribe en `decisions.md` ni en
+`conventions/`.

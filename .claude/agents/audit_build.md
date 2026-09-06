@@ -3,6 +3,7 @@ name: build
 description: Implementa en el código real el plan definitivo ya aprobado. Se invoca explícitamente, nunca por delegación automática.
 tools: Read, Edit, Write, Bash
 model: haiku
+permissionMode: acceptEdits
 hooks:
   PreToolUse:
     - matcher: "Write|Edit"

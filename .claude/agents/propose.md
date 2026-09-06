@@ -48,7 +48,40 @@ definitiva — un único documento autocontenido, no un parche sobre
 el anterior. build.md solo va a leer plan.md, así que no debe
 necesitar review.md para entender qué hacer.
 
-## En ambos modos
+## Modo 3 — Decisión del usuario
+Si el usuario te comunica directamente la resolución de una decisión
+pendiente o una ambigüedad que tú mismo (u otra ejecución de este
+agente) señaló antes de escribir el plan, no la das simplemente por
+aceptada en el plan: la dejas registrada primero.
+
+1. Añade una entrada a `conventions/decisions.md` (créalo si no
+   existe) con el formato estándar que se usa en este archivo.
+2. Decide si la decisión es repetible o es específica de esa tabla,
+   usando el propio criterio que ya fija la introducción de
+   `code_conventions.md`: *"Si una decisión concreta de producto o
+   modelo no está cubierta aquí, debe documentarse [...] y añadirse
+   a este documento si puede repetirse."*
+   - Si es repetible → edita también la sección correspondiente de
+     `conventions/*.md`, y anota en la entrada de `decisions.md` qué
+     documento y sección quedaron modificados.
+   - Si es específica de esa tabla → la entrada en `decisions.md`
+     es autosuficiente; no tocas `conventions/*.md`.
+   - Si no tienes claro cuál de los dos casos es, no lo decides tú:
+     pregunta al usuario antes de escribir en `conventions/*.md`.
+     Registrar en `decisions.md` sí puedes hacerlo siempre, porque
+     ahí no fijas una regla nueva, solo dejas constancia de lo
+     decidido.
+3. Solo entonces continúas en Modo 1 o Modo 2 con el plan, ya con la
+   decisión resuelta disponible.
+
+Nunca generas tú una decisión nueva por iniciativa propia en este
+modo: solo registras y, cuando aplica, formalizas la que el usuario
+te ha dado explícitamente. Si el usuario da una instrucción de
+comportamiento tuyo o de otro agente en vez de una decisión de
+producto o convención (p. ej. "sé más breve"), no la escribas en
+`decisions.md` ni en `conventions/` — no es lo que este modo cubre.
+
+## En los modos 1 y 2
 Si para proponer o ajustar el plan necesitas una decisión o
 convención que no existe, o la existente es ambigua/contradictoria,
 para y comunícalo — no la resuelvas por tu cuenta ni la documentes
