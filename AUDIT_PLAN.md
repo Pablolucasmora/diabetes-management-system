@@ -1,6 +1,6 @@
 # Plan de auditoría y estabilización — DayBetes
 
-Última actualización: 2026-09-04
+Última actualización: 2026-09-05
 
 ## Objetivo y marco de tiempo
 
@@ -111,7 +111,7 @@ real comprobado hoy:
 
 | Concepto | Columna | Estado |
 |---|---|---|
-| Marcas | `food_brands` (tabla) + `catalog.brand` | La tabla existe, pero `catalog.brand` es texto libre **sin FK** a ella — solo autocomplete. |
+| Marcas | `food_brands` + `catalog.brand_id` | **Cerrado 2026-09-05**: `food_brands` es catálogo §4.5 (`code`, `label`, `is_active`) y `catalog.brand_id` es FK real. Deuda menor en `audit/deuda_pendiente.md`. |
 | Subtipos | `catalog.subtype`, `manual_intake.subtype` | `VARCHAR` libre, sin `CHECK`, sin catálogo. |
 | Origen manual | `manual_intake.origin` | `VARCHAR` libre, sin `CHECK`, sin catálogo. |
 | Estado físico inicial | `catalog.initial_state` | `CHECK` **cerrado** en BD — al revés de lo que pide 4.5 (más rígido que los demás, no más abierto). |
@@ -147,6 +147,8 @@ Ya cerradas (sesión previa a este plan):
 - [x] `users` — 2026-09-04
 - [x] `auth_sessions` — 2026-09-04 (decisión 2026-09-02/03 en decisions.md)
 - [x] `auth_rate_limits` — 2026-09-04 (extraída de auth/service.py)
+- [x] `food_brands` — 2026-09-05 (audit → plan → review → build; deuda
+      restante en `audit/deuda_pendiente.md`)
 
 Fuera de alcance por ahora (decisión tuya, no técnica):
 - `fridge` — funcionalidad todavía no implementada, no se audita hasta que exista.
@@ -160,7 +162,6 @@ Pendientes (8), agrupadas por tamaño/dependencia — dentro de cada
 grupo el orden es libre, pero conviene mantener el orden entre grupos:
 
 ### Grupo 1 — Catálogos simples (para coger ritmo con el nuevo proceso)
-- [ ] `food_brands`
 - [ ] `insulin_injections` *(FK a `intake_event`; su propio análisis no
       depende de que esa tabla esté cerrada, pero ten presente ese
       vínculo al revisar ownership)*
