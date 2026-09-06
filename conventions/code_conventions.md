@@ -246,13 +246,31 @@ Un update parcial debe representar de forma inequívoca tres estados: campo ause
 - No usar `**kwargs` para campos de tablas; los campos aceptados deben estar tipados y validados.
 - Las funciones que reciben una conexión deben usar el tipo común de conexión del proyecto cuando exista; no crear wrappers incompatibles por módulo.
 
+### 3.6 Paquete `domain/` y ubicación de los mappers
+
+`DayBetes_food/domain/` es el único lugar donde viven los enums de dominio (§4.1) y las dataclasses de lectura/comando/update (§3.1). `domain/` no importa psycopg, rutas ni componentes: es código puro, sin dependencias de infraestructura ni de presentación.
+
+- `domain/constants.py`: enums de dominio (§4.2).
+- Un módulo por entidad con sus dataclasses, por ejemplo `domain/insulin.py` para `insulin_injections`.
+
+Los **mappers de fila SQL a dataclass viven en la capa de persistencia** (`DayBetes_food/database/mappers.py`), nunca en `domain/`: conocen nombres físicos de columna (`users_id` → `user_id`, §3.5) que el dominio no debe conocer. `auth/models.py` es anterior a esta convención y mantiene sus mappers junto a las dataclasses porque es un módulo cerrado y específico de autenticación; no es precedente para código nuevo.
+
+Las etiquetas visibles y las imágenes asociadas a un enum (por ejemplo las rutas de imagen de `InjectionZone`) son un mapper de presentación y siguen en `components/`, nunca en `domain/`.
+
+```text
+domain/constants.py   -> enums de dominio
+domain/<entidad>.py    -> dataclasses de esa entidad
+database/mappers.py   -> fila SQL -> dataclass (conoce nombres físicos)
+components/<algo>.py  -> dataclass/enum -> etiqueta o imagen (presentación)
+```
+
 ## 4. Constantes de dominio
 
 ### 4.1 Fuente única de verdad
 
 Un valor se modela como enumeración cuando pertenece a un conjunto cerrado y conocido de opciones. Ejemplos: tipos de comida, zonas de inyección, tipos de insulina, estados de eventos, Nutriscore y modos internos de navegación. Los estados físicos del alimento, los métodos de cocción y los métodos de conservación son actualmente ampliables y se tratan como catálogos, no como enums.
 
-Los enums de dominio se declaran en un módulo central, por ejemplo `DayBetes_food/domain/constants.py`. Ese módulo no debe importar rutas, componentes ni la base de datos.
+Los enums de dominio se declaran en un módulo central, `DayBetes_food/domain/constants.py` (§3.6). Ese módulo no debe importar rutas, componentes ni la base de datos. Las dataclasses que usan estos enums viven en el módulo de su entidad dentro de `domain/`, por ejemplo `InsulinType` e `InjectionZone` se declaran en `domain/constants.py` y se consumen desde `domain/insulin.py`.
 
 Cada concepto tiene un único enum. No se crean listas paralelas del mismo concepto en `routes/`, `components/`, `crud.py` y `schema.py`.
 
@@ -720,7 +738,7 @@ Las variables opcionales solo pueden tener defaults documentados y seguros. Una 
 
 Los parsers centralizados deben validar estrictamente booleanos, enteros, decimales, URLs y enums. Los límites de sesiones, rate limiting, timeouts y paginación se definen una sola vez en configuración.
 
-La configuración de desarrollo, test y producción no se mezcla. La inicialización automática del esquema no debe activarse accidentalmente en producción.
+La configuración de desarrollo, test y producción no se mezcla. La inicialización automática del esquema no debe activarse accidentalmente en producción. Ver además sección 12.6 sobre la identidad de conexión separada para el bootstrap.
 
 ### 8.2 Secretos y cookies
 
@@ -1317,6 +1335,22 @@ Antes de ejecutar un cambio de esquema:
 - No imprimir un warning y continuar como si el esquema fuese correcto.
 - El resultado final debe ser inequívoco: aplicada, omitida de forma segura y documentada, o abortada.
 - Las operaciones que PostgreSQL no permita ejecutar de forma transaccional deben documentar su estrategia específica.
+
+### 12.6 Identidad de conexión para bootstrap y migraciones
+
+El bootstrap de esquema (`db_init.py`) ejecuta sentencias DDL: `CREATE TABLE`, `ALTER TABLE`, `ADD CONSTRAINT`, `CREATE INDEX`. Estas operaciones requieren privilegios de propietario sobre el objeto, distintos y más amplios que los privilegios DML (`SELECT`/`INSERT`/`UPDATE`/`DELETE`) que necesita el runtime de la aplicación.
+
+Por eso el bootstrap y el runtime de la aplicación no comparten identidad de conexión:
+
+- `init_db()` se conecta con una identidad de migraciones, propietaria de los objetos de esquema (`MIGRATIONS_DATABASE_URL` o el nombre equivalente que defina `config.py`). Esta identidad no se usa desde `routes/`, `services/` ni `database/queries/`.
+- El resto de la aplicación —rutas, servicios, CRUD— se conecta con `DATABASE_URL`, una identidad de mínimo privilegio sin permisos de DDL. Esta identidad nunca debe poder modificar esquema ni constraints, ni siquiera durante el arranque.
+- `get_connection()` (o el helper equivalente) no decide qué identidad usar según el contexto de llamada; el bootstrap usa explícitamente su propio helper de conexión de migraciones, distinto del que usan rutas, servicios y CRUD.
+- Ambas variables se validan al arrancar según la sección 8.1. Si la identidad de migraciones falta y el bootstrap está activado, el arranque falla con severidad `CRITICAL`, no se omite en silencio.
+- Conceder a la identidad de runtime privilegios de propietario o equivalentes a DDL, aunque sea temporalmente, deshace la separación de privilegios y no se considera una solución válida a un fallo de bootstrap.
+
+Un fallo del bootstrap por permisos (`must be owner of table ...`) es una señal de que se ha usado la identidad equivocada, no un problema de la tabla afectada. No se corrige ampliando los privilegios del runtime; se corrige asegurando que `init_db()` use la identidad de migraciones.
+
+Antes de dar por cerrada una tabla en el ciclo de auditoría (sección 13), debe verificarse contra la base de datos real —no solo contra `schema.py`— que el bootstrap se ejecutó efectivamente con la identidad correcta y que el esquema físico coincide con la definición esperada. Un cambio de esquema fusionado en el código y documentado como decisión no se considera aplicado hasta que esa verificación directa contra PostgreSQL lo confirme.
 
 ## 13. Procedimiento obligatorio de auditoría por tabla
 

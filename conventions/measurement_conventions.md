@@ -393,16 +393,17 @@ Reglas:
 
 La dosis de insulina se expresa en **unidades de insulina (`U`)**.
 
-`basal_units` representa una cantidad de unidades, no gramos ni mililitros.
+La columna que almacena la dosis en `insulin_injections` se llama `units` (se llamaba `basal_units` hasta la decisión del 2026-09-06 registrada en `decisions.md`). Representa una cantidad de unidades de insulina, no gramos ni mililitros, y su nombre es deliberadamente neutro respecto al tipo: la misma columna sirve para basal y para rápida.
 
 Reglas actuales:
 
-- `basal_units` es obligatorio para insulina basal;
-- `basal_units` es `NULL` para insulina rápida si no se registra una dosis equivalente;
+- `units` es obligatorio y positivo para insulina **basal**;
+- `units` es opcional para insulina **rápida**: hoy siempre se guarda `NULL`, porque el formulario de rápida no captura la dosis, pero un valor positivo es válido en el modelo y podrá capturarse sin migración adicional (caso de uso: usar una pluma que no registra la dosis por sí sola);
+- `NULL` significa "dosis no registrada", nunca cero (§2);
 - la dosis debe ser positiva;
-- el incremento permitido debe estar definido por el formulario y el servidor;
+- el incremento permitido debe estar definido por el formulario y el servidor, y reforzarse además en PostgreSQL con un `CHECK` coherente con esa validación (`code_conventions.md` §11.6);
 - la dosis registrada se diferencia de una dosis calculada por el sistema;
-- la fecha y hora de la inyección se almacenan separadas del momento de creación del registro.
+- la fecha y hora de la inyección (`shot_time`) se almacenan separadas del momento de creación del registro (`created_at`).
 
 Mientras las dosis se introduzcan manualmente y no se calculen automáticamente, se puede mantener el tipo actual con validación estricta. Si DayBetes calcula dosis o recomendaciones, la dosis y todos sus operandos clínicamente relevantes usarán `NUMERIC`/`Decimal`.
 
@@ -414,14 +415,23 @@ No se debe confundir:
 
 ```text
 insulin_dose = True       -> indicador
-basal_units = 8.5         -> cantidad de insulina
+units = 8.5               -> cantidad de insulina
 ```
 
 Si en el futuro se necesita almacenar una dosis asociada al evento, debe crearse un campo con nombre y unidad explícitos, no reutilizar el booleano.
 
+Relación entre `insulin_dose` e `insulin_injections` (decisiones del 2026-09-06):
+
+- Confirmar un `intake_event` con `insulin_dose = TRUE` registra **siempre** una fila en `insulin_injections` asociada a ese evento. Confirmar sin registrar la inyección no es un resultado válido.
+- Si el usuario no ha seleccionado zona, la fila se guarda con `injection_zone = NULL`, que significa "zona no registrada" y no "no hubo inyección". Por eso `injection_zone` es nullable. Una zona presente pero fuera del enum es un error de validación explícito, nunca un `NULL` silencioso.
+- Un `intake_event` puede tener **varias** inyecciones asociadas (comida larga partida en dos, corrección post-comida). No existe unicidad por evento: la confirmación crea una única inyección automática, y su no duplicación se apoya en que la transición `planned -> consumed` es condicional.
+- `intake_event_id` es opcional en la inyección: una inyección sin evento es un registro manual válido, y borrar el evento no elimina la inyección (`ON DELETE SET NULL`).
+
 ### 8.3 Fecha de inyección
 
 `shot_time` representa el momento en que se administró la inyección, almacenado en UTC. La interfaz puede introducirlo en la zona horaria local del usuario.
+
+`shot_time` no se sustituye por `created_at` ni al revés: son campos distintos según §9.3. Una inyección puede registrarse horas o días después de haberse administrado.
 
 ## 9. Tiempo y fechas
 
