@@ -91,7 +91,13 @@ class DBSchema:
         shot_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         insulin_type VARCHAR(20) CHECK (insulin_type IN ('rapid', 'basal')),
         basal_units REAL CHECK (basal_units > 0),
-        injection_zone VARCHAR(50) CHECK (injection_zone IN ('right_arm', 'left_arm', 'right_thigh', 'left_thigh', 'abdomen', 'right_gluteus', 'left_gluteus'))
+        injection_zone VARCHAR(50) CHECK (injection_zone IN ('right_arm', 'left_arm', 'right_thigh', 'left_thigh', 'abdomen', 'right_gluteus', 'left_gluteus')),
+        notes TEXT,
+        -- needle_leak / skin_pinch: intencionadamente NULLABLE y SIN DEFAULT.
+        -- NULL = "no observado", no "falso" (measurement_conventions.md §2:
+        -- no se usa NULL para representar automaticamente cero/false).
+        needle_leak BOOLEAN,
+        skin_pinch BOOLEAN
     );
     """
 

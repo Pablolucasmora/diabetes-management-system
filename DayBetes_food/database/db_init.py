@@ -842,6 +842,11 @@ def _ensure_insulin_injections_schema(cursor):
     cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS users_id INTEGER;")
     cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS insulin_type VARCHAR(20);")
     cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS basal_units REAL;")
+    cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS notes TEXT;")
+    # needle_leak / skin_pinch: nullable and without DEFAULT on purpose.
+    # NULL means "not observed", not "false" (measurement_conventions.md 2).
+    cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS needle_leak BOOLEAN;")
+    cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS skin_pinch BOOLEAN;")
     cursor.execute(
         """
         DO $$
