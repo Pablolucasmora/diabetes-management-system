@@ -24,6 +24,8 @@ services:
     # Usamos las mismas variables para construir la URL de conexión
     environment:
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}
+      - MIGRATIONS_DATABASE_URL=${MIGRATIONS_DATABASE_URL}
+      - DB_RUNTIME_ROLE=${DB_RUNTIME_ROLE}
     command: uvicorn DayBetes_food.main:app --host 0.0.0.0 --port 8000 --reload
     depends_on:
       db:

@@ -63,6 +63,23 @@ if not DATABASE_URL.startswith(("postgres://", "postgresql://")):
         "DATABASE_URL must be a postgres:// or postgresql:// connection string"
     )
 
+# Identidad de migraciones (§12.6): propietaria del esquema, nunca usada por
+# routes/, services/ ni database/queries/.
+MIGRATIONS_DATABASE_URL = (os.getenv("MIGRATIONS_DATABASE_URL") or "").strip()
+if DB_INIT_ON_STARTUP:
+    if not MIGRATIONS_DATABASE_URL:
+        logging.getLogger(__name__).critical(
+            "MIGRATIONS_DATABASE_URL is required when DB_INIT_ON_STARTUP is enabled"
+        )
+        raise RuntimeError("MIGRATIONS_DATABASE_URL is required when DB_INIT_ON_STARTUP is enabled")
+# El formato se valida siempre que la variable exista, aunque el bootstrap no
+# arranque en este proceso (§8.1): el flujo manual la usa igual.
+if MIGRATIONS_DATABASE_URL and not MIGRATIONS_DATABASE_URL.startswith(("postgres://", "postgresql://")):
+    raise RuntimeError("MIGRATIONS_DATABASE_URL must be a postgres:// or postgresql:// connection string")
+
+# Rol de runtime al que el bootstrap concede DML sobre los objetos que crea.
+DB_RUNTIME_ROLE = (os.getenv("DB_RUNTIME_ROLE") or "daybetes_app").strip()
+
 SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "daybetes_session")
 CSRF_COOKIE_NAME = os.getenv("CSRF_COOKIE_NAME", "daybetes_csrf")
 SESSION_TTL_SECONDS = _as_int("SESSION_TTL_SECONDS", 60 * 60 * 24 * 14)
