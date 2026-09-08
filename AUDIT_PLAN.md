@@ -1,6 +1,6 @@
 # Plan de auditoría y estabilización — DayBetes
 
-Última actualización: 2026-09-05
+Última actualización: 2026-09-08
 
 ## Objetivo y marco de tiempo
 
@@ -149,6 +149,12 @@ Ya cerradas (sesión previa a este plan):
 - [x] `auth_rate_limits` — 2026-09-04 (extraída de auth/service.py)
 - [x] `food_brands` — 2026-09-05 (audit → plan → review → build; deuda
       restante en `audit/deuda_pendiente.md`)
+- [x] `insulin_injections` — 2026-09-08 (audit → plan → review → build →
+      bootstrap ejecutado y verificado contra la base real, pasada de
+      verificación P1/P1.5 confirmada en `audit/audit_insulin_injections.md`;
+      deuda restante —H12, H13 parte de captura, clasificación
+      archivable, H14/H15/H16 y la divergencia Python/Postgres del
+      tiempo— en `audit/deuda_pendiente.md`)
 
 Fuera de alcance por ahora (decisión tuya, no técnica):
 - `fridge` — funcionalidad todavía no implementada, no se audita hasta que exista.
@@ -158,13 +164,8 @@ Fuera de alcance por ahora (decisión tuya, no técnica):
   de que lo confirmes** cuando lleguemos ahí — la dejo fuera de los
   grupos de abajo salvo que me digas lo contrario.
 
-Pendientes (8), agrupadas por tamaño/dependencia — dentro de cada
+Pendientes (7), agrupadas por tamaño/dependencia — dentro de cada
 grupo el orden es libre, pero conviene mantener el orden entre grupos:
-
-### Grupo 1 — Catálogos simples (para coger ritmo con el nuevo proceso)
-- [ ] `insulin_injections` *(FK a `intake_event`; su propio análisis no
-      depende de que esa tabla esté cerrada, pero ten presente ese
-      vínculo al revisar ownership)*
 
 ### Grupo 2 — Entidades principales de comida
 - [ ] `recipe`
