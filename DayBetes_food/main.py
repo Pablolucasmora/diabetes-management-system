@@ -136,8 +136,22 @@ def _is_htmx_request(request: Request) -> bool:
     return request.headers.get("HX-Request") == "true"
 
 
+def _response_sets_cookie(response, cookie_name: str) -> bool:
+    prefix = f"{cookie_name}=".encode()
+    return any(key == b"set-cookie" and value.startswith(prefix) for key, value in response.raw_headers)
+
+
 @app.middleware("http")
 async def auth_security_middleware(request: Request, call_next):
+    # Los assets estaticos son cacheables (Cache-Control: public, ver
+    # add_asset_cache_headers) y pueden servirse desde un CDN/edge. Si esta
+    # ruta escribiera una cookie CSRF aqui, esa cabecera Set-Cookie podria
+    # quedar cacheada y reenviarse a visitantes distintos, envenenando su
+    # cookie CSRF con un token ajeno a su sesion. No hay nada que autenticar
+    # ni validar por CSRF en una peticion GET a un asset publico.
+    if request.url.path.startswith(ASSET_PREFIXES):
+        return await call_next(request)
+
     csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME) or generate_token()
     request.state.csrf_token = csrf_cookie
     request.state.user = None
@@ -185,7 +199,12 @@ async def auth_security_middleware(request: Request, call_next):
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 
-    if request.cookies.get(CSRF_COOKIE_NAME) != csrf_cookie:
+    # Si la propia ruta (p.ej. login/register) ya emitio su Set-Cookie de
+    # CSRF vinculado a la sesion recien creada, no lo pisamos con el token
+    # "huerfano" generado al principio de esta funcion: hacerlo dejaba al
+    # navegador con una cookie que nunca se guardo en auth_sessions, y
+    # cualquier POST posterior (incluido logout) fallaba con 403.
+    if request.cookies.get(CSRF_COOKIE_NAME) != csrf_cookie and not _response_sets_cookie(response, CSRF_COOKIE_NAME):
         response.set_cookie(
             CSRF_COOKIE_NAME,
             csrf_cookie,

@@ -39,6 +39,7 @@ def settings_main(connection, current_user=None):
                 ),
                 action="/auth/logout",
                 method="post",
+                enctype="application/x-www-form-urlencoded",
                 cls="mt-3",
                 onsubmit=(
                     f"var m=document.cookie.match(/(?:^|; ){re.escape(CSRF_COOKIE_NAME)}=([^;]+)/);"
