@@ -23,3 +23,13 @@ class InjectionZone(str, Enum):
     ABDOMEN = "abdomen"
     RIGHT_GLUTEUS = "right_gluteus"
     LEFT_GLUTEUS = "left_gluteus"
+
+
+def sql_in_list(enum_cls) -> str:
+    """Lista de valores del enum para un CHECK: "'rapid', 'basal'".
+
+    Los valores son constantes de código, no datos de una petición: la regla de
+    parametrización de code_conventions.md 11.9 se refiere a valores dinámicos.
+    Generarla aquí garantiza que el CHECK coincida siempre con el enum (4.4).
+    """
+    return ", ".join(f"'{member.value}'" for member in enum_cls)
