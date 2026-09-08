@@ -129,3 +129,47 @@
 - Colocar los mappers dentro de `domain/` junto a las dataclasses, o en la capa de persistencia.
 **Decisión**: se crea el paquete `DayBetes_food/domain/` en este ciclo, por petición explícita del usuario. Contiene `constants.py` (enums de dominio) y un módulo por entidad con sus dataclasses (`domain/insulin.py`). `domain/` no importa psycopg, rutas ni componentes. Los **mappers de fila SQL a dataclass viven en la capa de persistencia** (`DayBetes_food/database/mappers.py`), porque conocen nombres físicos de columna (`users_id` → `user_id`) que el dominio no debe conocer. Las etiquetas visibles y las imágenes asociadas a un enum siguen en `components/`, como mapper de presentación, nunca en `domain/`.
 **Convención actualizada**: `conventions/code_conventions.md` sección 3.6 (nueva) y ampliación de la sección 4.1
+
+## 2026-09-08 — Clasificación híbrida por `state` de `intake_event` (§11.2)
+
+**Origen**: `intake_event` no estaba clasificada en ninguna convención (§11.1/§11.2), la misma laguna abierta para `insulin_injections` en `audit/deuda_pendiente.md:170-178`, pero aquí bloqueaba: sin decidirlo no se podía saber si un evento consumido debe archivarse, prohibirse su borrado, o borrarse arrastrando la inyección, ni qué política `ON DELETE` corresponde a `insulin_injections.intake_event_id` (hoy `SET NULL`, ver decisión 2026-09-06).
+**Contexto**: `intake_event.state` distingue `planned` (borrador de carrito, sin valor clínico si se descarta) de `consumed` (comida ya registrada, con o sin inyección asociada, con valor clínico/histórico). Una clasificación única para toda la tabla no reflejaba esa diferencia.
+**Alternativas consideradas**:
+- Histórica uniforme (planned y consumed): máxima trazabilidad, pero un carrito cancelado queda para siempre sin motivo clínico.
+- No archivable uniforme (statu quo, borrado físico siempre): contradice el propósito clínico de `consumed`; borrar un evento consumido con inyección asociada activa `SET NULL` y produce inyecciones sin contexto de comida.
+- Archivable uniforme (`deleted_at` en todos los estados): resuelve el problema de contexto sin tocar la FK, pero "archivar" un carrito descartado es semánticamente raro (no es dato para restaurar, es papelera de carrito).
+- Híbrida por `state`: `planned` no archivable, `consumed` archivable.
+**Decisión**: clasificación **híbrida por `state`**. `planned` es **no archivable**: `delete_intake_event` permite `DELETE` físico; si tenía una `insulin_injections` asociada, la FK aplica `SET NULL` (statu quo, sin cambio; se deja abierta como mejora futura la opción de arrastrar el borrado de la inyección en vez de desasociarla). `consumed` es **archivable**: su única vía de eliminación es `archive_intake_event` (`UPDATE deleted_at`, con `restore_intake_event` simétrico); `delete_intake_event` debe rechazar explícitamente `state = 'consumed'`. Como archivar es un `UPDATE` y no un `DELETE`, la FK `ON DELETE SET NULL` de `insulin_injections.intake_event_id` no se activa al archivar: la inyección sigue viendo el `intake_event` (ahora archivado) con todo su contexto de comida. La FK actual (`SET NULL`) no necesita cambiar: solo se activaría si en el futuro se añade una purga física de eventos archivados (p. ej. a los 30 días), momento en el que `SET NULL` sigue siendo el comportamiento correcto y ya queda cubierto sin trabajo adicional. Pendiente de interfaz: acceso de usuario a eventos archivados y política de purga automática, ambos fuera de este ciclo.
+**Convención actualizada**: `conventions/code_conventions.md` sección 11.2 (excepción documentada: clasificación por columna de estado, no solo por tabla, para `intake_event`)
+
+## 2026-09-08 — `intake_event` consumido sigue siendo editable
+
+**Origen**: n/a (aclaración derivada de la decisión "Clasificación híbrida por `state` de `intake_event`", 2026-09-08, misma fecha)
+**Contexto**: Al fijar `consumed` como archivable surgió la duda de si, además del borrado, la edición (`update_intake_event`) debía restringirse una vez el evento pasa a `consumed`, dado su valor histórico/clínico. Está prevista una futura interfaz para editar un evento ya confirmado por error (confirmación accidental o sin darse cuenta).
+**Alternativas consideradas**:
+- Congelar todos los campos al pasar a `consumed`, permitiendo solo `archive_`/`restore_`.
+- Congelar solo un subconjunto de campos considerados clínicos/inmutables (p. ej. macros calculadas) y dejar editables los demás (nombre, hora, tipo de comida).
+- Mantener todos los campos editables en `consumed`, igual que en `planned`, sin restricción adicional.
+**Decisión**: por ahora, **todos los campos de un `intake_event` siguen siendo editables tras pasar a `consumed`**; no se añade ninguna restricción de campo al `UPDATE`. `state = 'consumed'` no bloquea `update_intake_event`, solo cambia la vía de eliminación (ver decisión anterior). Se revisará como decisión nueva, referenciando esta entrada, si en el futuro se decide bloquear campos concretos una vez confirmado el evento.
+**Convención actualizada**: ninguna (comportamiento por defecto de `update_<entity>`, sección 3.x; esta entrada documenta que `intake_event` no introduce una excepción)
+
+## 2026-09-08 — `intake_event` no lleva `version`
+
+**Origen**: hallazgo 4 de `audit/audit_intake_event.md`
+**Contexto**: la tabla no tiene `created_at`, `updated_at` ni `version`. §6.7 exige control de concurrencia optimista para "transiciones críticas o snapshots clínicos" y usaba literalmente `intake_event` como ejemplo con `version`, pero no definía qué cuenta como crítico en una app monousuario con varias pestañas. La misma pregunta quedó sin cerrar en `insulin_injections`.
+**Alternativas consideradas**:
+- Añadir `version` ahora, siguiendo la letra de §6.7.
+- No añadir `version`, apoyándose en que las escrituras concurrentes sobre una fila solo pueden venir del propio usuario (pestañas duplicadas), no de otro actor.
+**Decisión**: **no se añade `version`** en esta fase. Se añaden `created_at`, `updated_at` y `deleted_at`. Se establece además el criterio general en `code_conventions.md` §6.7: en una app monousuario, `version` no es obligatorio por defecto salvo transición irreversible o con efecto en otra tabla. Si en el futuro la aplicación se abre a edición concurrente de la misma fila por varios usuarios, este criterio y la ausencia de `version` en `intake_event` e `insulin_injections` deben revisarse como decisión nueva.
+**Convención actualizada**: `conventions/code_conventions.md` sección 6.7 (criterio de qué cuenta como "crítico"; se corrige además el ejemplo de esa sección, que usaba `intake_event` con `version` de forma contradictoria con esta decisión)
+
+## 2026-09-08 — `intake_event.meal_time` pasa a `TIMESTAMPTZ` con `timezone_at_event`
+
+**Origen**: hallazgo 7 de `audit/audit_intake_event.md` **[venía de deuda_pendiente]**
+**Contexto**: `meal_time` era `TIMESTAMP` sin zona, dependiente de la zona de sesión de PostgreSQL (prohibido por `measurement_conventions.md` §9.1). `insulin_injections` ya resolvió la misma pregunta con `shot_time TIMESTAMPTZ` + `timezone_at_event`.
+**Alternativas consideradas**:
+- Mantener `TIMESTAMP` y seguir con el puente `AT TIME ZONE 'UTC'` en cada query.
+- Migrar a `TIMESTAMPTZ` sin columna adicional, perdiendo la zona original del evento.
+- Migrar a `TIMESTAMPTZ` y añadir `timezone_at_event`, igual que `insulin_injections`.
+**Decisión**: `meal_time` pasa a **`TIMESTAMPTZ`** (`USING meal_time AT TIME ZONE 'UTC'`) y se añade **`timezone_at_event`**. No es una convención nueva: `measurement_conventions.md` §9.1 ya establece con carácter general que "todos los instantes se almacenan como `TIMESTAMPTZ`" y que "los eventos relevantes para análisis histórico conservan además... `timezone_at_event`"; esta entrada documenta que `intake_event` se cierra aplicando esa regla ya existente, como ya se hizo con `insulin_injections.shot_time`/`timezone_at_event`. `create_injection_for_event` pasa a heredar `timezone_at_event` del propio evento en vez de la constante global `APP_TIMEZONE`.
+**Convención actualizada**: ninguna (aplicación de `measurement_conventions.md` §9.1, ya vigente)

@@ -527,14 +527,16 @@ En una entidad sin versionado, si este `UPDATE` devuelve cero filas se sabe que 
 - El update debe incluir la versión esperada en el `WHERE` y devolver la nueva versión:
 
 ```sql
-UPDATE intake_event
+UPDATE resource
 SET state = %(state)s,
     version = version + 1
-WHERE id = %(event_id)s
+WHERE id = %(resource_id)s
   AND users_id = %(user_id)s
   AND version = %(expected_version)s
 RETURNING id, version;
 ```
+
+**Qué cuenta como "crítico"**: en una aplicación monousuario donde las escrituras concurrentes sobre una misma fila solo pueden llegar del propio usuario (pestañas o dispositivos duplicados, nunca otro actor), `version` no es obligatorio por defecto. Se añade cuando la transición es irreversible o tiene efecto en otra tabla que no pueda deshacerse con un simple `UPDATE` (p. ej. la creación automática de una fila en otra entidad al confirmar). No usar `version` no exime de filtrar por estado esperado en el `WHERE` cuando la transición lo requiera (ver `confirm_intake_event` como ejemplo ya conforme). Este criterio se revisará si la aplicación pasa a admitir edición concurrente de la misma fila por varios usuarios (ver `intake_event`, `conventions/decisions.md`, 2026-09-08).
 
 - Si no se actualiza ninguna fila por una versión obsoleta, se lanza `ConflictError` y el endpoint devuelve `409`.
 - Si el update no devuelve fila, una comprobación protegida por ownership distingue `NotFoundError` de `ConflictError`; nunca se consulta el recurso sin filtros de visibilidad.
@@ -1137,6 +1139,8 @@ Cada entidad se clasifica antes de implementar sus operaciones:
 
 La clasificación no se deduce del verbo de una función. Debe documentarse por tabla y reflejarse en CRUD, endpoints, FKs e índices.
 
+Excepcionalmente, una tabla puede tener clasificación híbrida condicionada por una columna de estado, cuando esa columna distingue de forma inequívoca un valor sin vida propia (ej. un borrador) de un valor con valor histórico o clínico. Esto debe documentarse explícitamente por tabla, incluyendo qué valores de la columna caen en cada clasificación; no se asume implícitamente. Ejemplo: `intake_event.state = 'planned'` es no archivable, `state = 'consumed'` es archivable (`conventions/decisions.md`, 2026-09-08).
+
 ### 11.3 Soft-delete
 
 Una entidad archivable utiliza un campo nullable `deleted_at`.
@@ -1351,6 +1355,15 @@ Por eso el bootstrap y el runtime de la aplicación no comparten identidad de co
 Un fallo del bootstrap por permisos (`must be owner of table ...`) es una señal de que se ha usado la identidad equivocada, no un problema de la tabla afectada. No se corrige ampliando los privilegios del runtime; se corrige asegurando que `init_db()` use la identidad de migraciones.
 
 Antes de dar por cerrada una tabla en el ciclo de auditoría (sección 13), debe verificarse contra la base de datos real —no solo contra `schema.py`— que el bootstrap se ejecutó efectivamente con la identidad correcta y que el esquema físico coincide con la definición esperada. Un cambio de esquema fusionado en el código y documentado como decisión no se considera aplicado hasta que esa verificación directa contra PostgreSQL lo confirme.
+
+### 12.7 Datos preexistentes ante una regla nueva
+
+Una migración que añade una columna, un `CHECK` o un contrato nuevo (p. ej. "si `insulin_dose` es `TRUE` debe existir una inyección asociada") no puede asumir que las filas ya existentes lo cumplen. Antes de cerrar una tabla se debe comprobar contra la base real cuántas filas violan la regla nueva.
+
+- El criterio por defecto es **no tocar los datos existentes**: se añaden las columnas nuevas con el backfill técnico estrictamente necesario para que la migración sea válida (p. ej. rellenar `created_at` desde una columna de evento ya existente), pero no se corrigen, marcan ni completan datos para que cumplan una regla de negocio nueva que no existía cuando se escribieron.
+- Backfillear, marcar como inconsistente o borrar datos preexistentes que incumplen la regla nueva es una decisión de producto explícita, no una consecuencia automática de la migración. Se documenta en `conventions/decisions.md` solo si el usuario decide desviarse del criterio por defecto.
+- Cualquier análisis, estadística o modelo que lea esa tabla debe considerar que puede haber filas anteriores a la regla nueva que no la cumplen.
+- Esto no exime de aplicar la regla a los datos nuevos desde el momento en que la migración se cierra.
 
 ## 13. Procedimiento obligatorio de auditoría por tabla
 
