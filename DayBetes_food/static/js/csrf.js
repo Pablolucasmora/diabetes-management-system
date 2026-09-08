@@ -1,4 +1,9 @@
 (function () {
+  var CSRF_COOKIE_NAME = (function () {
+    var meta = document.querySelector('meta[name="csrf-cookie-name"]');
+    return (meta && meta.content) || "daybetes_csrf";
+  })();
+
   function getCookie(name) {
     var prefix = name + "=";
     var cookies = document.cookie ? document.cookie.split(";") : [];
@@ -22,7 +27,7 @@
   }
 
   function syncAllForms() {
-    var token = getCookie("daybetes_csrf");
+    var token = getCookie(CSRF_COOKIE_NAME);
     if (!token) return;
     var forms = document.querySelectorAll("form");
     for (var i = 0; i < forms.length; i += 1) {
@@ -31,7 +36,7 @@
   }
 
   document.body.addEventListener("htmx:configRequest", function (event) {
-    var token = getCookie("daybetes_csrf");
+    var token = getCookie(CSRF_COOKIE_NAME);
     if (!token || !event || !event.detail || !event.detail.headers) return;
     event.detail.headers["X-CSRF-Token"] = token;
   });

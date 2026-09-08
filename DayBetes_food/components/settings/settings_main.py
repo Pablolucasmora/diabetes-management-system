@@ -10,6 +10,8 @@ from DayBetes_food.components.injection_zone import (
 )
 from DayBetes_food.domain.constants import InjectionZone, InsulinType
 from DayBetes_food.time_utils import to_local
+from DayBetes_food.config import CSRF_COOKIE_NAME
+import re
 
 
 def settings_main(connection, current_user=None):
@@ -39,7 +41,7 @@ def settings_main(connection, current_user=None):
                 method="post",
                 cls="mt-3",
                 onsubmit=(
-                    "var m=document.cookie.match(/(?:^|; )daybetes_csrf=([^;]+)/);"
+                    f"var m=document.cookie.match(/(?:^|; ){re.escape(CSRF_COOKIE_NAME)}=([^;]+)/);"
                     "if(m){this.querySelector(\"input[name='csrf_token']\").value=decodeURIComponent(m[1]);}"
                 ),
             ),
