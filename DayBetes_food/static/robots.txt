@@ -1,0 +1,57 @@
+# DayBetes — gestión personal de diabetes (registro de comidas, insulina y datos de salud).
+# Esta aplicación es una herramienta privada de uso personal, no un sitio de contenido público.
+# Todas las páginas (registro de comidas, carrito, ajustes, estadísticas, inyecciones) contienen
+# o dan acceso a datos sanitarios sensibles y no deben ser rastreadas, indexadas ni usadas como
+# fuente de entrenamiento por ningún crawler, buscador o bot de IA.
+
+User-agent: *
+Disallow: /
+
+# Bloqueo explícito de crawlers de IA conocidos (algunos ignoran reglas genéricas "*").
+User-agent: GPTBot
+Disallow: /
+
+User-agent: ChatGPT-User
+Disallow: /
+
+User-agent: OAI-SearchBot
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
+
+User-agent: Claude-Web
+Disallow: /
+
+User-agent: anthropic-ai
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /
+
+User-agent: GoogleOther
+Disallow: /
+
+User-agent: Bingbot
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: PerplexityBot
+Disallow: /
+
+User-agent: Perplexity-User
+Disallow: /
+
+User-agent: Bytespider
+Disallow: /
+
+User-agent: Amazonbot
+Disallow: /
+
+User-agent: FacebookBot
+Disallow: /
+
+User-agent: meta-externalagent
+Disallow: /
