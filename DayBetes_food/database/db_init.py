@@ -3,8 +3,10 @@ import os
 from psycopg import sql
 
 from DayBetes_food.auth.security import hash_password, normalize_identifier, sanitize_text
-from DayBetes_food.database.connection import get_connection
+from DayBetes_food.config import DB_RUNTIME_ROLE
+from DayBetes_food.database.connection import get_migrations_connection
 from DayBetes_food.database.schema import DBSchema
+from DayBetes_food.domain.constants import InsulinType, InjectionZone, sql_in_list
 
 logger = logging.getLogger(__name__)
 
@@ -711,53 +713,57 @@ def _ensure_food_brands_schema(cursor):
     # (C) catalog.brand_id
     cursor.execute("ALTER TABLE catalog ADD COLUMN IF NOT EXISTS brand_id INTEGER;")
     
-    # (D) High of brands that only exist in catalog
-    cursor.execute(
-        r"""
-        WITH raw AS (
-            SELECT regexp_replace(btrim(lower(brand)), '\s+', ' ', 'g') AS code,
-                   btrim(regexp_replace(brand, '\s+', ' ', 'g'))        AS label,
-                   count(*) AS uses, min(id) AS first_id
-            FROM catalog
-            WHERE brand IS NOT NULL AND btrim(brand) <> ''
-            GROUP BY 1, 2
-        ), chosen AS (
-            SELECT DISTINCT ON (code) code, label
-            FROM raw
-            ORDER BY code, uses DESC, first_id ASC
+    # (D)-(F) solo aplican mientras exista catalog.brand: en una ejecución previa
+    # de este mismo bootstrap ya se pudo migrar y eliminar la columna (paso H),
+    # y estas sentencias no son válidas sobre una columna que ya no existe.
+    if _has_column(cursor, "catalog", "brand"):
+        # (D) High of brands that only exist in catalog
+        cursor.execute(
+            r"""
+            WITH raw AS (
+                SELECT regexp_replace(btrim(lower(brand)), '\s+', ' ', 'g') AS code,
+                       btrim(regexp_replace(brand, '\s+', ' ', 'g'))        AS label,
+                       count(*) AS uses, min(id) AS first_id
+                FROM catalog
+                WHERE brand IS NOT NULL AND btrim(brand) <> ''
+                GROUP BY 1, 2
+            ), chosen AS (
+                SELECT DISTINCT ON (code) code, label
+                FROM raw
+                ORDER BY code, uses DESC, first_id ASC
+            )
+            INSERT INTO food_brands (code, label, created_at, updated_at)
+            SELECT code, label, NOW(), NOW() FROM chosen
+            ON CONFLICT (code) DO NOTHING;
+            """
         )
-        INSERT INTO food_brands (code, label, created_at, updated_at)
-        SELECT code, label, NOW(), NOW() FROM chosen
-        ON CONFLICT (code) DO NOTHING;
-        """
-    )
-    
-    # (E) Populate the FK
-    cursor.execute(
-        r"""
-        UPDATE catalog c
-        SET brand_id = fb.id
-        FROM food_brands fb
-        WHERE c.brand_id IS NULL
-          AND c.brand IS NOT NULL AND btrim(c.brand) <> ''
-          AND fb.code = regexp_replace(btrim(lower(c.brand)), '\s+', ' ', 'g');
-        """
-    )
-    
-    # (F) Hard verification before destroying
-    cursor.execute(
-        """
-        SELECT count(*) FROM catalog
-        WHERE brand IS NOT NULL AND btrim(brand) <> '' AND brand_id IS NULL;
-        """
-    )
-    orphaned = cursor.fetchone()[0]
-    if orphaned > 0:
-        raise ValueError(
-            f"Migration failed: {orphaned} rows in catalog have brand text but no brand_id. "
-            "This indicates a bug in the migration logic."
+
+        # (E) Populate the FK
+        cursor.execute(
+            r"""
+            UPDATE catalog c
+            SET brand_id = fb.id
+            FROM food_brands fb
+            WHERE c.brand_id IS NULL
+              AND c.brand IS NOT NULL AND btrim(c.brand) <> ''
+              AND fb.code = regexp_replace(btrim(lower(c.brand)), '\s+', ' ', 'g');
+            """
         )
-    
+
+        # (F) Hard verification before destroying
+        cursor.execute(
+            """
+            SELECT count(*) AS orphaned FROM catalog
+            WHERE brand IS NOT NULL AND btrim(brand) <> '' AND brand_id IS NULL;
+            """
+        )
+        orphaned = cursor.fetchone()["orphaned"]
+        if orphaned > 0:
+            raise ValueError(
+                f"Migration failed: {orphaned} rows in catalog have brand text but no brand_id. "
+                "This indicates a bug in the migration logic."
+            )
+
     # (G) Integrity and indexes
     cursor.execute(
         """
@@ -789,6 +795,20 @@ def _ensure_food_brands_schema(cursor):
     # (H) Destruction of the column, at last
     cursor.execute("ALTER TABLE catalog DROP COLUMN IF EXISTS brand;")
 
+
+# Constraints que este bootstrap declara como canónicos para insulin_injections
+# (§11.6). Cualquier CHECK o FK de la tabla que no esté aquí se elimina en
+# _ensure_insulin_injections_schema: el bootstrap es la única fuente del esquema (§12.1).
+_CANONICAL_INJECTION_CONSTRAINTS = (
+    "fk_insulin_injections_users_id_users",
+    "fk_insulin_injections_intake_event_id_intake_event",
+    "ck_insulin_injections_insulin_type",
+    "ck_insulin_injections_injection_zone",
+    "ck_insulin_injections_units_by_type",     # H5: regla de coherencia por tipo
+    "ck_insulin_injections_units_step",        # H5: múltiplos de 0.5 U
+)
+
+
 def _ensure_insulin_injections_schema(cursor):
     cursor.execute(
         """
@@ -803,6 +823,10 @@ def _ensure_insulin_injections_schema(cursor):
         END $$;
         """
     )
+
+    insulin_type_list = sql_in_list(InsulinType)
+    injection_zone_list = sql_in_list(InjectionZone)
+
     cursor.execute(
         """
         ALTER TABLE intake_event
@@ -810,43 +834,154 @@ def _ensure_insulin_injections_schema(cursor):
         """
     )
     cursor.execute(
-        """
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1
-                FROM pg_constraint
-                WHERE conname = 'ck_intake_event_injection_zone'
-            ) THEN
-                ALTER TABLE intake_event
-                ADD CONSTRAINT ck_intake_event_injection_zone
-                CHECK (injection_zone IN ('right_arm', 'left_arm', 'right_thigh', 'left_thigh', 'abdomen', 'right_gluteus', 'left_gluteus') OR injection_zone IS NULL);
-            END IF;
-        END $$;
+        f"""
+        ALTER TABLE intake_event DROP CONSTRAINT IF EXISTS ck_intake_event_injection_zone;
+        ALTER TABLE intake_event
+        ADD CONSTRAINT ck_intake_event_injection_zone
+        CHECK (injection_zone IS NULL OR injection_zone IN ({injection_zone_list}));
         """
     )
     cursor.execute(
-        """
+        f"""
         CREATE TABLE IF NOT EXISTS insulin_injections (
             id SERIAL PRIMARY KEY,
-            users_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-            intake_event_id INTEGER REFERENCES intake_event(id) ON DELETE CASCADE,
+            users_id INTEGER,
+            intake_event_id INTEGER,
             shot_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            insulin_type VARCHAR(20) CHECK (insulin_type IN ('rapid', 'basal')),
-            basal_units REAL CHECK (basal_units > 0),
-            injection_zone VARCHAR(50) CHECK (injection_zone IN ('right_arm', 'left_arm', 'right_thigh', 'left_thigh', 'abdomen', 'right_gluteus', 'left_gluteus'))
+            insulin_type VARCHAR(20),
+            units REAL,
+            injection_zone VARCHAR(50),
+            notes TEXT,
+            needle_leak BOOLEAN,
+            skin_pinch BOOLEAN,
+            created_at TIMESTAMPTZ,
+            updated_at TIMESTAMPTZ,
+            timezone_at_event TEXT,
+            CONSTRAINT fk_insulin_injections_users_id_users
+                FOREIGN KEY (users_id) REFERENCES users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_insulin_injections_intake_event_id_intake_event
+                FOREIGN KEY (intake_event_id) REFERENCES intake_event(id) ON DELETE SET NULL,
+            CONSTRAINT ck_insulin_injections_insulin_type
+                CHECK (insulin_type IN ({insulin_type_list})),
+            CONSTRAINT ck_insulin_injections_units_by_type
+                CHECK (
+                    (insulin_type = 'basal' AND units IS NOT NULL AND units > 0)
+                    OR (insulin_type = 'rapid' AND (units IS NULL OR units > 0))
+                ),
+            CONSTRAINT ck_insulin_injections_units_step
+                CHECK (units IS NULL OR (units * 2) = floor(units * 2)),
+            CONSTRAINT ck_insulin_injections_injection_zone
+                CHECK (injection_zone IS NULL OR injection_zone IN ({injection_zone_list}))
         );
         """
     )
-    cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS intake_event_id INTEGER;")
-    cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS users_id INTEGER;")
-    cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS insulin_type VARCHAR(20);")
-    cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS basal_units REAL;")
-    cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS notes TEXT;")
-    # needle_leak / skin_pinch: nullable and without DEFAULT on purpose.
-    # NULL means "not observed", not "false" (measurement_conventions.md 2).
-    cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS needle_leak BOOLEAN;")
-    cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS skin_pinch BOOLEAN;")
+
+    # Fusión de las tablas legadas (§12.2). Va justo después del CREATE TABLE y antes de
+    # H4/H5 para que las filas migradas reciban el mismo backfill de timestamps y sean
+    # validadas por los constraints canónicos como cualquier otra fila.
+    # El nombre físico de la columna de dosis depende del histórico de cada base:
+    # tabla legada -> basal_units; tabla creada por este bootstrap -> units.
+    for legacy_table in ("injection_zone", "injection_zones"):
+        cursor.execute("SELECT to_regclass(%s) AS reg;", (f"public.{legacy_table}",))
+        if (cursor.fetchone() or {}).get("reg") is None:
+            continue
+        source_units = "basal_units" if _has_column(cursor, legacy_table, "basal_units") else "units"
+        target_units = "basal_units" if _has_column(cursor, "insulin_injections", "basal_units") else "units"
+        cursor.execute(
+            sql.SQL(
+                """
+                INSERT INTO insulin_injections
+                    (id, users_id, intake_event_id, shot_time, insulin_type, {target}, injection_zone)
+                SELECT id, users_id, intake_event_id, shot_time, insulin_type, {source}, injection_zone
+                FROM {legacy}
+                ON CONFLICT (id) DO NOTHING;
+                """
+            ).format(
+                target=sql.Identifier(target_units),
+                source=sql.Identifier(source_units),
+                legacy=sql.Identifier(legacy_table),
+            )
+        )
+        cursor.execute(
+            "SELECT setval('insulin_injections_id_seq', "
+            "COALESCE((SELECT MAX(id) FROM insulin_injections), 1), true);"
+        )
+        cursor.execute(sql.SQL("DROP TABLE {};").format(sql.Identifier(legacy_table)))
+
+    # ========== H4: TIMESTAMPTZ y timestamps de auditoría ==========
+    # 1) Columnas nuevas (primero nullable)
+    cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;")
+    cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;")
+    cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS timezone_at_event TEXT;")
+
+    # 2) Convertir shot_time a TIMESTAMPTZ (solo si sigue siendo naive)
+    data_type = (_column_data_type(cursor, "insulin_injections", "shot_time") or "").lower()
+    if data_type == "timestamp without time zone":
+        cursor.execute(
+            "ALTER TABLE insulin_injections "
+            "ALTER COLUMN shot_time TYPE TIMESTAMPTZ USING shot_time AT TIME ZONE 'UTC';"
+        )
+
+    # 3) Backfill de timestamps
+    cursor.execute("UPDATE insulin_injections SET created_at = COALESCE(created_at, shot_time, CURRENT_TIMESTAMP);")
+    cursor.execute("UPDATE insulin_injections SET updated_at = COALESCE(updated_at, created_at);")
+    cursor.execute("UPDATE insulin_injections SET timezone_at_event = COALESCE(timezone_at_event, 'Europe/Madrid');")
+
+    # 4) Defaults y NOT NULL
+    cursor.execute("ALTER TABLE insulin_injections ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;")
+    cursor.execute("ALTER TABLE insulin_injections ALTER COLUMN created_at SET NOT NULL;")
+    cursor.execute("ALTER TABLE insulin_injections ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;")
+    cursor.execute("ALTER TABLE insulin_injections ALTER COLUMN updated_at SET NOT NULL;")
+    cursor.execute("ALTER TABLE insulin_injections ALTER COLUMN timezone_at_event SET DEFAULT 'Europe/Madrid';")
+    cursor.execute("ALTER TABLE insulin_injections ALTER COLUMN timezone_at_event SET NOT NULL;")
+
+    # ========== H5: Rename basal_units → units, agregar NOT NULL ==========
+    # Renombrar columna
+    if _has_column(cursor, "insulin_injections", "basal_units") and not _has_column(cursor, "insulin_injections", "units"):
+        cursor.execute("ALTER TABLE insulin_injections RENAME COLUMN basal_units TO units;")
+
+    # NOT NULL en users_id e insulin_type
+    cursor.execute("ALTER TABLE insulin_injections ALTER COLUMN users_id SET NOT NULL;")
+    cursor.execute("ALTER TABLE insulin_injections ALTER COLUMN insulin_type SET NOT NULL;")
+
+    # Convergencia de constraints (§12.2): se elimina cualquier CHECK o FK de la tabla
+    # cuyo nombre no sea canónico — tanto los heredados de injection_zone/injection_zones
+    # como los autogenerados por PostgreSQL en instalaciones limpias anteriores
+    # (insulin_injections_*_check, *_fkey). Se excluyen PRIMARY KEY y UNIQUE ('p','u'),
+    # que se tratan por renombrado más abajo.
+    cursor.execute(
+        """
+        SELECT conname
+        FROM pg_constraint
+        WHERE conrelid = 'public.insulin_injections'::regclass
+          AND contype IN ('c', 'f')
+          AND conname <> ALL(%(canonical)s)
+        """,
+        {"canonical": list(_CANONICAL_INJECTION_CONSTRAINTS)},
+    )
+    for row in cursor.fetchall():
+        cursor.execute(
+            sql.SQL("ALTER TABLE insulin_injections DROP CONSTRAINT IF EXISTS {}").format(
+                sql.Identifier(row["conname"])
+            )
+        )
+
+    # Renombrar PK y secuencia a nombres canónicos si existen con nombres heredados (§12.2)
+    cursor.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'injection_zone_pkey') THEN
+                ALTER TABLE insulin_injections RENAME CONSTRAINT injection_zone_pkey TO insulin_injections_pkey;
+            END IF;
+            IF to_regclass('public.injection_zone_id_seq') IS NOT NULL
+               AND to_regclass('public.insulin_injections_id_seq') IS NULL THEN
+                ALTER SEQUENCE injection_zone_id_seq RENAME TO insulin_injections_id_seq;
+            END IF;
+        END $$;
+        """
+    )
+
     cursor.execute(
         """
         DO $$
@@ -854,11 +989,11 @@ def _ensure_insulin_injections_schema(cursor):
             IF NOT EXISTS (
                 SELECT 1
                 FROM pg_constraint
-                WHERE conname = 'fk_insulin_injections_intake_event'
+                WHERE conname = 'fk_insulin_injections_intake_event_id_intake_event'
             ) THEN
                 ALTER TABLE insulin_injections
-                ADD CONSTRAINT fk_insulin_injections_intake_event
-                FOREIGN KEY (intake_event_id) REFERENCES intake_event(id) ON DELETE CASCADE;
+                ADD CONSTRAINT fk_insulin_injections_intake_event_id_intake_event
+                FOREIGN KEY (intake_event_id) REFERENCES intake_event(id) ON DELETE SET NULL;
             END IF;
         END $$;
         """
@@ -870,27 +1005,38 @@ def _ensure_insulin_injections_schema(cursor):
             IF NOT EXISTS (
                 SELECT 1
                 FROM pg_constraint
-                WHERE conname = 'fk_insulin_injections_users'
+                WHERE conname = 'fk_insulin_injections_users_id_users'
             ) THEN
                 ALTER TABLE insulin_injections
-                ADD CONSTRAINT fk_insulin_injections_users
+                ADD CONSTRAINT fk_insulin_injections_users_id_users
                 FOREIGN KEY (users_id) REFERENCES users(id) ON DELETE CASCADE;
             END IF;
         END $$;
         """
     )
     cursor.execute(
+        f"""
+        ALTER TABLE insulin_injections DROP CONSTRAINT IF EXISTS ck_insulin_injections_insulin_type;
+        ALTER TABLE insulin_injections
+        ADD CONSTRAINT ck_insulin_injections_insulin_type
+        CHECK (insulin_type IN ({insulin_type_list}));
+        """
+    )
+    cursor.execute(
         """
         DO $$
         BEGIN
             IF NOT EXISTS (
                 SELECT 1
                 FROM pg_constraint
-                WHERE conname = 'ck_insulin_injections_insulin_type'
+                WHERE conname = 'ck_insulin_injections_units_by_type'
             ) THEN
                 ALTER TABLE insulin_injections
-                ADD CONSTRAINT ck_insulin_injections_insulin_type
-                CHECK (insulin_type IN ('rapid', 'basal') OR insulin_type IS NULL);
+                ADD CONSTRAINT ck_insulin_injections_units_by_type
+                CHECK (
+                    (insulin_type = 'basal' AND units IS NOT NULL AND units > 0)
+                    OR (insulin_type = 'rapid' AND (units IS NULL OR units > 0))
+                );
             END IF;
         END $$;
         """
@@ -902,11 +1048,26 @@ def _ensure_insulin_injections_schema(cursor):
             IF NOT EXISTS (
                 SELECT 1
                 FROM pg_constraint
-                WHERE conname = 'ck_insulin_injections_basal_units'
+                WHERE conname = 'ck_insulin_injections_units_step'
             ) THEN
                 ALTER TABLE insulin_injections
-                ADD CONSTRAINT ck_insulin_injections_basal_units
-                CHECK (basal_units IS NULL OR basal_units > 0);
+                ADD CONSTRAINT ck_insulin_injections_units_step
+                CHECK (units IS NULL OR (units * 2) = floor(units * 2));
+            END IF;
+        END $$;
+        """
+    )
+    cursor.execute(
+        f"""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'ck_insulin_injections_injection_zone'
+            ) THEN
+                ALTER TABLE insulin_injections
+                ADD CONSTRAINT ck_insulin_injections_injection_zone
+                CHECK (injection_zone IS NULL OR injection_zone IN ({injection_zone_list}));
             END IF;
         END $$;
         """
@@ -921,29 +1082,6 @@ def _ensure_insulin_injections_schema(cursor):
         """
         CREATE INDEX IF NOT EXISTS idx_insulin_injections_users_id_shot_time
         ON insulin_injections (users_id, shot_time DESC, id DESC);
-        """
-    )
-    cursor.execute(
-        """
-        DO $$
-        BEGIN
-            IF to_regclass('public.injection_zone') IS NOT NULL THEN
-                INSERT INTO insulin_injections (id, users_id, intake_event_id, shot_time, insulin_type, basal_units, injection_zone)
-                SELECT id, users_id, intake_event_id, shot_time, insulin_type, basal_units, injection_zone
-                FROM injection_zone
-                ON CONFLICT (id) DO NOTHING;
-                PERFORM setval('insulin_injections_id_seq', COALESCE((SELECT MAX(id) FROM insulin_injections), 1), true);
-                DROP TABLE injection_zone;
-            END IF;
-            IF to_regclass('public.injection_zones') IS NOT NULL THEN
-                INSERT INTO insulin_injections (id, users_id, intake_event_id, shot_time, insulin_type, basal_units, injection_zone)
-                SELECT id, users_id, intake_event_id, shot_time, insulin_type, basal_units, injection_zone
-                FROM injection_zones
-                ON CONFLICT (id) DO NOTHING;
-                PERFORM setval('insulin_injections_id_seq', COALESCE((SELECT MAX(id) FROM insulin_injections), 1), true);
-                DROP TABLE injection_zones;
-            END IF;
-        END $$;
         """
     )
 
@@ -1102,9 +1240,12 @@ def _ensure_auth_rate_limits_schema(cursor):
 
 
 def init_db():
-    conn = get_connection()
+    conn = get_migrations_connection()
     cur = conn.cursor()
     try:
+        # Advisory lock transaccional (§12.5): evita condiciones de carrera
+        # en arranques concurrentes con DB_INIT_ON_STARTUP=true.
+        cur.execute("SELECT pg_advisory_xact_lock(%s)", (742001,))
         tables = [
             DBSchema.users,
             DBSchema.auth_sessions,
@@ -1117,8 +1258,8 @@ def init_db():
             DBSchema.recipe,
             DBSchema.user_favorites,
             DBSchema.linked_tags,
-            DBSchema.intake_event,
-            DBSchema.insulin_injections,
+            DBSchema.intake_event(),
+            DBSchema.insulin_injections(),
             DBSchema.portion_detail,
         ]
 
@@ -1144,6 +1285,16 @@ def init_db():
         _remove_legacy_user_hidden_catalog(cur)
         _remove_legacy_user_columns(cur)
         _ensure_default_user(cur)
+
+        # Conceder DML al rol de runtime (§12.6): los objetos creados nacen
+        # propiedad de la identidad de migraciones, así que el runtime se quedaría
+        # sin permisos.
+        role = sql.Identifier(DB_RUNTIME_ROLE)
+        cur.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(role))
+        cur.execute(sql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {}").format(role))
+        cur.execute(sql.SQL("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {}").format(role))
+        cur.execute(sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {}").format(role))
+        cur.execute(sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO {}").format(role))
 
         conn.commit()
         logger.info("Database initialized successfully.")
