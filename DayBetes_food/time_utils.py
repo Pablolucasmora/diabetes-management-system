@@ -36,3 +36,23 @@ def local_naive_to_utc(value):
     if value.tzinfo is None:
         value = value.replace(tzinfo=APP_TIMEZONE)
     return value.astimezone(UTC_TIMEZONE).replace(tzinfo=None)
+
+
+def utc_now() -> datetime:
+    """Instante actual aware en UTC (para columnas TIMESTAMPTZ)."""
+    return datetime.now(UTC_TIMEZONE)
+
+
+def local_naive_to_utc_aware(value):
+    """Fecha/hora local de un formulario -> instante aware en UTC.
+
+    A diferencia de local_naive_to_utc, NO descarta el tzinfo: el destino es una
+    columna TIMESTAMPTZ y un naive se reinterpretaria con el TimeZone de la sesion.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, datetime):
+        return value
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=APP_TIMEZONE)
+    return value.astimezone(UTC_TIMEZONE)
