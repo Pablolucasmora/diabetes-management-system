@@ -3,10 +3,11 @@ from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.cart.cart_components import MacrosSummary
 from DayBetes_food.components.injection_zone import (
     BASE_INJECTION_ZONE_IMAGE,
-    INJECTION_ZONE_IMAGE_BY_KEY,
-    INJECTION_ZONE_LABEL_BY_KEY,
+    INJECTION_ZONE_IMAGE_BY_ZONE,
+    injection_zone_label,
     asset_busted,
 )
+from DayBetes_food.domain.constants import InjectionZone
 from DayBetes_food.database.queries.crud import (
     get_cart_events,
     get_portion_detail_by_event,
@@ -73,16 +74,16 @@ def quick_actions(connection):
     )
     zone_buttons = [
         Button(
-            INJECTION_ZONE_LABEL_BY_KEY[zone_key],
+            injection_zone_label(zone),
             type="button",
             cls="web_button px-3 py-2 text-xs",
             **{
-                "data-zone": zone_key,
-                "data-zone-img": asset_busted(INJECTION_ZONE_IMAGE_BY_KEY[zone_key]),
+                "data-zone": zone.value,
+                "data-zone-img": asset_busted(INJECTION_ZONE_IMAGE_BY_ZONE[zone]),
                 "onclick": selector_js,
             },
         )
-        for zone_key in INJECTION_ZONE_IMAGE_BY_KEY.keys()
+        for zone in InjectionZone
     ]
 
     quick_grid = Div(
@@ -218,7 +219,7 @@ def quick_actions(connection):
                     Label("Basal dose", cls="text-xs text-gray-600"),
                     Input(
                         type="number",
-                        name="basal_units",
+                        name="units",
                         step="0.5",
                         min="0.5",
                         inputmode="decimal",
@@ -255,7 +256,7 @@ def quick_actions(connection):
                             "const z=form?form.querySelector('[data-menu-injection-zone-input]'):null;"
                             "if(!z||!z.value){alert('Select a zone first.');return false;}"
                             "const t=form?form.querySelector('[data-menu-insulin-type]'):null;"
-                            "const b=form?form.querySelector('input[name=basal_units]'):null;"
+                            "const b=form?form.querySelector('input[name=units]'):null;"
                             "if(t&&t.value==='basal'&&(!b||!b.value)){alert('Enter basal dose.');return false;}"
                             + close_modal_js
                         ),

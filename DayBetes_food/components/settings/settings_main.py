@@ -2,11 +2,14 @@ from fasthtml.common import *
 from DayBetes_food.database.queries.crud import get_all_tags
 from DayBetes_food.components.injection_zone import (
     BASE_INJECTION_ZONE_IMAGE,
-    INJECTION_ZONE_IMAGE_BY_KEY,
-    INJECTION_ZONE_LABEL_BY_KEY,
+    INJECTION_ZONE_IMAGE_BY_ZONE,
+    injection_zone_image,
+    injection_zone_label,
+    parse_injection_zone,
     asset_busted,
 )
-from DayBetes_food.time_utils import utc_naive_to_local
+from DayBetes_food.domain.constants import InjectionZone, InsulinType
+from DayBetes_food.time_utils import to_local
 
 
 def settings_main(connection, current_user=None):
@@ -272,9 +275,8 @@ def _close_modal_js(modal_id: str):
     )
 
 
-def _injection_delete_modal(item: dict):
-    injection_id = int(item.get("id") or 0)
-    modal_id = f"settings_injection_delete_{injection_id}"
+def _injection_delete_modal(injection):
+    modal_id = f"settings_injection_delete_{injection.id}"
     refresh_js = "htmx.ajax('GET','/settings/injections',{target:'#main_content',swap:'innerHTML'});"
     return Div(
         Div(
@@ -289,7 +291,7 @@ def _injection_delete_modal(item: dict):
                     type="button",
                     cls="web_button px-4 py-2 text-sm text-white",
                     style="background-color:#b91c1c;border-color:#b91c1c;",
-                    hx_post=f"/settings/injections/{injection_id}/delete",
+                    hx_post=f"/settings/injections/{injection.id}/delete",
                     hx_swap="none",
                     **{"hx-on:htmx:after-request": refresh_js},
                     onclick=_close_modal_js(modal_id),
@@ -318,17 +320,15 @@ def _injection_delete_modal(item: dict):
     )
 
 
-def _injection_edit_modal(item: dict):
-    injection_id = int(item.get("id") or 0)
-    modal_id = f"settings_injection_edit_{injection_id}"
-    local_dt = utc_naive_to_local(item.get("shot_time"))
+def _injection_edit_modal(injection):
+    modal_id = f"settings_injection_edit_{injection.id}"
+    local_dt = to_local(injection.shot_time)
     shot_hour = local_dt.strftime("%H:%M") if local_dt else ""
     shot_date = local_dt.strftime("%Y-%m-%d") if local_dt else ""
-    insulin_type = str(item.get("insulin_type") or "").strip().lower() or "rapid"
-    selected_zone = str(item.get("injection_zone") or "").strip()
-    basal_units = item.get("basal_units")
+    selected_zone = injection.injection_zone
+    units = injection.units
     base_image = asset_busted(BASE_INJECTION_ZONE_IMAGE)
-    image = asset_busted(INJECTION_ZONE_IMAGE_BY_KEY.get(selected_zone)) if selected_zone in INJECTION_ZONE_IMAGE_BY_KEY else base_image
+    image = asset_busted(injection_zone_image(selected_zone))
     selector_js = (
         f"const mid='{modal_id}';"
         "const box=document.getElementById(mid);"
@@ -354,32 +354,32 @@ def _injection_edit_modal(item: dict):
     )
     zone_buttons = [
         Button(
-            INJECTION_ZONE_LABEL_BY_KEY[zone_key],
+            injection_zone_label(zone),
             type="button",
             cls=(
                 "web_button px-3 py-2 text-xs "
-                + ("ring-2 ring-cyan-500 bg-cyan-50" if selected_zone == zone_key else "")
+                + ("ring-2 ring-cyan-500 bg-cyan-50" if selected_zone is zone else "")
             ),
             **{
-                "data-zone": zone_key,
-                "data-zone-img": asset_busted(INJECTION_ZONE_IMAGE_BY_KEY[zone_key]),
+                "data-zone": zone.value,
+                "data-zone-img": asset_busted(INJECTION_ZONE_IMAGE_BY_ZONE[zone]),
                 "onclick": selector_js,
             },
         )
-        for zone_key in INJECTION_ZONE_IMAGE_BY_KEY.keys()
+        for zone in InjectionZone
     ]
     refresh_js = "htmx.ajax('GET','/settings/injections',{target:'#main_content',swap:'innerHTML'});"
     return Div(
         Div(
             P("Insulin injection", cls="text-lg font-semibold"),
             Form(
-                Input(type="hidden", name="injection_id", value=str(injection_id)),
+                Input(type="hidden", name="injection_id", value=str(injection.id)),
                 Div(
                     Div(
                         Label("Type", cls="text-xs text-gray-600"),
                         Select(
-                            Option("Rapid", value="rapid", selected=insulin_type != "basal"),
-                            Option("Basal", value="basal", selected=insulin_type == "basal"),
+                            Option("Rapid", value="rapid", selected=injection.insulin_type is not InsulinType.BASAL),
+                            Option("Basal", value="basal", selected=injection.insulin_type is InsulinType.BASAL),
                             name="insulin_type",
                             cls="web_input border border-white rounded-lg px-2 py-1 text-base",
                             data_settings_insulin_type="true",
@@ -402,7 +402,7 @@ def _injection_edit_modal(item: dict):
                                 type="button",
                                 cls="web_button px-2 py-1 text-xs",
                                 onclick=(
-                                    f"const el=document.getElementById('settings_shot_date_wrap_{injection_id}');"
+                                    f"const el=document.getElementById('settings_shot_date_wrap_{injection.id}');"
                                     "if(el){el.classList.toggle('hidden');}"
                                 ),
                             ),
@@ -417,7 +417,7 @@ def _injection_edit_modal(item: dict):
                                 aria_label="Injection date",
                                 cls="web_input border border-white rounded-lg px-2 py-1 text-base",
                             ),
-                            id=f"settings_shot_date_wrap_{injection_id}",
+                            id=f"settings_shot_date_wrap_{injection.id}",
                             cls="hidden flex-col gap-1 mt-1",
                         ),
                         cls="flex flex-col gap-1 flex-1 min-w-0",
@@ -428,17 +428,17 @@ def _injection_edit_modal(item: dict):
                     Label("Basal dose", cls="text-xs text-gray-600"),
                     Input(
                         type="number",
-                        name="basal_units",
+                        name="units",
                         step="0.5",
                         min="0.5",
                         inputmode="decimal",
                         pattern="[0-9]+([\\.,][0-9]+)?",
                         placeholder="e.g. 8.5",
-                        value=(f"{float(basal_units):g}" if basal_units is not None else ""),
+                        value=(f"{float(units):g}" if units is not None else ""),
                         cls="web_input border border-white rounded-lg px-2 py-1 text-base",
                     ),
                     data_settings_basal_wrap="true",
-                    cls=f"{'hidden ' if insulin_type != 'basal' else ''}flex flex-col gap-1",
+                    cls=f"{'hidden ' if injection.insulin_type is not InsulinType.BASAL else ''}flex flex-col gap-1",
                 ),
                 Div(
                     Img(
@@ -450,14 +450,14 @@ def _injection_edit_modal(item: dict):
                     cls="w-full",
                 ),
                 Div(*zone_buttons, cls="flex flex-wrap gap-2"),
-                Input(type="hidden", name="zone", value=selected_zone, data_settings_injection_zone_input="true"),
+                Input(type="hidden", name="zone", value=(selected_zone.value if selected_zone else ""), data_settings_injection_zone_input="true"),
                 Div(
                     Button(
                         "OK",
                         type="button",
                         cls="web_button px-4 py-2 text-sm text-white ml-auto",
                         style="background-color:#111111;border-color:#111111;",
-                        hx_post=f"/settings/injections/{injection_id}/update",
+                        hx_post=f"/settings/injections/{injection.id}/update",
                         hx_include="closest form",
                         hx_swap="none",
                         **{"hx-on:htmx:after-request": refresh_js},
@@ -466,7 +466,7 @@ def _injection_edit_modal(item: dict):
                             "const z=form?form.querySelector('[data-settings-injection-zone-input]'):null;"
                             "if(!z||!z.value){alert('Select a zone first.');return false;}"
                             "const t=form?form.querySelector('[data-settings-insulin-type]'):null;"
-                            "const b=form?form.querySelector('input[name=basal_units]'):null;"
+                            "const b=form?form.querySelector('input[name=units]'):null;"
                             "if(t&&t.value==='basal'&&(!b||!b.value)){alert('Enter basal dose.');return false;}"
                             + _close_modal_js(modal_id)
                         ),
@@ -490,21 +490,15 @@ def _injection_edit_modal(item: dict):
     )
 
 
-def _injection_row(item: dict):
-    injection_id = int(item.get("id") or 0)
-    if not injection_id:
-        return ""
-    actions_id = f"settings_injection_actions_{injection_id}"
-    insulin_type = str(item.get("insulin_type") or "").strip().lower()
-    insulin_label = "Basal" if insulin_type == "basal" else "Rapid"
-    zone_key = str(item.get("injection_zone") or "").strip()
-    zone_label = INJECTION_ZONE_LABEL_BY_KEY.get(zone_key, zone_key.replace("_", " ").title() or "-")
-    local_dt = utc_naive_to_local(item.get("shot_time"))
+def _injection_row(injection):
+    actions_id = f"settings_injection_actions_{injection.id}"
+    insulin_label = "Basal" if injection.insulin_type is InsulinType.BASAL else "Rapid"
+    zone_label = injection_zone_label(injection.injection_zone)
+    local_dt = to_local(injection.shot_time)
     hour = _format_injection_hour(local_dt) if local_dt else "--:--"
-    basal_units = item.get("basal_units")
     basal_text = ""
-    if insulin_type == "basal" and basal_units is not None:
-        basal_text = f"Basal units: {float(basal_units):g}u"
+    if injection.insulin_type is InsulinType.BASAL and injection.units is not None:
+        basal_text = f"Basal units: {float(injection.units):g}u"
 
     return Div(
         Div(
@@ -529,14 +523,14 @@ def _injection_row(item: dict):
                 "Edit",
                 type="button",
                 cls="web_button px-3 py-1 text-xs",
-                onclick=f"event.stopPropagation();{_open_modal_js(f'settings_injection_edit_{injection_id}')}",
+                onclick=f"event.stopPropagation();{_open_modal_js(f'settings_injection_edit_{injection.id}')}",
             ),
             Button(
                 "Delete",
                 type="button",
                 cls="web_button px-3 py-1 text-xs text-white",
                 style="background-color:#b91c1c;border-color:#b91c1c;",
-                onclick=f"event.stopPropagation();{_open_modal_js(f'settings_injection_delete_{injection_id}')}",
+                onclick=f"event.stopPropagation();{_open_modal_js(f'settings_injection_delete_{injection.id}')}",
             ),
             id=actions_id,
             cls="hidden flex items-center justify-end gap-2 pt-2",
@@ -545,10 +539,10 @@ def _injection_row(item: dict):
     )
 
 
-def _injection_row_modals(item: dict):
+def _injection_row_modals(injection):
     return Div(
-        _injection_edit_modal(item),
-        _injection_delete_modal(item),
+        _injection_edit_modal(injection),
+        _injection_delete_modal(injection),
     )
 
 
@@ -557,7 +551,7 @@ def _injection_day_header(day_text: str):
 
 
 def injections_settings_chunk(
-    rows: list[dict],
+    rows,
     offset: int,
     page_size: int,
     previous_day=None,
@@ -568,16 +562,16 @@ def injections_settings_chunk(
     items = []
     modals = []
     current_day = previous_day
-    for row in rows:
-        local_dt = utc_naive_to_local(row.get("shot_time"))
+    for injection in rows:
+        local_dt = to_local(injection.shot_time)
         if not local_dt:
             continue
         day_value = local_dt.date()
         if current_day != day_value:
             items.append(_injection_day_header(_format_injection_day(local_dt)))
             current_day = day_value
-        items.append(_injection_row(row))
-        modals.append(_injection_row_modals(row))
+        items.append(_injection_row(injection))
+        modals.append(_injection_row_modals(injection))
 
     has_more = len(rows) >= page_size
     next_offset = offset + len(rows)

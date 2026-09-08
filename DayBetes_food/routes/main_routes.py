@@ -7,8 +7,12 @@ from DayBetes_food.components.menu.main_menu import main_menu
 from DayBetes_food.components.scanner.scanner_main import scanner_main
 from DayBetes_food.components.ui import render_fragment, render_page
 from DayBetes_food.database.connection import get_connection
-from DayBetes_food.database.queries.crud import add_manual_injection_log, get_catalog_item_by_barcode
-from DayBetes_food.time_utils import local_naive_to_utc
+from DayBetes_food.database.queries.crud import get_catalog_item_by_barcode
+from DayBetes_food.database.queries.insulin_injections import create_insulin_injection
+from DayBetes_food.domain.constants import InsulinType, InjectionZone
+from DayBetes_food.domain.insulin import InsulinInjectionCreate
+from DayBetes_food.errors import ValidationError
+from DayBetes_food.time_utils import local_naive_to_utc_aware, APP_TIMEZONE
 
 
 def setup_main_routes(rt):
@@ -24,7 +28,7 @@ def setup_main_routes(rt):
     def post(
         request: Request,
         insulin_type: str = "",
-        basal_units: str = "",
+        units: str = "",
         zone: str = "",
         shot_hour: str = "",
         shot_date: str = "",
@@ -35,31 +39,51 @@ def setup_main_routes(rt):
         if not user_id:
             return HTMLResponse(status_code=401)
 
-        units = None
-        if (insulin_type or "").strip().lower() == "basal":
-            try:
-                units = float((basal_units or "").strip().replace(",", "."))
-            except (TypeError, ValueError):
-                return HTMLResponse(status_code=400)
+        # Parsear fecha y hora
         try:
             parsed_time = datetime.strptime((shot_hour or "").strip(), "%H:%M").time()
             parsed_date = datetime.strptime((shot_date or "").strip(), "%Y-%m-%d").date()
             shot_time_local = datetime.combine(parsed_date, parsed_time)
-            shot_time = local_naive_to_utc(shot_time_local)
+            shot_time = local_naive_to_utc_aware(shot_time_local)
         except ValueError:
-            return HTMLResponse(status_code=400)
+            return HTMLResponse(status_code=422)
 
+        # Parsear tipo de insulina
+        try:
+            parsed_insulin_type = InsulinType(insulin_type.strip().lower())
+        except ValueError:
+            return HTMLResponse(status_code=422)
+
+        # Parsear dosis (si aplica)
+        units_value = None
+        if parsed_insulin_type is InsulinType.BASAL:
+            try:
+                units_value = float((units or "").strip().replace(",", "."))
+            except (TypeError, ValueError):
+                return HTMLResponse(status_code=422)
+
+        # Parsear zona (opcional)
+        injection_zone = None
+        if zone and zone.strip():
+            try:
+                injection_zone = InjectionZone(zone.strip().lower())
+            except ValueError:
+                return HTMLResponse(status_code=422)
+
+        # Crear payload y registrar
+        payload = InsulinInjectionCreate(
+            user_id=int(user_id),
+            insulin_type=parsed_insulin_type,
+            shot_time=shot_time,
+            timezone_at_event=APP_TIMEZONE.key,
+            units=units_value,
+            injection_zone=injection_zone,
+        )
         with get_connection() as connection:
-            ok = add_manual_injection_log(
-                connection,
-                users_id=int(user_id),
-                insulin_type=insulin_type,
-                injection_zone=zone,
-                basal_units=units,
-                shot_time=shot_time,
-            )
-            if not ok:
-                return HTMLResponse(status_code=400)
+            try:
+                create_insulin_injection(connection, payload)
+            except ValidationError:
+                return HTMLResponse(status_code=422)
             return render_fragment(main_menu(connection))
 
     @rt("/scanner")

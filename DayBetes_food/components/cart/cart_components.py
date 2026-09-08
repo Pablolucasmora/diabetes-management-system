@@ -16,11 +16,14 @@ from DayBetes_food.components.cart.cart_shared import (
 )
 from DayBetes_food.components.injection_zone import (
     BASE_INJECTION_ZONE_IMAGE,
-    INJECTION_ZONE_IMAGE_BY_KEY,
-    INJECTION_ZONE_LABEL_BY_KEY,
+    INJECTION_ZONE_IMAGE_BY_ZONE,
+    injection_zone_image,
+    injection_zone_label,
+    parse_injection_zone,
     asset_busted,
 )
-from DayBetes_food.time_utils import local_now, utc_naive_to_local
+from DayBetes_food.domain.constants import InjectionZone
+from DayBetes_food.time_utils import local_now, to_local
 
 
 def _check_icon():
@@ -157,7 +160,7 @@ def ConfirmActionModal(modal_id: str, title: str, question: str, yes_button):
 
 
 def EventHeader(event):
-    meal_time = utc_naive_to_local(event.get("meal_time")) or local_now()
+    meal_time = to_local(event.get("meal_time")) or local_now()
     event_name_id = f"event_name_{event['id']}"
     meal_hour_id = f"meal_hour_{event['id']}"
     meal_date_id = f"meal_date_{event['id']}"
@@ -592,9 +595,9 @@ def DeleteMealModal(event):
 
 def InjectionZoneModal(event):
     modal_id = f"injection_zone_modal_{event['id']}"
-    selected_zone = (event.get("selected_injection_zone") or "").strip()
+    selected_zone = parse_injection_zone(event.get("selected_injection_zone"))
     base_image = asset_busted(BASE_INJECTION_ZONE_IMAGE)
-    image = asset_busted(INJECTION_ZONE_IMAGE_BY_KEY.get(selected_zone)) if selected_zone in INJECTION_ZONE_IMAGE_BY_KEY else base_image
+    image = asset_busted(injection_zone_image(selected_zone))
     selector_js = (
         f"const mid='{modal_id}';"
         "const box=document.getElementById(mid);"
@@ -611,19 +614,19 @@ def InjectionZoneModal(event):
     )
     zone_buttons = [
         Button(
-            INJECTION_ZONE_LABEL_BY_KEY[zone_key],
+            injection_zone_label(zone),
             type="button",
             cls=(
                 "web_button px-3 py-2 text-xs "
-                + ("ring-2 ring-cyan-500 bg-cyan-50" if selected_zone == zone_key else "")
+                + ("ring-2 ring-cyan-500 bg-cyan-50" if selected_zone is zone else "")
             ),
             **{
-                "data-zone": zone_key,
-                "data-zone-img": asset_busted(INJECTION_ZONE_IMAGE_BY_KEY[zone_key]),
+                "data-zone": zone.value,
+                "data-zone-img": asset_busted(INJECTION_ZONE_IMAGE_BY_ZONE[zone]),
                 "onclick": selector_js,
             },
         )
-        for zone_key in INJECTION_ZONE_IMAGE_BY_KEY.keys()
+        for zone in InjectionZone
     ]
 
     return Div(
@@ -645,7 +648,7 @@ def InjectionZoneModal(event):
                     Input(
                         type="hidden",
                         name="zone",
-                        value=selected_zone,
+                        value=(selected_zone.value if selected_zone else ""),
                         data_injection_zone_input="true",
                     ),
                     Button(

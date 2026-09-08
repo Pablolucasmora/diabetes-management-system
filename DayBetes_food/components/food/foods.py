@@ -3,7 +3,7 @@ from fasthtml.common import *
 
 from DayBetes_food.database.queries.crud import get_cart_events
 from DayBetes_food.components.cart.cart_shared import CHECKBOX_CLS
-from DayBetes_food.time_utils import utc_naive_to_local
+from DayBetes_food.time_utils import to_local
 
 
 CATEGORY_OPTIONS = [
@@ -154,7 +154,7 @@ def MealSelector(connection, user_id: int, selected_id: int = None):
 
     options = []
     for event in events:
-        local_meal_time = utc_naive_to_local(event.get("meal_time"))
+        local_meal_time = to_local(event.get("meal_time"))
         label = event["name"] or (
             f"Meal {local_meal_time.strftime('%H:%M')}" if local_meal_time else f"Meal {event['id']}"
         )

@@ -13,14 +13,18 @@ from DayBetes_food.database.connection import get_connection
 from DayBetes_food.database.queries.crud import (
     update_tag,
     get_all_tags,
-    get_user_injection_logs,
-    get_user_injection_log_prev_day,
-    update_user_injection_log,
-    delete_user_injection_log,
-    get_user_injection_log_by_id,
 )
+from DayBetes_food.database.queries.insulin_injections import (
+    list_insulin_injections,
+    get_injection_shot_time_at_offset,
+    update_insulin_injection,
+    delete_insulin_injection,
+)
+from DayBetes_food.domain.constants import InsulinType, InjectionZone
+from DayBetes_food.domain.insulin import InsulinInjectionUpdate
+from DayBetes_food.errors import ValidationError, NotFoundError
 from DayBetes_food.auth.context import get_current_user_id
-from DayBetes_food.time_utils import local_naive_to_utc
+from DayBetes_food.time_utils import local_naive_to_utc_aware, APP_TIMEZONE
 
 
 INJECTIONS_PAGE_SIZE = 15
@@ -73,7 +77,12 @@ def setup_settings_routes(rt):
         if not user_id:
             return HTMLResponse(status_code=401)
         with get_connection() as connection:
-            rows = get_user_injection_logs(connection, users_id=int(user_id), limit=INJECTIONS_PAGE_SIZE, offset=0)
+            rows = list_insulin_injections(
+                connection,
+                user_id=int(user_id),
+                limit=INJECTIONS_PAGE_SIZE,
+                offset=0,
+            )
         first_chunk = injections_settings_chunk(
             rows=rows,
             offset=0,
@@ -91,15 +100,15 @@ def setup_settings_routes(rt):
             return HTMLResponse(status_code=401)
         clean_offset = max(0, int(offset or 0))
         with get_connection() as connection:
-            rows = get_user_injection_logs(
+            rows = list_insulin_injections(
                 connection,
-                users_id=int(user_id),
+                user_id=int(user_id),
                 limit=INJECTIONS_PAGE_SIZE,
                 offset=clean_offset,
             )
-            previous_shot = get_user_injection_log_prev_day(
+            previous_shot = get_injection_shot_time_at_offset(
                 connection,
-                users_id=int(user_id),
+                user_id=int(user_id),
                 offset=clean_offset,
             )
         previous_day = previous_shot.date() if previous_shot else None
@@ -118,18 +127,18 @@ def setup_settings_routes(rt):
         if not user_id:
             return HTMLResponse(status_code=401)
         with get_connection() as connection:
-            exists = get_user_injection_log_by_id(connection, users_id=int(user_id), injection_id=int(injection_id))
-            if not exists:
+            try:
+                delete_insulin_injection(connection, user_id=int(user_id), injection_id=int(injection_id))
+            except NotFoundError:
                 return HTMLResponse(status_code=404)
-            ok = delete_user_injection_log(connection, users_id=int(user_id), injection_id=int(injection_id))
-        return HTMLResponse(status_code=200 if ok else 400)
+            return HTMLResponse(status_code=200)
 
     @rt("/settings/injections/{injection_id}/update")
     def post(
         req: Request,
         injection_id: int,
         insulin_type: str = "",
-        basal_units: str = "",
+        units: str = "",
         zone: str = "",
         shot_hour: str = "",
         shot_date: str = "",
@@ -139,31 +148,55 @@ def setup_settings_routes(rt):
         user_id = get_current_user_id()
         if not user_id:
             return HTMLResponse(status_code=401)
-        clean_type = (insulin_type or "").strip().lower()
-        units = None
-        if clean_type == "basal":
-            try:
-                units = float((basal_units or "").strip().replace(",", "."))
-            except (TypeError, ValueError):
-                return HTMLResponse(status_code=400)
+
+        # Parsear fecha y hora
         try:
             parsed_time = datetime.strptime((shot_hour or "").strip(), "%H:%M").time()
             parsed_date = datetime.strptime((shot_date or "").strip(), "%Y-%m-%d").date()
             shot_time_local = datetime.combine(parsed_date, parsed_time)
-            shot_time = local_naive_to_utc(shot_time_local)
+            shot_time = local_naive_to_utc_aware(shot_time_local)
         except ValueError:
-            return HTMLResponse(status_code=400)
+            return HTMLResponse(status_code=422)
+
+        # Parsear tipo de insulina
+        try:
+            parsed_insulin_type = InsulinType(insulin_type.strip().lower())
+        except ValueError:
+            return HTMLResponse(status_code=422)
+
+        # Parsear dosis (si aplica)
+        units_value = None
+        if parsed_insulin_type is InsulinType.BASAL:
+            try:
+                units_value = float((units or "").strip().replace(",", "."))
+            except (TypeError, ValueError):
+                return HTMLResponse(status_code=422)
+
+        # Parsear zona (opcional)
+        injection_zone = None
+        if zone and zone.strip():
+            try:
+                injection_zone = InjectionZone(zone.strip().lower())
+            except ValueError:
+                return HTMLResponse(status_code=422)
+
+        # Actualizar
+        payload = InsulinInjectionUpdate(
+            insulin_type=parsed_insulin_type,
+            shot_time=shot_time,
+            injection_zone=injection_zone,
+            units=units_value,
+        )
         with get_connection() as connection:
-            exists = get_user_injection_log_by_id(connection, users_id=int(user_id), injection_id=int(injection_id))
-            if not exists:
+            try:
+                update_insulin_injection(
+                    connection,
+                    user_id=int(user_id),
+                    injection_id=int(injection_id),
+                    payload=payload,
+                )
+            except ValidationError:
+                return HTMLResponse(status_code=422)
+            except NotFoundError:
                 return HTMLResponse(status_code=404)
-            ok = update_user_injection_log(
-                connection,
-                users_id=int(user_id),
-                injection_id=int(injection_id),
-                insulin_type=clean_type,
-                injection_zone=zone,
-                shot_time=shot_time,
-                basal_units=units,
-            )
-        return HTMLResponse(status_code=200 if ok else 400)
+            return HTMLResponse(status_code=200)

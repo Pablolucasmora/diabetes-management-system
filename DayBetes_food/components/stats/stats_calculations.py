@@ -13,7 +13,7 @@ from DayBetes_food.components.stats.stats_shared import (
     to_float,
 )
 from DayBetes_food.components.cart.cart_shared import portion_intake_amount
-from DayBetes_food.time_utils import utc_naive_to_local
+from DayBetes_food.time_utils import to_local
 
 
 def _portion_nutrient_100g(portion: dict, nutrient_key: str):
@@ -57,7 +57,7 @@ def _has_non_zero_totals(totals: dict) -> bool:
 def _event_day_key(event: dict) -> str:
     meal_time = event.get("meal_time")
     if isinstance(meal_time, datetime):
-        local_time = utc_naive_to_local(meal_time)
+        local_time = to_local(meal_time)
         return local_time.date().isoformat() if local_time else meal_time.date().isoformat()
     if isinstance(meal_time, date):
         return meal_time.isoformat()

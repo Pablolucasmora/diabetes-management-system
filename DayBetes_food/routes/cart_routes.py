@@ -5,20 +5,25 @@ from DayBetes_food.components.cart.cart_shared import calculate_macro_summary_me
 from DayBetes_food.components.ui import render_fragment, render_page
 from datetime import datetime
 from DayBetes_food.database.connection import get_connection
-from DayBetes_food.time_utils import local_naive_to_utc, utc_naive_to_local
+from DayBetes_food.time_utils import local_naive_to_utc, to_local
 from DayBetes_food.database.queries.crud import (
-    change_event_status,
     consolidate_event_portion_group_amount,
     delete_event_portion_group,
     delete_intake_event,
     get_intake_event,
-    finalize_injection_zone_for_event,
     get_portion_detail_by_event,
-    set_injection_zone,
     update_event_portion_group_field,
     update_intake_event_name,
     update_intake_event,
 )
+from DayBetes_food.database.queries.intake_event import (
+    set_injection_zone,
+    create_injection_for_event,
+    confirm_intake_event,
+)
+from DayBetes_food.domain.constants import InjectionZone
+from DayBetes_food.errors import ValidationError, NotFoundError, ConflictError, InfrastructureError
+from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.food.foods import MEAL_TYPES
 
 
@@ -64,7 +69,7 @@ def setup_cart_routes(rt):
             event = get_intake_event(connection, event_id)
             if not event or not event.get("meal_time"):
                 return HTMLResponse(status_code=404)
-            current_local = utc_naive_to_local(event["meal_time"])
+            current_local = to_local(event["meal_time"])
             if meal_date:
                 try:
                     chosen_date = datetime.strptime(meal_date, "%Y-%m-%d").date()
@@ -152,14 +157,34 @@ def setup_cart_routes(rt):
     def post(request: Request, event_id: int, zone: str = ""):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return HTMLResponse(status_code=401)
+
+        # Parsear zona
+        if not zone or not zone.strip():
+            return HTMLResponse(status_code=422)
+        try:
+            parsed_zone = InjectionZone(zone.strip().lower())
+        except ValueError:
+            return HTMLResponse(status_code=422)
+
+        # Registrar zona
         with get_connection() as connection:
-            event = get_intake_event(connection, event_id)
-            if not event:
+            try:
+                set_injection_zone(
+                    connection,
+                    user_id=int(user_id),
+                    intake_event_id=event_id,
+                    zone=parsed_zone,
+                )
+            except NotFoundError:
                 return HTMLResponse(status_code=404)
-            if not event.get("insulin_dose"):
-                return HTMLResponse(status_code=400)
-            ok = set_injection_zone(connection, event_id, zone)
-            return _cart_response(connection, status=200 if ok else 400)
+            except ConflictError:
+                return HTMLResponse(status_code=409)
+            except ValidationError:
+                return HTMLResponse(status_code=422)
+            return _cart_response(connection, status=200)
 
     @rt("/cart/event/{event_id}/ingredient/{origin}/{origin_id}/amount")
     def post(request: Request, event_id: int, origin: str, origin_id: int, amount_g: str = ""):
@@ -244,6 +269,9 @@ def setup_cart_routes(rt):
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return HTMLResponse(status_code=401)
 
         ingested_amount = None
         if (ingested_value or "").strip() != "":
@@ -279,20 +307,23 @@ def setup_cart_routes(rt):
             update_payload.update(calculate_macro_summary_metrics(portions))
             try:
                 with connection.transaction():
-                    updated = (
-                        update_intake_event(connection, event_id, update_payload, commit=False)
-                        if update_payload
-                        else True
+                    # 1) Ownership + idempotencia en una sola sentencia (§6.6).
+                    confirm_intake_event(
+                        connection, user_id=int(user_id), event_id=event_id, commit=False
                     )
-                    if not updated:
-                        raise ValueError("Could not update intake event")
-                    finalized_zone = finalize_injection_zone_for_event(connection, event_id, commit=False)
-                    if not finalized_zone:
-                        raise ValueError("Could not finalize injection zone")
-                    changed = change_event_status(connection, event_id, "consumed", commit=False)
-                    if not changed:
-                        raise ValueError("Could not change intake event status")
-            except Exception:
-                return _cart_response(connection, status=400)
-
-            return _cart_response(connection, status=200 if (updated and finalized_zone and changed) else 400)
+                    # 2) Resto de escrituras, ya dentro de la misma transacción.
+                    if update_payload and not update_intake_event(
+                        connection, event_id, update_payload, commit=False
+                    ):
+                        raise InfrastructureError("Could not update intake event")
+                    # 3) Inyección automática: devuelve id o None (evento sin insulina).
+                    create_injection_for_event(
+                        connection, user_id=int(user_id), intake_event_id=event_id, commit=False
+                    )
+            except NotFoundError:
+                return HTMLResponse(status_code=404)
+            except ConflictError:
+                return HTMLResponse(status_code=409)
+            except ValidationError:
+                return HTMLResponse(status_code=422)
+            return _cart_response(connection, status=200)
