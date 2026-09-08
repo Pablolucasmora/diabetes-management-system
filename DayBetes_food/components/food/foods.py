@@ -1,7 +1,7 @@
 import json
 from fasthtml.common import *
 
-from DayBetes_food.database.queries.crud import get_cart_events
+from DayBetes_food.database.queries import get_cart_events
 from DayBetes_food.components.cart.cart_shared import CHECKBOX_CLS
 from DayBetes_food.time_utils import to_local
 

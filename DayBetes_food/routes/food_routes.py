@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.food.food_main import food_main
 from DayBetes_food.components.ui import render_fragment, render_page
-from DayBetes_food.database.queries.crud import (
+from DayBetes_food.database.queries import (
     add_catalog_item,
     get_all_catalog,
     get_all_manual_intakes,

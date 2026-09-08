@@ -10,11 +10,9 @@ from DayBetes_food.components.settings.settings_main import (
 )
 from DayBetes_food.components.ui import render_page, render_fragment
 from DayBetes_food.database.connection import get_connection
-from DayBetes_food.database.queries.crud import (
+from DayBetes_food.database.queries import (
     update_tag,
     get_all_tags,
-)
-from DayBetes_food.database.queries.insulin_injections import (
     list_insulin_injections,
     get_injection_shot_time_at_offset,
     update_insulin_injection,

@@ -1,5 +1,5 @@
 from fasthtml.common import *
-from DayBetes_food.database.queries.crud import get_all_tags
+from DayBetes_food.database.queries import get_all_tags
 from DayBetes_food.components.injection_zone import (
     BASE_INJECTION_ZONE_IMAGE,
     INJECTION_ZONE_IMAGE_BY_ZONE,

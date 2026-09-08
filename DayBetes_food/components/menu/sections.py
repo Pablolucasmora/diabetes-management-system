@@ -8,7 +8,7 @@ from DayBetes_food.components.injection_zone import (
     asset_busted,
 )
 from DayBetes_food.domain.constants import InjectionZone
-from DayBetes_food.database.queries.crud import (
+from DayBetes_food.database.queries import (
     get_cart_events,
     get_portion_detail_by_event,
 )

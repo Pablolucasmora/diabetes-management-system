@@ -1,14 +1,18 @@
-"""Queries para intake_event con operaciones de inyección (H1, H2).
+"""Queries para la tabla `intake_event`, incluyendo las operaciones de
+inyección de insulina asociadas (H1, H2):
 
 - create_injection_for_event (H1): crea automáticamente inyección al confirmar evento
 - set_injection_zone (H2): registra zona de inyección en el borrador del evento
 """
 
+from typing import Optional
+
+from DayBetes_food.database.queries.crud import APP_TIMEZONE_SQL, _build_update_query, _execute_query, _execute_query_many
 from DayBetes_food.database.queries.insulin_injections import create_insulin_injection
 from DayBetes_food.domain.constants import InjectionZone, InsulinType
 from DayBetes_food.domain.insulin import InsulinInjectionCreate
 from DayBetes_food.errors import ConflictError, InfrastructureError, NotFoundError, ValidationError
-from DayBetes_food.time_utils import utc_now, APP_TIMEZONE
+from DayBetes_food.time_utils import local_today, utc_now, APP_TIMEZONE
 
 
 def set_injection_zone(
@@ -250,3 +254,151 @@ def get_injection_zone_for_event(connection, user_id: int, intake_event_id: int)
         raise InfrastructureError(
             f"Invalid injection_zone '{row['injection_zone']}' in intake_event {intake_event_id}"
         ) from exc
+
+
+# ============================================
+# CRUD base (movido desde crud.py)
+# ============================================
+
+def add_intake_event(connection, users_id: int, state: str, meal_type: str = None, name: str = None,
+                       meal_time=None, eating_out: bool = False, insulin_dose: bool = True,
+                       total_amount: float = None, ingested_amount: float = None,
+                       amount_confidence: float = None, quality_confidence: float = None,
+                     notes: str = None, commit: bool = True, **kwargs) -> Optional[int]:
+    """Creates a new intake event."""
+
+    data = {
+        "users_id": users_id,
+        "state": state,
+        "eating_out": eating_out,
+        "insulin_dose": insulin_dose,
+    }
+
+    optional = {
+        "meal_type": meal_type,
+        "name": name,
+        "meal_time": meal_time,
+        "total_amount": total_amount,
+        "ingested_amount": ingested_amount,
+        "amount_confidence": amount_confidence,
+        "quality_confidence": quality_confidence,
+        "notes": notes,
+        "carbs_uncertainty": kwargs.get("carbs_uncertainty"),
+        "sugars_uncertainty": kwargs.get("sugars_uncertainty"),
+        "fats_uncertainty": kwargs.get("fats_uncertainty"),
+        "saturated_uncertainty": kwargs.get("saturated_uncertainty"),
+        "proteins_uncertainty": kwargs.get("proteins_uncertainty"),
+        "fiber_uncertainty": kwargs.get("fiber_uncertainty"),
+    }
+
+    data.update({k: v for k, v in optional.items() if v is not None})
+
+    columns = ", ".join(data.keys())
+    values = ", ".join(f"%({k})s" for k in data.keys())
+
+    query = f"""
+        INSERT INTO intake_event ({columns})
+        VALUES ({values})
+        RETURNING id;
+    """
+
+    result = _execute_query(connection, query, data, commit=commit, rollback_on_error=commit)
+    return result["id"] if result else None
+
+
+def get_intake_event(connection, event_id: int) -> Optional[dict]:
+    """Gets an intake event by ID."""
+    query = "SELECT * FROM intake_event WHERE id = %(id)s;"
+    return _execute_query(connection, query, {"id": event_id}, commit=False)
+
+
+def get_cart_events(connection, users_id: int) -> list:
+    """Gets the events in 'planned' state (cart) for a users."""
+    query = """
+        SELECT * FROM intake_event 
+        WHERE users_id = %(users_id)s AND state = 'planned' 
+        ORDER BY meal_time DESC;
+    """
+    return _execute_query_many(connection, query, {"users_id": users_id}, commit=False)
+
+
+def get_consumed_events_for_day(connection, users_id: int, day=None) -> list:
+    """Gets events in 'consumed' state for a specific calendar day."""
+    if day is None:
+        day = local_today()
+    query = """
+        SELECT *
+        FROM intake_event
+        WHERE users_id = %(users_id)s
+          AND state = 'consumed'
+          AND DATE((meal_time AT TIME ZONE 'UTC' AT TIME ZONE %(app_timezone)s)) = %(day)s
+        ORDER BY meal_time ASC, id ASC;
+    """
+    return _execute_query_many(
+        connection,
+        query,
+        {"users_id": users_id, "day": day, "app_timezone": APP_TIMEZONE_SQL},
+        commit=False,
+    )
+
+
+def get_consumed_events(connection, users_id: int) -> list:
+    """Gets all events in 'consumed' state for a users."""
+    query = """
+        SELECT *
+        FROM intake_event
+        WHERE users_id = %(users_id)s
+          AND state = 'consumed'
+        ORDER BY meal_time ASC, id ASC;
+    """
+    return _execute_query_many(connection, query, {"users_id": users_id}, commit=False)
+
+
+def update_intake_event(connection, event_id: int, data: dict, commit: bool = True) -> bool:
+    """Updates an intake event."""
+    if not data:
+        return False
+    
+    params = {**data, "id": event_id}
+    query = _build_update_query("intake_event", params)
+    
+    if not query:
+        return False
+        
+    result = _execute_query(connection, query, params, commit=commit, rollback_on_error=commit)
+    return result is not None
+
+
+def change_event_status(connection, event_id: int, new_state: str, commit: bool = True) -> bool:
+    """Changes the status of an intake event (planned -> consumed)."""
+    if new_state not in ("planned", "consumed"):
+        raise ValueError("Invalid state. Must be 'planned' or 'consumed'")
+    
+    query = "UPDATE intake_event SET state = %(state)s WHERE id = %(id)s RETURNING id;"
+    result = _execute_query(
+        connection, query, {"id": event_id, "state": new_state}, commit=commit, rollback_on_error=commit
+    )
+    return result is not None
+
+
+def delete_intake_event(connection, event_id: int, commit: bool = True) -> bool:
+    """Deletes an intake event."""
+    query = "DELETE FROM intake_event WHERE id = %(id)s RETURNING id;"
+    result = _execute_query(
+        connection, query, {"id": event_id}, commit=commit, rollback_on_error=commit
+    )
+    return result is not None
+
+
+def update_intake_event_name(connection, event_id: int, name: Optional[str], commit: bool = True) -> bool:
+    """Updates intake event name."""
+    query = """
+        UPDATE intake_event
+        SET name = %(name)s
+        WHERE id = %(id)s
+        RETURNING id;
+    """
+    result = _execute_query(
+        connection, query, {"id": event_id, "name": name}, commit=commit, rollback_on_error=commit
+    )
+    return result is not None
