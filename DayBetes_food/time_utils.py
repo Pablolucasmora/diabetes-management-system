@@ -18,7 +18,14 @@ def local_today():
     return local_now().date()
 
 
-def utc_naive_to_local(value):
+def to_local(value):
+    """UTC naive o aware -> hora local (APP_TIMEZONE).
+
+    Acepta ambos porque hoy conviven columnas TIMESTAMP sin zona
+    (`intake_event.meal_time`) y TIMESTAMPTZ (`insulin_injections.shot_time`).
+    Cuando se migre `meal_time` a TIMESTAMPTZ, la rama naive deja de ser
+    necesaria (ver audit/deuda_pendiente.md, H16).
+    """
     if value is None:
         return None
     if not isinstance(value, datetime):
