@@ -586,13 +586,18 @@ def _add_entity_filters(
     favorite_condition: str = None,
     viewer_user_id: int = None,
 ) -> None:
+    # Las condiciones se cualifican con el alias `entity`: todas las llamadas
+    # a esta función vienen de queries que aliasan así su tabla principal
+    # (FROM catalog entity / FROM manual_intake entity / FROM recipe entity).
+    # Sin cualificar, un JOIN con una tabla que tenga una columna del mismo
+    # nombre (p.ej. food_brands.created_by) vuelve la referencia ambigua.
     if users_id:
-        conditions.append(f"{owner_column} = %(users_id)s")
+        conditions.append(f"entity.{owner_column} = %(users_id)s")
         params["users_id"] = users_id
     if favorite_condition:
         conditions.append(favorite_condition)
     if viewer_user_id is not None:
-        conditions.append(f"(is_private = FALSE OR {owner_column} = %(viewer_user_id)s)")
+        conditions.append(f"(entity.is_private = FALSE OR entity.{owner_column} = %(viewer_user_id)s)")
         params["viewer_user_id"] = viewer_user_id
 
 
@@ -620,11 +625,11 @@ def get_all_catalog(
     params = {}
 
     if viewer_user_id is None:
-        conditions.append("deleted_at IS NULL")
+        conditions.append("entity.deleted_at IS NULL")
     else:
         params["catalog_viewer_user_id"] = viewer_user_id
         conditions.append(
-            "(deleted_at IS NULL OR (is_private = FALSE AND created_by <> %(catalog_viewer_user_id)s))"
+            "(entity.deleted_at IS NULL OR (entity.is_private = FALSE AND entity.created_by <> %(catalog_viewer_user_id)s))"
         )
 
     normalized = (search or "").strip()
@@ -639,7 +644,7 @@ def get_all_catalog(
         params.update(name_params)
         params.update(brand_params)
     if category:
-        conditions.append("category = %(category)s")
+        conditions.append("entity.category = %(category)s")
         params["category"] = category
     _add_entity_filters(
         conditions,
