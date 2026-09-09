@@ -1,24 +1,9 @@
 from fasthtml.common import *
-from DayBetes_food.auth.context import get_current_user_id
 
 from DayBetes_food.components.cart.cart_components import CartCard
-from DayBetes_food.database.queries import (
-    get_cart_events,
-    get_portion_detail_by_events,
-    get_injection_zone_for_event,
-)
 
 
-def cart_main(connection):
-    user_id = get_current_user_id()
-    if not user_id:
-        return Div(H2("No users"), cls="flex flex-col items-center")
-
-    events = get_cart_events(connection, user_id)
-    for event in events:
-        event["selected_injection_zone"] = get_injection_zone_for_event(
-            connection, user_id=int(user_id), intake_event_id=event["id"]
-        )
+def cart_main(events, portions_by_event):
     if not events:
         return Div(
             Div(
@@ -60,13 +45,7 @@ def cart_main(connection):
             data_hide_cart="true",
         )
 
-    event_ids = [event["id"] for event in events]
-    all_portions = get_portion_detail_by_events(connection, event_ids)
-    portions_by_event = {event_id: [] for event_id in event_ids}
-    for portion in all_portions:
-        portions_by_event.setdefault(portion["intake_event_id"], []).append(portion)
-
-    event_cards = [CartCard(event, portions_by_event.get(event["id"], [])) for event in events]
+    event_cards = [CartCard(event, portions_by_event.get(event.id, [])) for event in events]
 
     return Div(
         H1("Food cart", cls="text-xl font-bold"),

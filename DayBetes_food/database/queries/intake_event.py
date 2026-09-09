@@ -5,14 +5,53 @@ inyección de insulina asociadas (H1, H2):
 - set_injection_zone (H2): registra zona de inyección en el borrador del evento
 """
 
+from dataclasses import fields as dataclass_fields
+from datetime import date
+from enum import Enum
 from typing import Optional
 
-from DayBetes_food.database.queries.crud import APP_TIMEZONE_SQL, _build_update_query, _execute_query, _execute_query_many
+from psycopg import sql
+
+from DayBetes_food.database.mappers import intake_event_read_from_row
+from DayBetes_food.database.queries.crud import (
+    RawSQL,
+    _build_update_query,
+    _execute_query_many,
+)
 from DayBetes_food.database.queries.insulin_injections import create_insulin_injection
-from DayBetes_food.domain.constants import InjectionZone, InsulinType
+from DayBetes_food.domain.constants import IntakeEventState, InsulinType, InjectionZone, MealType
+from DayBetes_food.domain.intake_event import IntakeEventCreate, IntakeEventRead, IntakeEventUpdate
 from DayBetes_food.domain.insulin import InsulinInjectionCreate
 from DayBetes_food.errors import ConflictError, InfrastructureError, NotFoundError, ValidationError
 from DayBetes_food.time_utils import local_today, utc_now, APP_TIMEZONE
+
+
+_INTAKE_EVENT_COLUMNS = """
+    id,
+    users_id AS user_id,
+    state,
+    meal_type,
+    name,
+    meal_time,
+    timezone_at_event,
+    eating_out,
+    insulin_dose,
+    injection_zone,
+    total_amount,
+    ingested_amount,
+    amount_confidence,
+    quality_confidence,
+    carbs_uncertainty,
+    sugars_uncertainty,
+    fats_uncertainty,
+    saturated_uncertainty,
+    proteins_uncertainty,
+    fiber_uncertainty,
+    notes,
+    created_at,
+    updated_at,
+    deleted_at
+"""
 
 
 def set_injection_zone(
@@ -45,10 +84,12 @@ def set_injection_zone(
     """
     query = """
         UPDATE intake_event
-        SET injection_zone = %(zone)s
+        SET injection_zone = %(zone)s,
+            updated_at = NOW()
         WHERE id = %(intake_event_id)s
           AND users_id = %(user_id)s
           AND insulin_dose = TRUE
+          AND deleted_at IS NULL
         RETURNING id;
     """
     try:
@@ -67,7 +108,7 @@ def set_injection_zone(
             # Verificar cuál fue la razón del fallo
             with connection.cursor() as cursor:
                 cursor.execute(
-                    "SELECT id, insulin_dose FROM intake_event WHERE id = %(id)s AND users_id = %(user_id)s;",
+                    "SELECT id, insulin_dose FROM intake_event WHERE id = %(id)s AND users_id = %(user_id)s AND deleted_at IS NULL;",
                     {"id": intake_event_id, "user_id": user_id},
                 )
                 check_row = cursor.fetchone()
@@ -129,9 +170,11 @@ def create_injection_for_event(
     """
     query = """
         SELECT id, users_id AS user_id, insulin_dose, injection_zone,
-               meal_time AT TIME ZONE 'UTC' AS meal_time_utc
+               meal_time, timezone_at_event
         FROM intake_event
-        WHERE id = %(intake_event_id)s AND users_id = %(user_id)s;
+        WHERE id = %(intake_event_id)s
+          AND users_id = %(user_id)s
+          AND deleted_at IS NULL;
     """
     try:
         with connection.cursor() as cursor:
@@ -160,8 +203,8 @@ def create_injection_for_event(
         injection_payload = InsulinInjectionCreate(
             user_id=row["user_id"],
             intake_event_id=intake_event_id,
-            shot_time=row["meal_time_utc"] or utc_now(),
-            timezone_at_event=APP_TIMEZONE.key,
+            shot_time=row["meal_time"] or utc_now(),
+            timezone_at_event=row["timezone_at_event"] or APP_TIMEZONE.key,
             insulin_type=InsulinType.RAPID,
             units=None,
             injection_zone=zone,
@@ -201,15 +244,25 @@ def confirm_intake_event(
     """
     query = """
         UPDATE intake_event
-        SET state = 'consumed'
+        SET state = %(new_state)s,
+            updated_at = NOW()
         WHERE id = %(event_id)s
           AND users_id = %(user_id)s
-          AND state = 'planned'
+          AND state = %(current_state)s
+          AND deleted_at IS NULL
         RETURNING id;
     """
     try:
         with connection.cursor() as cursor:
-            cursor.execute(query, {"event_id": event_id, "user_id": user_id})
+            cursor.execute(
+                query,
+                {
+                    "event_id": event_id,
+                    "user_id": user_id,
+                    "new_state": IntakeEventState.CONSUMED.value,
+                    "current_state": IntakeEventState.PLANNED.value,
+                },
+            )
             row = cursor.fetchone()
         if row is None:
             # Comprobación protegida por ownership (§6.7): distingue 404 de 409
@@ -232,173 +285,404 @@ def confirm_intake_event(
         raise
 
 
-def get_injection_zone_for_event(connection, user_id: int, intake_event_id: int) -> InjectionZone | None:
-    """Zona en borrador de un evento del usuario. None si no hay o el evento no es suyo.
+# ============================================
+# CRUD operations (§3.3, §3.4, §5.3)
+# ============================================
 
-    Lectura de presentación: no distingue "no existe" de "sin zona" (§5.4).
+def create_intake_event(connection, payload: IntakeEventCreate, *, commit: bool = True) -> int:
+    """Crea un evento y devuelve su id (§3.3, §3.4).
+
+    timezone_at_event se fija a la zona de la aplicación: es la zona en que se
+    interpretó meal_time (§10.4).
+
+    Raises:
+        InfrastructureError: si el INSERT no devuelve fila.
     """
     query = """
-        SELECT injection_zone
+        INSERT INTO intake_event
+            (users_id, state, meal_type, name, meal_time, timezone_at_event)
+        VALUES
+            (%(user_id)s, %(state)s, %(meal_type)s, %(name)s,
+             COALESCE(%(meal_time)s, CURRENT_TIMESTAMP), %(timezone_at_event)s)
+        RETURNING id;
+    """
+    params = {
+        "user_id": payload.user_id,
+        "state": payload.state.value,
+        "meal_type": payload.meal_type.value if payload.meal_type else None,
+        "name": payload.name,
+        "meal_time": payload.meal_time,
+        "timezone_at_event": APP_TIMEZONE.key,
+    }
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            row = cursor.fetchone()
+        if row is None:
+            raise InfrastructureError("Could not create intake event")
+        if commit:
+            connection.commit()
+        return int(row["id"])
+    except Exception:
+        if commit:
+            connection.rollback()
+        raise
+
+
+def get_intake_event(connection, user_id: int, event_id: int) -> IntakeEventRead | None:
+    """Lectura privada de un evento activo. None si no existe, no es del usuario
+    o está archivado (§5.3, §5.4, §11.3)."""
+    query = f"""
+        SELECT {_INTAKE_EVENT_COLUMNS}
         FROM intake_event
-        WHERE id = %(intake_event_id)s
-          AND users_id = %(user_id)s;
+        WHERE id = %(event_id)s
+          AND users_id = %(user_id)s
+          AND deleted_at IS NULL;
     """
     with connection.cursor() as cursor:
-        cursor.execute(query, {"intake_event_id": intake_event_id, "user_id": user_id})
+        cursor.execute(query, {"event_id": event_id, "user_id": user_id})
         row = cursor.fetchone()
-    if row is None or not row["injection_zone"]:
-        return None
-    try:
-        return InjectionZone(row["injection_zone"])
-    except ValueError as exc:
-        raise InfrastructureError(
-            f"Invalid injection_zone '{row['injection_zone']}' in intake_event {intake_event_id}"
-        ) from exc
+    return intake_event_read_from_row(row) if row else None
 
 
-# ============================================
-# CRUD base (movido desde crud.py)
-# ============================================
-
-def add_intake_event(connection, users_id: int, state: str, meal_type: str = None, name: str = None,
-                       meal_time=None, eating_out: bool = False, insulin_dose: bool = True,
-                       total_amount: float = None, ingested_amount: float = None,
-                       amount_confidence: float = None, quality_confidence: float = None,
-                     notes: str = None, commit: bool = True, **kwargs) -> Optional[int]:
-    """Creates a new intake event."""
-
-    data = {
-        "users_id": users_id,
-        "state": state,
-        "eating_out": eating_out,
-        "insulin_dose": insulin_dose,
-    }
-
-    optional = {
-        "meal_type": meal_type,
-        "name": name,
-        "meal_time": meal_time,
-        "total_amount": total_amount,
-        "ingested_amount": ingested_amount,
-        "amount_confidence": amount_confidence,
-        "quality_confidence": quality_confidence,
-        "notes": notes,
-        "carbs_uncertainty": kwargs.get("carbs_uncertainty"),
-        "sugars_uncertainty": kwargs.get("sugars_uncertainty"),
-        "fats_uncertainty": kwargs.get("fats_uncertainty"),
-        "saturated_uncertainty": kwargs.get("saturated_uncertainty"),
-        "proteins_uncertainty": kwargs.get("proteins_uncertainty"),
-        "fiber_uncertainty": kwargs.get("fiber_uncertainty"),
-    }
-
-    data.update({k: v for k, v in optional.items() if v is not None})
-
-    columns = ", ".join(data.keys())
-    values = ", ".join(f"%({k})s" for k in data.keys())
-
+def list_planned_intake_events(connection, user_id: int) -> list[IntakeEventRead]:
+    """Eventos en 'planned' (el carrito) del usuario, orden estable (§11.9)."""
     query = f"""
-        INSERT INTO intake_event ({columns})
-        VALUES ({values})
-        RETURNING id;
-    """
-
-    result = _execute_query(connection, query, data, commit=commit, rollback_on_error=commit)
-    return result["id"] if result else None
-
-
-def get_intake_event(connection, event_id: int) -> Optional[dict]:
-    """Gets an intake event by ID."""
-    query = "SELECT * FROM intake_event WHERE id = %(id)s;"
-    return _execute_query(connection, query, {"id": event_id}, commit=False)
-
-
-def get_cart_events(connection, users_id: int) -> list:
-    """Gets the events in 'planned' state (cart) for a users."""
-    query = """
-        SELECT * FROM intake_event 
-        WHERE users_id = %(users_id)s AND state = 'planned' 
-        ORDER BY meal_time DESC;
-    """
-    return _execute_query_many(connection, query, {"users_id": users_id}, commit=False)
-
-
-def get_consumed_events_for_day(connection, users_id: int, day=None) -> list:
-    """Gets events in 'consumed' state for a specific calendar day."""
-    if day is None:
-        day = local_today()
-    query = """
-        SELECT *
+        SELECT {_INTAKE_EVENT_COLUMNS}
         FROM intake_event
-        WHERE users_id = %(users_id)s
-          AND state = 'consumed'
-          AND DATE((meal_time AT TIME ZONE 'UTC' AT TIME ZONE %(app_timezone)s)) = %(day)s
-        ORDER BY meal_time ASC, id ASC;
+        WHERE users_id = %(user_id)s
+          AND state = %(state)s
+          AND deleted_at IS NULL
+        ORDER BY meal_time DESC, id DESC;
     """
-    return _execute_query_many(
+    rows = _execute_query_many(
         connection,
         query,
-        {"users_id": users_id, "day": day, "app_timezone": APP_TIMEZONE_SQL},
+        {"user_id": user_id, "state": IntakeEventState.PLANNED.value},
         commit=False,
     )
+    return [intake_event_read_from_row(row) for row in rows]
 
 
-def get_consumed_events(connection, users_id: int) -> list:
-    """Gets all events in 'consumed' state for a users."""
-    query = """
-        SELECT *
+def list_consumed_intake_events_for_day(
+    connection, user_id: int, day: date | None = None
+) -> list[IntakeEventRead]:
+    """Eventos consumidos de un día natural local del usuario."""
+    if day is None:
+        day = local_today()
+    query = f"""
+        SELECT {_INTAKE_EVENT_COLUMNS}
         FROM intake_event
-        WHERE users_id = %(users_id)s
-          AND state = 'consumed'
+        WHERE users_id = %(user_id)s
+          AND state = %(state)s
+          AND deleted_at IS NULL
+          AND DATE(meal_time AT TIME ZONE %(app_timezone)s) = %(day)s
         ORDER BY meal_time ASC, id ASC;
     """
-    return _execute_query_many(connection, query, {"users_id": users_id}, commit=False)
-
-
-def update_intake_event(connection, event_id: int, data: dict, commit: bool = True) -> bool:
-    """Updates an intake event."""
-    if not data:
-        return False
-    
-    params = {**data, "id": event_id}
-    query = _build_update_query("intake_event", params)
-    
-    if not query:
-        return False
-        
-    result = _execute_query(connection, query, params, commit=commit, rollback_on_error=commit)
-    return result is not None
-
-
-def change_event_status(connection, event_id: int, new_state: str, commit: bool = True) -> bool:
-    """Changes the status of an intake event (planned -> consumed)."""
-    if new_state not in ("planned", "consumed"):
-        raise ValueError("Invalid state. Must be 'planned' or 'consumed'")
-    
-    query = "UPDATE intake_event SET state = %(state)s WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(
-        connection, query, {"id": event_id, "state": new_state}, commit=commit, rollback_on_error=commit
+    rows = _execute_query_many(
+        connection,
+        query,
+        {
+            "user_id": user_id,
+            "state": IntakeEventState.CONSUMED.value,
+            "day": day,
+            "app_timezone": APP_TIMEZONE.key,
+        },
+        commit=False,
     )
-    return result is not None
+    return [intake_event_read_from_row(row) for row in rows]
 
 
-def delete_intake_event(connection, event_id: int, commit: bool = True) -> bool:
-    """Deletes an intake event."""
-    query = "DELETE FROM intake_event WHERE id = %(id)s RETURNING id;"
-    result = _execute_query(
-        connection, query, {"id": event_id}, commit=commit, rollback_on_error=commit
+def list_consumed_intake_events(connection, user_id: int) -> list[IntakeEventRead]:
+    """Todos los eventos consumidos del usuario, orden estable (§11.9)."""
+    query = f"""
+        SELECT {_INTAKE_EVENT_COLUMNS}
+        FROM intake_event
+        WHERE users_id = %(user_id)s
+          AND state = %(state)s
+          AND deleted_at IS NULL
+        ORDER BY meal_time ASC, id ASC;
+    """
+    rows = _execute_query_many(
+        connection,
+        query,
+        {"user_id": user_id, "state": IntakeEventState.CONSUMED.value},
+        commit=False,
     )
-    return result is not None
+    return [intake_event_read_from_row(row) for row in rows]
 
 
-def update_intake_event_name(connection, event_id: int, name: Optional[str], commit: bool = True) -> bool:
-    """Updates intake event name."""
+def update_intake_event(
+    connection,
+    user_id: int,
+    event_id: int,
+    data: IntakeEventUpdate,
+    *,
+    commit: bool = True,
+) -> None:
+    """Actualiza campos de un evento activo del usuario. Ownership en el SQL (§5.3).
+
+    data: IntakeEventUpdate (§3.1); solo los campos que representan realmente
+    los editables de la entidad. Los campos en None se ignoran (comportamiento
+    de _build_update_query); para poner name a NULL existe
+    update_intake_event_name. La traducción de dataclass a columnas físicas
+    (incluida la extracción de .value de los enums) ocurre en este único punto,
+    en vez de en cada ruta.
+
+    NO filtra por state: un evento 'consumed' sigue siendo editable en todos sus
+    campos (decisión 2026-09-08) y la ruta /confirm actualiza el evento cuando ya
+    está en 'consumed'. Sí excluye archivados (deleted_at IS NULL, §11.3).
+
+    Raises:
+        NotFoundError: el evento no existe, no es del usuario o está archivado.
+    """
+    payload = {}
+    for field in dataclass_fields(data):
+        value = getattr(data, field.name)
+        if value is None:
+            continue
+        if isinstance(value, Enum):
+            value = value.value
+        payload[field.name] = value
+    if not payload:
+        return None
+
+    params = {**payload, "id": event_id}
+    query = _build_update_query(
+        "intake_event",
+        params,
+        raw_fields={"updated_at": RawSQL.NOW},
+        extra_where=sql.SQL("users_id = %(owner_user_id)s AND deleted_at IS NULL"),
+    )
+    if query is None:
+        return None
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(query, {**params, "owner_user_id": user_id})
+            row = cursor.fetchone()
+        if row is None:
+            raise NotFoundError(
+                f"Intake event {event_id} not found or not owned by user {user_id}"
+            )
+        if commit:
+            connection.commit()
+    except Exception:
+        if commit:
+            connection.rollback()
+        raise
+
+
+def update_intake_event_name(
+    connection, user_id: int, event_id: int, name: str | None, *, commit: bool = True
+) -> None:
+    """Actualiza el nombre de un evento activo del usuario."""
     query = """
         UPDATE intake_event
-        SET name = %(name)s
-        WHERE id = %(id)s
+        SET name = %(name)s,
+            updated_at = NOW()
+        WHERE id = %(event_id)s
+          AND users_id = %(user_id)s
+          AND deleted_at IS NULL
         RETURNING id;
     """
-    result = _execute_query(
-        connection, query, {"id": event_id, "name": name}, commit=commit, rollback_on_error=commit
-    )
-    return result is not None
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                query,
+                {"event_id": event_id, "user_id": user_id, "name": name},
+            )
+            row = cursor.fetchone()
+        if row is None:
+            raise NotFoundError(
+                f"Intake event {event_id} not found or not owned by user {user_id}"
+            )
+        if commit:
+            connection.commit()
+    except Exception:
+        if commit:
+            connection.rollback()
+        raise
+
+
+def delete_intake_event(connection, user_id: int, event_id: int, *, commit: bool = True) -> None:
+    """Borrado FÍSICO de un evento en 'planned' del usuario.
+
+    'planned' es no archivable (decisión 2026-09-08): descartar un carrito es un
+    borrado legítimo. Un evento 'consumed' es archivable y NO puede borrarse por
+    esta vía: usa archive_intake_event.
+
+    Si el evento borrado tenía una inyección asociada, la FK
+    insulin_injections.intake_event_id (ON DELETE SET NULL) la conserva
+    desasociada. Es el comportamiento elegido, no un efecto colateral.
+
+    Raises:
+        NotFoundError: no existe o no es del usuario.
+        ConflictError: existe y es del usuario, pero no está en 'planned'.
+    """
+    query = """
+        DELETE FROM intake_event
+        WHERE id = %(event_id)s
+          AND users_id = %(user_id)s
+          AND state = %(state)s
+        RETURNING id;
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                query,
+                {
+                    "event_id": event_id,
+                    "user_id": user_id,
+                    "state": IntakeEventState.PLANNED.value,
+                },
+            )
+            row = cursor.fetchone()
+        if row is None:
+            # Comprobación protegida por ownership (§5.4): distingue 404 de 409
+            # sin revelar eventos ajenos.
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT id FROM intake_event "
+                    "WHERE id = %(event_id)s AND users_id = %(user_id)s;",
+                    {"event_id": event_id, "user_id": user_id},
+                )
+                owned = cursor.fetchone()
+            if owned is None:
+                raise NotFoundError(
+                    f"Intake event {event_id} not found or not owned by user {user_id}"
+                )
+            raise ConflictError("Only planned intake events can be deleted; archive it instead")
+        if commit:
+            connection.commit()
+    except Exception:
+        if commit:
+            connection.rollback()
+        raise
+
+
+def archive_intake_event(connection, user_id: int, event_id: int, *, commit: bool = True) -> None:
+    """Soft-delete de un evento 'consumed' del usuario (§11.3).
+
+    Archivar es un UPDATE, no un DELETE: la FK ON DELETE SET NULL de
+    insulin_injections NO se activa y la inyección conserva su contexto de comida
+    (decisión 2026-09-08).
+
+    Raises:
+        NotFoundError: no existe o no es del usuario.
+        ConflictError: no está en 'consumed', o ya estaba archivado.
+    """
+    query = """
+        UPDATE intake_event
+        SET deleted_at = NOW(),
+            updated_at = NOW()
+        WHERE id = %(event_id)s
+          AND users_id = %(user_id)s
+          AND state = %(state)s
+          AND deleted_at IS NULL
+        RETURNING id;
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                query,
+                {
+                    "event_id": event_id,
+                    "user_id": user_id,
+                    "state": IntakeEventState.CONSUMED.value,
+                },
+            )
+            row = cursor.fetchone()
+        if row is None:
+            # Comprobación protegida por ownership
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT id FROM intake_event "
+                    "WHERE id = %(event_id)s AND users_id = %(user_id)s;",
+                    {"event_id": event_id, "user_id": user_id},
+                )
+                owned = cursor.fetchone()
+            if owned is None:
+                raise NotFoundError(
+                    f"Intake event {event_id} not found or not owned by user {user_id}"
+                )
+            raise ConflictError("Intake event is not consumed or is already archived")
+        if commit:
+            connection.commit()
+    except Exception:
+        if commit:
+            connection.rollback()
+        raise
+
+
+def restore_intake_event(connection, user_id: int, event_id: int, *, commit: bool = True) -> None:
+    """Deshace el archivado (§11.3). No hay unicidad que revalidar en esta tabla.
+
+    Raises:
+        NotFoundError: no existe o no es del usuario.
+        ConflictError: no estaba archivado.
+    """
+    query = """
+        UPDATE intake_event
+        SET deleted_at = NULL,
+            updated_at = NOW()
+        WHERE id = %(event_id)s
+          AND users_id = %(user_id)s
+          AND deleted_at IS NOT NULL
+        RETURNING id;
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                query,
+                {"event_id": event_id, "user_id": user_id},
+            )
+            row = cursor.fetchone()
+        if row is None:
+            # Comprobación protegida por ownership
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT id FROM intake_event "
+                    "WHERE id = %(event_id)s AND users_id = %(user_id)s;",
+                    {"event_id": event_id, "user_id": user_id},
+                )
+                owned = cursor.fetchone()
+            if owned is None:
+                raise NotFoundError(
+                    f"Intake event {event_id} not found or not owned by user {user_id}"
+                )
+            raise ConflictError("Intake event is not archived")
+        if commit:
+            connection.commit()
+    except Exception:
+        if commit:
+            connection.rollback()
+        raise
+
+
+def get_planned_intake_event(connection, user_id: int, event_id: int) -> int:
+    """Valida que el evento existe, es del usuario, está activo y sigue en 'planned'.
+
+    Devuelve el id del evento. Ownership y estado van dentro del SQL (§5.3).
+
+    Raises:
+        NotFoundError: no existe, no es del usuario o está archivado.
+        ConflictError: es del usuario pero ya no está en 'planned'.
+    """
+    query = """
+        SELECT id, state
+        FROM intake_event
+        WHERE id = %(event_id)s
+          AND users_id = %(user_id)s
+          AND deleted_at IS NULL;
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(query, {"event_id": event_id, "user_id": user_id})
+        row = cursor.fetchone()
+    if row is None:
+        raise NotFoundError(
+            f"Intake event {event_id} not found or not owned by user {user_id}"
+        )
+    if row["state"] != IntakeEventState.PLANNED.value:
+        raise ConflictError("Intake event is not in 'planned' state")
+    return int(row["id"])

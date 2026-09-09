@@ -2,6 +2,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 
+# Longitudes máximas de users.email y users.username, iguales a los VARCHAR de
+# esas columnas (database/schema.py). §7.3 exige declarar el límite una sola vez
+# y rechazar el exceso en el boundary, nunca truncarlo (decisión 2026-09-09).
+USER_EMAIL_MAX_LENGTH = 255
+USER_USERNAME_MAX_LENGTH = 50
+
+
 @dataclass(frozen=True)
 class UserRead:
     id: int

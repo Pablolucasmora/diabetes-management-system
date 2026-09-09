@@ -18,7 +18,7 @@ from DayBetes_food.auth.security import (
     sanitize_text,
     verify_password,
 )
-from DayBetes_food.auth.models import CreateUserCommand
+from DayBetes_food.auth.models import USER_EMAIL_MAX_LENGTH, CreateUserCommand
 from DayBetes_food.errors import ConflictError
 from DayBetes_food.auth.service import (
     GENERIC_AUTH_ERROR,
@@ -103,10 +103,12 @@ def _registration_form(request: Request, error: str = "", status_code: int = 200
         title="Crear cuenta",
         action="/auth/register/submit",
         csrf_token=getattr(request.state, "csrf_token", ""),
-        fields_html="""
+        fields_html=f"""
             <input name="username" placeholder="Usuario (3-32 caracteres)" required="required"
+              maxlength="32"
               class="web_input border border-white rounded-lg px-3 py-2 text-sm">
             <input type="email" name="email" placeholder="Email" required="required"
+              maxlength="{USER_EMAIL_MAX_LENGTH}"
               class="web_input border border-white rounded-lg px-3 py-2 text-sm">
             <p class="text-xs text-gray-600">
               Usuario: 3-32 caracteres, solo letras, numeros y guion bajo (_).
@@ -168,8 +170,9 @@ def setup_auth_routes(rt):
             title="Iniciar sesion",
             action="/auth/login/submit",
             csrf_token=csrf_token,
-            fields_html="""
+            fields_html=f"""
                 <input name="identifier" placeholder="Email o usuario" required="required"
+                  maxlength="{USER_EMAIL_MAX_LENGTH}"
                   class="web_input border border-white rounded-lg px-3 py-2 text-sm">
                 <input type="password" name="password" placeholder="Contrasena" required="required"
                   class="web_input border border-white rounded-lg px-3 py-2 text-sm">
@@ -201,11 +204,21 @@ def setup_auth_routes(rt):
         if getattr(request.state, "user", None):
             return RedirectResponse(url="/menu", status_code=303)
 
-        username = normalize_identifier(sanitize_text(username, 50))
-        email = normalize_identifier(sanitize_text(email, 255))
+        username = normalize_identifier(sanitize_text(username))
+        email = normalize_identifier(sanitize_text(email))
 
+        # `is_valid_username` acota a 3-32 caracteres, más estricto que el
+        # VARCHAR(50) de la columna: rechazar por regex ya cubre el límite.
         if not is_valid_username(username):
             return _redirect_with_error("/auth/register", "Usuario invalido: usa 3-32 caracteres (letras, numeros o _)")
+        # `is_valid_email` no acota longitud, así que el límite de columna se
+        # comprueba aquí y se rechaza; antes se truncaba en silencio y se podía
+        # registrar una cuenta con un email distinto del escrito (§7.3).
+        if len(email) > USER_EMAIL_MAX_LENGTH:
+            return _redirect_with_error(
+                "/auth/register",
+                f"Email invalido: maximo {USER_EMAIL_MAX_LENGTH} caracteres",
+            )
         if not is_valid_email(email):
             return _redirect_with_error("/auth/register", "Email invalido")
         if password != password_confirm or not is_strong_password(password):
@@ -240,12 +253,20 @@ def setup_auth_routes(rt):
         if getattr(request.state, "user", None):
             return RedirectResponse(url="/menu", status_code=303)
 
-        identifier = normalize_identifier(sanitize_text(identifier, 255))
+        identifier = normalize_identifier(sanitize_text(identifier))
         limiter_key_hash = hash_token(f"{identifier}:{_client_ip(request)}")
 
         with get_connection() as connection:
             purge_expired_sessions(connection)
             if not rate_limit_login_allowed(connection, limiter_key_hash):
+                return _redirect_with_error("/auth/login", GENERIC_AUTH_ERROR)
+
+            # Un identificador más largo que la columna no puede corresponder a
+            # ningún usuario: se rechaza sin truncarlo (§7.3) y por la misma vía
+            # que un usuario inexistente, para no distinguir ambos casos
+            # (error_conventions.md §3.5).
+            if len(identifier) > USER_EMAIL_MAX_LENGTH:
+                register_login_failure(connection, limiter_key_hash)
                 return _redirect_with_error("/auth/login", GENERIC_AUTH_ERROR)
 
             # Migración gradual de la base de datos, para añadir el pepper

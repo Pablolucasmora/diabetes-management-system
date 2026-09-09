@@ -13,8 +13,7 @@ This module no longer holds per-table CRUD functions (see code_conventions.md
   and `recipe.py` (`_add_entity_filters`, `_favorite_filter_sql`);
 - tag normalization helpers shared by `tags.py` and `linked_tags.py`
   (`_normalize_tag_name`, `_tag_color_from_name`);
-- constants shared across table modules (`TRGM_SIMILARITY_THRESHOLD`,
-  `APP_TIMEZONE_SQL`).
+- constants shared across table modules (`TRGM_SIMILARITY_THRESHOLD`).
 
 Table-specific queries live in one module per table
 (`users.py`, `catalog.py`, `manual_intake.py`, `recipe.py`, `tags.py`,
@@ -34,7 +33,6 @@ from psycopg import sql
 logger = logging.getLogger(__name__)
 
 TRGM_SIMILARITY_THRESHOLD = 0.25
-APP_TIMEZONE_SQL = "Europe/Madrid"
 _HAS_PG_TRGM = None
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _ALLOWED_UPDATE_TABLES = {

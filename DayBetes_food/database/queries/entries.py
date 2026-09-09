@@ -9,7 +9,9 @@ por eso no viven en el archivo de ninguna tabla individual
 (code_conventions.md §1.3.1).
 """
 
-from DayBetes_food.database.queries.crud import APP_TIMEZONE_SQL, _build_fuzzy_search, _execute_query_many
+from DayBetes_food.database.queries.crud import _build_fuzzy_search, _execute_query_many
+from DayBetes_food.domain.constants import IntakeEventState
+from DayBetes_food.time_utils import APP_TIMEZONE
 
 
 def get_subtype_suggestions(connection, search: str = "", limit: int = 50) -> list[str]:
@@ -149,8 +151,8 @@ def get_consumed_food_usage_rankings(connection, users_id: int, days: int = 60) 
                 pd.catalog_id,
                 pd.manual_intake_id,
                 (
-                    EXTRACT(HOUR FROM (ie.meal_time AT TIME ZONE 'UTC' AT TIME ZONE %(app_timezone)s)) * 60
-                    + EXTRACT(MINUTE FROM (ie.meal_time AT TIME ZONE 'UTC' AT TIME ZONE %(app_timezone)s))
+                    EXTRACT(HOUR FROM (ie.meal_time AT TIME ZONE %(app_timezone)s)) * 60
+                    + EXTRACT(MINUTE FROM (ie.meal_time AT TIME ZONE %(app_timezone)s))
                 )::int AS event_minute,
                 (
                     EXTRACT(HOUR FROM (CURRENT_TIMESTAMP AT TIME ZONE %(app_timezone)s)) * 60
@@ -159,8 +161,9 @@ def get_consumed_food_usage_rankings(connection, users_id: int, days: int = 60) 
             FROM portion_detail pd
             INNER JOIN intake_event ie ON ie.id = pd.intake_event_id
             WHERE ie.users_id = %(users_id)s
-              AND ie.state = 'consumed'
-              AND ie.meal_time >= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - (%(days)s * INTERVAL '1 day')
+              AND ie.state = %(state)s
+              AND ie.deleted_at IS NULL
+              AND ie.meal_time >= CURRENT_TIMESTAMP - (%(days)s * INTERVAL '1 day')
         ),
         scored AS (
             SELECT
@@ -217,6 +220,12 @@ def get_consumed_food_usage_rankings(connection, users_id: int, days: int = 60) 
     return _execute_query_many(
         connection,
         query,
-        {"users_id": users_id, "days": safe_days, "app_timezone": APP_TIMEZONE_SQL},
+        {
+            "users_id": users_id,
+            "days": safe_days,
+            "app_timezone": APP_TIMEZONE.key,
+            # §4.1: el estado sale del enum central, no de un literal en el SQL.
+            "state": IntakeEventState.CONSUMED.value,
+        },
         commit=False,
     )

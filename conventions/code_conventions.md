@@ -640,6 +640,18 @@ No se debe convertir silenciosamente una entrada inválida en un valor válido: 
 - No truncar silenciosamente.
 - Usar la misma normalización en Python y en los índices SQL de duplicados.
 
+La longitud máxima de un campo persistido es la de su columna. El boundary
+que recibe el texto debe comprobarla **antes** de llamar a persistencia y
+**rechazar** el exceso como `validation_error` (`422`), nunca truncarlo ni
+dejar que lo rechace PostgreSQL (`value too long for type character
+varying(N)` sale como `500`, un error de cliente convertido en fallo de
+servidor). El límite se declara una sola vez como constante en el módulo de
+dominio de la tabla (por ejemplo `INTAKE_EVENT_NAME_MAX_LENGTH` en
+`domain/intake_event.py`), y todas las rutas y formularios que escriben esa
+columna usan esa misma constante — incluido el `maxlength` del `Input`, que
+es ayuda de UX y no sustituye la comprobación en servidor. Decisión
+2026-09-09.
+
 ### 7.4 Campos obligatorios, opcionales y parciales
 
 Se distinguen tres estados:
@@ -1374,6 +1386,8 @@ Una migración que añade una columna, un `CHECK` o un contrato nuevo (p. ej. "s
 - Backfillear, marcar como inconsistente o borrar datos preexistentes que incumplen la regla nueva es una decisión de producto explícita, no una consecuencia automática de la migración. Se documenta en `conventions/decisions.md` solo si el usuario decide desviarse del criterio por defecto.
 - Cualquier análisis, estadística o modelo que lea esa tabla debe considerar que puede haber filas anteriores a la regla nueva que no la cumplen.
 - Esto no exime de aplicar la regla a los datos nuevos desde el momento en que la migración se cierra.
+
+Aplicado sin excepción (criterio por defecto, sin entrada en `decisions.md`) en `intake_event` (hallazgo 17 de `audit/audit_intake_event.md`: 40 filas `consumed` con `insulin_dose = TRUE` sin inyección asociada, 48 de 51 sin métricas de confianza) e `insulin_injections` (9 de 9 filas con `intake_event_id IS NULL`), ambos verificados contra la base real el 2026-09-09.
 
 ## 13. Procedimiento obligatorio de auditoría por tabla
 

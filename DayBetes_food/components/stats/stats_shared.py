@@ -1,4 +1,4 @@
-from DayBetes_food.components.cart.cart_shared import MEAL_TYPES
+from DayBetes_food.domain.constants import MealType
 
 
 NUTRIENT_SPECS = [
@@ -22,7 +22,7 @@ MEAL_TYPE_LABELS = {
     "sin_tipo": "Sin tipo",
 }
 
-MEAL_TYPE_ORDER = [*MEAL_TYPES, "sin_tipo"]
+MEAL_TYPE_ORDER = [meal_type.value for meal_type in MealType] + ["sin_tipo"]
 
 STATS_PAGE_CLS = """
     w-full mx-auto

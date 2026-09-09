@@ -21,9 +21,15 @@ def normalize_identifier(value: str) -> str:
     return (value or "").strip().lower()
 
 
-def sanitize_text(value: str, max_len: int) -> str:
-    cleaned = "".join(ch for ch in (value or "") if ch.isprintable()).strip()
-    return cleaned[:max_len]
+def sanitize_text(value: str) -> str:
+    """Normaliza un texto de entrada: descarta caracteres no imprimibles y
+    recorta espacios de los extremos.
+
+    Es solo normalización (§7.2): **no** trunca. La longitud máxima de cada
+    campo es la de su columna y se comprueba en el boundary, que rechaza el
+    exceso en vez de recortarlo silenciosamente (§7.3, decisión 2026-09-09).
+    """
+    return "".join(ch for ch in (value or "") if ch.isprintable()).strip()
 
 
 def is_valid_email(email: str) -> bool:

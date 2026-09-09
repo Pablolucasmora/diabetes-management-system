@@ -6,8 +6,9 @@ DayBetes_food/domain/ no se construyen desde una fila SQL en ningún otro
 punto del código.
 """
 
-from DayBetes_food.domain.constants import InjectionZone, InsulinType
+from DayBetes_food.domain.constants import InjectionZone, IntakeEventState, InsulinType, MealType
 from DayBetes_food.domain.insulin import InsulinInjectionRead
+from DayBetes_food.domain.intake_event import IntakeEventRead
 from DayBetes_food.errors import InfrastructureError
 
 
@@ -50,4 +51,69 @@ def insulin_injection_read_from_row(row: dict) -> InsulinInjectionRead:
         skin_pinch=row.get("skin_pinch"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+    )
+
+
+def intake_event_read_from_row(row: dict) -> IntakeEventRead:
+    """Convierte fila SQL a IntakeEventRead.
+
+    La fila debe venir de _INTAKE_EVENT_COLUMNS (queries/intake_event.py), que
+    ya expone users_id con el alias user_id (§3.5).
+    Columnas obligatorias: id, user_id, state, timezone_at_event, eating_out,
+    insulin_dose, created_at, updated_at. El resto son nullables.
+    """
+    try:
+        state = IntakeEventState(row["state"])
+    except ValueError as exc:
+        raise InfrastructureError(
+            f"Invalid state '{row['state']}' in intake_event row"
+        ) from exc
+    except KeyError as exc:
+        raise InfrastructureError(f"Missing required field {exc} in intake_event row") from exc
+
+    meal_type_raw = row.get("meal_type")
+    meal_type = None
+    if meal_type_raw:
+        try:
+            meal_type = MealType(meal_type_raw)
+        except ValueError as exc:
+            raise InfrastructureError(
+                f"Invalid meal_type '{meal_type_raw}' in intake_event row"
+            ) from exc
+
+    injection_zone_raw = row.get("injection_zone")
+    injection_zone = None
+    if injection_zone_raw:
+        try:
+            injection_zone = InjectionZone(injection_zone_raw)
+        except ValueError as exc:
+            raise InfrastructureError(
+                f"Invalid injection_zone '{injection_zone_raw}' in intake_event row"
+            ) from exc
+
+    return IntakeEventRead(
+        id=int(row["id"]),
+        user_id=int(row["user_id"]),
+        state=state,
+        meal_type=meal_type,
+        name=row.get("name"),
+        meal_time=row.get("meal_time"),
+        timezone_at_event=row["timezone_at_event"],
+        eating_out=bool(row["eating_out"]),
+        insulin_dose=bool(row["insulin_dose"]),
+        injection_zone=injection_zone,
+        total_amount=row.get("total_amount"),
+        ingested_amount=row.get("ingested_amount"),
+        amount_confidence=row.get("amount_confidence"),
+        quality_confidence=row.get("quality_confidence"),
+        carbs_uncertainty=row.get("carbs_uncertainty"),
+        sugars_uncertainty=row.get("sugars_uncertainty"),
+        fats_uncertainty=row.get("fats_uncertainty"),
+        saturated_uncertainty=row.get("saturated_uncertainty"),
+        proteins_uncertainty=row.get("proteins_uncertainty"),
+        fiber_uncertainty=row.get("fiber_uncertainty"),
+        notes=row.get("notes"),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        deleted_at=row.get("deleted_at"),
     )

@@ -1,10 +1,5 @@
 from datetime import date, datetime
 
-from DayBetes_food.database.queries import (
-    get_consumed_events,
-    get_consumed_events_for_day,
-    get_portion_detail_by_events,
-)
 from DayBetes_food.components.stats.stats_shared import (
     MEAL_TYPE_LABELS,
     MEAL_TYPE_ORDER,
@@ -54,8 +49,8 @@ def _has_non_zero_totals(totals: dict) -> bool:
     return any(to_float(totals.get(nutrient_key)) > 0 for nutrient_key, _, _ in NUTRIENT_SPECS)
 
 
-def _event_day_key(event: dict) -> str:
-    meal_time = event.get("meal_time")
+def _event_day_key(event) -> str:
+    meal_time = event.meal_time
     if isinstance(meal_time, datetime):
         local_time = to_local(meal_time)
         return local_time.date().isoformat() if local_time else meal_time.date().isoformat()
@@ -64,11 +59,12 @@ def _event_day_key(event: dict) -> str:
     return "sin_fecha"
 
 
-def get_stats_payload(connection, user_id: int, today: date) -> dict:
-    today_events = get_consumed_events_for_day(connection, users_id=user_id, day=today)
-    today_event_ids = [int(event["id"]) for event in today_events]
-    today_portions = get_portion_detail_by_events(connection, today_event_ids)
-
+def compute_stats_payload(
+    today_events: list,
+    today_portions: list[dict],
+    all_consumed_events: list,
+    all_portions: list[dict],
+) -> dict:
     portions_by_today_event = {}
     for portion in today_portions:
         event_id = int(portion.get("intake_event_id") or 0)
@@ -76,16 +72,11 @@ def get_stats_payload(connection, user_id: int, today: date) -> dict:
 
     today_event_totals = {}
     for event in today_events:
-        event_id = int(event["id"])
-        today_event_totals[event_id] = _compute_totals_for_portions(portions_by_today_event.get(event_id, []))
+        today_event_totals[event.id] = _compute_totals_for_portions(portions_by_today_event.get(event.id, []))
 
     today_totals = empty_totals()
     for totals in today_event_totals.values():
         _sum_totals(today_totals, totals)
-
-    all_consumed_events = get_consumed_events(connection, users_id=user_id)
-    all_event_ids = [int(event["id"]) for event in all_consumed_events]
-    all_portions = get_portion_detail_by_events(connection, all_event_ids)
 
     portions_by_event = {}
     for portion in all_portions:
@@ -95,14 +86,13 @@ def get_stats_payload(connection, user_id: int, today: date) -> dict:
     daily_totals_by_day = {}
     meal_type_historical_totals = {}
     for event in all_consumed_events:
-        event_id = int(event["id"])
         day_key = _event_day_key(event)
         if day_key not in daily_totals_by_day:
             daily_totals_by_day[day_key] = empty_totals()
-        event_totals = _compute_totals_for_portions(portions_by_event.get(event_id, []))
+        event_totals = _compute_totals_for_portions(portions_by_event.get(event.id, []))
         _sum_totals(daily_totals_by_day[day_key], event_totals)
 
-        meal_type = (event.get("meal_type") or "sin_tipo").strip() or "sin_tipo"
+        meal_type = event.meal_type.value if event.meal_type else "sin_tipo"
         if meal_type not in meal_type_historical_totals:
             meal_type_historical_totals[meal_type] = empty_totals()
         _sum_totals(meal_type_historical_totals[meal_type], event_totals)
@@ -121,12 +111,11 @@ def get_stats_payload(connection, user_id: int, today: date) -> dict:
 
     grouped = {meal_type: {"count": 0, "totals": empty_totals()} for meal_type in MEAL_TYPE_ORDER}
     for event in today_events:
-        event_id = int(event["id"])
-        meal_type = (event.get("meal_type") or "sin_tipo").strip() or "sin_tipo"
+        meal_type = event.meal_type.value if event.meal_type else "sin_tipo"
         if meal_type not in grouped:
             grouped[meal_type] = {"count": 0, "totals": empty_totals()}
         grouped[meal_type]["count"] += 1
-        _sum_totals(grouped[meal_type]["totals"], today_event_totals.get(event_id, empty_totals()))
+        _sum_totals(grouped[meal_type]["totals"], today_event_totals.get(event.id, empty_totals()))
 
     meal_groups = []
     for meal_type in MEAL_TYPE_ORDER:

@@ -25,6 +25,23 @@ class InjectionZone(str, Enum):
     LEFT_GLUTEUS = "left_gluteus"
 
 
+@unique
+class MealType(str, Enum):
+    BREAKFAST = "breakfast"
+    BRUNCH = "brunch"
+    LUNCH = "lunch"
+    AFTERNOON_SNACK = "afternoon_snack"
+    DINNER = "dinner"
+    SNACK = "snack"
+    RESCUE = "rescue"
+
+
+@unique
+class IntakeEventState(str, Enum):
+    PLANNED = "planned"
+    CONSUMED = "consumed"
+
+
 def sql_in_list(enum_cls) -> str:
     """Lista de valores del enum para un CHECK: "'rapid', 'basal'".
 
