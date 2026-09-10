@@ -216,6 +216,48 @@ def consolidate_event_portion_group_amount(
         raise
 
 
+def scale_event_portion_amounts(
+    connection,
+    event_id: int,
+    fraction: float,
+    commit: bool = True,
+) -> bool:
+    """Escala plate_amount de todas las porciones de un evento por `fraction`.
+
+    Único punto de escritura del flujo de `confirm` (measurement_conventions.md
+    §4.4/§6.9.1, decisión 2026-09-10): sobrescribe, una sola vez y con una única
+    sentencia SQL (no en un bucle Python), la cantidad servida por la cantidad
+    realmente consumida. `amount_g` no se toca.
+
+    `fraction` debe estar en [0, 1]; se valida aquí también como defensa en
+    profundidad, aunque el boundary HTTP ya lo rechaza con 422 antes de llegar.
+
+    Devuelve True si había al menos una fila (evento con porciones). Un evento
+    sin porciones no es un error: no hay nada que escalar.
+    """
+    if not (0.0 <= fraction <= 1.0):
+        raise ValueError("fraction must be between 0 and 1")
+
+    query = """
+        UPDATE portion_detail
+        SET plate_amount = plate_amount * %(fraction)s
+        WHERE intake_event_id = %(event_id)s;
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(query, {"fraction": fraction, "event_id": event_id})
+            updated = cursor.rowcount
+        if commit:
+            connection.commit()
+        return updated > 0
+    except Exception as e:
+        if commit:
+            connection.rollback()
+            logger.error("Error in query: %s", e, exc_info=True)
+            return False
+        raise
+
+
 def update_event_portion_group_field(
     connection,
     event_id: int,

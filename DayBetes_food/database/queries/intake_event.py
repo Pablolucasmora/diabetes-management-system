@@ -37,7 +37,6 @@ _INTAKE_EVENT_COLUMNS = """
     eating_out,
     insulin_dose,
     injection_zone,
-    total_amount,
     ingested_amount,
     amount_confidence,
     quality_confidence,

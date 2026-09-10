@@ -1,7 +1,7 @@
 from fasthtml.common import *
 from DayBetes_food.components.cart.cart_main import cart_main
 from DayBetes_food.components.cart.cart_components import MacrosSummary
-from DayBetes_food.components.cart.cart_shared import calculate_macro_summary_metrics
+from DayBetes_food.components.cart.cart_shared import calculate_macro_summary_metrics, portion_intake_amount
 from DayBetes_food.components.ui import render_fragment, render_page
 from datetime import datetime
 from DayBetes_food.database.connection import get_connection
@@ -11,6 +11,7 @@ from DayBetes_food.database.queries import (
     delete_event_portion_group,
     get_portion_detail_by_event,
     get_portion_detail_by_events,
+    scale_event_portion_amounts,
     update_event_portion_group_field,
 )
 from DayBetes_food.database.queries.intake_event import (
@@ -453,36 +454,22 @@ def setup_cart_routes(rt):
         event_id: int,
         ingested_value: str = "",
         ingested_unit: str = "g",
-        total_amount: str = "",
     ):
+        """
+        Confirma el evento (planned -> consumed). ingested_value/ingested_unit
+        representan cuánto del plato servido se ha comido realmente:
+        - vacío -> se asume el 100% (todo el plato).
+        - ingested_unit == "%" -> fracción = ingested_value / 100.
+        - ingested_unit == "g" -> fracción = ingested_value / total_amount
+          (suma en vivo de plate_amount, calculada en este mismo request).
+        fracción debe quedar en [0, 1]; fuera de rango es 422.
+        Ver measurement_conventions.md §4.4/§6.9.1 (decisión 2026-09-10).
+        """
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()
         if not user_id:
             return HTMLResponse(status_code=401)
-
-        ingested_amount = None
-        if (ingested_value or "").strip() != "":
-            try:
-                value = float(ingested_value)
-            except (TypeError, ValueError):
-                # No numérico y cantidad negativa son validation_error → 422.
-                return HTMLResponse(status_code=422)
-            if value < 0:
-                return HTMLResponse(status_code=422)
-
-            try:
-                total = float(total_amount)
-            except (TypeError, ValueError):
-                total = None
-
-            if ingested_unit == "%":
-                if total is None:
-                    # Combinación incompatible de campos: validation_error → 422.
-                    return HTMLResponse(status_code=422)
-                ingested_amount = (total * value) / 100.0
-            else:
-                ingested_amount = value
 
         with get_connection() as connection:
             # 0) Autorizar antes de leer nada del evento (§5.3; cierra el hallazgo 19).
@@ -494,15 +481,34 @@ def setup_cart_routes(rt):
                 return HTMLResponse(status_code=409)
 
             portions = get_portion_detail_by_event(connection, event_id)
-            update_fields = {}
-            if ingested_amount is not None:
-                update_fields["ingested_amount"] = ingested_amount
-            if (total_amount or "").strip() != "":
+            total_amount = sum(portion_intake_amount(p) for p in portions)
+
+            raw_value = (ingested_value or "").strip()
+            if raw_value == "":
+                fraction = 1.0
+            else:
                 try:
-                    update_fields["total_amount"] = float(total_amount)
+                    value = _to_float(raw_value)
                 except (TypeError, ValueError):
-                    pass
-            update_fields.update(calculate_macro_summary_metrics(portions))
+                    # No numérico: validation_error → 422.
+                    return HTMLResponse(status_code=422)
+                if value < 0:
+                    return HTMLResponse(status_code=422)
+                if ingested_unit == "%":
+                    fraction = value / 100.0
+                else:
+                    if total_amount <= 0:
+                        # No hay nada que consumir: gramos > 0 no es interpretable.
+                        return HTMLResponse(status_code=422)
+                    fraction = value / total_amount
+            if not (0.0 <= fraction <= 1.0):
+                return HTMLResponse(status_code=422)
+
+            # amount_confidence/quality_confidence/*_uncertainty son proporciones:
+            # una escala uniforme de todas las porciones no las cambia, así que se
+            # calculan sobre las porciones servidas, antes de escalarlas (§6.9.1).
+            update_fields = calculate_macro_summary_metrics(portions)
+            update_fields["ingested_amount"] = total_amount * fraction
             update_payload = IntakeEventUpdate(**update_fields)
             try:
                 with connection.transaction():
@@ -510,11 +516,16 @@ def setup_cart_routes(rt):
                     confirm_intake_event(
                         connection, user_id=int(user_id), event_id=event_id, commit=False
                     )
-                    # 2) Resto de escrituras, ya dentro de la misma transacción.
+                    # 2) Sobrescribe plate_amount = plate_amount * fracción para todas
+                    # las porciones del evento, en una sola sentencia SQL (§6.9.1).
+                    scale_event_portion_amounts(
+                        connection, event_id=event_id, fraction=fraction, commit=False
+                    )
+                    # 3) Resto de escrituras, ya dentro de la misma transacción.
                     update_intake_event(
                         connection, user_id=int(user_id), event_id=event_id, data=update_payload, commit=False
                     )
-                    # 3) Inyección automática: devuelve id o None (evento sin insulina).
+                    # 4) Inyección automática: devuelve id o None (evento sin insulina).
                     create_injection_for_event(
                         connection, user_id=int(user_id), intake_event_id=event_id, commit=False
                     )

@@ -938,6 +938,9 @@ def _ensure_intake_event_schema(cursor):
         """
     )
 
+    # ---- total_amount deja de persistirse: se calcula en vivo (decisión 2026-09-10) ----
+    cursor.execute("ALTER TABLE intake_event DROP COLUMN IF EXISTS total_amount;")
+
 
 def _ensure_insulin_injections_schema(cursor):
     cursor.execute(

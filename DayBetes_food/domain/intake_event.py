@@ -25,6 +25,12 @@ class IntakeEventRead:
     introdujo meal_time, igual que en insulin_injections.
     deleted_at no NULL significa evento archivado (§11.3); solo puede ocurrir
     en estado 'consumed' (decisión 2026-09-08).
+    ingested_amount es el único snapshot de cantidad total del evento: se
+    calcula una vez en confirm_intake_event y equivale a la suma de
+    portion_detail.plate_amount tras escalarlas por la fracción realmente
+    consumida. No existe total_amount como columna: se calcula en vivo con
+    SUM(plate_amount) cuando haga falta (decisión 2026-09-10,
+    measurement_conventions.md §4.4/§6.9.1).
     """
     id: int
     user_id: int
@@ -36,7 +42,6 @@ class IntakeEventRead:
     eating_out: bool
     insulin_dose: bool
     injection_zone: InjectionZone | None
-    total_amount: float | None
     ingested_amount: float | None
     amount_confidence: float | None
     quality_confidence: float | None
@@ -78,7 +83,6 @@ class IntakeEventUpdate:
     eating_out: bool | None = None
     insulin_dose: bool | None = None
     injection_zone: InjectionZone | None = None
-    total_amount: float | None = None
     ingested_amount: float | None = None
     amount_confidence: float | None = None
     quality_confidence: float | None = None

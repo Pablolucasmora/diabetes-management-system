@@ -73,7 +73,6 @@ Se aplica a:
 
 - `amount_g`;
 - `plate_amount`;
-- `total_amount`;
 - `ingested_amount`;
 - cantidades disponibles en nevera;
 - peso de tuppers;
@@ -81,6 +80,8 @@ Se aplica a:
 - cantidades restantes.
 
 Los nombres de campos que representen masa deben terminar preferiblemente en `_g` cuando la unidad no sea obvia.
+
+`total_amount` (suma de `plate_amount` de las porciones de un evento) no es una columna almacenada: se calcula en vivo, en cualquier estado del evento, cuando haga falta (decisión 2026-09-10, ver §4.4 y §6.9).
 
 ### 4.2 Unidades de entrada permitidas
 
@@ -122,21 +123,22 @@ No almacenar “1 porción” como si fuera `1 g`. El valor persistido siempre d
 
 Estos conceptos son diferentes:
 
-- `amount_g`: cantidad del ingrediente utilizada en la preparación o asignada a la porción.
-- `plate_amount`: cantidad servida o puesta en el plato.
-- `total_amount`: suma de las cantidades servidas en el evento.
-- `ingested_amount`: cantidad que realmente se consumió.
-- cantidad sobrante: `total_amount - ingested_amount`, si la operación aplica.
+- `amount_g`: cantidad del ingrediente utilizada en la preparación o asignada a la porción. No se modifica nunca por el flujo de confirmación descrito abajo.
+- `plate_amount` (`portion_detail`): cantidad servida o puesta en el plato **mientras el evento está `planned`**. En el instante de `confirm` (transición `planned -> consumed`), se sobrescribe **una única vez** por la cantidad realmente consumida de ese ingrediente (ver fórmula abajo). Desde ese momento, para un evento `consumed`, `plate_amount` deja de significar "lo servido" y pasa a significar "lo consumido". `portion_detail` no vuelve a mutar después de confirmar (las rutas de edición de ingredientes exigen `state = planned`), así que esa cantidad consumida queda estable.
+- `total_amount`: suma de `plate_amount` de las porciones de un evento, calculada siempre en vivo (§4.1), nunca almacenada. Antes de confirmar es la cantidad servida total; en el instante de confirmar es el denominador usado para interpretar `ingested_value` cuando se introduce en gramos.
+- `ingested_amount` (`intake_event`): único campo persistido a nivel de evento con el total realmente consumido. Es un snapshot (§6.9) calculado en el propio `confirm` como `total_amount (en ese instante) * fracción`.
+- `fracción`: número en `[0, 1]` que representa la proporción del plato servido que se ha consumido. Se obtiene de los campos `ingested_value`/`ingested_unit` del formulario de confirmación: si `ingested_unit = "%"`, `fracción = ingested_value / 100`; si es gramos, `fracción = ingested_value_g / total_amount`. Si el usuario no rellena `ingested_value`, `fracción = 1.0` (se asume que se ha comido todo el plato). Un valor fuera de `[0, 1]` se rechaza como `validation_error` (`422`), no se recorta silenciosamente.
+- cantidad sobrante por ingrediente: `plate_amount_original - plate_amount_final` (equivalente a `plate_amount_original * (1 - fracción)`). Solo puede calcularse en el propio instante de `confirm`, antes de sobrescribir la fila, porque `plate_amount_original` no se conserva después. Mientras no exista la funcionalidad de nevera (`fridge`, tabla sin implementar — `audit/deuda_pendiente.md`), este sobrante no se persiste en ningún sitio: se pierde igual que se perdía antes de esta decisión.
 
-No se deben utilizar como sinónimos ni sobrescribir una cantidad planificada con la cantidad ingerida.
+Excepción documentada a la regla general de §1 ("el valor original introducido por el usuario no se sobreescribe cuando sea necesario conservarlo para trazabilidad"): esta sobreescritura de `plate_amount` en `confirm` es la única excepción admitida, limitada a esta tabla y a esta transición de estado (decisión 2026-09-10). Ningún otro campo ni tabla puede apoyarse en este precedente sin una decisión propia.
 
 Reglas:
 
 ```text
 amount_g > 0
 plate_amount >= 0 cuando exista
-ingested_amount >= 0 cuando exista
-ingested_amount <= total_amount cuando ambos estén definidos
+0 <= fracción <= 1
+ingested_amount = total_amount (en el instante de confirmar) * fracción
 ```
 
 ## 5. Información nutricional
@@ -361,6 +363,23 @@ nutriente_total_evento =
 ```
 
 El redondeo se realiza únicamente en la presentación según las reglas de este documento.
+
+Mientras el evento está `planned`, nada de esto se persiste: la interfaz del carrito lee `portion_detail` en cada petición y recalcula en memoria (`total_amount`, macros, `amount_confidence`, `quality_confidence`, `*_uncertainty`). No existe ninguna escritura en `intake_event` por cada alta, baja o edición de un ingrediente del carrito.
+
+### 6.9.1 Flujo de `confirm` (decisión 2026-09-10)
+
+El único punto donde se persiste algo es la transición `planned -> consumed`, dentro de una sola transacción:
+
+1. Se leen las porciones actuales del evento (`portion_detail`, todavía sin tocar).
+2. `total_amount = SUM(plate_amount)` de esas porciones, calculado en vivo (§4.4).
+3. `amount_confidence`, `quality_confidence` y `*_uncertainty` (§6.3-§6.6) se calculan sobre esas porciones **antes** de escalarlas. Al ser proporciones (peso que cumple una condición / peso total), una escala uniforme de todas las porciones por el mismo factor no cambia el resultado, así que da igual calcularlas antes o después del paso 5.
+4. Se obtiene la `fracción` (`[0, 1]`) a partir de `ingested_value`/`ingested_unit`, según la fórmula de §4.4. Fuera de rango es `422`.
+5. `UPDATE portion_detail SET plate_amount = plate_amount * fracción WHERE intake_event_id = ...`: una sola sentencia SQL para todas las porciones del evento, no un recálculo recursivo en Python.
+6. `intake_event.ingested_amount = total_amount (paso 2) * fracción`, junto con el resto de campos del snapshot (paso 3) y la transición de `state`.
+
+`amount_g` no se toca en ningún paso: el mecanismo ya documentado en `portion_detail.amount_g` (diferencia entre lo cocinado y lo servido, guardada en la nevera) es anterior a este flujo y sigue funcionando igual, en el momento de servir el plato.
+
+Pendiente, fuera de alcance de esta decisión (ver `audit/deuda_pendiente.md`): cuando exista la tabla `fridge` como funcionalidad real, el sobrante por ingrediente (`plate_amount_original - plate_amount_final`, calculable solo en el paso 5, antes de sobrescribir) se escribirá en la misma transacción del `confirm`, condicionado a una confirmación explícita del usuario (popup, solo si `fracción < 1`, con un número de días de conservación configurable, por defecto 7).
 
 ## 7. Factor de cocinado
 

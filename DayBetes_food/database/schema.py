@@ -308,8 +308,7 @@ class DBSchema:
             CONSTRAINT ck_intake_event_injection_zone
             CHECK (injection_zone IS NULL OR injection_zone IN ({injection_zone_list})), -- Temporary selection while the meal is still in the cart; definitive log goes to insulin_injections table when meal is confirmed
 
-        total_amount REAL, -- Automatically calculated as the sum of plate_amount from all related portion_detail rows
-        ingested_amount REAL, -- After eating, before confirming the meal, the user enters the total amount ingested (in grams or approximate percentage).
+        ingested_amount REAL, -- Snapshot set once at confirm: sum of plate_amount from portion_detail (already scaled to what was actually eaten) at that instant. total_amount is never stored; it is computed live as SUM(plate_amount) whenever needed (decision 2026-09-10).
 
         amount_confidence REAL
             CONSTRAINT ck_intake_event_amount_confidence
@@ -366,7 +365,7 @@ class DBSchema:
         strictly_weighed BOOLEAN, -- Whether or not the food was weighed before consumption
         macros_quality BOOLEAN, -- Whether the macros were estimated or read from the product label
         
-        plate_amount REAL, -- The amount actually plated. Defaults to the same value as amount_g
+        plate_amount REAL, -- The amount actually plated. Defaults to the same value as amount_g. While the event is 'planned', this is the served amount; at confirm it is overwritten once with the amount actually consumed (plate_amount * fraction), and stays that way for a 'consumed' event (decision 2026-09-10, measurement_conventions.md §4.4).
         is_cooked_weight BOOLEAN DEFAULT FALSE, -- If the food was weighed already cooked, the cooking_factor is used to back-calculate the raw weight and obtain accurate macros
         offset_minutes INTEGER, -- Only for intake_event. Adjusted during the planning phase (not when added to the cart), and defaults to the difference in minutes between the intake_event timestamp and the moment this food is added to the cart
 

@@ -102,7 +102,6 @@ def intake_event_read_from_row(row: dict) -> IntakeEventRead:
         eating_out=bool(row["eating_out"]),
         insulin_dose=bool(row["insulin_dose"]),
         injection_zone=injection_zone,
-        total_amount=row.get("total_amount"),
         ingested_amount=row.get("ingested_amount"),
         amount_confidence=row.get("amount_confidence"),
         quality_confidence=row.get("quality_confidence"),

@@ -522,10 +522,8 @@ def IngredientRow(event, grouped_item):
 
 
 def ConfirmSection(event, portions):
-    total_amount = sum(float(p.get("amount_g") or 0.0) for p in portions)
     ingested_value_id = f"ingested_value_{event.id}"
     return Form(
-        Input(type="hidden", name="total_amount", value=f"{total_amount:.4f}"),
         Input(type="hidden", name="ingested_unit", value="g", id=f"ingested_unit_{event.id}"),
         Input(
             type="number",
@@ -537,7 +535,7 @@ def ConfirmSection(event, portions):
             name="ingested_value",
             value=f"{float(event.ingested_amount or 0.0):.1f}" if event.ingested_amount is not None else "",
             aria_label="Ingested amount",
-            placeholder="Ingested amount",
+            placeholder="All of it (100%)",
             cls="""
                 web_input border border-white rounded-lg
                 px-2 py-1 w-24 text-base
