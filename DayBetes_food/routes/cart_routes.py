@@ -1,6 +1,6 @@
 from fasthtml.common import *
-from DayBetes_food.components.cart.cart_main import cart_main
-from DayBetes_food.components.cart.cart_components import MacrosSummary
+from DayBetes_food.components.cart.cart_main import cart_main, cart_events_list
+from DayBetes_food.components.cart.cart_components import CartCard, MacrosSummary
 from DayBetes_food.components.cart.cart_shared import calculate_macro_summary_metrics, portion_intake_amount
 from DayBetes_food.components.ui import render_fragment, render_page
 from datetime import datetime
@@ -37,32 +37,85 @@ def _no_user_cart():
     return Div(H2("No users"), cls="flex flex-col items-center")
 
 
-def _load_cart_main(connection):
+def _load_events_and_portions(connection, user_id: int):
     """
-    Loads the planned events and their portions for the current user and
-    renders cart_main with data already fetched (§1.4: components don't query).
+    Loads the planned events and their portions for a user (§1.4: components
+    don't query). Shared by the full-cart render and the local #cart_events_list
+    refresh so both stay in sync with a single query pattern.
     """
-    user_id = get_current_user_id()
-    if not user_id:
-        return _no_user_cart()
-
-    events = list_planned_intake_events(connection, int(user_id))
+    events = list_planned_intake_events(connection, user_id)
     event_ids = [event.id for event in events]
     all_portions = get_portion_detail_by_events(connection, event_ids)
     portions_by_event = {event_id: [] for event_id in event_ids}
     for portion in all_portions:
         portions_by_event.setdefault(portion["intake_event_id"], []).append(portion)
+    return events, portions_by_event
 
+
+def _load_cart_main(connection):
+    user_id = get_current_user_id()
+    if not user_id:
+        return _no_user_cart()
+    events, portions_by_event = _load_events_and_portions(connection, int(user_id))
     return cart_main(events, portions_by_event)
 
 
 def _cart_response(connection, status: int = 200):
     """
-    Helper function to generate a consistent response for cart updates.
+    Refresco de la página completa del carrito. Reservado para las acciones
+    que no tienen un elemento de UI propio en el carrito (archive/restore,
+    hallazgo n/a: no están enlazadas desde ninguna tarjeta hoy). Las acciones
+    que sí se disparan desde el carrito usan un refresco local: la tarjeta
+    (`_card_response`), la lista (`_events_list_response`) o, si el evento
+    deja de estar planificado, `_removal_response` (decisión 2026-09-10,
+    refresco local del carrito).
     """
     if status >= 400:
         return HTMLResponse("", status_code=status)
     return render_fragment(_load_cart_main(connection))
+
+
+def _events_list_response(connection, user_id: int, status: int = 200):
+    """
+    Refresca solo #cart_events_list. Es el target de meal_hour, la única
+    acción que puede reordenar la lista (orden `meal_time DESC`).
+    """
+    if status >= 400:
+        return HTMLResponse("", status_code=status)
+    events, portions_by_event = _load_events_and_portions(connection, user_id)
+    return render_fragment(cart_events_list(events, portions_by_event))
+
+
+def _card_response(connection, user_id: int, event_id: int, status: int = 200):
+    """
+    Refresca solo #cart_card_event_{id}. Target por defecto para cualquier
+    edición dentro de una tarjeta que no cambia si el evento sigue en
+    'planned' ni su posición en la lista.
+    """
+    if status >= 400:
+        return HTMLResponse("", status_code=status)
+    event = get_intake_event(connection, user_id, event_id)
+    if not event:
+        return HTMLResponse("", status_code=404)
+    portions = get_portion_detail_by_event(connection, event_id)
+    return render_fragment(CartCard(event, portions))
+
+
+def _removal_response(connection, user_id: int, status: int = 200):
+    """
+    El evento ya salió de 'planned' (borrado o confirmado): su tarjeta se
+    elimina devolviendo cuerpo vacío sobre el mismo target
+    (#cart_card_event_{id}, outerHTML → nodo eliminado). Si no queda ningún
+    evento planificado, se añade un swap OOB de #cart_body con el estado
+    "carrito vacío", sin recargar el resto de la página (decisión
+    2026-09-10, refresco local del carrito).
+    """
+    if status >= 400:
+        return HTMLResponse("", status_code=status)
+    remaining = list_planned_intake_events(connection, user_id)
+    if remaining:
+        return render_fragment("")
+    return render_fragment(cart_main([], {}, oob=True))
 
 
 def _to_float(value: str):
@@ -126,7 +179,7 @@ def setup_cart_routes(rt):
                 return HTMLResponse(status_code=409)
             except ValidationError:
                 return HTMLResponse(status_code=422)
-            return _cart_response(connection, status=200)
+            return _events_list_response(connection, int(user_id), status=200)
 
     @rt("/cart/event/{event_id}/meal_type")
     def post(request: Request, event_id: int, meal_type: str = ""):
@@ -159,7 +212,7 @@ def setup_cart_routes(rt):
                 return HTMLResponse(status_code=409)
             except ValidationError:
                 return HTMLResponse(status_code=422)
-            return _cart_response(connection, status=200)
+            return _card_response(connection, int(user_id), event_id, status=200)
 
     @rt("/cart/event/{event_id}/name")
     def post(request: Request, event_id: int, event_name: str = ""):
@@ -190,7 +243,7 @@ def setup_cart_routes(rt):
                 return HTMLResponse(status_code=409)
             except ValidationError:
                 return HTMLResponse(status_code=422)
-            return _cart_response(connection, status=200)
+            return _card_response(connection, int(user_id), event_id, status=200)
 
     @rt("/cart/event/{event_id}/macros_summary")
     def get(request: Request, event_id: int):
@@ -227,7 +280,7 @@ def setup_cart_routes(rt):
                 return HTMLResponse(status_code=409)
             except ValidationError:
                 return HTMLResponse(status_code=422)
-            return _cart_response(connection, status=200)
+            return _removal_response(connection, int(user_id), status=200)
 
     @rt("/cart/event/{event_id}/archive")
     def post(request: Request, event_id: int):
@@ -287,7 +340,7 @@ def setup_cart_routes(rt):
                 return HTMLResponse(status_code=409)
             except ValidationError:
                 return HTMLResponse(status_code=422)
-            return _cart_response(connection, status=200)
+            return _card_response(connection, int(user_id), event_id, status=200)
 
     @rt("/cart/event/{event_id}/insulin_dose")
     def post(request: Request, event_id: int, insulin_dose: str = ""):
@@ -311,7 +364,7 @@ def setup_cart_routes(rt):
                 return HTMLResponse(status_code=409)
             except ValidationError:
                 return HTMLResponse(status_code=422)
-            return _cart_response(connection, status=200)
+            return _card_response(connection, int(user_id), event_id, status=200)
 
     @rt("/cart/event/{event_id}/injection_zone")
     def post(request: Request, event_id: int, zone: str = ""):
@@ -344,7 +397,7 @@ def setup_cart_routes(rt):
                 return HTMLResponse(status_code=409)
             except ValidationError:
                 return HTMLResponse(status_code=422)
-            return _cart_response(connection, status=200)
+            return _card_response(connection, int(user_id), event_id, status=200)
 
     @rt("/cart/event/{event_id}/ingredient/{origin}/{origin_id}/amount")
     def post(request: Request, event_id: int, origin: str, origin_id: int, amount_g: str = ""):
@@ -370,7 +423,7 @@ def setup_cart_routes(rt):
                 ok = delete_event_portion_group(connection, event_id, origin, origin_id)
             else:
                 ok = consolidate_event_portion_group_amount(connection, event_id, origin, origin_id, amount)
-            return _cart_response(connection, status=200 if ok else 400)
+            return _card_response(connection, int(user_id), event_id, status=200 if ok else 400)
 
     @rt("/cart/event/{event_id}/ingredient/{origin}/{origin_id}/offset")
     def post(request: Request, event_id: int, origin: str, origin_id: int, offset_minutes: str = ""):
@@ -392,7 +445,7 @@ def setup_cart_routes(rt):
             except ConflictError:
                 return HTMLResponse(status_code=409)
             ok = update_event_portion_group_field(connection, event_id, origin, origin_id, "offset_minutes", value)
-            return _cart_response(connection, status=200 if ok else 400)
+            return _card_response(connection, int(user_id), event_id, status=200 if ok else 400)
 
     @rt("/cart/event/{event_id}/ingredient/{origin}/{origin_id}/strictly_weighed")
     def post(request: Request, event_id: int, origin: str, origin_id: int, strictly_weighed: str = ""):
@@ -535,4 +588,4 @@ def setup_cart_routes(rt):
                 return HTMLResponse(status_code=409)
             except ValidationError:
                 return HTMLResponse(status_code=422)
-            return _cart_response(connection, status=200)
+            return _removal_response(connection, int(user_id), status=200)

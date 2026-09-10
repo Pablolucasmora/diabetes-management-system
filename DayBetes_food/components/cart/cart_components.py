@@ -164,6 +164,7 @@ def EventHeader(event):
     meal_hour_id = f"meal_hour_{event.id}"
     meal_date_id = f"meal_date_{event.id}"
     meal_type_id = f"meal_type_{event.id}"
+    card_target = f"#cart_card_event_{event.id}"
     return Div(
         Div(
             Form(
@@ -189,6 +190,8 @@ def EventHeader(event):
                     style="background:transparent;border-color:transparent;box-shadow:none;",
                     hx_post=f"/cart/event/{event.id}/name",
                     hx_trigger="change",
+                    hx_target=card_target,
+                    hx_swap="outerHTML",
                     onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}",
                     onchange="this.blur();",
                     onclick="this.select();",
@@ -207,6 +210,8 @@ def EventHeader(event):
                         hx_post=f"/cart/event/{event.id}/meal_hour",
                         hx_trigger="blur",
                         hx_include="closest form",
+                        hx_target="#cart_events_list",
+                        hx_swap="outerHTML",
                     ),
                     Button(
                         "Date",
@@ -231,6 +236,8 @@ def EventHeader(event):
                         hx_post=f"/cart/event/{event.id}/meal_hour",
                         hx_trigger="change",
                         hx_include="closest form",
+                        hx_target="#cart_events_list",
+                        hx_swap="outerHTML",
                     ),
                     id=f"meal_date_wrap_{event.id}",
                     cls="hidden flex-col gap-1 w-auto self-end items-end text-right"
@@ -249,6 +256,8 @@ def EventHeader(event):
                 cls="web_input border border-white rounded-lg px-2 py-1 text-sm",
                 hx_post=f"/cart/event/{event.id}/meal_type",
                 hx_trigger="change",
+                hx_target=card_target,
+                hx_swap="outerHTML",
                 onchange="this.blur();",
             ),
             cls="flex gap-3 items-center justify-end"
@@ -389,7 +398,7 @@ def IngredientRow(event, grouped_item):
     default_display = f"{units_count:.2f}".replace(".", ",")
     confirm_id = f"delete_food_confirm_{item_key}"
     ingredient_name = portion_name(sample)
-    refresh_cart_js = "htmx.ajax('GET','/cart',{target:'#main_content',swap:'innerHTML'});"
+    card_target = f"#cart_card_event_{event.id}"
     offset_input_id = f"offset_input_{item_key}"
 
     return Div(
@@ -418,9 +427,8 @@ def IngredientRow(event, grouped_item):
                 style="background-color:#b91c1c;border-color:#b91c1c;",
                 hx_post=f"/cart/event/{event.id}/ingredient/{origin}/{origin_id}/amount",
                 hx_vals='{"amount_g":"0"}',
-                hx_swap="none",
-                **{"hx-on:htmx:after-request": refresh_cart_js},
-                data_skip_page_loading="true",
+                hx_target=card_target,
+                hx_swap="outerHTML",
                 onclick=_close_modal_js(confirm_id),
             ),
         ),
@@ -447,8 +455,8 @@ def IngredientRow(event, grouped_item):
                     hx_post=f"/cart/event/{event.id}/ingredient/{origin}/{origin_id}/amount",
                     hx_trigger="change",
                     hx_include="closest form",
-                    hx_swap="none",
-                    **{"hx-on:htmx:after-request": refresh_cart_js},
+                    hx_target=card_target,
+                    hx_swap="outerHTML",
                 ),Select(
                     *_unit_options(unit_g, unit_label),
                     id=unit_select_id,
@@ -477,6 +485,8 @@ def IngredientRow(event, grouped_item):
                 cls="web_input border border-white rounded-lg px-2 py-1 w-24 text-base",
                 hx_post=f"/cart/event/{event.id}/ingredient/{origin}/{origin_id}/offset",
                 hx_trigger="change",
+                hx_target=card_target,
+                hx_swap="outerHTML",
                 onclick= "this.select()",
             ),
             cls="flex items-center gap-2"
@@ -565,6 +575,8 @@ def ConfirmSection(event, portions):
             """,
             hx_post=f"/cart/event/{event.id}/confirm",
             hx_include="closest form",
+            hx_target=f"#cart_card_event_{event.id}",
+            hx_swap="outerHTML",
         ),
         cls="flex items-center gap-1 md:gap-2 justify-end"
     )
@@ -572,7 +584,6 @@ def ConfirmSection(event, portions):
 
 def DeleteMealModal(event):
     confirm_id = f"delete_meal_confirm_{event.id}"
-    refresh_cart_js = "htmx.ajax('GET','/cart',{target:'#main_content',swap:'innerHTML'});"
     return ConfirmActionModal(
         modal_id=confirm_id,
         title="Delete meal",
@@ -583,9 +594,8 @@ def DeleteMealModal(event):
             cls="web_button px-4 py-2 text-sm text-white",
             style="background-color:#b91c1c;border-color:#b91c1c;",
             hx_post=f"/cart/event/{event.id}/delete",
-            hx_swap="none",
-            **{"hx-on:htmx:after-request": refresh_cart_js},
-            data_skip_page_loading="true",
+            hx_target=f"#cart_card_event_{event.id}",
+            hx_swap="outerHTML",
             onclick=_close_modal_js(confirm_id),
         ),
     )
@@ -656,6 +666,8 @@ def InjectionZoneModal(event):
                         style="background-color:#111111;border-color:#111111;",
                         hx_post=f"/cart/event/{event.id}/injection_zone",
                         hx_include="closest form",
+                        hx_target=f"#cart_card_event_{event.id}",
+                        hx_swap="outerHTML",
                         onclick=(
                             "const z=this.form?this.form.querySelector('[data-injection-zone-input]'):null;"
                             "if(!z||!z.value){alert('Select a zone first.');return false;}"
@@ -686,6 +698,7 @@ def CartCard(event, portions):
     confirm_id = f"delete_meal_confirm_{event.id}"
     eating_out_id = f"eating_out_{event.id}"
     insulin_dose_id = f"insulin_dose_{event.id}"
+    card_target = f"#cart_card_event_{event.id}"
     return Div(
         EventHeader(event),
         Div(
@@ -697,6 +710,8 @@ def CartCard(event, portions):
                     hx_post=f"/cart/event/{event.id}/eating_out",
                     input_id=eating_out_id,
                     aria_label="Eating out",
+                    hx_target=card_target,
+                    hx_swap="outerHTML",
                 ),
                 cls="flex items-center gap-2"
             ),
@@ -708,6 +723,8 @@ def CartCard(event, portions):
                     hx_post=f"/cart/event/{event.id}/insulin_dose",
                     input_id=insulin_dose_id,
                     aria_label="Insulin",
+                    hx_target=card_target,
+                    hx_swap="outerHTML",
                 ),
                 cls="flex items-center gap-2"
             ),
@@ -742,6 +759,7 @@ def CartCard(event, portions):
             cls="flex flex-col gap-3"
         ),
         ConfirmSection(event, portions),
+        id=f"cart_card_event_{event.id}",
         cls="""
             web_container p-4 rounded-3xl
             md:w-md lg:w-md w-xs
@@ -749,6 +767,4 @@ def CartCard(event, portions):
             mx-auto
             transition-[width,margin,padding] duration-150
         """,
-        hx_target="#main_content",
-        hx_swap="innerHTML",
     )

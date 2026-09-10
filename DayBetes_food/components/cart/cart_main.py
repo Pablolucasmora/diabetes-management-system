@@ -3,7 +3,29 @@ from fasthtml.common import *
 from DayBetes_food.components.cart.cart_components import CartCard
 
 
-def cart_main(events, portions_by_event):
+def cart_events_list(events, portions_by_event):
+    """
+    Contenedor local de las tarjetas de evento (#cart_events_list). Es el
+    target de las acciones que pueden reordenar la lista (p.ej. meal_hour,
+    que cambia el orden `meal_time DESC`) sin necesidad de recargar el resto
+    de la página (decisión 2026-09-10, refresco local del carrito).
+    """
+    return Div(
+        *[CartCard(event, portions_by_event.get(event.id, [])) for event in events],
+        id="cart_events_list",
+        cls="flex flex-col items-center gap-6 w-full",
+    )
+
+
+def cart_main(events, portions_by_event, oob: bool = False):
+    """
+    `oob=True` marca el Div raíz (#cart_body) como swap fuera de banda
+    (hx-swap-oob), para que un endpoint que borra/confirma el último evento
+    planificado pueda inyectar el estado "carrito vacío" sin recargar el
+    resto de la página (decisión 2026-09-10, refresco local del carrito).
+    """
+    oob_attrs = {"hx_swap_oob": "true"} if oob else {}
+
     if not events:
         return Div(
             Div(
@@ -36,6 +58,7 @@ def cart_main(events, portions_by_event):
                     flex flex-col items-center gap-3
                 """
             ),
+            id="cart_body",
             cls="""
                 flex flex-col items-center
                 justify-center gap-6
@@ -43,14 +66,14 @@ def cart_main(events, portions_by_event):
                 transition-[width,margin,padding] duration-150
             """,
             data_hide_cart="true",
+            **oob_attrs,
         )
-
-    event_cards = [CartCard(event, portions_by_event.get(event.id, [])) for event in events]
 
     return Div(
         H1("Food cart", cls="text-xl font-bold"),
-        *event_cards,
+        cart_events_list(events, portions_by_event),
         Script(src="/js/cart_units.js", defer="defer"),
+        id="cart_body",
         data_hide_cart="true",
         cls="""
             flex flex-col items-center
@@ -60,5 +83,6 @@ def cart_main(events, portions_by_event):
             w-full mx-auto
             md:mb-28 lg:mb-28 mb-24
             transition-[width,margin,padding] duration-150
-        """
+        """,
+        **oob_attrs,
     )

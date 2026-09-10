@@ -108,10 +108,14 @@
 
   function bindInitEvents() {
     initAllUnitSelects(document);
+    // Reacciona a cualquier swap (carrito completo, #cart_events_list o una
+    // tarjeta #cart_card_event_{id}): el refresco local del carrito
+    // (decisión 2026-09-10) puede insertar selects nuevos en targets que no
+    // son #main_content.
     document.body.addEventListener("htmx:afterSwap", function (event) {
       var target = event && event.detail ? event.detail.target : null;
-      if (!target || target.id !== "main_content") return;
-      initAllUnitSelects(document);
+      if (!target) return;
+      initAllUnitSelects(target);
     });
   }
 
