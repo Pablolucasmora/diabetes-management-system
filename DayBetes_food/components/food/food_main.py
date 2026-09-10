@@ -6,7 +6,7 @@ from DayBetes_food.components.food.foods import (
     QuickCreateButtons,
     SearchInput,
 )
-from DayBetes_food.database.queries.intake_event import list_planned_intake_events
+from DayBetes_food.database.queries import list_planned_intake_events
 
 def food_main(connection):
     user_id = get_current_user_id()

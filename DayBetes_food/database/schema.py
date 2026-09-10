@@ -308,7 +308,9 @@ class DBSchema:
             CONSTRAINT ck_intake_event_injection_zone
             CHECK (injection_zone IS NULL OR injection_zone IN ({injection_zone_list})), -- Temporary selection while the meal is still in the cart; definitive log goes to insulin_injections table when meal is confirmed
 
-        ingested_amount REAL, -- Snapshot set once at confirm: sum of plate_amount from portion_detail (already scaled to what was actually eaten) at that instant. total_amount is never stored; it is computed live as SUM(plate_amount) whenever needed (decision 2026-09-10).
+        ingested_amount REAL
+            CONSTRAINT ck_intake_event_ingested_amount
+            CHECK (ingested_amount IS NULL OR (ingested_amount >= 0 AND ingested_amount <= 100000)), -- Snapshot set once at confirm: sum of plate_amount from portion_detail (already scaled to what was actually eaten) at that instant. total_amount is never stored; it is computed live as SUM(plate_amount) whenever needed (decision 2026-09-10). 100000 g (100 kg) is a sanity ceiling, not a clinical one (measurement_conventions.md §6.9.2, decision 2026-09-10).
 
         amount_confidence REAL
             CONSTRAINT ck_intake_event_amount_confidence

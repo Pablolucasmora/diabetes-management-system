@@ -381,6 +381,18 @@ El único punto donde se persiste algo es la transición `planned -> consumed`, 
 
 Pendiente, fuera de alcance de esta decisión (ver `audit/deuda_pendiente.md`): cuando exista la tabla `fridge` como funcionalidad real, el sobrante por ingrediente (`plate_amount_original - plate_amount_final`, calculable solo en el paso 5, antes de sobrescribir) se escribirá en la misma transacción del `confirm`, condicionado a una confirmación explícita del usuario (popup, solo si `fracción < 1`, con un número de días de conservación configurable, por defecto 7).
 
+### 6.9.2 Límite de masa de `intake_event.ingested_amount` (decisión 2026-09-10)
+
+`ingested_amount` es la única masa que `intake_event` sigue persistiendo (§6.9.1; `total_amount` ya no es columna, se calcula en vivo). Como toda cantidad en gramos, debe validarse antes de guardarse:
+
+- **No finitos**: `NaN` e `Infinity` se rechazan con `422` en el boundary (`math.isfinite`), nunca se guardan. Un valor no finito no es "sin dato" (eso es `NULL`); es una entrada corrupta.
+- **Límite inferior**: `>= 0`. `0` es un valor válido (fracción de ingesta `0`, evento confirmado sin haber comido nada de lo servido) y no se confunde con "sin dato" (`NULL`).
+- **Límite superior**: `100000` (100 kg). No es una cota clínica ni nutricional, es una cota de cordura: ninguna comida humana real la alcanza; su único propósito es que un valor corrupto o manipulado no se guarde como si fuera un dato plausible.
+
+Constraint: `ck_intake_event_ingested_amount CHECK (ingested_amount IS NULL OR (ingested_amount >= 0 AND ingested_amount <= 100000))`, con el mismo nombre canónico (§11.6 de `code_conventions.md`) que el resto de columnas de la tabla.
+
+Esta misma cota aplica al `total_amount` calculado en vivo (§6.9.1 paso 2) y a la `fracción` derivada de él, aunque no exista columna que la persista: un `total_amount` fuera de rango no debe usarse para calcular `ingested_amount` ni para escalar `portion_detail.plate_amount`.
+
 ## 7. Factor de cocinado
 
 `cooking_factor` es una magnitud sin unidad. Representa una relación entre masa cruda y masa cocinada según la fórmula definida por el dominio.

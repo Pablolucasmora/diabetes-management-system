@@ -2,8 +2,7 @@ from fasthtml.common import *
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.menu.layout import IslandLogo
 from DayBetes_food.components.menu.sections import quick_actions
-from DayBetes_food.database.queries import get_portion_detail_by_event
-from DayBetes_food.database.queries.intake_event import list_planned_intake_events
+from DayBetes_food.database.queries import get_portion_detail_by_event, list_planned_intake_events
 
 
 def main_menu(conexion):

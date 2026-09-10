@@ -15,6 +15,15 @@ from DayBetes_food.domain.constants import InjectionZone, IntakeEventState, Meal
 # rechazar el exceso en el boundary en vez de truncarlo (decisión 2026-09-09).
 INTAKE_EVENT_NAME_MAX_LENGTH = 255
 
+# Límite superior de cordura para ingested_amount (y, aunque no sea columna,
+# para el total_amount calculado en vivo y la fracción derivada de él, §6.9.1):
+# 100000 g = 100 kg, muy por encima de cualquier comida humana real. No es un
+# límite clínico ni nutricional, solo evita guardar un valor corrupto o
+# manipulado como si fuera plausible. Igual al CHECK
+# ck_intake_event_ingested_amount de database/schema.py (measurement_conventions.md
+# §6.9.2, decisión 2026-09-10).
+INTAKE_EVENT_INGESTED_AMOUNT_MAX_G = 100000
+
 
 @dataclass(frozen=True)
 class IntakeEventRead:

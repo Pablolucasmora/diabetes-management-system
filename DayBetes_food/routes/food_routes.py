@@ -50,8 +50,6 @@ from DayBetes_food.database.queries import (
     update_portion_detail_amount,
     update_portion_detail_fields,
     delete_portion_detail,
-)
-from DayBetes_food.database.queries.intake_event import (
     create_intake_event,
     get_intake_event,
     get_planned_intake_event,

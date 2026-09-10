@@ -8,8 +8,8 @@ from DayBetes_food.components.stats.stats_sections import (
     stats_header,
 )
 from DayBetes_food.components.stats.stats_shared import STATS_PAGE_CLS
-from DayBetes_food.database.queries import get_portion_detail_by_events
-from DayBetes_food.database.queries.intake_event import (
+from DayBetes_food.database.queries import (
+    get_portion_detail_by_events,
     list_consumed_intake_events,
     list_consumed_intake_events_for_day,
 )

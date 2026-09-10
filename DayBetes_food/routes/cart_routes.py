@@ -4,6 +4,7 @@ from DayBetes_food.components.cart.cart_components import CartCard, MacrosSummar
 from DayBetes_food.components.cart.cart_shared import calculate_macro_summary_metrics, portion_intake_amount
 from DayBetes_food.components.ui import render_fragment, render_page
 from datetime import datetime
+import math
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.time_utils import local_naive_to_utc_aware, local_today, to_local, APP_TIMEZONE
 from DayBetes_food.database.queries import (
@@ -13,8 +14,6 @@ from DayBetes_food.database.queries import (
     get_portion_detail_by_events,
     scale_event_portion_amounts,
     update_event_portion_group_field,
-)
-from DayBetes_food.database.queries.intake_event import (
     set_injection_zone,
     create_injection_for_event,
     confirm_intake_event,
@@ -28,7 +27,11 @@ from DayBetes_food.database.queries.intake_event import (
     update_intake_event,
 )
 from DayBetes_food.domain.constants import InjectionZone, MealType
-from DayBetes_food.domain.intake_event import INTAKE_EVENT_NAME_MAX_LENGTH, IntakeEventUpdate
+from DayBetes_food.domain.intake_event import (
+    INTAKE_EVENT_INGESTED_AMOUNT_MAX_G,
+    INTAKE_EVENT_NAME_MAX_LENGTH,
+    IntakeEventUpdate,
+)
 from DayBetes_food.errors import ValidationError, NotFoundError, ConflictError
 from DayBetes_food.auth.context import get_current_user_id
 
@@ -125,6 +128,23 @@ def _to_float(value: str):
 
     normalized = (value or "").strip().replace(",", ".")
     return float(normalized)
+
+
+def _parse_strict_bool(raw_value: str) -> bool:
+    """
+    Parser estricto para los booleanos de transporte HTML de esta ruta
+    (checkboxes con `value="true"`): campo ausente o vacío -> `False` (así es
+    como un checkbox sin marcar llega, el formulario no envía el campo);
+    `"true"` -> `True`; cualquier otro valor presente es una entrada inválida
+    y se rechaza en vez de convertirse en `False` en silencio (§7.6,
+    decisión 2026-09-10; hallazgo 31 de audit/audit_intake_event.md).
+    """
+    normalized = (raw_value or "").strip().lower()
+    if normalized == "":
+        return False
+    if normalized == "true":
+        return True
+    raise ValidationError("boolean_not_recognized")
 
 
 def setup_cart_routes(rt):
@@ -325,7 +345,10 @@ def setup_cart_routes(rt):
         user_id = get_current_user_id()
         if not user_id:
             return HTMLResponse(status_code=401)
-        value = (eating_out or "").strip().lower() == "true"
+        try:
+            value = _parse_strict_bool(eating_out)
+        except ValidationError:
+            return HTMLResponse(status_code=422)
         with get_connection() as connection:
             try:
                 update_intake_event(
@@ -349,7 +372,10 @@ def setup_cart_routes(rt):
         user_id = get_current_user_id()
         if not user_id:
             return HTMLResponse(status_code=401)
-        value = (insulin_dose or "").strip().lower() == "true"
+        try:
+            value = _parse_strict_bool(insulin_dose)
+        except ValidationError:
+            return HTMLResponse(status_code=422)
         with get_connection() as connection:
             try:
                 update_intake_event(
@@ -454,7 +480,10 @@ def setup_cart_routes(rt):
         user_id = get_current_user_id()
         if not user_id:
             return HTMLResponse(status_code=401)
-        value = (strictly_weighed or "").strip().lower() == "true"
+        try:
+            value = _parse_strict_bool(strictly_weighed)
+        except ValidationError:
+            return HTMLResponse("", status_code=422)
         with get_connection() as connection:
             event = get_intake_event(connection, int(user_id), event_id)
             if not event:
@@ -472,7 +501,10 @@ def setup_cart_routes(rt):
         user_id = get_current_user_id()
         if not user_id:
             return HTMLResponse(status_code=401)
-        value = (macros_quality or "").strip().lower() == "true"
+        try:
+            value = _parse_strict_bool(macros_quality)
+        except ValidationError:
+            return HTMLResponse("", status_code=422)
         with get_connection() as connection:
             event = get_intake_event(connection, int(user_id), event_id)
             if not event:
@@ -490,7 +522,10 @@ def setup_cart_routes(rt):
         user_id = get_current_user_id()
         if not user_id:
             return HTMLResponse(status_code=401)
-        value = (is_cooked_weight or "").strip().lower() == "true"
+        try:
+            value = _parse_strict_bool(is_cooked_weight)
+        except ValidationError:
+            return HTMLResponse("", status_code=422)
         with get_connection() as connection:
             event = get_intake_event(connection, int(user_id), event_id)
             if not event:
@@ -534,7 +569,19 @@ def setup_cart_routes(rt):
                 return HTMLResponse(status_code=409)
 
             portions = get_portion_detail_by_event(connection, event_id)
+            if not portions:
+                # Regla dependiente del estado de la base (§7.10): un evento sin
+                # porciones no puede confirmarse; transición de estado no
+                # permitida → conflict (error_conventions.md §3.6). Hallazgo 34
+                # de audit/audit_intake_event.md, decisión 2026-09-10.
+                return HTMLResponse(status_code=409)
             total_amount = sum(portion_intake_amount(p) for p in portions)
+            if not math.isfinite(total_amount) or total_amount > INTAKE_EVENT_INGESTED_AMOUNT_MAX_G:
+                # Defensa en profundidad: total_amount se calcula en vivo a partir
+                # de portion_detail (fuera del alcance de esta tabla), pero un
+                # ingested_amount derivado de él sigue teniendo que respetar el
+                # límite de cordura de esta tabla (§6.9.2, hallazgo 32/35).
+                return HTMLResponse(status_code=422)
 
             raw_value = (ingested_value or "").strip()
             if raw_value == "":
@@ -543,9 +590,12 @@ def setup_cart_routes(rt):
                 try:
                     value = _to_float(raw_value)
                 except (TypeError, ValueError):
-                    # No numérico: validation_error → 422.
+                    # No numérico: validation_error → 422 (hallazgo 33: mismo
+                    # comportamiento aquí que en el resto de la ruta).
                     return HTMLResponse(status_code=422)
-                if value < 0:
+                # NaN/Infinity no deben guardarse: rechazo explícito (hallazgo 32),
+                # no depender solo de que la comparación de fracción los descarte.
+                if not math.isfinite(value) or value < 0:
                     return HTMLResponse(status_code=422)
                 if ingested_unit == "%":
                     fraction = value / 100.0

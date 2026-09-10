@@ -941,6 +941,16 @@ def _ensure_intake_event_schema(cursor):
     # ---- total_amount deja de persistirse: se calcula en vivo (decisión 2026-09-10) ----
     cursor.execute("ALTER TABLE intake_event DROP COLUMN IF EXISTS total_amount;")
 
+    # ---- H32/H35: ingested_amount con límites de cordura (measurement_conventions.md
+    # §6.9.2, decisión 2026-09-10). Verificado el 2026-09-09: 0 filas negativas o
+    # fuera de rango; si apareciera alguna, este ALTER falla y aborta el bootstrap,
+    # que es lo correcto (§12.5). ----
+    cursor.execute("ALTER TABLE intake_event DROP CONSTRAINT IF EXISTS ck_intake_event_ingested_amount;")
+    cursor.execute(
+        "ALTER TABLE intake_event ADD CONSTRAINT ck_intake_event_ingested_amount "
+        "CHECK (ingested_amount IS NULL OR (ingested_amount >= 0 AND ingested_amount <= 100000));"
+    )
+
 
 def _ensure_insulin_injections_schema(cursor):
     cursor.execute(
