@@ -345,6 +345,63 @@ Reglas HTMX:
 - No devolver un cuerpo vacío para un error que el usuario necesita ver.
 - Las respuestas de error incluyen el header `X-Request-ID` con el mismo identificador usado en el log.
 
+### 7.1 Canal de error visible (aviso global)
+
+La excepción de `200` + fragmento solo sirve cuando el error se inserta dentro
+de un formulario. Una edición en línea —el carrito, por ejemplo: cada control
+guarda solo, sin botón de guardar— no tiene dónde insertarlo, y devolver `200`
+con un fragmento de error sobre su `hx-target` sustituiría el componente
+editado por el mensaje.
+
+Para ese caso, la respuesta:
+
+- conserva el **status semántico** de su categoría (`422`, `404`, `409`, …) y
+  devuelve **cuerpo vacío**, de modo que htmx no haga swap;
+- declara el mensaje público en las cabeceras `X-App-Error` (el `code` del
+  catálogo) y `X-App-Error-Message` (el `public_message`);
+- emite además el evento documentado `appError` en `HX-Trigger`, con
+  `{"code": ..., "message": ...}`, para las respuestas `2xx` que necesiten
+  avisar.
+
+El aviso se pinta en un contenedor único del layout (`#app_toast`,
+`components/ui.py`), alimentado por `static/js/app_toast.js`. Es el único
+canal de aviso global: no se crean toasts, `alert()` ni contenedores de error
+por página o por componente.
+
+El mensaje siempre sale del catálogo de errores (`DayBetes_food/errors.py`) o
+es un texto público más específico de la misma categoría; nunca contiene
+detalles técnicos, identificadores internos ni texto de excepción. Esto
+satisface la regla "no devolver un cuerpo vacío para un error que el usuario
+necesita ver": el cuerpo va vacío, pero el error sí llega al usuario.
+Decisión 2026-09-10.
+
+Reglas de construcción del canal (decisión 2026-09-10, hallazgos 50-52 de
+`audit/audit_intake_event.md`):
+
+- Las cabeceras las construye **un único helper compartido**,
+  `DayBetes_food/http_errors.py`. Ni las rutas ni el middleware las escriben a
+  mano.
+- La respuesta incluye siempre `X-Request-ID`, igual que las que pasan por el
+  boundary global. Una ruta que **devuelve** el error en vez de levantarlo no
+  pasa por ese boundary, así que es ella quien debe añadirlo; el
+  identificador se obtiene del mismo helper para que sea el mismo criterio en
+  toda la aplicación.
+- Quién construye el canal depende de cómo viaja el error: la ruta que devuelve
+  la respuesta lo construye con el helper; el error **levantado** lo formatea
+  el boundary global. No se convierte el boundary en el único constructor,
+  porque su formato HTMX (fragmento con el mensaje) sustituiría el componente
+  editado, que es justo lo que esta sección evita.
+- El código que corre **fuera** del boundary global —los middlewares, cuya
+  excepción no llega a los `exception_handler`— construye la respuesta con el
+  mismo helper: cabeceras de esta sección si la petición es HTMX, y el formato
+  JSON de §6 en caso contrario. Nunca `{"detail": ...}`.
+- `X-App-Error-Message` viaja en una cabecera HTTP, que Starlette codifica en
+  **latin-1**: un guion largo, unas comillas tipográficas o un `€` en el
+  mensaje levantarían `UnicodeEncodeError` al construir la respuesta y
+  convertirían el `4xx` en un `500`. El helper sustituye los caracteres no
+  representables; el texto íntegro viaja en el JSON de `HX-Trigger`, que no
+  tiene esa limitación. Aun así, los mensajes públicos se redactan en latin-1.
+
 ## 8. Traducción por capa
 
 ### 8.1 CRUD

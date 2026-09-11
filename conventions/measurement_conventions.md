@@ -409,6 +409,34 @@ Constraint: `ck_intake_event_ingested_amount CHECK (ingested_amount IS NULL OR (
 
 Esta misma cota aplica al `total_amount` calculado en vivo (§6.9.1 paso 2) y a la `fracción` derivada de él, aunque no exista columna que la persista: un `total_amount` fuera de rango no debe usarse para calcular `ingested_amount` ni para escalar `portion_detail.plate_amount`.
 
+### 6.9.3 Edición de las porciones de un evento ya `consumed` (decisión 2026-09-10)
+
+Las porciones de un evento confirmado **son editables**. Un evento `consumed`
+ya era editable en todos sus campos (decisión 2026-09-08) y lo mismo vale para
+su `portion_detail`: una comida se corrige después de haberla registrado
+(faltaba un ingrediente, el peso no era el que se anotó, la calidad de los
+macros era otra). La interfaz que exponga esas ediciones sobre un evento
+consumido está pendiente; la regla se fija ahora porque hay rutas que ya las
+aceptan.
+
+Consecuencia obligatoria: el snapshot de `intake_event` deja de corresponder a
+sus porciones en cuanto estas cambian, así que **toda escritura sobre las
+porciones de un evento `consumed` recalcula y reescribe los campos derivados,
+en la misma transacción que la escritura**:
+
+- `amount_confidence`, `quality_confidence` y los seis `*_uncertainty`
+  (§6.3-§6.6), siempre;
+- `ingested_amount` (§6.9.1 paso 6), además, si la escritura cambia algún
+  `plate_amount`.
+
+No se admite dejar el snapshot antiguo ni recalcularlo "más tarde": es la misma
+regla de §6.9 ("no se deben mantener valores derivados antiguos después de
+cambiar sus datos de origen"), aplicada al estado en el que sí hay valores
+persistidos.
+
+Mientras el evento está `planned` no hay snapshot que reescribir: las métricas
+se recalculan en memoria en cada petición (§6.9).
+
 ## 7. Factor de cocinado
 
 `cooking_factor` es una magnitud sin unidad. Representa una relación entre masa cruda y masa cocinada según la fórmula definida por el dominio.
@@ -550,6 +578,8 @@ Factor: 28.349523125
 ```
 
 El código interno de una unidad cerrada debe formar parte del enum central de unidades. Las unidades no se introducen como texto libre.
+
+Ese enum central es `AmountInputUnit` (`DayBetes_food/domain/constants.py`). Contiene solo las unidades que algún control real emite hoy (`g` y `%`); las demás de §4.2 se añaden cuando exista la interfaz que las use, junto con su factor de conversión. El boundary que recibe una unidad la convierte con ese enum y rechaza con `422` cualquier valor que no pertenezca al subconjunto que acepta —nunca la interpreta como la unidad canónica por defecto, porque eso guarda una cantidad falsa en vez de rechazar la entrada (decisión 2026-09-10, hallazgo 47 de `audit/audit_intake_event.md`).
 
 ## 12. Fuentes y calidad del dato
 

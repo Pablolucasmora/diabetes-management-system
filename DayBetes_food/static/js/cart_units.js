@@ -76,6 +76,11 @@
 
   function initUnitSelect(selectEl) {
     if (!selectEl) return;
+    // Idempotencia: initAllUnitSelects se ejecuta sobre `document` en cada
+    // swap, así que un select ya inicializado se vuelve a visitar. Sin esta
+    // marca acumularía un listener "change" por swap.
+    if (selectEl.dataset.dbUnitsInit === "1") return;
+    selectEl.dataset.dbUnitsInit = "1";
     var persistKey = selectEl.getAttribute("data-persist-key");
     var displayId = selectEl.getAttribute("data-display-id");
     var gramsId = selectEl.getAttribute("data-grams-id");
@@ -112,10 +117,16 @@
     // tarjeta #cart_card_event_{id}): el refresco local del carrito
     // (decisión 2026-09-10) puede insertar selects nuevos en targets que no
     // son #main_content.
-    document.body.addEventListener("htmx:afterSwap", function (event) {
-      var target = event && event.detail ? event.detail.target : null;
-      if (!target) return;
-      initAllUnitSelects(target);
+    //
+    // Se recorre `document`, no `event.detail.target`: con hx-swap="outerHTML"
+    // —el swap que usan todas las acciones del carrito— el target del evento
+    // es el nodo *sustituido*, que ya está desconectado del DOM, así que los
+    // selects recién insertados no aparecerían en su querySelectorAll
+    // (hallazgo 42 de audit/audit_intake_event.md, comprobado en navegador).
+    // Recorrer el documento es barato y idempotente: initUnitSelect marca los
+    // selects ya inicializados con data-db-units-init.
+    document.body.addEventListener("htmx:afterSwap", function () {
+      initAllUnitSelects(document);
     });
   }
 

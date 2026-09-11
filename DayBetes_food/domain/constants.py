@@ -42,6 +42,28 @@ class IntakeEventState(str, Enum):
     CONSUMED = "consumed"
 
 
+@unique
+class AmountInputUnit(str, Enum):
+    """Unidades de entrada de cantidad que la interfaz puede emitir.
+
+    Es el enum central de unidades que exige measurement_conventions.md §11:
+    el código interno de una unidad cerrada vive aquí y no se escribe como
+    texto libre en rutas ni componentes. Los valores son los códigos estables
+    de §4.2 de ese mismo documento.
+
+    Solo están los dos que hoy emite algún control real (el selector de
+    cantidad ingerida del `confirm` del carrito). Los demás de §4.2
+    (`portion`, `lb`, `oz`) se añaden aquí, junto con su factor de conversión
+    a gramos, cuando exista la interfaz que los use; no se declaran antes para
+    no publicar unidades que ningún boundary sabe convertir.
+
+    Ninguna de estas unidades se persiste: deciden cómo se interpreta la
+    cantidad recibida antes de convertirla a la unidad canónica (gramos).
+    """
+    GRAMS = "g"
+    PERCENT = "%"
+
+
 def sql_in_list(enum_cls) -> str:
     """Lista de valores del enum para un CHECK: "'rapid', 'basal'".
 

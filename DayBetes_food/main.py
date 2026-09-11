@@ -2,8 +2,6 @@ from fasthtml.common import *
 from datetime import datetime, timezone
 from html import escape
 import logging
-import re
-import uuid
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import JSONResponse
 
@@ -20,7 +18,18 @@ from DayBetes_food.config import (
 )
 from DayBetes_food.database.db_init import init_db
 from DayBetes_food.database.connection import get_connection
-from DayBetes_food.errors import AppError, InfrastructureError, ValidationError
+from DayBetes_food.errors import (
+    AppError,
+    AuthenticationError,
+    AuthorizationError,
+    InfrastructureError,
+    ValidationError,
+)
+from DayBetes_food.http_errors import (
+    app_error_headers,
+    error_json_body,
+    request_id as _request_id,
+)
 from DayBetes_food.routes import (
     setup_auth_routes,
     setup_food_routes,
@@ -38,14 +47,6 @@ app, rt = fast_app(
 )
 
 logger = logging.getLogger(__name__)
-
-
-_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
-
-
-def _request_id(request: Request) -> str:
-    supplied = request.headers.get("X-Request-ID", "").strip()
-    return supplied if _REQUEST_ID_RE.fullmatch(supplied) else uuid.uuid4().hex
 
 
 def _error_html(message: str, *, fragment: bool) -> str:
@@ -70,14 +71,7 @@ def _error_response(request: Request, error: AppError, request_id: str):
     status_code = 200 if is_htmx and isinstance(error, ValidationError) else error.status_code
     if is_json:
         return JSONResponse(
-            {
-                "error": {
-                    "code": error.code,
-                    "message": error.public_message,
-                    "fields": error.fields,
-                },
-                "request_id": request_id,
-            },
+            error_json_body(error, request_id),
             status_code=error.status_code,
             headers=headers,
         )
@@ -179,14 +173,44 @@ async def auth_security_middleware(request: Request, call_next):
             supplied_token = str(form.get("csrf_token", ""))
 
         if not supplied_token or supplied_token != csrf_cookie or not is_csrf_valid(session_row, supplied_token):
-            return JSONResponse({"detail": "Forbidden"}, status_code=403)
+            # Un fallo CSRF es `403` con mensaje genérico (§9), pero con el
+            # formato de error del proyecto: el middleware corre por fuera del
+            # boundary global (una excepción levantada aquí no llega a
+            # `_handle_app_error`), así que construye la respuesta con el
+            # mismo canal compartido en vez de improvisar `{"detail": ...}`,
+            # que §6 prohíbe. Para HTMX el cuerpo va vacío y el aviso viaja en
+            # las cabeceras de §7.1, igual que en las rutas del carrito: así la
+            # "pestaña abierta desde ayer" recibe un mensaje propio en vez de
+            # un `403` opaco (hallazgo 52 de audit/audit_intake_event.md).
+            csrf_error = AuthorizationError()
+            csrf_message = "Tu sesión ha caducado. Recarga la página e inténtalo de nuevo."
+            if _is_htmx_request(request):
+                return HTMLResponse(
+                    "",
+                    status_code=csrf_error.status_code,
+                    headers=app_error_headers(request, csrf_error, csrf_message),
+                )
+            csrf_request_id = _request_id(request)
+            return JSONResponse(
+                error_json_body(csrf_error, csrf_request_id),
+                status_code=csrf_error.status_code,
+                headers={"X-Request-ID": csrf_request_id},
+            )
 
     if not request.state.user and not _is_public_path(request.url.path):
         if _is_htmx_request(request):
             return HTMLResponse("", status_code=401, headers={"HX-Redirect": "/auth/login"})
         if request.method == "GET":
             return RedirectResponse(url="/auth/login", status_code=302)
-        return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+        # Mismo motivo que el `403` de arriba: formato único de §6, sin
+        # `{"detail": ...}`.
+        auth_error = AuthenticationError()
+        auth_request_id = _request_id(request)
+        return JSONResponse(
+            error_json_body(auth_error, auth_request_id),
+            status_code=auth_error.status_code,
+            headers={"X-Request-ID": auth_request_id},
+        )
 
     ctx_token = set_current_user_id(request.state.user["id"] if request.state.user else None)
     try:

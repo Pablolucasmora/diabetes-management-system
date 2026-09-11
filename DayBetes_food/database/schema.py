@@ -314,7 +314,7 @@ class DBSchema:
 
         amount_confidence REAL
             CONSTRAINT ck_intake_event_amount_confidence
-            CHECK (amount_confidence >= 0 AND amount_confidence <= 1), -- Weighted average based on each food's amount and whether it was strictly weighed: ((amount1 * strictly_weighed1 + amount2 * strictly_weighed2) / total_amount)
+            CHECK (amount_confidence >= 0 AND amount_confidence <= 1), -- Weighted average based on each food's amount and whether it was strictly weighed: (amount1 * strictly_weighed1 + amount2 * strictly_weighed2) divided by the live sum of portion_detail.plate_amount for the event (total_amount is not a column; see cart_shared.calculate_macro_summary_metrics, decision 2026-09-10)
         quality_confidence REAL
             CONSTRAINT ck_intake_event_quality_confidence
             CHECK (quality_confidence >= 0 AND quality_confidence <= 1), -- Value between 0 and 1 indicating confidence in the nutritional information. Same calculation as amount_confidence but using each ingredient's macros_quality
@@ -338,7 +338,7 @@ class DBSchema:
             CONSTRAINT ck_intake_event_fiber_uncertainty
             CHECK (fiber_uncertainty >= 0 AND fiber_uncertainty <= 1), -- Same as carbs_uncertainty but for fiber
 
-        notes TEXT,
+        notes TEXT, -- Free-text note about the meal, edited from the cart card (input above "Confirm food"). No physical limit: the 500-character cap is a domain rule (INTAKE_EVENT_NOTES_MAX_LENGTH in domain/intake_event.py), enforced at the boundary with 422 and never truncated (decision 2026-09-10, §7.3)
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         deleted_at TIMESTAMPTZ  -- soft-delete; solo se usa en state='consumed' (decisión 2026-09-08)

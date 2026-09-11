@@ -24,20 +24,77 @@ from DayBetes_food.database.queries import (
     get_planned_intake_event,
     list_planned_intake_events,
     update_intake_event_name,
+    update_intake_event_notes,
     update_intake_event,
 )
-from DayBetes_food.domain.constants import InjectionZone, MealType
+from DayBetes_food.domain.constants import (
+    AmountInputUnit,
+    InjectionZone,
+    IntakeEventState,
+    MealType,
+)
 from DayBetes_food.domain.intake_event import (
     INTAKE_EVENT_INGESTED_AMOUNT_MAX_G,
+    INTAKE_EVENT_INGESTED_UNITS,
     INTAKE_EVENT_NAME_MAX_LENGTH,
+    INTAKE_EVENT_NOTES_MAX_LENGTH,
     IntakeEventUpdate,
 )
-from DayBetes_food.errors import ValidationError, NotFoundError, ConflictError
+from DayBetes_food.http_errors import app_error_headers
+from DayBetes_food.errors import (
+    AppError,
+    AuthenticationError,
+    AuthorizationError,
+    ConflictError,
+    MalformedRequestError,
+    NotFoundError,
+    ValidationError,
+)
 from DayBetes_food.auth.context import get_current_user_id
 
 
 def _no_user_cart():
     return Div(H2("No users"), cls="flex flex-col items-center")
+
+
+def _error(request: Request, error, message: str = ""):
+    """
+    Respuesta de error del carrito: status semántico + aviso visible.
+
+    Las acciones del carrito son ediciones en línea, no un formulario de
+    guardado, así que **no** usan la excepción de `code_conventions.md` §9.5
+    (`200` + fragmento dentro del formulario): conservan el status de su
+    categoría (`422` validación, `404` inexistente, `409` conflicto, §3.2/§3.5/
+    §3.6 de error_conventions.md) y devuelven cuerpo vacío, porque htmx no debe
+    hacer swap de un error sobre la tarjeta.
+
+    Para que el error no sea invisible —htmx ignora el cuerpo de un `4xx`, así
+    que sin esto el usuario ve exactamente lo mismo que si no hubiera pulsado
+    nada— la respuesta declara el mensaje público en cabeceras y, además, en el
+    evento `appError` de `HX-Trigger`. `static/js/app_toast.js` lo pinta en el
+    `#app_toast` del layout (decisión 2026-09-10, hallazgo 37 de
+    audit/audit_intake_event.md; error_conventions.md §7: "no devolver un
+    cuerpo vacío para un error que el usuario necesita ver").
+
+    `error` puede ser una clase de `DayBetes_food/errors.py` o una instancia; el
+    código y el mensaje por defecto salen siempre del catálogo central, nunca se
+    inventan por endpoint (error_conventions.md §8.3).
+
+    Las cabeceras las construye `http_errors.app_error_headers`, el mismo punto
+    que usa el middleware de `main.py`: incluye el `X-Request-ID` que §7 exige
+    en toda respuesta de error —estas rutas **devuelven** el error en vez de
+    levantarlo, así que no pasan por el boundary global que lo añadía
+    (hallazgo 50)— y sanea el mensaje a latin-1, la codificación de cabecera de
+    Starlette, para que un guion largo o unas comillas tipográficas no
+    conviertan el `4xx` en un `500` (hallazgo 51).
+    """
+    if isinstance(error, type) and issubclass(error, AppError):
+        error = error()
+    return HTMLResponse(
+        "",
+        status_code=error.status_code,
+        headers=app_error_headers(request, error, message),
+    )
 
 
 def _load_events_and_portions(connection, user_id: int):
@@ -63,7 +120,7 @@ def _load_cart_main(connection):
     return cart_main(events, portions_by_event)
 
 
-def _cart_response(connection, status: int = 200):
+def _cart_response(connection):
     """
     Refresco de la página completa del carrito. Reservado para las acciones
     que no tienen un elemento de UI propio en el carrito (archive/restore,
@@ -73,38 +130,32 @@ def _cart_response(connection, status: int = 200):
     deja de estar planificado, `_removal_response` (decisión 2026-09-10,
     refresco local del carrito).
     """
-    if status >= 400:
-        return HTMLResponse("", status_code=status)
     return render_fragment(_load_cart_main(connection))
 
 
-def _events_list_response(connection, user_id: int, status: int = 200):
+def _events_list_response(connection, user_id: int):
     """
     Refresca solo #cart_events_list. Es el target de meal_hour, la única
     acción que puede reordenar la lista (orden `meal_time DESC`).
     """
-    if status >= 400:
-        return HTMLResponse("", status_code=status)
     events, portions_by_event = _load_events_and_portions(connection, user_id)
     return render_fragment(cart_events_list(events, portions_by_event))
 
 
-def _card_response(connection, user_id: int, event_id: int, status: int = 200):
+def _card_response(request: Request, connection, user_id: int, event_id: int):
     """
     Refresca solo #cart_card_event_{id}. Target por defecto para cualquier
     edición dentro de una tarjeta que no cambia si el evento sigue en
     'planned' ni su posición en la lista.
     """
-    if status >= 400:
-        return HTMLResponse("", status_code=status)
     event = get_intake_event(connection, user_id, event_id)
     if not event:
-        return HTMLResponse("", status_code=404)
+        return _error(request, NotFoundError, "Esta comida ya no existe.")
     portions = get_portion_detail_by_event(connection, event_id)
     return render_fragment(CartCard(event, portions))
 
 
-def _removal_response(connection, user_id: int, status: int = 200):
+def _removal_response(connection, user_id: int):
     """
     El evento ya salió de 'planned' (borrado o confirmado): su tarjeta se
     elimina devolviendo cuerpo vacío sobre el mismo target
@@ -113,8 +164,6 @@ def _removal_response(connection, user_id: int, status: int = 200):
     "carrito vacío", sin recargar el resto de la página (decisión
     2026-09-10, refresco local del carrito).
     """
-    if status >= 400:
-        return HTMLResponse("", status_code=status)
     remaining = list_planned_intake_events(connection, user_id)
     if remaining:
         return render_fragment("")
@@ -147,6 +196,64 @@ def _parse_strict_bool(raw_value: str) -> bool:
     raise ValidationError("boolean_not_recognized")
 
 
+def _parse_ingested_unit(raw_value: str) -> AmountInputUnit:
+    """
+    Parser estricto de la unidad de la cantidad ingerida del `/confirm`.
+
+    Mismo criterio que `_parse_strict_bool` (§7.6/§7.7): el conjunto es
+    cerrado y vive en `domain/` (`AmountInputUnit`, restringido para este
+    boundary por `INTAKE_EVENT_INGESTED_UNITS`); cualquier otro valor
+    —incluido el vacío— se rechaza con `422` en vez de degradarse al `else`
+    de gramos. Sin esto, `ingested_unit=kg` con `ingested_value=0.05`
+    confirmaba la comida como 0,05 g y sobrescribía `plate_amount`, que es un
+    dato clínico irrecuperable (hallazgo 47 de audit/audit_intake_event.md).
+    """
+    normalized = (raw_value or "").strip()
+    try:
+        unit = AmountInputUnit(normalized)
+    except ValueError as exc:
+        raise ValidationError("ingested_unit_not_recognized") from exc
+    if unit not in INTAKE_EVENT_INGESTED_UNITS:
+        raise ValidationError("ingested_unit_not_accepted_here")
+    return unit
+
+
+def _resync_consumed_event_metrics(connection, user_id: int, event_id: int, portions) -> None:
+    """
+    Recalcula el snapshot de métricas de un evento ya `consumed`.
+
+    `amount_confidence`, `quality_confidence` y los seis `*_uncertainty` se
+    calculan una sola vez en `/confirm` a partir de las porciones del evento.
+    Las porciones de un evento consumido **son editables** (decisión
+    2026-09-10, hallazgo 48), así que toda escritura sobre ellas tiene que
+    reescribir ese snapshot: si no, el evento queda con métricas que ya no
+    corresponden a sus porciones.
+
+    Las métricas son proporciones ponderadas por cantidad, así que se calculan
+    sobre las porciones tal y como están guardadas (ya escaladas por la
+    fracción consumida en el `confirm`, §6.9.1); una escala uniforme no las
+    altera. `ingested_amount` no se toca aquí porque estos flags no cambian
+    `plate_amount`; la ruta que llegue a cambiarlo deberá recalcularlo también.
+
+    No hace nada si el evento sigue en `planned`: ahí el snapshot todavía no
+    existe y lo escribe el `confirm`.
+    """
+    update_intake_event(
+        connection,
+        user_id=user_id,
+        event_id=event_id,
+        data=IntakeEventUpdate(**calculate_macro_summary_metrics(portions)),
+        commit=False,
+    )
+
+
+_NOT_HTMX = "Esta acción solo puede ejecutarse desde el carrito."
+_NO_SESSION = "Tu sesión ha caducado. Vuelve a iniciar sesión."
+_EVENT_GONE = "Esta comida ya no existe."
+_EVENT_NOT_PLANNED = "Esta comida ya no está en el carrito."
+_INGREDIENT_FAILED = "No se ha podido actualizar el ingrediente."
+
+
 def setup_cart_routes(rt):
     @rt("/cart")
     def get(req):
@@ -161,28 +268,28 @@ def setup_cart_routes(rt):
         Update meal_hour from a specific event, returning the response to the request
         """
         if request.headers.get("HX-Request") != "true":
-            return HTMLResponse(status_code=403)
+            return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
         if not user_id:
-            return HTMLResponse(status_code=401)
+            return _error(request, AuthenticationError, _NO_SESSION)
         try:
             parsed_time = datetime.strptime(meal_hour, "%H:%M").time()
         except ValueError:
             # Valor presente y bien formado como petición, contenido inválido:
             # validation_error → 422 (error_conventions.md §3.2).
-            return HTMLResponse(status_code=422)
+            return _error(request, ValidationError, "La hora de la comida no es válida.")
 
         with get_connection() as connection:
             event = get_intake_event(connection, int(user_id), event_id)
             if not event or not event.meal_time:
-                return HTMLResponse(status_code=404)
+                return _error(request, NotFoundError, _EVENT_GONE)
             current_local = to_local(event.meal_time)
             if meal_date:
                 try:
                     chosen_date = datetime.strptime(meal_date, "%Y-%m-%d").date()
                 except ValueError:
                     # "fecha inválida" es validation_error → 422, no 400.
-                    return HTMLResponse(status_code=422)
+                    return _error(request, ValidationError, "La fecha de la comida no es válida.")
             else:
                 chosen_date = current_local.date() if current_local else local_today()
             updated = local_naive_to_utc_aware(datetime.combine(chosen_date, parsed_time))
@@ -194,12 +301,12 @@ def setup_cart_routes(rt):
                     data=IntakeEventUpdate(meal_time=updated, timezone_at_event=APP_TIMEZONE.key),
                 )
             except NotFoundError:
-                return HTMLResponse(status_code=404)
+                return _error(request, NotFoundError, _EVENT_GONE)
             except ConflictError:
-                return HTMLResponse(status_code=409)
+                return _error(request, ConflictError, _EVENT_NOT_PLANNED)
             except ValidationError:
-                return HTMLResponse(status_code=422)
-            return _events_list_response(connection, int(user_id), status=200)
+                return _error(request, ValidationError, "La hora de la comida no es válida.")
+            return _events_list_response(connection, int(user_id))
 
     @rt("/cart/event/{event_id}/meal_type")
     def post(request: Request, event_id: int, meal_type: str = ""):
@@ -207,17 +314,17 @@ def setup_cart_routes(rt):
         Update meal_type from a specific event, returning the response to the request
         """
         if request.headers.get("HX-Request") != "true":
-            return HTMLResponse(status_code=403)
+            return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
         if not user_id:
-            return HTMLResponse(status_code=401)
+            return _error(request, AuthenticationError, _NO_SESSION)
         clean_meal_type = (meal_type or "").strip()
         if not clean_meal_type:
-            return HTMLResponse(status_code=422)
+            return _error(request, ValidationError, "Elige un tipo de comida.")
         try:
             parsed = MealType(clean_meal_type)
         except ValueError:
-            return HTMLResponse(status_code=422)
+            return _error(request, ValidationError, "Ese tipo de comida no existe.")
         with get_connection() as connection:
             try:
                 update_intake_event(
@@ -227,12 +334,12 @@ def setup_cart_routes(rt):
                     data=IntakeEventUpdate(meal_type=parsed),
                 )
             except NotFoundError:
-                return HTMLResponse(status_code=404)
+                return _error(request, NotFoundError, _EVENT_GONE)
             except ConflictError:
-                return HTMLResponse(status_code=409)
+                return _error(request, ConflictError, _EVENT_NOT_PLANNED)
             except ValidationError:
-                return HTMLResponse(status_code=422)
-            return _card_response(connection, int(user_id), event_id, status=200)
+                return _error(request, ValidationError, "Ese tipo de comida no existe.")
+            return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/name")
     def post(request: Request, event_id: int, event_name: str = ""):
@@ -240,15 +347,18 @@ def setup_cart_routes(rt):
         Update event meal name, returning the response to the request
         """
         if request.headers.get("HX-Request") != "true":
-            return HTMLResponse(status_code=403)
+            return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
         if not user_id:
-            return HTMLResponse(status_code=401)
+            return _error(request, AuthenticationError, _NO_SESSION)
         clean_name = (event_name or "").strip()
         if len(clean_name) > INTAKE_EVENT_NAME_MAX_LENGTH:
             # §7.3: no truncar silenciosamente; el exceso se rechaza como
             # validation_error (decisión 2026-09-09).
-            return HTMLResponse(status_code=422)
+            return _error(request, 
+                ValidationError,
+                f"El nombre no puede pasar de {INTAKE_EVENT_NAME_MAX_LENGTH} caracteres.",
+            )
         with get_connection() as connection:
             try:
                 update_intake_event_name(
@@ -258,97 +368,121 @@ def setup_cart_routes(rt):
                     name=clean_name or None,
                 )
             except NotFoundError:
-                return HTMLResponse(status_code=404)
+                return _error(request, NotFoundError, _EVENT_GONE)
             except ConflictError:
-                return HTMLResponse(status_code=409)
+                return _error(request, ConflictError, _EVENT_NOT_PLANNED)
             except ValidationError:
-                return HTMLResponse(status_code=422)
-            return _card_response(connection, int(user_id), event_id, status=200)
+                return _error(request, ValidationError, "El nombre de la comida no es válido.")
+            return _card_response(request, connection, int(user_id), event_id)
 
-    @rt("/cart/event/{event_id}/macros_summary")
-    def get(request: Request, event_id: int):
+    @rt("/cart/event/{event_id}/notes")
+    def post(request: Request, event_id: int, notes: str = ""):
+        """
+        Update the meal note, returning the refreshed card.
+
+        Mismo contrato que /name: se guarda al salir del campo, la cadena vacía
+        borra la nota (§7.3) y el exceso de longitud se rechaza con 422 en vez
+        de truncarse (hallazgo 44 de audit/audit_intake_event.md,
+        decisión 2026-09-10).
+        """
         if request.headers.get("HX-Request") != "true":
-            return HTMLResponse(status_code=403)
+            return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
         if not user_id:
-            return HTMLResponse(status_code=401)
-        with get_connection() as connection:
-            event = get_intake_event(connection, int(user_id), event_id)
-            if not event:
-                return HTMLResponse(status_code=404)
-            portions = get_portion_detail_by_event(connection, event_id)
-            return render_fragment(
-                Div(
-                    MacrosSummary(event, portions),
-                    id=f"macros_summary_event_{event_id}",
-                )
+            return _error(request, AuthenticationError, _NO_SESSION)
+        clean_notes = (notes or "").strip()
+        if len(clean_notes) > INTAKE_EVENT_NOTES_MAX_LENGTH:
+            return _error(request, 
+                ValidationError,
+                f"La nota no puede pasar de {INTAKE_EVENT_NOTES_MAX_LENGTH} caracteres.",
             )
+        with get_connection() as connection:
+            try:
+                update_intake_event_notes(
+                    connection,
+                    user_id=int(user_id),
+                    event_id=event_id,
+                    notes=clean_notes or None,
+                )
+            except NotFoundError:
+                return _error(request, NotFoundError, _EVENT_GONE)
+            except ConflictError:
+                return _error(request, ConflictError, _EVENT_NOT_PLANNED)
+            except ValidationError:
+                return _error(request, ValidationError, "La nota no es válida.")
+            return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/delete")
     def post(request: Request, event_id: int):
         if request.headers.get("HX-Request") != "true":
-            return HTMLResponse(status_code=403)
+            return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
         if not user_id:
-            return HTMLResponse(status_code=401)
+            return _error(request, AuthenticationError, _NO_SESSION)
         with get_connection() as connection:
             try:
                 delete_intake_event(connection, user_id=int(user_id), event_id=event_id)
             except NotFoundError:
-                return HTMLResponse(status_code=404)
+                return _error(request, NotFoundError, _EVENT_GONE)
             except ConflictError:
-                return HTMLResponse(status_code=409)
+                return _error(request, 
+                    ConflictError,
+                    "Una comida ya confirmada no se borra: archívala en su lugar.",
+                )
             except ValidationError:
-                return HTMLResponse(status_code=422)
-            return _removal_response(connection, int(user_id), status=200)
+                return _error(request, ValidationError)
+            return _removal_response(connection, int(user_id))
 
     @rt("/cart/event/{event_id}/archive")
     def post(request: Request, event_id: int):
         if request.headers.get("HX-Request") != "true":
-            return HTMLResponse(status_code=403)
+            return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
         if not user_id:
-            return HTMLResponse(status_code=401)
+            return _error(request, AuthenticationError, _NO_SESSION)
         with get_connection() as connection:
             try:
                 archive_intake_event(connection, user_id=int(user_id), event_id=event_id)
             except NotFoundError:
-                return HTMLResponse(status_code=404)
+                return _error(request, NotFoundError, _EVENT_GONE)
             except ConflictError:
-                return HTMLResponse(status_code=409)
+                return _error(request, 
+                    ConflictError,
+                    "Solo se archivan las comidas ya confirmadas.",
+                )
             except ValidationError:
-                return HTMLResponse(status_code=422)
-            return _cart_response(connection, status=200)
+                return _error(request, ValidationError)
+            return _cart_response(connection)
 
     @rt("/cart/event/{event_id}/restore")
     def post(request: Request, event_id: int):
         if request.headers.get("HX-Request") != "true":
-            return HTMLResponse(status_code=403)
+            return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
         if not user_id:
-            return HTMLResponse(status_code=401)
+            return _error(request, AuthenticationError, _NO_SESSION)
         with get_connection() as connection:
             try:
                 restore_intake_event(connection, user_id=int(user_id), event_id=event_id)
             except NotFoundError:
-                return HTMLResponse(status_code=404)
+                return _error(request, NotFoundError, _EVENT_GONE)
             except ConflictError:
-                return HTMLResponse(status_code=409)
+                return _error(request, ConflictError, "Esta comida no está archivada.")
             except ValidationError:
-                return HTMLResponse(status_code=422)
-            return _cart_response(connection, status=200)
+                return _error(request, ValidationError)
+            return _cart_response(connection)
 
     @rt("/cart/event/{event_id}/eating_out")
     def post(request: Request, event_id: int, eating_out: str = ""):
         if request.headers.get("HX-Request") != "true":
-            return HTMLResponse(status_code=403)
+            return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
         if not user_id:
-            return HTMLResponse(status_code=401)
+            return _error(request, AuthenticationError, _NO_SESSION)
         try:
             value = _parse_strict_bool(eating_out)
         except ValidationError:
-            return HTMLResponse(status_code=422)
+            return _error(request, ValidationError, "No se ha entendido la casilla 'Eating out'.")
         with get_connection() as connection:
             try:
                 update_intake_event(
@@ -358,24 +492,24 @@ def setup_cart_routes(rt):
                     data=IntakeEventUpdate(eating_out=value),
                 )
             except NotFoundError:
-                return HTMLResponse(status_code=404)
+                return _error(request, NotFoundError, _EVENT_GONE)
             except ConflictError:
-                return HTMLResponse(status_code=409)
+                return _error(request, ConflictError, _EVENT_NOT_PLANNED)
             except ValidationError:
-                return HTMLResponse(status_code=422)
-            return _card_response(connection, int(user_id), event_id, status=200)
+                return _error(request, ValidationError, "No se ha entendido la casilla 'Eating out'.")
+            return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/insulin_dose")
     def post(request: Request, event_id: int, insulin_dose: str = ""):
         if request.headers.get("HX-Request") != "true":
-            return HTMLResponse(status_code=403)
+            return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
         if not user_id:
-            return HTMLResponse(status_code=401)
+            return _error(request, AuthenticationError, _NO_SESSION)
         try:
             value = _parse_strict_bool(insulin_dose)
         except ValidationError:
-            return HTMLResponse(status_code=422)
+            return _error(request, ValidationError, "No se ha entendido la casilla 'Insulin'.")
         with get_connection() as connection:
             try:
                 update_intake_event(
@@ -385,28 +519,28 @@ def setup_cart_routes(rt):
                     data=IntakeEventUpdate(insulin_dose=value),
                 )
             except NotFoundError:
-                return HTMLResponse(status_code=404)
+                return _error(request, NotFoundError, _EVENT_GONE)
             except ConflictError:
-                return HTMLResponse(status_code=409)
+                return _error(request, ConflictError, _EVENT_NOT_PLANNED)
             except ValidationError:
-                return HTMLResponse(status_code=422)
-            return _card_response(connection, int(user_id), event_id, status=200)
+                return _error(request, ValidationError, "No se ha entendido la casilla 'Insulin'.")
+            return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/injection_zone")
     def post(request: Request, event_id: int, zone: str = ""):
         if request.headers.get("HX-Request") != "true":
-            return HTMLResponse(status_code=403)
+            return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
         if not user_id:
-            return HTMLResponse(status_code=401)
+            return _error(request, AuthenticationError, _NO_SESSION)
 
         # Parsear zona
         if not zone or not zone.strip():
-            return HTMLResponse(status_code=422)
+            return _error(request, ValidationError, "Elige una zona de inyección.")
         try:
             parsed_zone = InjectionZone(zone.strip().lower())
         except ValueError:
-            return HTMLResponse(status_code=422)
+            return _error(request, ValidationError, "Esa zona de inyección no existe.")
 
         # Registrar zona
         with get_connection() as connection:
@@ -418,130 +552,145 @@ def setup_cart_routes(rt):
                     zone=parsed_zone,
                 )
             except NotFoundError:
-                return HTMLResponse(status_code=404)
+                return _error(request, NotFoundError, _EVENT_GONE)
             except ConflictError:
-                return HTMLResponse(status_code=409)
+                return _error(request, ConflictError, _EVENT_NOT_PLANNED)
             except ValidationError:
-                return HTMLResponse(status_code=422)
-            return _card_response(connection, int(user_id), event_id, status=200)
+                return _error(request, ValidationError, "Esa zona de inyección no existe.")
+            return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/ingredient/{origin}/{origin_id}/amount")
     def post(request: Request, event_id: int, origin: str, origin_id: int, amount_g: str = ""):
         if request.headers.get("HX-Request") != "true":
-            return HTMLResponse(status_code=403)
+            return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
         if not user_id:
-            return HTMLResponse(status_code=401)
+            return _error(request, AuthenticationError, _NO_SESSION)
         try:
             amount = _to_float(amount_g)
         except (TypeError, ValueError):
             # Cantidad no numérica: validation_error → 422.
-            return HTMLResponse(status_code=422)
+            return _error(request, ValidationError, "La cantidad no es un número válido.")
 
         with get_connection() as connection:
             try:
                 get_planned_intake_event(connection, int(user_id), event_id)
             except NotFoundError:
-                return HTMLResponse(status_code=404)
+                return _error(request, NotFoundError, _EVENT_GONE)
             except ConflictError:
-                return HTMLResponse(status_code=409)
+                return _error(request, ConflictError, _EVENT_NOT_PLANNED)
             if amount <= 0:
                 ok = delete_event_portion_group(connection, event_id, origin, origin_id)
             else:
                 ok = consolidate_event_portion_group_amount(connection, event_id, origin, origin_id, amount)
-            return _card_response(connection, int(user_id), event_id, status=200 if ok else 400)
+            if not ok:
+                return _error(request, MalformedRequestError, _INGREDIENT_FAILED)
+            return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/ingredient/{origin}/{origin_id}/offset")
     def post(request: Request, event_id: int, origin: str, origin_id: int, offset_minutes: str = ""):
         if request.headers.get("HX-Request") != "true":
-            return HTMLResponse(status_code=403)
+            return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
         if not user_id:
-            return HTMLResponse(status_code=401)
+            return _error(request, AuthenticationError, _NO_SESSION)
         try:
             value = int(offset_minutes)
         except (TypeError, ValueError):
             # Offset no entero: validation_error → 422.
-            return HTMLResponse(status_code=422)
+            return _error(request, ValidationError, "El offset debe ser un número entero de minutos.")
         with get_connection() as connection:
             try:
                 get_planned_intake_event(connection, int(user_id), event_id)
             except NotFoundError:
-                return HTMLResponse(status_code=404)
+                return _error(request, NotFoundError, _EVENT_GONE)
             except ConflictError:
-                return HTMLResponse(status_code=409)
+                return _error(request, ConflictError, _EVENT_NOT_PLANNED)
             ok = update_event_portion_group_field(connection, event_id, origin, origin_id, "offset_minutes", value)
-            return _card_response(connection, int(user_id), event_id, status=200 if ok else 400)
+            if not ok:
+                return _error(request, MalformedRequestError, _INGREDIENT_FAILED)
+            return _card_response(request, connection, int(user_id), event_id)
+
+    def _portion_flag_route(request: Request, event_id: int, origin: str, origin_id: int, field_name: str, raw_value: str, label: str):
+        """
+        Cuerpo común de los tres booleanos de porción (strictly_weighed,
+        macros_quality, is_cooked_weight): mismo contrato HTMX
+        (target #macros_summary_event_{id}, swap outerHTML) y mismo mapeo de
+        errores, como exige §9.5 ("las acciones equivalentes deben usar el
+        mismo patrón").
+
+        A diferencia de sus rutas hermanas de ingrediente, acepta también un
+        evento `consumed`: las porciones de un evento confirmado son editables
+        (decisión 2026-09-10, hallazgo 48). La contrapartida es que el snapshot
+        de métricas del evento, calculado en el `confirm`, deja de
+        corresponder a sus porciones, así que se recalcula y se reescribe en la
+        misma transacción que el flag.
+        """
+        if request.headers.get("HX-Request") != "true":
+            return _error(request, AuthorizationError, _NOT_HTMX)
+        user_id = get_current_user_id()
+        if not user_id:
+            return _error(request, AuthenticationError, _NO_SESSION)
+        try:
+            value = _parse_strict_bool(raw_value)
+        except ValidationError:
+            return _error(request, ValidationError, f"No se ha entendido la casilla '{label}'.")
+        with get_connection() as connection:
+            event = get_intake_event(connection, int(user_id), event_id)
+            if not event:
+                return _error(request, NotFoundError, _EVENT_GONE)
+            is_consumed = event.state == IntakeEventState.CONSUMED
+            try:
+                # Escribir el flag y reescribir el snapshot son una sola
+                # operación: si el recálculo falla, el flag tampoco se guarda
+                # (§2.3, §6.5). Para un evento 'planned' no hay snapshot que
+                # tocar todavía —lo escribe el confirm—, así que la
+                # transacción envuelve solo la escritura del flag.
+                with connection.transaction():
+                    ok = update_event_portion_group_field(
+                        connection, event_id, origin, origin_id, field_name, value, commit=False
+                    )
+                    if not ok:
+                        raise MalformedRequestError("portion_group_not_updated")
+                    portions = get_portion_detail_by_event(connection, event_id)
+                    if is_consumed:
+                        _resync_consumed_event_metrics(connection, int(user_id), event_id, portions)
+            except MalformedRequestError:
+                return _error(request, MalformedRequestError, _INGREDIENT_FAILED)
+            except NotFoundError:
+                return _error(request, NotFoundError, _EVENT_GONE)
+            if is_consumed:
+                # El fragmento debe mostrar el snapshot recién guardado, no el
+                # que se leyó antes de recalcularlo.
+                event = get_intake_event(connection, int(user_id), event_id)
+                if not event:
+                    return _error(request, NotFoundError, _EVENT_GONE)
+            return render_fragment(Div(MacrosSummary(event, portions), id=f"macros_summary_event_{event_id}"))
 
     @rt("/cart/event/{event_id}/ingredient/{origin}/{origin_id}/strictly_weighed")
     def post(request: Request, event_id: int, origin: str, origin_id: int, strictly_weighed: str = ""):
-        if request.headers.get("HX-Request") != "true":
-            return HTMLResponse(status_code=403)
-        user_id = get_current_user_id()
-        if not user_id:
-            return HTMLResponse(status_code=401)
-        try:
-            value = _parse_strict_bool(strictly_weighed)
-        except ValidationError:
-            return HTMLResponse("", status_code=422)
-        with get_connection() as connection:
-            event = get_intake_event(connection, int(user_id), event_id)
-            if not event:
-                return HTMLResponse("", status_code=404)
-            ok = update_event_portion_group_field(connection, event_id, origin, origin_id, "strictly_weighed", value)
-            if not ok:
-                return HTMLResponse("", status_code=400)
-            portions = get_portion_detail_by_event(connection, event_id)
-            return render_fragment(Div(MacrosSummary(event, portions), id=f"macros_summary_event_{event_id}"))
+        return _portion_flag_route(
+            request, event_id, origin, origin_id, "strictly_weighed", strictly_weighed, "Strictly weighted"
+        )
 
     @rt("/cart/event/{event_id}/ingredient/{origin}/{origin_id}/macros_quality")
     def post(request: Request, event_id: int, origin: str, origin_id: int, macros_quality: str = ""):
-        if request.headers.get("HX-Request") != "true":
-            return HTMLResponse(status_code=403)
-        user_id = get_current_user_id()
-        if not user_id:
-            return HTMLResponse(status_code=401)
-        try:
-            value = _parse_strict_bool(macros_quality)
-        except ValidationError:
-            return HTMLResponse("", status_code=422)
-        with get_connection() as connection:
-            event = get_intake_event(connection, int(user_id), event_id)
-            if not event:
-                return HTMLResponse("", status_code=404)
-            ok = update_event_portion_group_field(connection, event_id, origin, origin_id, "macros_quality", value)
-            if not ok:
-                return HTMLResponse("", status_code=400)
-            portions = get_portion_detail_by_event(connection, event_id)
-            return render_fragment(Div(MacrosSummary(event, portions), id=f"macros_summary_event_{event_id}"))
+        return _portion_flag_route(
+            request, event_id, origin, origin_id, "macros_quality", macros_quality, "Macros quality"
+        )
 
     @rt("/cart/event/{event_id}/ingredient/{origin}/{origin_id}/is_cooked_weight")
     def post(request: Request, event_id: int, origin: str, origin_id: int, is_cooked_weight: str = ""):
-        if request.headers.get("HX-Request") != "true":
-            return HTMLResponse(status_code=403)
-        user_id = get_current_user_id()
-        if not user_id:
-            return HTMLResponse(status_code=401)
-        try:
-            value = _parse_strict_bool(is_cooked_weight)
-        except ValidationError:
-            return HTMLResponse("", status_code=422)
-        with get_connection() as connection:
-            event = get_intake_event(connection, int(user_id), event_id)
-            if not event:
-                return HTMLResponse("", status_code=404)
-            ok = update_event_portion_group_field(connection, event_id, origin, origin_id, "is_cooked_weight", value)
-            if not ok:
-                return HTMLResponse("", status_code=400)
-            portions = get_portion_detail_by_event(connection, event_id)
-            return render_fragment(Div(MacrosSummary(event, portions), id=f"macros_summary_event_{event_id}"))
+        return _portion_flag_route(
+            request, event_id, origin, origin_id, "is_cooked_weight", is_cooked_weight, "Cooked weight"
+        )
 
     @rt("/cart/event/{event_id}/confirm")
     def post(
         request: Request,
         event_id: int,
         ingested_value: str = "",
-        ingested_unit: str = "g",
+        ingested_unit: str = AmountInputUnit.GRAMS.value,
     ):
         """
         Confirma el evento (planned -> consumed). ingested_value/ingested_unit
@@ -550,92 +699,115 @@ def setup_cart_routes(rt):
         - ingested_unit == "%" -> fracción = ingested_value / 100.
         - ingested_unit == "g" -> fracción = ingested_value / total_amount
           (suma en vivo de plate_amount, calculada en este mismo request).
+        No hay más unidades: cualquier otro valor es 422, nunca gramos por
+        defecto (hallazgo 47).
         fracción debe quedar en [0, 1]; fuera de rango es 422.
         Ver measurement_conventions.md §4.4/§6.9.1 (decisión 2026-09-10).
         """
         if request.headers.get("HX-Request") != "true":
-            return HTMLResponse(status_code=403)
+            return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
         if not user_id:
-            return HTMLResponse(status_code=401)
+            return _error(request, AuthenticationError, _NO_SESSION)
+
+        # 1) Validación del payload HTTP que no depende del estado de la base
+        # (§7.1): se hace antes de abrir nada.
+        try:
+            unit = _parse_ingested_unit(ingested_unit)
+        except ValidationError:
+            return _error(request, ValidationError, "La unidad de la cantidad ingerida no es válida.")
+        raw_value = (ingested_value or "").strip()
+        value = None
+        if raw_value != "":
+            try:
+                value = _to_float(raw_value)
+            except (TypeError, ValueError):
+                # No numérico: validation_error → 422 (hallazgo 33: mismo
+                # comportamiento aquí que en el resto de la ruta).
+                return _error(request, ValidationError, "La cantidad ingerida no es un número válido.")
+            # NaN/Infinity no deben guardarse: rechazo explícito (hallazgo 32),
+            # no depender solo de que la comparación de fracción los descarte.
+            if not math.isfinite(value) or value < 0:
+                return _error(request, ValidationError, "La cantidad ingerida no es un número válido.")
 
         with get_connection() as connection:
-            # 0) Autorizar antes de leer nada del evento (§5.3; cierra el hallazgo 19).
+            # 2) Autorizar antes de leer nada del evento (§5.3; cierra el hallazgo 19).
             try:
                 get_planned_intake_event(connection, int(user_id), event_id)
             except NotFoundError:
-                return HTMLResponse(status_code=404)
+                return _error(request, NotFoundError, _EVENT_GONE)
             except ConflictError:
-                return HTMLResponse(status_code=409)
+                return _error(request, ConflictError, "Esta comida ya está confirmada.")
 
-            portions = get_portion_detail_by_event(connection, event_id)
-            if not portions:
-                # Regla dependiente del estado de la base (§7.10): un evento sin
-                # porciones no puede confirmarse; transición de estado no
-                # permitida → conflict (error_conventions.md §3.6). Hallazgo 34
-                # de audit/audit_intake_event.md, decisión 2026-09-10.
-                return HTMLResponse(status_code=409)
-            total_amount = sum(portion_intake_amount(p) for p in portions)
-            if not math.isfinite(total_amount) or total_amount > INTAKE_EVENT_INGESTED_AMOUNT_MAX_G:
-                # Defensa en profundidad: total_amount se calcula en vivo a partir
-                # de portion_detail (fuera del alcance de esta tabla), pero un
-                # ingested_amount derivado de él sigue teniendo que respetar el
-                # límite de cordura de esta tabla (§6.9.2, hallazgo 32/35).
-                return HTMLResponse(status_code=422)
-
-            raw_value = (ingested_value or "").strip()
-            if raw_value == "":
-                fraction = 1.0
-            else:
-                try:
-                    value = _to_float(raw_value)
-                except (TypeError, ValueError):
-                    # No numérico: validation_error → 422 (hallazgo 33: mismo
-                    # comportamiento aquí que en el resto de la ruta).
-                    return HTMLResponse(status_code=422)
-                # NaN/Infinity no deben guardarse: rechazo explícito (hallazgo 32),
-                # no depender solo de que la comparación de fracción los descarte.
-                if not math.isfinite(value) or value < 0:
-                    return HTMLResponse(status_code=422)
-                if ingested_unit == "%":
-                    fraction = value / 100.0
-                else:
-                    if total_amount <= 0:
-                        # No hay nada que consumir: gramos > 0 no es interpretable.
-                        return HTMLResponse(status_code=422)
-                    fraction = value / total_amount
-            if not (0.0 <= fraction <= 1.0):
-                return HTMLResponse(status_code=422)
-
-            # amount_confidence/quality_confidence/*_uncertainty son proporciones:
-            # una escala uniforme de todas las porciones no las cambia, así que se
-            # calculan sobre las porciones servidas, antes de escalarlas (§6.9.1).
-            update_fields = calculate_macro_summary_metrics(portions)
-            update_fields["ingested_amount"] = total_amount * fraction
-            update_payload = IntakeEventUpdate(**update_fields)
             try:
+                # 3) Todo lo que depende del estado de la base ocurre dentro de
+                # la misma transacción: leer las porciones fuera dejaba una
+                # ventana en la que otra petición podía insertar una porción
+                # que se escalaría sin haber contado en total_amount, así que
+                # el ingested_amount guardado no correspondía a la suma real de
+                # plate_amount (hallazgo 46, punto 11 de §13).
                 with connection.transaction():
-                    # 1) Ownership + idempotencia en una sola sentencia (§6.6).
+                    portions = get_portion_detail_by_event(connection, event_id)
+                    if not portions:
+                        # Regla dependiente del estado de la base (§7.10): un evento sin
+                        # porciones no puede confirmarse; transición de estado no
+                        # permitida → conflict (error_conventions.md §3.6). Hallazgo 34
+                        # de audit/audit_intake_event.md, decisión 2026-09-10.
+                        raise ConflictError("intake_event_without_portions")
+                    total_amount = sum(portion_intake_amount(p) for p in portions)
+                    if not math.isfinite(total_amount) or total_amount > INTAKE_EVENT_INGESTED_AMOUNT_MAX_G:
+                        # Defensa en profundidad: total_amount se calcula en vivo a partir
+                        # de portion_detail (fuera del alcance de esta tabla), pero un
+                        # ingested_amount derivado de él sigue teniendo que respetar el
+                        # límite de cordura de esta tabla (§6.9.2, hallazgo 32/35).
+                        raise ValidationError("total_amount_out_of_range")
+
+                    if value is None:
+                        fraction = 1.0
+                    elif unit is AmountInputUnit.PERCENT:
+                        fraction = value / 100.0
+                    else:
+                        # Única rama restante: gramos, ya validada arriba.
+                        if total_amount <= 0:
+                            # No hay nada que consumir: gramos > 0 no es interpretable.
+                            raise ValidationError("total_amount_not_positive")
+                        fraction = value / total_amount
+                    if not (0.0 <= fraction <= 1.0):
+                        raise ValidationError("fraction_out_of_range")
+
+                    # amount_confidence/quality_confidence/*_uncertainty son proporciones:
+                    # una escala uniforme de todas las porciones no las cambia, así que se
+                    # calculan sobre las porciones servidas, antes de escalarlas (§6.9.1).
+                    update_fields = calculate_macro_summary_metrics(portions)
+                    update_fields["ingested_amount"] = total_amount * fraction
+                    update_payload = IntakeEventUpdate(**update_fields)
+
+                    # 4) Ownership + idempotencia en una sola sentencia (§6.6).
                     confirm_intake_event(
                         connection, user_id=int(user_id), event_id=event_id, commit=False
                     )
-                    # 2) Sobrescribe plate_amount = plate_amount * fracción para todas
+                    # 5) Sobrescribe plate_amount = plate_amount * fracción para todas
                     # las porciones del evento, en una sola sentencia SQL (§6.9.1).
                     scale_event_portion_amounts(
                         connection, event_id=event_id, fraction=fraction, commit=False
                     )
-                    # 3) Resto de escrituras, ya dentro de la misma transacción.
+                    # 6) Resto de escrituras, ya dentro de la misma transacción.
                     update_intake_event(
                         connection, user_id=int(user_id), event_id=event_id, data=update_payload, commit=False
                     )
-                    # 4) Inyección automática: devuelve id o None (evento sin insulina).
+                    # 7) Inyección automática: devuelve id o None (evento sin insulina).
                     create_injection_for_event(
                         connection, user_id=int(user_id), intake_event_id=event_id, commit=False
                     )
             except NotFoundError:
-                return HTMLResponse(status_code=404)
-            except ConflictError:
-                return HTMLResponse(status_code=409)
+                return _error(request, NotFoundError, _EVENT_GONE)
+            except ConflictError as error:
+                if str(error) == "intake_event_without_portions":
+                    return _error(request, 
+                        ConflictError,
+                        "No puedes confirmar una comida sin ingredientes.",
+                    )
+                return _error(request, ConflictError, "Esta comida ya está confirmada.")
             except ValidationError:
-                return HTMLResponse(status_code=422)
-            return _removal_response(connection, int(user_id), status=200)
+                return _error(request, ValidationError, "La cantidad ingerida no es válida.")
+            return _removal_response(connection, int(user_id))

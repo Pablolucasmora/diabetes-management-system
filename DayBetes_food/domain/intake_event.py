@@ -7,13 +7,26 @@ SQL a estas dataclasses vive en DayBetes_food/database/mappers.py, no aquí.
 from dataclasses import dataclass
 from datetime import datetime
 
-from DayBetes_food.domain.constants import InjectionZone, IntakeEventState, MealType
+from DayBetes_food.domain.constants import (
+    AmountInputUnit,
+    InjectionZone,
+    IntakeEventState,
+    MealType,
+)
 
 
 # Longitud máxima de intake_event.name, igual al VARCHAR(255) de la columna
 # (database/schema.py). §7.3 exige declarar la longitud máxima por campo y
 # rechazar el exceso en el boundary en vez de truncarlo (decisión 2026-09-09).
 INTAKE_EVENT_NAME_MAX_LENGTH = 255
+
+# Longitud máxima de intake_event.notes. La columna es TEXT (sin límite
+# físico), así que el límite es de dominio: §7.3 exige declarar una longitud
+# máxima por campo y rechazar el exceso en el boundary con 422, sin truncar.
+# 500 caracteres cubren una nota de contexto de la comida ("comí fuera, ración
+# estimada") sin convertir el campo en texto libre ilimitado
+# (decisión 2026-09-10, hallazgo 44 de audit/audit_intake_event.md).
+INTAKE_EVENT_NOTES_MAX_LENGTH = 500
 
 # Límite superior de cordura para ingested_amount (y, aunque no sea columna,
 # para el total_amount calculado en vivo y la fracción derivada de él, §6.9.1):
@@ -23,6 +36,16 @@ INTAKE_EVENT_NAME_MAX_LENGTH = 255
 # ck_intake_event_ingested_amount de database/schema.py (measurement_conventions.md
 # §6.9.2, decisión 2026-09-10).
 INTAKE_EVENT_INGESTED_AMOUNT_MAX_G = 100000
+
+# Unidades admitidas para la cantidad ingerida que se envía al confirmar un
+# evento: gramos absolutos del plato servido o porcentaje de ese plato. Son
+# los dos miembros de AmountInputUnit (domain/constants.py), el enum central
+# de unidades de measurement_conventions.md §11; aquí solo se declara cuáles
+# de ellos acepta este boundary concreto, sin duplicar sus códigos.
+# Cualquier otro valor se rechaza con 422 (§7.7: sin fallback silencioso),
+# porque interpretarlo como gramos escribe una cantidad clínica falsa e
+# irreversible (hallazgo 47 de audit/audit_intake_event.md).
+INTAKE_EVENT_INGESTED_UNITS = (AmountInputUnit.GRAMS, AmountInputUnit.PERCENT)
 
 
 @dataclass(frozen=True)

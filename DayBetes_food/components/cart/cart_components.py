@@ -20,8 +20,11 @@ from DayBetes_food.components.injection_zone import (
     injection_zone_label,
     asset_busted,
 )
-from DayBetes_food.domain.constants import InjectionZone, MealType
-from DayBetes_food.domain.intake_event import INTAKE_EVENT_NAME_MAX_LENGTH
+from DayBetes_food.domain.constants import AmountInputUnit, InjectionZone, MealType
+from DayBetes_food.domain.intake_event import (
+    INTAKE_EVENT_NAME_MAX_LENGTH,
+    INTAKE_EVENT_NOTES_MAX_LENGTH,
+)
 from DayBetes_food.time_utils import local_now, to_local
 
 
@@ -56,7 +59,6 @@ def _checkbox(
     aria_label: str = "",
     hx_target: str = "",
     hx_swap: str = "",
-    after_request_js: str = "",
 ):
     return Label(
         Input(
@@ -71,7 +73,6 @@ def _checkbox(
             **({"id": input_id} if input_id else {}),
             **({"hx_target": hx_target} if hx_target else {}),
             **({"hx_swap": hx_swap} if hx_swap else {}),
-            **({"hx-on:htmx:after-request": after_request_js} if after_request_js else {}),
         ),
         _check_icon(),
         cls="flex items-center cursor-pointer relative h-5 w-5",
@@ -531,10 +532,51 @@ def IngredientRow(event, grouped_item):
     )
 
 
+def NotesSection(event):
+    """
+    Nota libre del evento, justo encima de "Confirm food".
+
+    Se guarda sola al salir del campo (`change`), igual que el nombre del
+    evento: no hay botón de guardar en el carrito. El `maxlength` es ayuda de
+    UX; el límite real lo comprueba la ruta y devuelve 422 si se excede, sin
+    truncar (§7.3, hallazgo 44 de audit/audit_intake_event.md).
+    """
+    notes_id = f"event_notes_{event.id}"
+    return Form(
+        Label("Notes", cls="text-xs text-gray-600", **{"for": notes_id}),
+        Input(
+            type="text",
+            id=notes_id,
+            name="notes",
+            value=event.notes or "",
+            maxlength=str(INTAKE_EVENT_NOTES_MAX_LENGTH),
+            placeholder="Add a note for this meal",
+            aria_label="Meal notes",
+            cls="web_input border border-white rounded-lg px-2 py-1 text-sm w-full",
+            hx_post=f"/cart/event/{event.id}/notes",
+            hx_trigger="change",
+            hx_target=f"#cart_card_event_{event.id}",
+            hx_swap="outerHTML",
+            onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}",
+            onchange="this.blur();",
+        ),
+        cls="flex flex-col gap-1 w-full",
+    )
+
+
 def ConfirmSection(event, portions):
     ingested_value_id = f"ingested_value_{event.id}"
     return Form(
-        Input(type="hidden", name="ingested_unit", value="g", id=f"ingested_unit_{event.id}"),
+        # La unidad que emite este control sale del enum central de unidades,
+        # el mismo que valida la ruta: no se escriben aquí literales sueltos
+        # (§4.3 de code_conventions.md, §11 de measurement_conventions.md;
+        # hallazgo 47 de audit/audit_intake_event.md).
+        Input(
+            type="hidden",
+            name="ingested_unit",
+            value=AmountInputUnit.GRAMS.value,
+            id=f"ingested_unit_{event.id}",
+        ),
         Input(
             type="number",
             id=ingested_value_id,
@@ -553,11 +595,13 @@ def ConfirmSection(event, portions):
             """
         ),
         Button(
-            "g",
+            AmountInputUnit.GRAMS.value,
             type="button",
             onclick=(
                 f"const hidden=document.getElementById('ingested_unit_{event.id}');"
-                "hidden.value = hidden.value === 'g' ? '%' : 'g';"
+                f"hidden.value = hidden.value === '{AmountInputUnit.GRAMS.value}'"
+                f" ? '{AmountInputUnit.PERCENT.value}'"
+                f" : '{AmountInputUnit.GRAMS.value}';"
                 "this.innerText = hidden.value;"
             ),
             aria_label="Toggle ingested amount unit",
@@ -758,6 +802,7 @@ def CartCard(event, portions):
             *[IngredientRow(event, item) for item in grouped_portions],
             cls="flex flex-col gap-3"
         ),
+        NotesSection(event),
         ConfirmSection(event, portions),
         id=f"cart_card_event_{event.id}",
         cls="""

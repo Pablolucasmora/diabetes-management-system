@@ -652,6 +652,15 @@ columna usan esa misma constante — incluido el `maxlength` del `Input`, que
 es ayuda de UX y no sustituye la comprobación en servidor. Decisión
 2026-09-09.
 
+Una columna `TEXT` no tiene límite físico, pero eso **no la exime** de la
+regla anterior: el límite es entonces una decisión de dominio y se declara
+igual, como constante en el módulo de dominio de la tabla (por ejemplo
+`INTAKE_EVENT_NOTES_MAX_LENGTH`), se comprueba en el boundary y se rechaza el
+exceso con `422` sin truncar. El comentario de la columna en `schema.py`
+indica que el límite es de dominio y dónde vive la constante. Una columna de
+texto libre sin límite declarado es un hallazgo de auditoría, no un caso
+permitido. Decisión 2026-09-10.
+
 ### 7.4 Campos obligatorios, opcionales y parciales
 
 Se distinguen tres estados:

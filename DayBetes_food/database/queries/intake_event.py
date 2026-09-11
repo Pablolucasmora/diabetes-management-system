@@ -504,6 +504,43 @@ def update_intake_event_name(
         raise
 
 
+def update_intake_event_notes(
+    connection, user_id: int, event_id: int, notes: str | None, *, commit: bool = True
+) -> None:
+    """Actualiza las notas de un evento activo del usuario.
+
+    Función propia, igual que update_intake_event_name y por el mismo motivo:
+    IntakeEventUpdate interpreta None como "no tocar", así que borrar una nota
+    (cadena vacía -> NULL, §7.3) no puede hacerse por esa vía.
+    """
+    query = """
+        UPDATE intake_event
+        SET notes = %(notes)s,
+            updated_at = NOW()
+        WHERE id = %(event_id)s
+          AND users_id = %(user_id)s
+          AND deleted_at IS NULL
+        RETURNING id;
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                query,
+                {"event_id": event_id, "user_id": user_id, "notes": notes},
+            )
+            row = cursor.fetchone()
+        if row is None:
+            raise NotFoundError(
+                f"Intake event {event_id} not found or not owned by user {user_id}"
+            )
+        if commit:
+            connection.commit()
+    except Exception:
+        if commit:
+            connection.rollback()
+        raise
+
+
 def delete_intake_event(connection, user_id: int, event_id: int, *, commit: bool = True) -> None:
     """Borrado FÍSICO de un evento en 'planned' del usuario.
 
