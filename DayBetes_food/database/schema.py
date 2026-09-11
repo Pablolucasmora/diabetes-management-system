@@ -5,6 +5,7 @@ dynamically where applicable, ensuring a single source of truth.
 """
 
 from DayBetes_food.domain.constants import IntakeEventState, InsulinType, InjectionZone, MealType, sql_in_list
+from DayBetes_food.domain.meal_type_schedule import AUTO_ASSIGNABLE_MEAL_TYPES
 
 
 class DBSchema:
@@ -131,6 +132,43 @@ class DBSchema:
             CHECK (units IS NULL OR (units * 2) = floor(units * 2)),
         CONSTRAINT ck_insulin_injections_injection_zone
             CHECK (injection_zone IS NULL OR injection_zone IN ({injection_zone_list}))
+    );
+    """
+
+    @classmethod
+    def meal_type_schedule(cls):
+        """
+        Generate meal_type_schedule table SQL. Franjas horarias, por usuario,
+        para el meal_type que se asigna automáticamente a un intake_event
+        creado sin pasar por el carrito (decisión 2026-09-11). Solo existe una
+        fila por (users_id, meal_type) cuando el usuario ha personalizado esa
+        franja desde /settings/meal_type_schedule; si no hay fila, el default
+        vive en código (domain/meal_type_schedule.py:DEFAULT_MEAL_TYPE_WINDOWS),
+        no en la base, para no tener que sembrar filas al dar de alta un
+        usuario nuevo.
+
+        meal_type está restringido a AUTO_ASSIGNABLE_MEAL_TYPES, no al enum
+        MealType completo: snack y rescue son siempre manuales y nunca deben
+        poder tener una franja horaria aquí.
+        """
+        auto_meal_type_list = sql_in_list(AUTO_ASSIGNABLE_MEAL_TYPES)
+        return f"""
+    CREATE TABLE IF NOT EXISTS meal_type_schedule (
+        id SERIAL PRIMARY KEY,
+        users_id INTEGER NOT NULL
+            CONSTRAINT fk_meal_type_schedule_users_id_users
+            REFERENCES users(id) ON DELETE CASCADE,
+        meal_type VARCHAR(50) NOT NULL
+            CONSTRAINT ck_meal_type_schedule_meal_type
+            CHECK (meal_type IN ({auto_meal_type_list})),
+        start_time TIME NOT NULL,
+        end_time TIME NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT uq_meal_type_schedule_users_id_meal_type
+            UNIQUE (users_id, meal_type),
+        CONSTRAINT ck_meal_type_schedule_start_end_distinct
+            CHECK (start_time <> end_time) -- una franja degenerada (start = end) no cubriría ninguna hora; se rechaza al guardar, no se permite persistirla
     );
     """
 

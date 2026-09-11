@@ -250,6 +250,15 @@ def EventHeader(event):
         Form(
             Label("Meal type", cls="text-xs text-gray-600", **{"for": meal_type_id}),
             Select(
+                # Placeholder explícito para el estado "sin elegir": si no se
+                # incluyera, un event.meal_type en None dejaría el <select>
+                # sin ningún <option selected>, y el navegador marca la
+                # primera opción como si fuera la elegida aunque la base
+                # tenga NULL — el usuario confirmaría creyendo un meal_type
+                # que nunca se guardó (§7.14 de code_conventions.md, decisión
+                # 2026-09-11). No debería llegar a mostrarse salvo huecos de
+                # franja horaria o un evento creado antes de esta corrección.
+                Option("— Select —", value="", selected=(event.meal_type is None), disabled=True),
                 *[Option(meal_type.value, value=meal_type.value, selected=(event.meal_type is meal_type)) for meal_type in MealType],
                 id=meal_type_id,
                 name="meal_type",

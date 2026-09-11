@@ -3,7 +3,8 @@
 Un módulo por tabla (`users.py`, `catalog.py`, `manual_intake.py`,
 `recipe.py`, `tags.py`, `linked_tags.py`, `user_favorites.py`,
 `food_brands.py`, `intake_event.py`, `insulin_injections.py`,
-`portion_detail.py`, `auth_sessions.py`, `auth_rate_limits.py`), más
+`portion_detail.py`, `meal_type_schedule.py`, `auth_sessions.py`,
+`auth_rate_limits.py`), más
 `entries.py` para lecturas cross-entity sin tabla dueña y `crud.py` con los
 helpers genéricos compartidos (privados, no se re-exportan aquí).
 
@@ -110,6 +111,11 @@ from DayBetes_food.database.queries.insulin_injections import (
     get_injection_shot_time_at_offset,
     update_insulin_injection,
     delete_insulin_injection,
+)
+from DayBetes_food.database.queries.meal_type_schedule import (
+    get_meal_type_schedule,
+    upsert_meal_type_window,
+    delete_meal_type_window,
 )
 from DayBetes_food.database.queries.auth_sessions import (
     create_auth_session,
