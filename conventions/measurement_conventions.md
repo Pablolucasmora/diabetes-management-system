@@ -345,9 +345,25 @@ Estas métricas no son todavía intervalos estadísticos, desviaciones estándar
 
 Si un evento no tiene ninguna porción con `plate_amount` válido, sus proporciones no pueden calcularse matemáticamente.
 
-La implementación actual conserva `0.0` por compatibilidad para las métricas del evento, pero ese valor no debe interpretarse como “incertidumbre cero” ni como “confianza cero” sin consultar también la existencia de peso válido.
+De las dos alternativas que esta sección dejaba abiertas —impedir la
+confirmación o almacenar `NULL`— se eligió la primera: **un evento sin
+porciones no puede confirmarse**. `POST /cart/event/{id}/confirm` responde
+`409` (transición de estado no permitida, `error_conventions.md` §3.6) y no
+escribe nada, así que a partir de ahora ningún evento `consumed` nace sin peso
+calculable. Decisión 2026-09-10 (hallazgo 34 de
+`audit/audit_intake_event.md`).
 
-La solución futura preferida es impedir confirmar un evento sin cantidades válidas o almacenar `NULL` para métricas no calculables.
+La comprobación es una regla dependiente del estado de la base, así que ocurre
+dentro de la misma transacción que confirma el evento, no antes de abrirla:
+leerla fuera dejaba una ventana en la que otra petición podía añadir una
+porción que se escalaría sin haber contado en `total_amount` (hallazgo 46).
+
+Un `0.0` en las métricas de un evento **histórico** sigue significando "no
+calculable", no "confianza cero" ni "incertidumbre cero": son las filas
+anteriores a esta decisión (40 eventos `consumed` con `amount_confidence = 0`),
+que se conservan como daño consumado y no se reinterpretan. Cualquier lectura
+que compare confianzas debe consultar también si el evento tiene peso válido
+antes de tratar un `0.0` como una medida.
 
 ### 6.9 Momento del cálculo
 

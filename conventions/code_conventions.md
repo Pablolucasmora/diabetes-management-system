@@ -1010,6 +1010,33 @@ El refresco posterior solo ocurre cuando `event.detail.successful` es verdadero.
 - Un evento de éxito no se emite en una respuesta de validación fallida.
 - No mezclar `HX-Redirect`, `HX-Location` y fragmentos intercambiados para el mismo flujo sin una decisión documentada.
 
+#### Contrato HTMX del carrito
+
+El carrito usa **refresco local**: cada acción devuelve el fragmento mínimo
+que ha cambiado, no la página entera (decisión 2026-09-10). Como consecuencia
+el `hx-target` deja de ser uniforme, así que la relación acción → target → swap
+→ fragmento se declara aquí y no solo en el código. Toda acción HTMX del
+carrito exige el header `HX-Request` (`403` si falta) y lleva `hx-target`
+**explícito**: sin él, htmx toma como target el propio elemento que dispara la
+petición y el swap `outerHTML` lo destruye.
+
+| Acción (`POST /cart/event/{id}/…`) | `hx-target` | `hx-swap` | Fragmento de éxito |
+|---|---|---|---|
+| `meal_hour` (hora y fecha) | `#cart_events_list` | `outerHTML` | `cart_events_list(...)` — es la única acción que reordena la lista (`meal_time`) |
+| `name`, `notes`, `meal_type`, `eating_out`, `insulin_dose`, `injection_zone`, `ingredient/…/amount`, `ingredient/…/offset` | `#cart_card_event_{id}` | `outerHTML` | `CartCard(event, portions)` |
+| `ingredient/…/strictly_weighed`, `…/macros_quality`, `…/is_cooked_weight` | `#macros_summary_event_{id}` | `outerHTML` | `Div(MacrosSummary(...), id="macros_summary_event_{id}")` |
+| `delete`, `confirm` | `#cart_card_event_{id}` | `outerHTML` | cuerpo vacío (la tarjeta desaparece) y, si no queda ningún evento planificado, swap OOB de `#cart_body` con el carrito vacío |
+| `archive`, `restore` | página completa del carrito | `outerHTML` | `cart_main(...)`; no están enlazadas desde ninguna tarjeta todavía |
+
+Fragmento de error: ninguno. Las acciones del carrito son ediciones en línea,
+no un formulario de guardado, así que **no** aplican la excepción de `200` +
+fragmento de esta misma sección: conservan el status semántico de su categoría
+y el aviso viaja por el canal de error visible definido en
+`error_conventions.md` §7. Eventos `HX-Trigger`: solo `appError`.
+
+Añadir un botón nuevo al carrito obliga a elegir una de las filas de esta
+tabla o a añadir una nueva; no se deja el `hx-target` implícito.
+
 ### 9.6 Entrada, estados de carga y repetición
 
 La entrada se extrae y valida según la sección 7 antes de crear el `Request` o `Command`. El usuario autenticado procede del contexto de sesión.
