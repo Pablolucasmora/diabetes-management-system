@@ -282,12 +282,27 @@ def meal_type_schedule_row(meal_type, start_time, end_time, is_default: bool):
     """
     row_id = f"meal_type_schedule_row_{meal_type.value}"
     label = _MEAL_TYPE_SCHEDULE_LABELS[meal_type]
-    common_input_cls = "web_input border border-white rounded-lg px-2 py-1 text-sm w-full"
+    common_input_cls = (
+        "web_input border border-white rounded-lg px-1 py-1 md:px-2 lg:px-2 text-sm "
+        "w-full min-w-0 overflow-hidden"
+    )
     return Form(
         Input(type="hidden", name="meal_type", value=meal_type.value),
         Div(
-            P(label, cls="text-sm font-semibold"),
-            P("Custom" if not is_default else "Default", cls="text-[10px] text-gray-500"),
+            Div(
+                P(label, cls="text-sm font-semibold"),
+                P("Custom" if not is_default else "Default", cls="text-[10px] text-gray-500"),
+                cls="flex flex-col px-2",
+            ),
+            Button(
+                "Reset",
+                type="button",
+                cls=f"web_button px-2 py-1 text-xs {'invisible' if is_default else ''}",
+                hx_post="/settings/meal_type_schedule/reset",
+                hx_vals=f'{{"meal_type":"{meal_type.value}"}}',
+                hx_target=f"#{row_id}",
+                hx_swap="outerHTML",
+            ),
             cls="flex items-center justify-between gap-2",
         ),
         Div(
@@ -306,7 +321,7 @@ def meal_type_schedule_row(meal_type, start_time, end_time, is_default: bool):
                     hx_target=f"#{row_id}",
                     hx_swap="outerHTML",
                 ),
-                cls="flex flex-col gap-1",
+                cls="flex flex-col gap-1 min-w-0 px-2",
             ),
             Div(
                 Label("End", cls="text-xs text-gray-600", **{"for": f"{row_id}_end"}),
@@ -323,21 +338,12 @@ def meal_type_schedule_row(meal_type, start_time, end_time, is_default: bool):
                     hx_target=f"#{row_id}",
                     hx_swap="outerHTML",
                 ),
-                cls="flex flex-col gap-1",
+                cls="flex flex-col gap-1 min-w-0 px-3",
             ),
-            Button(
-                "Reset",
-                type="button",
-                cls=f"web_button px-2 py-1 text-xs self-end {'invisible' if is_default else ''}",
-                hx_post="/settings/meal_type_schedule/reset",
-                hx_vals=f'{{"meal_type":"{meal_type.value}"}}',
-                hx_target=f"#{row_id}",
-                hx_swap="outerHTML",
-            ),
-            cls="grid grid-cols-3 gap-2 items-end",
+            cls="grid grid-cols-2 gap-1 md:gap-2 lg:gap-2 items-end",
         ),
         id=row_id,
-        cls="web_container food_entry flex flex-col gap-2",
+        cls="web_container food_entry flex flex-col gap-2 px-2 py-3 md:px-4 lg:px-4",
     )
 
 
