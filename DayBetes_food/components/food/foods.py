@@ -2960,6 +2960,7 @@ def RecipeIngredientsBlock(recipe_id: int, portions: list[dict]):
                 hx_target="#main_content",
                 hx_swap="innerHTML",
                 hx_push_url="true",
+                **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
             ),
             cls="flex items-center justify-between gap-3",
         ),
@@ -3437,6 +3438,19 @@ def RecipeIngredientPickerPage(recipe_entry: dict, foods: list[dict]):
     recipe_id = int(recipe_entry.get("id") or 0)
     return Div(
         Div(
+            Button(
+                "Back to recipe",
+                type="button",
+                cls="web_button self-start px-3 py-1.5 text-sm",
+                hx_get=f"/food/item/recipe/{recipe_id}",
+                hx_target="#main_content",
+                hx_swap="innerHTML",
+                hx_push_url="true",
+                **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
+            ),
+            cls="w-full flex justify-start",
+        ),
+        Div(
             H1(f"Add ingredient to {recipe_entry.get('name') or 'recipe'}", cls="text-xl font-bold text-gray-900"),
             P("Search in your Food and Manual intake lists.", cls="text-sm text-gray-600"),
             cls="flex flex-col gap-1 w-full",
@@ -3445,18 +3459,6 @@ def RecipeIngredientPickerPage(recipe_entry: dict, foods: list[dict]):
         Div(
             RecipeIngredientPickerList(recipe_id, foods),
             id="recipe-ingredient-list",
-            cls="w-full",
-        ),
-        Div(
-            Button(
-                "Back to recipe",
-                type="button",
-                cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-white/85 text-gray-800 border border-gray-300",
-                hx_get=f"/food/item/recipe/{recipe_id}",
-                hx_target="#main_content",
-                hx_swap="innerHTML",
-                hx_push_url="true",
-            ),
             cls="w-full",
         ),
         data_hide_cart="true",

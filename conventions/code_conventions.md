@@ -754,6 +754,8 @@ Si un campo tiene un valor por defecto razonable, ese default se calcula y se es
 
 Corolario para defaults "inteligentes" (inferidos de contexto — hora del día, origen del alimento, receta...): la lógica de inferencia vive donde se crea la fila, no en el componente de presentación; el componente sigue leyendo el campo ya resuelto como cualquier otro dato persistido. Un default inteligente que se calcule solo en el momento de renderizar reproduce el mismo defecto que un `<select>` sin `selected`. Ver domain/meal_type_schedule.py y audit/deuda_pendiente.md (sección `intake_event`, H13) para el primer caso real (decisión 2026-09-11).
 
+Esta sección cubre los **defaults**. La regla más general —que todo estado visible, tenga default o no, coincida exactamente con lo que se guardaría— está en `conventions/frontend_conventions.md` sección 6 (decisión 2026-09-18), e incluye el caso de los campos de tres estados (`NULL` / `True` / `False`), que no pueden representarse con un checkbox de dos posiciones.
+
 ## 8. Configuración, logging y servicios externos
 
 Esta sección define cómo se configura la aplicación, cómo se registran los eventos operativos y cómo se integran fuentes externas.
