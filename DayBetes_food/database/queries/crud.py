@@ -40,6 +40,7 @@ _ALLOWED_UPDATE_TABLES = {
     "manual_intake",
     "recipe",
     "intake_event",
+    "intake_plate",
     "portion_detail",
 }
 

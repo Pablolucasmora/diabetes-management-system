@@ -151,6 +151,102 @@ La **cota inferior de `amount` está pendiente de decisión** (`audit/feedback_p
 
 - **No se recalcula nunca** cuando cambia el `meal_time` del evento. El offset es un dato propio de la porción, no una función del `meal_time`: el análisis obtiene la hora real restándolo al `meal_time` vigente en ese momento, de modo que si la hora del evento cambia, el resultado se mueve con ella.
 - Admite valores negativos y positivos. Rango: `-300 <= offset_minutes <= 300`, con `CHECK`. Es una cota de cordura para que un valor corrupto no pase por plausible, no una frontera de negocio.
+- El valor de cada porción **se hereda de la tanda** a la que se añade (§4.6.2), pero una vez escrito es independiente de ella: `intake_plate.offset_minutes` es una plantilla, no un dato clínico.
+
+### 4.6 Tandas (platos) dentro de un evento (decisión 2026-09-19)
+
+Un `intake_event` es **una sola unidad glucémica**: un tipo de comida, un `meal_time`, normalmente un bolo. Cuando esa comida se come en varios momentos —primer plato, segundo, postre media hora después— **no se parte en varios eventos**: se subdivide en **tandas** (platos) dentro del mismo evento, para que todos los offsets sigan midiéndose contra el mismo `meal_time`.
+
+#### 4.6.1 Modelo
+
+```text
+intake_plate
+  id
+  intake_event_id  -> intake_event  ON DELETE CASCADE
+  name             VARCHAR(255)   -- NULL = nombre derivado (4.6.3)
+  offset_minutes   INTEGER        -- plantilla heredada por las filas nuevas (4.6.2)
+  created_at / updated_at
+
+portion_detail
+  plate_id         -> intake_plate  ON DELETE RESTRICT
+                      NOT NULL cuando intake_event_id NOT NULL
+                      NULL para los destinos fridge y recipe
+```
+
+Una tanda pertenece a un evento y solo existe dentro de él. Un evento sin alimentos no tiene ninguna tanda: la primera se crea implícitamente al añadir el primer alimento.
+
+La tabla **no tiene columna de posición**. El orden de las tandas dentro de un evento es `ORDER BY offset_minutes NULLS LAST, id`: la de offset menor primero, y a igualdad de offset la creada antes. El orden es por tanto **cronológico real y derivado del dato**, no una etiqueta manual que pueda contradecirlo; reordenar las tandas se hace cambiando el offset, no arrastrándolas.
+
+#### 4.6.2 Qué offset es el válido
+
+`portion_detail.offset_minutes` (§4.5) sigue siendo **el único valor autoritativo**: es el que describe cuándo se comió ese alimento concreto y el que usa el análisis. Conserva la semántica de la decisión del 2026-09-18 — entero literal, fijado al insertar, nunca recalculado, rango `-300..300`.
+
+`intake_plate.offset_minutes` **no es un dato clínico**, es una plantilla:
+
+- Al insertar una porción en una tanda, la porción **hereda** el offset de la tanda. Ese es el mecanismo que elimina la fricción original: se fija el offset una vez por tanda y los ingredientes entran ya con el valor correcto, en vez de corregirlos uno a uno.
+- Después de heredarlo, **fila y tanda son independientes**. Editar el offset de una porción concreta no toca la tanda (caso legítimo: un ingrediente del plato comido antes o después que el resto), y editar el offset de la tanda **no** reescribe sus filas.
+- La propagación a las filas existentes es una acción **explícita** del usuario (`Apply all`, `frontend_conventions.md` §7): fija el offset de la tanda y lo escribe en todas sus porciones.
+- Si se borrase `intake_plate.offset_minutes`, no se perdería ningún dato del estudio, solo la comodidad. Esa es la prueba de que no es un dato de la comida.
+
+La tanda creada implícitamente con el primer alimento nace con el offset autocalculado de ese alimento (diferencia entre `meal_time` y el instante de añadirlo, §4.5).
+
+#### 4.6.3 Nombre de la tanda
+
+`name` nulo significa **nombre derivado**, calculado en el render a partir de los ingredientes de la tanda por orden de inserción:
+
+| Ingredientes en la tanda | Nombre mostrado |
+|---|---|
+| 0 | `Empty plate` |
+| 1 | la primera palabra de su nombre (`Arroz`) |
+| 2 o más | la primera palabra de los dos primeros, separadas por coma (`Arroz, Pechuga`) |
+
+Se toma la **primera palabra** de cada nombre, no el nombre completo: `Arroz basmati Hacendado` aporta `Arroz`. El objetivo es un título corto y reconocible al releer el histórico, que es también la razón de preferir esto a un ordinal puro (`First`, `Second`): describe qué se comió, no en qué posición estaba.
+
+Por el mismo motivo, la tanda vacía **no se llama `First`** (corrige la primera redacción de esta sección, 2026-09-19): una tanda sin ingredientes puede ser la segunda o la tercera del evento, así que un ordinal sería falso. `Empty plate` describe lo único que se sabe de ella.
+
+El único literal del nombre derivado —el de la tanda vacía— va **en inglés**, como el resto de la interfaz (`frontend_conventions.md` §7.12). Los otros dos casos no son literales: salen del nombre del alimento, en el idioma en que se guardó.
+
+El nombre derivado **no se guarda** y se recalcula solo: cambia al añadir, borrar o mover ingredientes. En cuanto el usuario escribe un nombre, `name` deja de ser nulo y el nombre queda congelado; borrarlo devuelve la tanda al nombre derivado.
+
+#### 4.6.4 Unicidad de un ingrediente dentro de una tanda
+
+La clave única de la decisión del 2026-09-18 pasa de `(intake_event_id, origen, origen_id, cooking, conservation, final_state)` a:
+
+```text
+UNIQUE NULLS NOT DISTINCT (plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state)
+WHERE plate_id IS NOT NULL
+```
+
+`plate_id` sustituye a `intake_event_id` porque la tanda ya determina el evento. Sin este cambio, el mismo pan en el primer plato y en el segundo se fusionaría en una sola fila. El resto de la regla se mantiene: añadir un alimento que ya está **en esa tanda** con los tres atributos de preparación iguales suma las cantidades en la fila existente; si alguno difiere, se crea una fila aparte.
+
+**Es un índice único parcial, no un constraint de tabla, y el `WHERE` no es opcional.** `plate_id` es nulo en las porciones con destino `recipe` y `fridge`, y con `NULLS NOT DISTINCT` esos nulos se consideran iguales entre sí: sin el filtro, el mismo alimento con la misma preparación en **dos recetas distintas** chocaría como si fuera un duplicado. La unicidad es dentro de la tanda y solo aplica a las porciones que tienen tanda.
+
+**La fusión es real en la base, no solo visual** (decisión 2026-09-19). Antes de esta regla, añadir dos veces el mismo alimento insertaba dos filas y `group_portions` las sumaba solo al pintar; la fusión física ocurría únicamente si el usuario editaba la cantidad desde el carrito. A partir de aquí, la inserción fusiona en la propia tabla, para que el análisis no tenga que deduplicar.
+
+**Qué ocurre con los campos que no están en la clave al fusionar** (decisión 2026-09-19, cierra el punto que el 2026-09-18 dejaba abierto):
+
+- `amount` **se suma**: es el sentido mismo de la fusión.
+- `strictly_weighed`, `macros_quality` e `is_cooked_weight` **conservan el valor de la fila existente**. Gana lo que ya estaba: la fila lleva ahí desde la primera adición y su calidad de dato ya está afirmada; una adición posterior no sabe más sobre ella.
+- `offset_minutes` no necesita regla: dentro de una misma tanda el offset heredado ya coincide.
+
+La misma regla se aplicó retroactivamente al histórico en la migración (§4.6.6).
+
+#### 4.6.5 Ciclo de vida
+
+- **Borrar el evento** borra sus tandas (`ON DELETE CASCADE`) y, por la cascada ya existente de `portion_detail.intake_event_id`, sus porciones.
+- **Borrar una tanda que tiene porciones está bloqueado** (`ON DELETE RESTRICT`). La interfaz obliga a mover o borrar sus ingredientes antes. Es deliberado: arrastrar las filas a otra tanda automáticamente haría que un click se llevara por delante la mitad de la comida sin que se note.
+- **Mover un ingrediente de tanda** es un `UPDATE` de `plate_id`. No modifica su `offset_minutes`: el offset heredado en su día sigue siendo lo que se comió, y si debe cambiar, se cambia explícitamente.
+- **Importar una receta a un evento** crea una **tanda nueva** con los ingredientes de la receta dentro.
+
+#### 4.6.6 Migración de los datos existentes
+
+Cada evento existente pasa a tener **una sola tanda**, con `name` nulo (para que el nombre derivado se calcule solo desde sus ingredientes) y `offset_minutes` igual al **menor** de los offsets de sus porciones. Todas sus filas de `portion_detail` reciben ese `plate_id`. No afirma nada nuevo sobre el histórico: agrupa en una tanda lo que hoy ya es un único bloque de ingredientes.
+
+La columna `portion_detail.split_group_id` se elimina en la misma migración (`DROP COLUMN`, hallazgo 16 de `audit/audit_portion_detail.md`): era DDL aplicado a mano, sin ningún valor guardado y sin relación con este diseño.
+
+**Consolidación de los duplicados históricos.** La clave única de §4.6.4 no puede crearse sobre datos que ya la violan (§12.7 de `code_conventions.md`). Verificado el 2026-09-19 sobre la base real: 11 grupos, 24 filas, todos dentro de un mismo evento y clones exactos entre sí —misma cantidad, mismo offset, mismos tres booleanos, `plate_amount` nulo en todas—, producto de añadir el mismo alimento dos o tres veces sin editar después la cantidad. Se consolidan con la misma regla de fusión de §4.6.4: una fila por grupo, con la suma de las cantidades y el resto de campos de la **fila más antigua**. El total de cada comida no cambia, de modo que `ingested_amount`, los macros y las confianzas de los eventos ya confirmados siguen siendo válidos sin recalcularlos.
+
+`plate_amount` se trata aparte porque en el histórico es nulo y la lectura viva usa `COALESCE(plate_amount, amount_g)`: si todas las filas del grupo lo tienen nulo, la fila consolidada lo conserva nulo; si alguna tiene valor, se guarda la suma de `COALESCE(plate_amount, amount_g)`. En los dos casos la cantidad que el código calcula hoy es idéntica antes y después.
 
 ## 5. Información nutricional
 

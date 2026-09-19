@@ -8,12 +8,21 @@ import math
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.time_utils import local_naive_to_utc_aware, local_today, to_local, APP_TIMEZONE
 from DayBetes_food.database.queries import (
-    consolidate_event_portion_group_amount,
-    delete_event_portion_group,
+    consolidate_plate_portion_group_amount,
+    delete_plate_portion_group,
     get_portion_detail_by_event,
     get_portion_detail_by_events,
+    move_portion_group_to_plate,
     scale_event_portion_amounts,
-    update_event_portion_group_field,
+    update_plate_portion_group_field,
+    apply_plate_offset_to_portions,
+    create_intake_plate,
+    delete_intake_plate,
+    get_intake_plate,
+    list_intake_plates,
+    list_intake_plates_by_events,
+    update_intake_plate,
+    update_intake_plate_name,
     set_injection_zone,
     create_injection_for_event,
     confirm_intake_event,
@@ -39,6 +48,13 @@ from DayBetes_food.domain.intake_event import (
     INTAKE_EVENT_NAME_MAX_LENGTH,
     INTAKE_EVENT_NOTES_MAX_LENGTH,
     IntakeEventUpdate,
+)
+from DayBetes_food.domain.intake_plate import (
+    INTAKE_PLATE_NAME_MAX_LENGTH,
+    INTAKE_PLATE_OFFSET_MAX_MINUTES,
+    INTAKE_PLATE_OFFSET_MIN_MINUTES,
+    IntakePlateCreate,
+    IntakePlateUpdate,
 )
 from DayBetes_food.http_errors import app_error_headers
 from DayBetes_food.errors import (
@@ -109,15 +125,20 @@ def _load_events_and_portions(connection, user_id: int):
     portions_by_event = {event_id: [] for event_id in event_ids}
     for portion in all_portions:
         portions_by_event.setdefault(portion["intake_event_id"], []).append(portion)
-    return events, portions_by_event
+    # Las tandas de todos los eventos en una sola consulta, ya ordenadas por la
+    # query (§4.6.1); aquí solo se reparten por evento, sin reordenar.
+    plates_by_event = {event_id: [] for event_id in event_ids}
+    for plate in list_intake_plates_by_events(connection, event_ids):
+        plates_by_event.setdefault(plate.intake_event_id, []).append(plate)
+    return events, portions_by_event, plates_by_event
 
 
 def _load_cart_main(connection):
     user_id = get_current_user_id()
     if not user_id:
         return _no_user_cart()
-    events, portions_by_event = _load_events_and_portions(connection, int(user_id))
-    return cart_main(events, portions_by_event)
+    events, portions_by_event, plates_by_event = _load_events_and_portions(connection, int(user_id))
+    return cart_main(events, portions_by_event, plates_by_event)
 
 
 def _cart_response(connection):
@@ -138,8 +159,8 @@ def _events_list_response(connection, user_id: int):
     Refresca solo #cart_events_list. Es el target de meal_hour, la única
     acción que puede reordenar la lista (orden `meal_time DESC`).
     """
-    events, portions_by_event = _load_events_and_portions(connection, user_id)
-    return render_fragment(cart_events_list(events, portions_by_event))
+    events, portions_by_event, plates_by_event = _load_events_and_portions(connection, user_id)
+    return render_fragment(cart_events_list(events, portions_by_event, plates_by_event))
 
 
 def _card_response(request: Request, connection, user_id: int, event_id: int):
@@ -152,7 +173,28 @@ def _card_response(request: Request, connection, user_id: int, event_id: int):
     if not event:
         return _error(request, NotFoundError, "Esta comida ya no existe.")
     portions = get_portion_detail_by_event(connection, event_id)
-    return render_fragment(CartCard(event, portions))
+    plates = list_intake_plates(connection, event_id)
+    return render_fragment(CartCard(event, portions, plates))
+
+
+def _plate_event_id(connection, user_id: int, plate_id: int, *, require_planned: bool = True) -> int:
+    """Resuelve la tanda a su evento comprobando la propiedad en el SQL (§5.3).
+
+    Las rutas de ingrediente viajan por `plate_id`, así que el evento nunca
+    viene de la URL: se deriva de la tanda, que `get_intake_plate` valida
+    contra el usuario dueño del evento.
+
+    `require_planned=False` para las acciones que también son válidas sobre un
+    evento ya consumido (measurement_conventions.md §6.9.3).
+
+    Raises:
+        NotFoundError: la tanda no existe o no es del usuario.
+        ConflictError: se exigía 'planned' y el evento ya está confirmado.
+    """
+    plate = get_intake_plate(connection, user_id, plate_id)
+    if require_planned:
+        get_planned_intake_event(connection, user_id, plate.intake_event_id)
+    return plate.intake_event_id
 
 
 def _removal_response(connection, user_id: int):
@@ -177,6 +219,28 @@ def _to_float(value: str):
 
     normalized = (value or "").strip().replace(",", ".")
     return float(normalized)
+
+
+def _parse_offset_minutes(raw_value: str) -> int:
+    """Valida un offset en minutos en el boundary (§7.5).
+
+    Entero y dentro de la cota de cordura de measurement_conventions.md §4.5
+    (`-300..300`), la misma que declara el CHECK de `intake_plate`: escribir
+    fuera de rango daría un error de base de datos en vez de un 422.
+
+    Raises:
+        ValidationError: no es entero o se sale del rango.
+    """
+    try:
+        value = int((raw_value or "").strip())
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("El offset debe ser un número entero de minutos.") from exc
+    if not (INTAKE_PLATE_OFFSET_MIN_MINUTES <= value <= INTAKE_PLATE_OFFSET_MAX_MINUTES):
+        raise ValidationError(
+            f"El offset debe estar entre {INTAKE_PLATE_OFFSET_MIN_MINUTES} y "
+            f"{INTAKE_PLATE_OFFSET_MAX_MINUTES} minutos."
+        )
+    return value
 
 
 def _parse_strict_bool(raw_value: str) -> bool:
@@ -252,6 +316,9 @@ _NO_SESSION = "Tu sesión ha caducado. Vuelve a iniciar sesión."
 _EVENT_GONE = "Esta comida ya no existe."
 _EVENT_NOT_PLANNED = "Esta comida ya no está en el carrito."
 _INGREDIENT_FAILED = "No se ha podido actualizar el ingrediente."
+_PLATE_GONE = "Este plato ya no existe."
+_PLATE_NOT_EMPTY = "Mueve o borra sus ingredientes antes de eliminar el plato."
+_PLATE_FAILED = "No se ha podido actualizar el plato."
 
 
 def setup_cart_routes(rt):
@@ -559,8 +626,8 @@ def setup_cart_routes(rt):
                 return _error(request, ValidationError, "Esa zona de inyección no existe.")
             return _card_response(request, connection, int(user_id), event_id)
 
-    @rt("/cart/event/{event_id}/ingredient/{origin}/{origin_id}/amount")
-    def post(request: Request, event_id: int, origin: str, origin_id: int, amount_g: str = ""):
+    @rt("/cart/plate/{plate_id}/ingredient/{origin}/{origin_id}/amount")
+    def post(request: Request, plate_id: int, origin: str, origin_id: int, amount_g: str = ""):
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
@@ -574,44 +641,95 @@ def setup_cart_routes(rt):
 
         with get_connection() as connection:
             try:
-                get_planned_intake_event(connection, int(user_id), event_id)
+                event_id = _plate_event_id(connection, int(user_id), plate_id)
             except NotFoundError:
-                return _error(request, NotFoundError, _EVENT_GONE)
+                return _error(request, NotFoundError, _PLATE_GONE)
             except ConflictError:
                 return _error(request, ConflictError, _EVENT_NOT_PLANNED)
             if amount <= 0:
-                ok = delete_event_portion_group(connection, event_id, origin, origin_id)
+                ok = delete_plate_portion_group(connection, plate_id, origin, origin_id)
             else:
-                ok = consolidate_event_portion_group_amount(connection, event_id, origin, origin_id, amount)
+                ok = consolidate_plate_portion_group_amount(connection, plate_id, origin, origin_id, amount)
             if not ok:
                 return _error(request, MalformedRequestError, _INGREDIENT_FAILED)
             return _card_response(request, connection, int(user_id), event_id)
 
-    @rt("/cart/event/{event_id}/ingredient/{origin}/{origin_id}/offset")
-    def post(request: Request, event_id: int, origin: str, origin_id: int, offset_minutes: str = ""):
+    @rt("/cart/plate/{plate_id}/ingredient/{origin}/{origin_id}/offset")
+    def post(request: Request, plate_id: int, origin: str, origin_id: int, offset_minutes: str = ""):
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
         if not user_id:
             return _error(request, AuthenticationError, _NO_SESSION)
         try:
-            value = int(offset_minutes)
-        except (TypeError, ValueError):
-            # Offset no entero: validation_error → 422.
-            return _error(request, ValidationError, "El offset debe ser un número entero de minutos.")
+            value = _parse_offset_minutes(offset_minutes)
+        except ValidationError as error:
+            return _error(request, ValidationError, str(error))
         with get_connection() as connection:
             try:
-                get_planned_intake_event(connection, int(user_id), event_id)
+                event_id = _plate_event_id(connection, int(user_id), plate_id)
             except NotFoundError:
-                return _error(request, NotFoundError, _EVENT_GONE)
+                return _error(request, NotFoundError, _PLATE_GONE)
             except ConflictError:
                 return _error(request, ConflictError, _EVENT_NOT_PLANNED)
-            ok = update_event_portion_group_field(connection, event_id, origin, origin_id, "offset_minutes", value)
+            ok = update_plate_portion_group_field(connection, plate_id, origin, origin_id, "offset_minutes", value)
             if not ok:
                 return _error(request, MalformedRequestError, _INGREDIENT_FAILED)
             return _card_response(request, connection, int(user_id), event_id)
 
-    def _portion_flag_route(request: Request, event_id: int, origin: str, origin_id: int, field_name: str, raw_value: str, label: str):
+    @rt("/cart/plate/{plate_id}/ingredient/{origin}/{origin_id}/move")
+    def post(request: Request, plate_id: int, origin: str, origin_id: int, target_plate_id: str = ""):
+        """Mueve un ingrediente a otra tanda del mismo evento, o a una nueva.
+
+        `target_plate_id` vacío o "0" es la opción `+ New plate` del selector
+        (frontend_conventions.md §7.5): la tanda se crea en el acto, hereda el
+        offset de la tanda de origen y recibe el ingrediente.
+        """
+        if request.headers.get("HX-Request") != "true":
+            return _error(request, AuthorizationError, _NOT_HTMX)
+        user_id = get_current_user_id()
+        if not user_id:
+            return _error(request, AuthenticationError, _NO_SESSION)
+
+        with get_connection() as connection:
+            try:
+                source_plate = get_intake_plate(connection, int(user_id), plate_id)
+                get_planned_intake_event(connection, int(user_id), source_plate.intake_event_id)
+            except NotFoundError:
+                return _error(request, NotFoundError, _PLATE_GONE)
+            except ConflictError:
+                return _error(request, ConflictError, _EVENT_NOT_PLANNED)
+
+            raw_target = (target_plate_id or "").strip()
+            try:
+                with connection.transaction():
+                    if raw_target.isdigit() and int(raw_target) != 0:
+                        target = get_intake_plate(connection, int(user_id), int(raw_target))
+                        if target.intake_event_id != source_plate.intake_event_id:
+                            raise NotFoundError("plate_not_in_event")
+                        target_id = target.id
+                    else:
+                        target_id = create_intake_plate(
+                            connection,
+                            IntakePlateCreate(
+                                intake_event_id=source_plate.intake_event_id,
+                                offset_minutes=source_plate.offset_minutes,
+                            ),
+                            commit=False,
+                        )
+                    if not move_portion_group_to_plate(
+                        connection, plate_id, origin, origin_id, target_id, commit=False
+                    ):
+                        raise MalformedRequestError("portion_group_not_moved")
+            except NotFoundError:
+                return _error(request, NotFoundError, _PLATE_GONE)
+            except ValidationError:
+                return _error(request, ValidationError, _INGREDIENT_FAILED)
+            except MalformedRequestError:
+                return _error(request, MalformedRequestError, _INGREDIENT_FAILED)
+            return _card_response(request, connection, int(user_id), source_plate.intake_event_id)
+
+    def _portion_flag_route(request: Request, plate_id: int, origin: str, origin_id: int, field_name: str, raw_value: str, label: str):
         """
         Cuerpo común de los tres booleanos de porción (strictly_weighed,
         macros_quality, is_cooked_weight): mismo contrato HTMX
@@ -636,6 +754,12 @@ def setup_cart_routes(rt):
         except ValidationError:
             return _error(request, ValidationError, f"No se ha entendido la casilla '{label}'.")
         with get_connection() as connection:
+            try:
+                # require_planned=False: un evento consumido sigue siendo
+                # editable en estos tres campos (decisión 2026-09-10).
+                event_id = _plate_event_id(connection, int(user_id), plate_id, require_planned=False)
+            except NotFoundError:
+                return _error(request, NotFoundError, _PLATE_GONE)
             event = get_intake_event(connection, int(user_id), event_id)
             if not event:
                 return _error(request, NotFoundError, _EVENT_GONE)
@@ -647,8 +771,8 @@ def setup_cart_routes(rt):
                 # tocar todavía —lo escribe el confirm—, así que la
                 # transacción envuelve solo la escritura del flag.
                 with connection.transaction():
-                    ok = update_event_portion_group_field(
-                        connection, event_id, origin, origin_id, field_name, value, commit=False
+                    ok = update_plate_portion_group_field(
+                        connection, plate_id, origin, origin_id, field_name, value, commit=False
                     )
                     if not ok:
                         raise MalformedRequestError("portion_group_not_updated")
@@ -667,23 +791,141 @@ def setup_cart_routes(rt):
                     return _error(request, NotFoundError, _EVENT_GONE)
             return render_fragment(Div(MacrosSummary(event, portions), id=f"macros_summary_event_{event_id}"))
 
-    @rt("/cart/event/{event_id}/ingredient/{origin}/{origin_id}/strictly_weighed")
-    def post(request: Request, event_id: int, origin: str, origin_id: int, strictly_weighed: str = ""):
+    @rt("/cart/plate/{plate_id}/ingredient/{origin}/{origin_id}/strictly_weighed")
+    def post(request: Request, plate_id: int, origin: str, origin_id: int, strictly_weighed: str = ""):
         return _portion_flag_route(
-            request, event_id, origin, origin_id, "strictly_weighed", strictly_weighed, "Strictly weighted"
+            request, plate_id, origin, origin_id, "strictly_weighed", strictly_weighed, "Strictly weighted"
         )
 
-    @rt("/cart/event/{event_id}/ingredient/{origin}/{origin_id}/macros_quality")
-    def post(request: Request, event_id: int, origin: str, origin_id: int, macros_quality: str = ""):
+    @rt("/cart/plate/{plate_id}/ingredient/{origin}/{origin_id}/macros_quality")
+    def post(request: Request, plate_id: int, origin: str, origin_id: int, macros_quality: str = ""):
         return _portion_flag_route(
-            request, event_id, origin, origin_id, "macros_quality", macros_quality, "Macros quality"
+            request, plate_id, origin, origin_id, "macros_quality", macros_quality, "Macros quality"
         )
 
-    @rt("/cart/event/{event_id}/ingredient/{origin}/{origin_id}/is_cooked_weight")
-    def post(request: Request, event_id: int, origin: str, origin_id: int, is_cooked_weight: str = ""):
+    @rt("/cart/plate/{plate_id}/ingredient/{origin}/{origin_id}/is_cooked_weight")
+    def post(request: Request, plate_id: int, origin: str, origin_id: int, is_cooked_weight: str = ""):
         return _portion_flag_route(
-            request, event_id, origin, origin_id, "is_cooked_weight", is_cooked_weight, "Cooked weight"
+            request, plate_id, origin, origin_id, "is_cooked_weight", is_cooked_weight, "Cooked weight"
         )
+
+    @rt("/cart/event/{event_id}/plate")
+    def post(request: Request, event_id: int):
+        """`+ Add plate`: crea una tanda vacía al final del evento.
+
+        Nace sin nombre —lo derivará de sus ingredientes (§4.6.3)— y sin
+        offset: lo hereda del que el usuario escriba en su cabecera antes de
+        añadir nada, o queda en NULL si añade primero y lo ajusta después.
+        """
+        if request.headers.get("HX-Request") != "true":
+            return _error(request, AuthorizationError, _NOT_HTMX)
+        user_id = get_current_user_id()
+        if not user_id:
+            return _error(request, AuthenticationError, _NO_SESSION)
+        with get_connection() as connection:
+            try:
+                get_planned_intake_event(connection, int(user_id), event_id)
+            except NotFoundError:
+                return _error(request, NotFoundError, _EVENT_GONE)
+            except ConflictError:
+                return _error(request, ConflictError, _EVENT_NOT_PLANNED)
+            create_intake_plate(connection, IntakePlateCreate(intake_event_id=event_id))
+            return _card_response(request, connection, int(user_id), event_id)
+
+    @rt("/cart/plate/{plate_id}/name")
+    def post(request: Request, plate_id: int, name: str = ""):
+        """Nombre propio de la tanda. Vacío lo borra y vuelve al derivado (§4.6.3)."""
+        if request.headers.get("HX-Request") != "true":
+            return _error(request, AuthorizationError, _NOT_HTMX)
+        user_id = get_current_user_id()
+        if not user_id:
+            return _error(request, AuthenticationError, _NO_SESSION)
+        clean_name = (name or "").strip()
+        if len(clean_name) > INTAKE_PLATE_NAME_MAX_LENGTH:
+            # §7.3: el exceso se rechaza con 422, nunca se trunca.
+            return _error(
+                request,
+                ValidationError,
+                f"El nombre del plato no puede superar {INTAKE_PLATE_NAME_MAX_LENGTH} caracteres.",
+            )
+        with get_connection() as connection:
+            try:
+                event_id = _plate_event_id(connection, int(user_id), plate_id, require_planned=False)
+                update_intake_plate_name(connection, plate_id, clean_name or None)
+            except NotFoundError:
+                return _error(request, NotFoundError, _PLATE_GONE)
+            return _card_response(request, connection, int(user_id), event_id)
+
+    @rt("/cart/plate/{plate_id}/offset")
+    def post(request: Request, plate_id: int, offset_minutes: str = ""):
+        """Offset plantilla de la tanda.
+
+        No reescribe sus porciones: eso es `Apply all` (§4.6.2). Solo cambia lo
+        que heredarán los alimentos que se añadan después.
+        """
+        if request.headers.get("HX-Request") != "true":
+            return _error(request, AuthorizationError, _NOT_HTMX)
+        user_id = get_current_user_id()
+        if not user_id:
+            return _error(request, AuthenticationError, _NO_SESSION)
+        try:
+            value = _parse_offset_minutes(offset_minutes)
+        except ValidationError as error:
+            return _error(request, ValidationError, str(error))
+        with get_connection() as connection:
+            try:
+                event_id = _plate_event_id(connection, int(user_id), plate_id, require_planned=False)
+                update_intake_plate(connection, plate_id, IntakePlateUpdate(offset_minutes=value))
+            except NotFoundError:
+                return _error(request, NotFoundError, _PLATE_GONE)
+            return _card_response(request, connection, int(user_id), event_id)
+
+    @rt("/cart/plate/{plate_id}/apply_offset")
+    def post(request: Request, plate_id: int, offset_minutes: str = ""):
+        """`Apply all`: fija el offset de la tanda y lo propaga a sus porciones.
+
+        Mismo endpoint para el botón de la cabecera y para el de una fila
+        (frontend_conventions.md §7.4): en los dos casos el valor enviado pasa a
+        ser el de la tanda y el de todas sus filas.
+        """
+        if request.headers.get("HX-Request") != "true":
+            return _error(request, AuthorizationError, _NOT_HTMX)
+        user_id = get_current_user_id()
+        if not user_id:
+            return _error(request, AuthenticationError, _NO_SESSION)
+        try:
+            value = _parse_offset_minutes(offset_minutes)
+        except ValidationError as error:
+            return _error(request, ValidationError, str(error))
+        with get_connection() as connection:
+            try:
+                event_id = _plate_event_id(connection, int(user_id), plate_id, require_planned=False)
+            except NotFoundError:
+                return _error(request, NotFoundError, _PLATE_GONE)
+            if not apply_plate_offset_to_portions(connection, plate_id, value):
+                return _error(request, MalformedRequestError, _PLATE_FAILED)
+            return _card_response(request, connection, int(user_id), event_id)
+
+    @rt("/cart/plate/{plate_id}/delete")
+    def post(request: Request, plate_id: int):
+        """Borra una tanda vacía. Con ingredientes dentro responde 409 (§4.6.5)."""
+        if request.headers.get("HX-Request") != "true":
+            return _error(request, AuthorizationError, _NOT_HTMX)
+        user_id = get_current_user_id()
+        if not user_id:
+            return _error(request, AuthenticationError, _NO_SESSION)
+        with get_connection() as connection:
+            try:
+                # require_planned=False para que el único ConflictError posible
+                # sea el RESTRICT de una tanda con ingredientes, y no se
+                # confunda con "el evento ya no está en el carrito".
+                event_id = _plate_event_id(connection, int(user_id), plate_id, require_planned=False)
+                delete_intake_plate(connection, plate_id)
+            except NotFoundError:
+                return _error(request, NotFoundError, _PLATE_GONE)
+            except ConflictError:
+                return _error(request, ConflictError, _PLATE_NOT_EMPTY)
+            return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/confirm")
     def post(

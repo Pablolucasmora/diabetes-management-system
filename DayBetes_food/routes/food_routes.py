@@ -9,7 +9,7 @@ import unicodedata
 from urllib import request as urlrequest
 from urllib.parse import urlencode
 from DayBetes_food.auth.context import get_current_user_id
-from DayBetes_food.components.food.food_main import food_main
+from DayBetes_food.components.food.food_main import food_main, plate_selector_options
 from DayBetes_food.components.ui import render_fragment, render_page
 from DayBetes_food.database.queries import (
     add_catalog_item,
@@ -55,6 +55,9 @@ from DayBetes_food.database.queries import (
     get_planned_intake_event,
     list_planned_intake_events,
     get_meal_type_schedule,
+    create_intake_plate,
+    ensure_default_plate,
+    get_intake_plate,
 )
 from DayBetes_food.components.food.foods import (
     GLYCEMIC_INDEX_OPTIONS,
@@ -74,10 +77,12 @@ from DayBetes_food.components.food.foods import (
     RecipeIngredientPickerList,
     RecipeIngredientPickerPage,
     RecipeMacrosGrid,
+    PlateSelector,
 )
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.domain.constants import IntakeEventState, MealType
 from DayBetes_food.domain.intake_event import INTAKE_EVENT_NAME_MAX_LENGTH, IntakeEventCreate
+from DayBetes_food.domain.intake_plate import IntakePlateCreate
 from DayBetes_food.domain.meal_type_schedule import resolve_meal_type_for_time
 from DayBetes_food.time_utils import local_naive_to_utc_aware, local_now, local_today, utc_now
 from DayBetes_food.errors import NotFoundError, ConflictError
@@ -98,6 +103,49 @@ def _default_meal_type_now(connection, user_id: int) -> MealType | None:
     """
     overrides = get_meal_type_schedule(connection, user_id)
     return resolve_meal_type_for_time(local_now().time(), overrides)
+
+
+def _event_auto_offset_minutes(event_data) -> int:
+    """Offset autocalculado de una tanda nueva (measurement_conventions.md §4.5).
+
+    Diferencia en minutos entre el `meal_time` del evento y este instante. Es
+    el valor con el que nace la tanda; a partir de ahí lo heredan sus
+    porciones, que es lo que evita corregirlo ingrediente a ingrediente
+    (§4.6.2).
+    """
+    if not event_data or not event_data.meal_time:
+        return 0
+    delta = utc_now() - event_data.meal_time
+    return int(delta.total_seconds() // 60)
+
+
+def _resolve_event_plate(connection, user_id: int, event_id: int, plate_id: str, offset_minutes: int) -> int:
+    """Tanda a la que va un alimento que se añade a un evento (§4.6.1, §7.7).
+
+    - Un id concreto: esa tanda, validando dentro del SQL que es del usuario y
+      del evento (§5.3); el `event_id` de la petición no basta como prueba.
+    - `"0"`: la opción `+ New plate` del selector, que crea la tanda en el acto.
+    - Vacío o ausente: la última tanda del evento y, si no hay ninguna, la
+      primera creada implícitamente.
+
+    Raises:
+        NotFoundError: la tanda no existe, no es del usuario o es de otro evento.
+    """
+    raw = (plate_id or "").strip()
+    if raw.isdigit() and int(raw) != 0:
+        plate = get_intake_plate(connection, user_id, int(raw))
+        if plate.intake_event_id != int(event_id):
+            raise NotFoundError(f"Intake plate {raw} does not belong to event {event_id}")
+        return plate.id
+    if raw == "0":
+        return create_intake_plate(
+            connection,
+            IntakePlateCreate(intake_event_id=int(event_id), offset_minutes=offset_minutes),
+            commit=False,
+        )
+    return ensure_default_plate(
+        connection, int(event_id), offset_minutes=offset_minutes, commit=False
+    )
 
 
 def _to_float(value: str):
@@ -1068,6 +1116,13 @@ def setup_food_routes(rt):
                         ),
                         commit=False,
                     )
+                    # Un rescate es una única toma: nace con su tanda propia y
+                    # offset 0, el mismo que ya tenía la porción (§4.6.1).
+                    plate_id = create_intake_plate(
+                        connection,
+                        IntakePlateCreate(intake_event_id=int(event_id), offset_minutes=0),
+                        commit=False,
+                    )
                     if not add_portion_detail(
                         connection,
                         origin=origin_type,
@@ -1079,6 +1134,7 @@ def setup_food_routes(rt):
                         macros_quality=True,
                         plate_amount=float(grams),
                         offset_minutes=0,
+                        plate_id=plate_id,
                         commit=False,
                     ):
                         raise ValueError("Could not register rescue.")
@@ -1110,6 +1166,12 @@ def setup_food_routes(rt):
             can_edit = _can_edit_entry(entry_type, entry, user_id)
             can_delete = can_edit
             events = list_planned_intake_events(connection, int(user_id)) if user_id else []
+            # Las tandas del evento que el selector va a mostrar seleccionado
+            # (§7.7): sin esto el selector de tanda nacería vacío y solo se
+            # llenaría al cambiar de comida.
+            plate_options, selected_plate_id = (
+                plate_selector_options(connection, events[0].id) if events else ([], None)
+            )
         return render_page(
             request,
             lambda _: FoodDetailPage(
@@ -1120,6 +1182,8 @@ def setup_food_routes(rt):
                     recipe_portions=recipe_portions,
                     tags=tags,
                     events=events,
+                    plate_options=plate_options,
+                    selected_plate_id=selected_plate_id,
                     can_edit=can_edit,
                     can_delete=can_delete,
                     is_archived=(entry_type == "catalog" and entry.get("deleted_at") is not None),
@@ -1596,6 +1660,7 @@ def setup_food_routes(rt):
         amount_g: str = "",
         total_amount_g: str = "",
         intake_event_id: str = "",
+        plate_id: str = "",
         cooking: str = "",
         final_state: str = "",
         conservation: str = "",
@@ -1674,13 +1739,13 @@ def setup_food_routes(rt):
                             commit=False,
                         )
                     event_data = get_intake_event(connection, int(user_id), event_id)
-                    offset_minutes = 0
-                    if event_data and event_data.meal_time:
-                        delta = utc_now() - event_data.meal_time
-                        offset_minutes = int(delta.total_seconds() // 60)
+                    offset_minutes = _event_auto_offset_minutes(event_data)
 
                     created = []
                     if entry_type in ("catalog", "manual_intake"):
+                        target_plate_id = _resolve_event_plate(
+                            connection, int(user_id), event_id, plate_id, offset_minutes
+                        )
                         created.append(
                             add_portion_detail(
                                 connection,
@@ -1688,6 +1753,7 @@ def setup_food_routes(rt):
                                 origin_id=entry_id,
                                 destination="intake_event",
                                 destination_id=event_id,
+                                plate_id=target_plate_id,
                                 amount_g=parsed_amount,
                                 cooking=clean_cooking,
                                 final_state=clean_final_state,
@@ -1695,7 +1761,6 @@ def setup_food_routes(rt):
                                 strictly_weighed=True,
                                 macros_quality=True,
                                 plate_amount=parsed_amount,
-                                offset_minutes=offset_minutes,
                                 commit=False,
                             )
                         )
@@ -1705,6 +1770,18 @@ def setup_food_routes(rt):
                         if total_recipe_amount <= 0:
                             raise ValueError("Recipe has no ingredients to log.")
                         factor = parsed_amount / total_recipe_amount
+                        # Una receta importada entra como tanda propia, con el
+                        # nombre de la receta (§4.6.5): es un plato completo,
+                        # no ingredientes sueltos que se mezclen con los demás.
+                        recipe_plate_id = create_intake_plate(
+                            connection,
+                            IntakePlateCreate(
+                                intake_event_id=event_id,
+                                name=(origin_item.get("name") or None),
+                                offset_minutes=offset_minutes,
+                            ),
+                            commit=False,
+                        )
                         for row in recipe_rows:
                             row_amount = float(row.get("amount_g") or 0.0) * factor
                             if row_amount <= 0:
@@ -1720,6 +1797,7 @@ def setup_food_routes(rt):
                                     origin_id=origin_id,
                                     destination="intake_event",
                                     destination_id=event_id,
+                                    plate_id=recipe_plate_id,
                                     amount_g=row_amount,
                                     cooking=row.get("cooking"),
                                     conservation=row.get("conservation"),
@@ -1728,7 +1806,6 @@ def setup_food_routes(rt):
                                     macros_quality=True,
                                     plate_amount=row_amount,
                                     is_cooked_weight=bool(row.get("is_cooked_weight")),
-                                    offset_minutes=offset_minutes,
                                     commit=False,
                                 )
                             )
@@ -1887,7 +1964,7 @@ def setup_food_routes(rt):
         return render_fragment(tuple(FoodSectionsContent(entries)))
 
     @rt("/add_food/{food_id}")
-    def post(request: Request, food_id: int, intake_event_id: str = ""):
+    def post(request: Request, food_id: int, intake_event_id: str = "", plate_id: str = ""):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         
@@ -1926,10 +2003,10 @@ def setup_food_routes(rt):
                             commit=False,
                         )
                     event_data = get_intake_event(connection, int(user_id), event_id)
-                    offset_minutes = 0
-                    if event_data and event_data.meal_time:
-                        delta = utc_now() - event_data.meal_time
-                        offset_minutes = int(delta.total_seconds() // 60)
+                    offset_minutes = _event_auto_offset_minutes(event_data)
+                    target_plate_id = _resolve_event_plate(
+                        connection, int(user_id), event_id, plate_id, offset_minutes
+                    )
 
                     portion_id = add_portion_detail(
                         connection,
@@ -1937,9 +2014,9 @@ def setup_food_routes(rt):
                         origin_id=food_id,
                         destination="intake_event",
                         destination_id=event_id,
+                        plate_id=target_plate_id,
                         amount_g=portion_amount,
                         macros_quality=True,
-                        offset_minutes=offset_minutes,
                         commit=False,
                     )
                     if not portion_id:
@@ -1955,7 +2032,7 @@ def setup_food_routes(rt):
             return HTMLResponse("", headers=headers)
 
     @rt("/add_manual_intake/{intake_id}")
-    def post(request: Request, intake_id: int, intake_event_id: str = ""):
+    def post(request: Request, intake_id: int, intake_event_id: str = "", plate_id: str = ""):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
 
@@ -1986,10 +2063,10 @@ def setup_food_routes(rt):
                         )
                     portion_amount = float(intake_item.get("amount_g") or 100.0)
                     event_data = get_intake_event(connection, int(user_id), event_id)
-                    offset_minutes = 0
-                    if event_data and event_data.meal_time:
-                        delta = utc_now() - event_data.meal_time
-                        offset_minutes = int(delta.total_seconds() // 60)
+                    offset_minutes = _event_auto_offset_minutes(event_data)
+                    target_plate_id = _resolve_event_plate(
+                        connection, int(user_id), event_id, plate_id, offset_minutes
+                    )
 
                     portion_id = add_portion_detail(
                         connection,
@@ -1997,9 +2074,9 @@ def setup_food_routes(rt):
                         origin_id=intake_id,
                         destination="intake_event",
                         destination_id=event_id,
+                        plate_id=target_plate_id,
                         amount_g=portion_amount,
                         macros_quality=True,
-                        offset_minutes=offset_minutes,
                         commit=False,
                     )
                     if not portion_id:
@@ -2055,10 +2132,17 @@ def setup_food_routes(rt):
                         )
 
                     event_data = get_intake_event(connection, int(user_id), event_id)
-                    offset_minutes = 0
-                    if event_data and event_data.meal_time:
-                        delta = utc_now() - event_data.meal_time
-                        offset_minutes = int(delta.total_seconds() // 60)
+                    offset_minutes = _event_auto_offset_minutes(event_data)
+                    # La receta entra como tanda propia con su nombre (§4.6.5).
+                    recipe_plate_id = create_intake_plate(
+                        connection,
+                        IntakePlateCreate(
+                            intake_event_id=event_id,
+                            name=(recipe.get("name") or None),
+                            offset_minutes=offset_minutes,
+                        ),
+                        commit=False,
+                    )
 
                     recipe_portions = get_portion_detail_by_recipe(connection, recipe_id)
                     created_ids = []
@@ -2074,6 +2158,7 @@ def setup_food_routes(rt):
                                 origin_id=origin_id,
                                 destination="intake_event",
                                 destination_id=event_id,
+                                plate_id=recipe_plate_id,
                                 amount_g=float(row.get("amount_g") or 0.0),
                                 cooking=row.get("cooking"),
                                 conservation=row.get("conservation"),
@@ -2081,7 +2166,6 @@ def setup_food_routes(rt):
                                 macros_quality=True,
                                 plate_amount=row.get("plate_amount"),
                                 is_cooked_weight=bool(row.get("is_cooked_weight")),
-                                offset_minutes=offset_minutes,
                                 commit=False,
                             )
                         )
@@ -2916,6 +3000,32 @@ def setup_food_routes(rt):
             ),
             cls="flex gap-2 w-full"        
             ))
+
+    @rt("/food/plate_selector")
+    def get(request: Request, intake_event_id: str = ""):
+        """Selector de tanda del evento elegido en el selector de comida (§7.7).
+
+        Devuelve vacío solo cuando no hay evento del que listar tandas (ninguno
+        seleccionado, `New Meal`, o un evento que ya no está en el carrito).
+        """
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return HTMLResponse(status_code=401)
+        raw_event_id = (intake_event_id or "").strip()
+        if not raw_event_id.isdigit() or int(raw_event_id) == 0:
+            return render_fragment(PlateSelector([]))
+
+        with get_connection() as connection:
+            try:
+                event_id = get_planned_intake_event(connection, int(user_id), int(raw_event_id))
+            except (NotFoundError, ConflictError):
+                return render_fragment(PlateSelector([]))
+            # Preseleccionada la última tanda a la que se añadió algo: montando
+            # el segundo plato se añaden varios alimentos seguidos al mismo (§7.7).
+            options, last_used = plate_selector_options(connection, event_id)
+            return render_fragment(PlateSelector(options, selected_id=last_used))
 
     @rt("/create_named_event")
     def post(request: Request, meal_name: str = ""):

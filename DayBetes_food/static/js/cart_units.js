@@ -136,3 +136,58 @@
     bindInitEvents();
   }
 })();
+
+(function () {
+  // Un refresco parcial no es un cambio de página y no debe mover el scroll
+  // (frontend_conventions.md §5). Las acciones del carrito reemplazan la
+  // tarjeta entera con hx-swap="outerHTML", y al desaparecer del DOM el nodo
+  // que tenía el foco —un botón como `Apply all`, que no tiene id que htmx
+  // pueda restaurar— el navegador puede reposicionar la página por su cuenta.
+  // Aquí se guarda la posición antes del swap y se restaura después, solo si
+  // ha cambiado y solo para los targets del carrito.
+  if (window.__dbCartScrollGuard) return;
+  window.__dbCartScrollGuard = true;
+
+  var savedScrollY = null;
+
+  function isCartTarget(target) {
+    if (!target || !target.id) return false;
+    return (
+      target.id.indexOf("cart_card_event_") === 0 ||
+      target.id === "cart_events_list" ||
+      target.id === "cart_body"
+    );
+  }
+
+  function restore(clear) {
+    if (savedScrollY === null) return;
+    if (Math.abs(window.scrollY - savedScrollY) >= 2) {
+      window.scrollTo({ top: savedScrollY, behavior: "auto" });
+    }
+    if (clear) savedScrollY = null;
+  }
+
+  function bind() {
+    document.body.addEventListener("htmx:beforeSwap", function (event) {
+      var detail = event && event.detail ? event.detail : null;
+      if (!detail || !isCartTarget(detail.target)) return;
+      savedScrollY = window.scrollY;
+    });
+
+    // Se restaura en los dos momentos: afterSwap deja la posición correcta de
+    // inmediato y afterSettle la mantiene si el navegador la mueve al asentar
+    // el contenido nuevo.
+    document.body.addEventListener("htmx:afterSwap", function () {
+      restore(false);
+    });
+    document.body.addEventListener("htmx:afterSettle", function () {
+      restore(true);
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bind);
+  } else {
+    bind();
+  }
+})();

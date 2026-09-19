@@ -9,6 +9,7 @@ punto del código.
 from DayBetes_food.domain.constants import InjectionZone, IntakeEventState, InsulinType, MealType
 from DayBetes_food.domain.insulin import InsulinInjectionRead
 from DayBetes_food.domain.intake_event import IntakeEventRead
+from DayBetes_food.domain.intake_plate import IntakePlateRead
 from DayBetes_food.errors import InfrastructureError
 
 
@@ -116,3 +117,23 @@ def intake_event_read_from_row(row: dict) -> IntakeEventRead:
         updated_at=row["updated_at"],
         deleted_at=row.get("deleted_at"),
     )
+
+
+def intake_plate_read_from_row(row: dict) -> IntakePlateRead:
+    """Convierte fila SQL a IntakePlateRead.
+
+    Columnas obligatorias: id, intake_event_id, created_at, updated_at.
+    Columnas nullables: name (NULL = nombre derivado, measurement §4.6.3) y
+    offset_minutes (NULL = la tanda todavía no tiene plantilla de offset).
+    """
+    try:
+        return IntakePlateRead(
+            id=int(row["id"]),
+            intake_event_id=int(row["intake_event_id"]),
+            name=row.get("name"),
+            offset_minutes=row.get("offset_minutes"),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+    except KeyError as exc:
+        raise InfrastructureError(f"Missing required field {exc} in intake plate row") from exc

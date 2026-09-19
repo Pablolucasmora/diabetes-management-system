@@ -55,6 +55,13 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 
+# Ruido de terceros que en DEBUG ahoga los logs propios sin aportar nada: el
+# parser de formularios multipart emite cinco líneas por cada campo de cada
+# POST. Se sube su nivel, no se baja el global, para no perder el DEBUG de la
+# aplicación en desarrollo.
+for _noisy_logger in ("python_multipart", "python_multipart.multipart", "multipart"):
+    logging.getLogger(_noisy_logger).setLevel(logging.INFO)
+
 DB_INIT_ON_STARTUP = _as_bool("DB_INIT_ON_STARTUP", APP_ENV == "development")
 
 DATABASE_URL = _require("DATABASE_URL")
