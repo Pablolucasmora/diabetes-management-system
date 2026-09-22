@@ -552,10 +552,18 @@ def PlateHeader(event, plate, display_name, card_target):
             ),
             _ApplyAllButton(plate, offset_input_id, card_target),
             Button(
-                "Delete plate",
+                Img(src="/images/content/delete.svg", alt="Delete plate", cls="w-5 h-5"),
                 type="button",
-                cls="web_button px-2 py-1 text-xs text-white shrink-0",
-                style="background-color:#b91c1c;border-color:#b91c1c;",
+                aria_label="Delete plate",
+                title="Delete plate",
+                cls="""
+                    web_button p-2 shrink-0
+                    border-red-600/40 shadow-none
+                    w-9 h-9
+                    flex items-center justify-center
+                    hover:bg-red-50
+                """,
+                style="color:#b91c1c;",
                 onclick=_open_modal_js(confirm_id),
             ),
             cls="flex items-center gap-2 shrink-0 flex-wrap justify-end"
@@ -645,10 +653,18 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
             Div(ingredient_name, cls="font-semibold"),
             Form(
                 Button(
-                    "Delete food",
+                    Img(src="/images/content/delete.svg", alt="Delete food", cls="w-5 h-5"),
                     type="button",
-                    cls="web_button px-2 py-1 text-xs text-white",
-                    style="background-color:#b91c1c;border-color:#b91c1c;",
+                    aria_label="Delete food",
+                    title="Delete food",
+                    cls="""
+                        web_button p-2
+                        border-red-600/40 shadow-none
+                        w-9 h-9
+                        flex items-center justify-center
+                        hover:bg-red-50
+                    """,
+                    style="color:#b91c1c;",
                     onclick=_open_modal_js(confirm_id),
                 ),
                 cls="flex flex-col items-end gap-2"
@@ -789,7 +805,7 @@ def NotesSection(event):
     """
     notes_id = f"event_notes_{event.id}"
     return Form(
-        Label("Notes", cls="text-xs text-gray-600", **{"for": notes_id}),
+        Label("Notes", cls="text-sm text-gray-600", **{"for": notes_id}),
         Input(
             type="text",
             id=notes_id,
@@ -1040,10 +1056,18 @@ def CartCard(event, portions, plates=()):
                 cls=f"flex flex-col items-center gap-1 {'hidden' if not event.insulin_dose else ''}",
             ),
             Button(
-                "Delete meal",
+                Img(src="/images/content/delete.svg", alt="Delete meal", cls="w-5 h-5"),
                 type="button",
-                cls="web_button px-2 py-1 text-xs text-white",
-                style="background-color:#b91c1c;border-color:#b91c1c;",
+                aria_label="Delete meal",
+                title="Delete meal",
+                cls="""
+                    web_button p-2
+                    border-red-600/40 shadow-none
+                    w-9 h-9
+                    flex items-center justify-center
+                    hover:bg-red-50
+                """,
+                style="color:#b91c1c;",
                 onclick=_open_modal_js(confirm_id),
             ),
             cls="flex items-center justify-between gap-2"
@@ -1083,7 +1107,7 @@ def CartCard(event, portions, plates=()):
         id=f"cart_card_event_{event.id}",
         cls="""
             web_container p-4 rounded-3xl
-            md:w-md lg:w-md w-xs
+            md:w-md lg:w-md w-[90vw]
             flex flex-col gap-4
             mx-auto
             transition-[width,margin,padding] duration-150

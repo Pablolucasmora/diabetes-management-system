@@ -20,6 +20,7 @@ from DayBetes_food.auth.security import (
 )
 from DayBetes_food.auth.models import USER_EMAIL_MAX_LENGTH, CreateUserCommand
 from DayBetes_food.errors import ConflictError
+from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.auth.service import (
     GENERIC_AUTH_ERROR,
     clear_login_failures,
@@ -72,7 +73,7 @@ def _form_shell(title: str, action: str, csrf_token: str, fields_html: str, subm
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>{safe_title}</title>
         <link rel="icon" type="image/svg+xml" href="/images/ui/Clock_Page.svg">
-        <link rel="stylesheet" href="/css/output.css">
+        <link rel="stylesheet" href="{asset_busted("/css/output.css")}">
       </head>
       <body style="background-color:#f6f2eb;">
         <div class="min-h-screen flex flex-col items-center justify-center gap-4 px-4">

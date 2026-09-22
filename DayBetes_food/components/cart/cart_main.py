@@ -62,7 +62,7 @@ def cart_main(events, portions_by_event, plates_by_event=None, oob: bool = False
                 ),
                 cls="""
                     web_container p-6 rounded-3xl
-                    md:w-md lg:w-md w-xs
+                    md:w-md lg:w-md w-[90vw]
                     mt-5
                     flex flex-col items-center gap-3
                 """
@@ -91,8 +91,8 @@ def cart_main(events, portions_by_event, plates_by_event=None, oob: bool = False
             flex flex-col items-center
             gap-6
             md:mt-7 lg:mt-7 mt-2
-            md:w-md lg:w-md w-xs
-            w-full mx-auto
+            md:w-md lg:w-md w-[90vw]
+            mx-auto
             md:mb-28 lg:mb-28 mb-24
             transition-[width,margin,padding] duration-150
         """,
