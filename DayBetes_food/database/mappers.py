@@ -6,10 +6,18 @@ DayBetes_food/domain/ no se construyen desde una fila SQL en ningún otro
 punto del código.
 """
 
-from DayBetes_food.domain.constants import InjectionZone, IntakeEventState, InsulinType, MealType
+from DayBetes_food.domain.constants import (
+    InjectionZone,
+    IntakeEventState,
+    InsulinType,
+    MealType,
+    PortionDestination,
+    PortionOrigin,
+)
 from DayBetes_food.domain.insulin import InsulinInjectionRead
 from DayBetes_food.domain.intake_event import IntakeEventRead
 from DayBetes_food.domain.intake_plate import IntakePlateRead
+from DayBetes_food.domain.portion_detail import PortionDetailRead, PortionSourceRead
 from DayBetes_food.errors import InfrastructureError
 
 
@@ -137,3 +145,64 @@ def intake_plate_read_from_row(row: dict) -> IntakePlateRead:
         )
     except KeyError as exc:
         raise InfrastructureError(f"Missing required field {exc} in intake plate row") from exc
+
+
+def _single_arc_column(row: dict, columns: tuple[str, ...], arc: str) -> str:
+    present = [column for column in columns if row.get(column) is not None]
+    if len(present) != 1:
+        raise InfrastructureError(
+            f"portion_detail row has {len(present)} {arc} columns set (expected exactly 1)"
+        )
+    return present[0]
+
+
+def portion_detail_read_from_row(row: dict) -> PortionDetailRead:
+    """Convert a SQL row to PortionDetailRead.
+
+    The row must come from _PORTION_COLUMNS (queries/portion_detail.py). The
+    origin/destination are derived from which arc column is not null; the CHECK
+    guarantees exactly one, so a different count is corruption, not a silent
+    `None`. Source columns come prefixed with `source_`.
+    """
+    try:
+        origin_column = _single_arc_column(row, ("catalog_id", "manual_intake_id"), "origin")
+        destination_column = _single_arc_column(
+            row, ("intake_event_id", "recipe_id", "fridge_id"), "destination"
+        )
+        origin = PortionOrigin.CATALOG if origin_column == "catalog_id" else PortionOrigin.MANUAL_INTAKE
+        destination = PortionDestination(destination_column.removesuffix("_id"))
+        source = PortionSourceRead(
+            name=row.get("source_name"),
+            unit_g=float(row.get("source_unit_g") or 100.0),
+            category=row.get("source_category"),
+            subtype=row.get("source_subtype"),
+            cooking_factor=row.get("source_cooking_factor"),
+            calories_100g=row.get("source_calories_100g"),
+            carbs_100g=row.get("source_carbs_100g"),
+            sugars_100g=row.get("source_sugars_100g"),
+            fats_100g=row.get("source_fats_100g"),
+            saturated_100g=row.get("source_saturated_100g"),
+            proteins_100g=row.get("source_proteins_100g"),
+            fiber_100g=row.get("source_fiber_100g"),
+        )
+        return PortionDetailRead(
+            id=int(row["id"]),
+            origin=origin,
+            origin_id=int(row[origin_column]),
+            destination=destination,
+            destination_id=int(row[destination_column]),
+            plate_id=row.get("plate_id"),
+            amount=float(row["amount"]),
+            cooking=row.get("cooking"),
+            conservation=row.get("conservation"),
+            final_state=row.get("final_state"),
+            strictly_weighed=row.get("strictly_weighed"),
+            macros_quality=row.get("macros_quality"),
+            is_cooked_weight=bool(row.get("is_cooked_weight")),
+            offset_minutes=row.get("offset_minutes"),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            source=source,
+        )
+    except KeyError as exc:
+        raise InfrastructureError(f"Missing required field {exc} in portion_detail row") from exc

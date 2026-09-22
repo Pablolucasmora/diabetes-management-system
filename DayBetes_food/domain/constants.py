@@ -64,6 +64,67 @@ class AmountInputUnit(str, Enum):
     PERCENT = "%"
 
 
+@unique
+class PortionOrigin(str, Enum):
+    """Where the food of a portion comes from (`portion_detail` origin arc)."""
+    CATALOG = "catalog"
+    MANUAL_INTAKE = "manual_intake"
+
+
+@unique
+class PortionDestination(str, Enum):
+    """Where a portion is assigned (`portion_detail` destination arc).
+
+    FRIDGE has no writer yet: the enum describes the model, not the interface
+    (decision 2026-09-22).
+    """
+    INTAKE_EVENT = "intake_event"
+    RECIPE = "recipe"
+    FRIDGE = "fridge"
+
+
+# Sanity ceiling for every mass in grams shared by more than one table
+# (measurement_conventions.md 6.9.2): 100000 g = 100 kg. It is not a clinical
+# limit, only a ceiling so a corrupt or manipulated value is not stored as if
+# it were plausible. Declared once (4.7) and reused by `intake_event` and
+# `portion_detail`.
+MASS_SANITY_MAX_G = 100000
+
+
+# Technical whitelists (4.6) for the food-state fields that still have no
+# catalog table (4.5). They are provisional: once those tables exist their
+# rows replace these lists. They live in `domain/` because the persistence
+# layer has to validate against them, and a presentation module cannot be the
+# source of a persistence rule (decision 2026-09-22).
+INITIAL_STATE_OPTIONS = ["solid", "mashed/creamy", "liquid", "gel"]
+COOKING_OPTIONS = [
+    "steam",
+    "boiled-al-dente",
+    "boiled-soft",
+    "fried",
+    "raw",
+    "oven",
+    "airfryer",
+    "toaster",
+    "griddle",
+]
+CONSERVATION_OPTIONS = ["freshly-made", "fridge", "freezer", "pre-cooked"]
+
+
+class Clear:
+    """Sentinel for a partial update: "present but empty", write NULL (7.4).
+
+    A field left out of the payload is `None` ("do not touch"); an explicit
+    clearing is the `CLEAR` singleton. The two states cannot share a value.
+    """
+
+    def __repr__(self) -> str:
+        return "CLEAR"
+
+
+CLEAR = Clear()
+
+
 def sql_in_list(enum_cls) -> str:
     """Lista de valores del enum para un CHECK: "'rapid', 'basal'".
 

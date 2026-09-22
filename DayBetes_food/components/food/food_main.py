@@ -8,13 +8,13 @@ from DayBetes_food.components.food.foods import (
     SearchInput,
 )
 from DayBetes_food.database.queries import (
-    get_portion_detail_by_event,
     list_intake_plates,
     list_planned_intake_events,
+    list_portions_by_event,
 )
 
 
-def plate_selector_options(connection, event_id: int):
+def plate_selector_options(connection, user_id: int, event_id: int):
     """Tandas de un evento como pares `(id, etiqueta)` para el selector (§7.7).
 
     El nombre visible de una tanda puede ser derivado de sus ingredientes
@@ -34,13 +34,13 @@ def plate_selector_options(connection, event_id: int):
     portions_by_plate = {}
     last_portion_id = -1
     default_plate_id = max(plate.id for plate in plates)
-    for portion in get_portion_detail_by_event(connection, event_id):
-        plate_id = portion.get("plate_id")
+    for portion in list_portions_by_event(connection, user_id, event_id):
+        plate_id = portion.plate_id
         if plate_id is None:
             continue
         portions_by_plate.setdefault(plate_id, []).append(portion)
-        if int(portion["id"]) > last_portion_id:
-            last_portion_id = int(portion["id"])
+        if int(portion.id) > last_portion_id:
+            last_portion_id = int(portion.id)
             default_plate_id = int(plate_id)
 
     options = [
@@ -60,7 +60,7 @@ def food_main(connection):
     # (frontend_conventions.md §6).
     selected_event_id = events[0].id if events else None
     plate_options, last_used_plate = (
-        plate_selector_options(connection, selected_event_id)
+        plate_selector_options(connection, int(user_id), selected_event_id)
         if selected_event_id
         else ([], None)
     )

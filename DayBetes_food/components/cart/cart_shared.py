@@ -60,18 +60,16 @@ def macro_text_color(uncertainty: float, amount_confidence: float, quality_confi
 
 
 def parse_source_macro(portion, macro_key: str):
-    catalog_value = portion.get(f"catalog_{macro_key}_100g")
-    manual_value = portion.get(f"manual_{macro_key}_100g")
-    return catalog_value if catalog_value is not None else manual_value
+    return getattr(portion.source, f"{macro_key}_100g")
 
 
 def portion_intake_amount(portion) -> float:
-    """Return the amount served for event-level nutrition calculations."""
-    plate_amount = portion.get("plate_amount")
-    if plate_amount is not None:
-        return float(plate_amount)
-    # Older rows and recipe portions may not have plate_amount populated.
-    return float(portion.get("amount_g") or 0.0)
+    """Amount of a portion in grams (measurement_conventions.md 4.4).
+
+    `portion_detail` has a single amount column since decision 2026-09-18: the
+    old `plate_amount`/`amount_g` fallback disappeared with the migration.
+    """
+    return float(portion.amount)
 
 
 def calculate_macro_summary_metrics(portions) -> dict:
@@ -80,8 +78,8 @@ def calculate_macro_summary_metrics(portions) -> dict:
     quality_confidence_num = 0.0
     for portion in portions:
         amount = portion_intake_amount(portion)
-        amount_confidence_num += amount * float(bool(portion.get("strictly_weighed")))
-        quality_confidence_num += amount * float(bool(portion.get("macros_quality")))
+        amount_confidence_num += amount * float(bool(portion.strictly_weighed))
+        quality_confidence_num += amount * float(bool(portion.macros_quality))
 
     metrics = {
         "amount_confidence": (amount_confidence_num / total_amount) if total_amount > 0 else 0.0,
@@ -100,43 +98,44 @@ def calculate_macro_summary_metrics(portions) -> dict:
 
 
 def portion_name(portion):
-    return portion.get("catalog_name") or portion.get("manual_intake_name") or f"Ingredient #{portion['id']}"
+    return portion.source.name or f"Ingredient #{portion.id}"
 
 
 def unit_amount(portion) -> float:
-    if portion.get("catalog_id"):
-        return float(portion.get("catalog_default_portion") or 100.0)
-    return float(portion.get("manual_amount_g") or portion.get("amount_g") or 100.0)
+    return float(portion.source.unit_g or 100.0)
 
 
 def group_portions(portions):
     grouped = {}
     order = []
     for portion in portions:
-        if portion.get("catalog_id"):
-            origin = "catalog"
-            origin_id = int(portion["catalog_id"])
-        else:
-            origin = "manual_intake"
-            origin_id = int(portion["manual_intake_id"])
-        key = (origin, origin_id)
+        # Same key as the unique index of measurement_conventions.md 4.6.4:
+        # portions of the same food with a different preparation are separate
+        # rows and must be painted separately (frontend_conventions.md 7.8).
+        key = (
+            portion.origin,
+            portion.origin_id,
+            portion.cooking,
+            portion.conservation,
+            portion.final_state,
+        )
         if key not in grouped:
             grouped[key] = {
-                "origin": origin,
-                "origin_id": origin_id,
+                "origin": portion.origin.value,
+                "origin_id": portion.origin_id,
                 "portion_ids": [],
                 "total_amount_g": 0.0,
                 "sample": portion,
             }
             order.append(key)
-        grouped[key]["portion_ids"].append(int(portion["id"]))
-        grouped[key]["total_amount_g"] += float(portion.get("amount_g") or 0.0)
+        grouped[key]["portion_ids"].append(int(portion.id))
+        grouped[key]["total_amount_g"] += float(portion.amount or 0.0)
     return [grouped[k] for k in order]
 
 
 def display_unit(portion) -> str:
-    catalog_category = (portion.get("catalog_category") or "").strip().lower()
-    manual_subtype = (portion.get("manual_subtype") or "").strip().lower()
+    catalog_category = (portion.source.category or "").strip().lower()
+    manual_subtype = (portion.source.subtype or "").strip().lower()
     if catalog_category == "beverages":
         return "ml"
     liquid_hints = ("drink", "beverage", "juice", "soda", "smoothie", "milk", "coffee", "tea", "bebida")

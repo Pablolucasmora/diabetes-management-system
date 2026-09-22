@@ -3,7 +3,13 @@ from fasthtml.common import *
 
 from DayBetes_food.components.cart.cart_shared import CHECKBOX_CLS
 from DayBetes_food.components.injection_zone import asset_busted
-from DayBetes_food.domain.constants import MealType
+from DayBetes_food.domain.constants import (
+    CONSERVATION_OPTIONS,
+    COOKING_OPTIONS,
+    INITIAL_STATE_OPTIONS,
+    MealType,
+    PortionOrigin,
+)
 from DayBetes_food.time_utils import to_local
 
 
@@ -28,10 +34,6 @@ CATEGORY_OPTIONS = [
 ]
 
 GLYCEMIC_INDEX_OPTIONS = ["high", "medium", "low"]
-
-INITIAL_STATE_OPTIONS = ["solid", "mashed/creamy", "liquid", "gel"]
-COOKING_OPTIONS = ["steam", "boiled-al-dente", "boiled-soft", "fried", "raw", "oven", "airfryer", "toaster", "griddle"]
-CONSERVATION_OPTIONS = ["freshly-made", "fridge", "freezer", "pre-cooked"]
 
 FILTER_ITEM_CLS = """
     px-3 py-1.5
@@ -2801,41 +2803,34 @@ def _detail_info_rows(rows: list[tuple[str, str]]):
     return Div(*blocks, cls="grid grid-cols-1 md:grid-cols-2 gap-2")
 
 
-def _recipe_portion_name(portion: dict) -> str:
-    return portion.get("catalog_name") or portion.get("manual_intake_name") or f"Ingredient #{portion.get('id')}"
+def _recipe_portion_name(portion) -> str:
+    return portion.source.name or f"Ingredient #{portion.id}"
 
 
-def _recipe_portion_entry_type(portion: dict) -> str:
-    return "catalog" if portion.get("catalog_id") else "manual_intake"
+def _recipe_portion_entry_type(portion) -> str:
+    return portion.origin.value
 
 
-def _recipe_portion_meta(portion: dict) -> str:
-    carbs = portion.get("catalog_carbs_100g")
-    if carbs is None:
-        carbs = portion.get("manual_carbs_100g")
-    entry_label = "Food" if portion.get("catalog_id") else "Manual"
+def _recipe_portion_meta(portion) -> str:
+    carbs = portion.source.carbs_100g
+    entry_label = "Food" if portion.origin is PortionOrigin.CATALOG else "Manual"
     return f"{entry_label} · {carbs if carbs is not None else '-'} CH"
 
 
-def _recipe_portion_base_amount(portion: dict) -> float:
-    if portion.get("catalog_id"):
-        return max(1.0, _float_or_zero(portion.get("catalog_default_portion")) or 100.0)
-    return max(1.0, _float_or_zero(portion.get("manual_amount_g")) or 100.0)
+def _recipe_portion_base_amount(portion) -> float:
+    return max(1.0, _float_or_zero(portion.source.unit_g) or 100.0)
 
 
-def _recipe_portion_base_unit(portion: dict) -> str:
-    if portion.get("catalog_id"):
-        item = {"category": portion.get("catalog_category")}
-        return _display_base_unit("catalog", item)
-    item = {"subtype": portion.get("manual_subtype")}
-    return _display_base_unit("manual_intake", item)
+def _recipe_portion_base_unit(portion) -> str:
+    item = {"category": portion.source.category, "subtype": portion.source.subtype}
+    return _display_base_unit(portion.origin.value, item)
 
 
-def RecipeIngredientRow(recipe_id: int, portion: dict):
-    portion_id = int(portion.get("id") or 0)
+def RecipeIngredientRow(recipe_id: int, portion):
+    portion_id = int(portion.id or 0)
     base_amount = _recipe_portion_base_amount(portion)
     base_unit = _recipe_portion_base_unit(portion)
-    grams_value = max(0.0, _float_or_zero(portion.get("amount_g")))
+    grams_value = max(0.0, _float_or_zero(portion.amount))
     display_value = (grams_value / base_amount) if base_amount > 0 else grams_value
     display_id = f"recipe_portion_display_{portion_id}"
     select_id = f"recipe_portion_select_{portion_id}"
@@ -2951,7 +2946,7 @@ def RecipeIngredientRow(recipe_id: int, portion: dict):
                         _searchable_compact_input(
                             name="cooking",
                             options=COOKING_OPTIONS,
-                            value=(portion.get("cooking") or ""),
+                            value=(portion.cooking or ""),
                             placeholder="Cooking",
                             allow_add=False,
                             autosave=True,
@@ -2962,7 +2957,7 @@ def RecipeIngredientRow(recipe_id: int, portion: dict):
                         _searchable_compact_input(
                             name="final_state",
                             options=INITIAL_STATE_OPTIONS,
-                            value=(portion.get("final_state") or ""),
+                            value=(portion.final_state or ""),
                             placeholder="Final state",
                             allow_add=False,
                             autosave=True,
@@ -2973,7 +2968,7 @@ def RecipeIngredientRow(recipe_id: int, portion: dict):
                         _searchable_compact_input(
                             name="conservation",
                             options=CONSERVATION_OPTIONS,
-                            value=(portion.get("conservation") or ""),
+                            value=(portion.conservation or ""),
                             placeholder="Conservation",
                             allow_add=False,
                             autosave=True,
