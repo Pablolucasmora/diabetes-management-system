@@ -4,6 +4,7 @@ from starlette.responses import HTMLResponse
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.components.menu.layout import FloatingIsland, Cart
 from DayBetes_food.config import CSRF_COOKIE_NAME
+from DayBetes_food.components.injection_zone import asset_busted
 
 # ============================================
 # BASE COMPONENTS
@@ -96,7 +97,7 @@ def _base_html_shell(content_html: str) -> str:
     <meta name="description" content="DayBetes Food: plan meals, track ingredients, and manage macros for diabetes nutrition.">
     <title>DayBetes</title>
     <link rel="icon" href="/images/ui/Clock_Page.svg">
-    <link rel="stylesheet" href="/css/output.css">
+    <link rel="stylesheet" href="{asset_busted("/css/output.css")}">
     <meta name="csrf-cookie-name" content="{CSRF_COOKIE_NAME}">
     <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.7/dist/htmx.min.js" defer></script>
     <script src="https://cdn.jsdelivr.net/gh/answerdotai/fasthtml-js@1.0.12/fasthtml.js" defer></script>

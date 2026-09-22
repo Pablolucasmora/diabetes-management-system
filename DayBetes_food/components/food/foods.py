@@ -2,6 +2,7 @@ import json
 from fasthtml.common import *
 
 from DayBetes_food.components.cart.cart_shared import CHECKBOX_CLS
+from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.domain.constants import MealType
 from DayBetes_food.time_utils import to_local
 
@@ -147,7 +148,7 @@ def ConfirmActionModal(modal_id: str, title: str, question: str, yes_button):
     )
 
 
-def MealSelector(events: list, selected_id: int = None):
+def MealSelector(events: list, selected_id: int = None, plate_options: list = None, selected_plate_id: int = None):
     options = []
     for event in events:
         local_meal_time = to_local(event.meal_time)
@@ -175,6 +176,13 @@ def MealSelector(events: list, selected_id: int = None):
             name="intake_event_id",
             data_skip_page_loading="true",
             aria_label="Meal selector",
+            # Al cambiar de comida cambian sus tandas: el selector de tanda se
+            # repinta con las del evento elegido (§7.7).
+            hx_get="/food/plate_selector",
+            hx_trigger="change",
+            hx_target="#plate_selector_box",
+            hx_swap="innerHTML",
+            hx_include="this",
             **{
                 "hx-on:change": (
                     "var box=document.getElementById('meal_name_input');"
@@ -243,7 +251,50 @@ def MealSelector(events: list, selected_id: int = None):
             id="meal_name_input",
             cls=f"lg:w-40 md:w-40 w-32 bg-transparent {'hidden' if selected_id != 0 else ''}",
         ),
+        Div(
+            PlateSelector(plate_options or [], selected_id=selected_plate_id),
+            id="plate_selector_box",
+        ),
         cls="flex items-center justify-center gap-2  md:w-md lg:w-md w-xs mb-3",
+    )
+
+
+def PlateSelector(plate_options: list, selected_id: int = None):
+    """Selector de tanda, al lado del selector de comida (§7.7).
+
+    `plate_options` son pares `(id, etiqueta)` ya resueltos por la ruta: el
+    nombre mostrado de una tanda puede ser derivado de sus ingredientes
+    (measurement_conventions.md §4.6.3) y eso es una consulta, que no
+    corresponde al componente (§1.4).
+
+    Siempre hay una tanda concreta seleccionada —la última usada, que resuelve
+    la ruta— para que el control no mienta sobre dónde va a caer el alimento
+    (§6). Sin evento seleccionado no se pinta ningún control.
+    """
+    if not plate_options:
+        return ""
+
+    options = []
+    for plate_id, label in plate_options:
+        options.append(Option(label, value=str(plate_id), selected=(plate_id == selected_id)))
+    options.append(Option("+ New plate", value="0", selected=(selected_id == 0)))
+
+    return Div(
+        Select(
+            *options,
+            id="plate_selector",
+            name="plate_id",
+            data_skip_page_loading="true",
+            aria_label="Plate selector",
+            cls="""
+            border-[1px] px-2 py-1
+            md:text-sm lg:text-sm text-xs
+            shadow-sm rounded-md focus:outline-none
+            lg:w-40 md:w-40 w-32
+            border-white cursor-pointer
+            """,
+        ),
+        cls="flex flex-col",
     )
 
 
@@ -2621,7 +2672,11 @@ def FavoriteButton(entry_type: str, entry_id: int, favorite: bool):
 
 def AddButton(label: str = "+", include_meal_selector: bool = True, **attrs):
     if include_meal_selector:
-        attrs.setdefault("hx_include", "#meal_selector")
+        # El selector de tanda viaja con el de comida: el alimento tiene que
+        # saber a qué tanda va, no solo a qué evento (§7.7). Si no se está
+        # mostrando, el selector no existe y la petición sale sin plate_id,
+        # que es exactamente "la tanda por defecto".
+        attrs.setdefault("hx_include", "#meal_selector, #plate_selector")
     else:
         attrs.pop("hx_include", None)
     attrs.setdefault("data_skip_page_loading", "true")
@@ -2960,6 +3015,7 @@ def RecipeIngredientsBlock(recipe_id: int, portions: list[dict]):
                 hx_target="#main_content",
                 hx_swap="innerHTML",
                 hx_push_url="true",
+                **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
             ),
             cls="flex items-center justify-between gap-3",
         ),
@@ -2976,6 +3032,8 @@ def FoodDetailPage(
     recipe_portions: list[dict] | None = None,
     tags: list[dict] | list[str] | None = None,
     events: list | None = None,
+    plate_options: list | None = None,
+    selected_plate_id: int | None = None,
     can_edit: bool = True,
     can_delete: bool = False,
     is_archived: bool = False,
@@ -3028,7 +3086,16 @@ def FoodDetailPage(
 
     recipe_mode = entry_type == "recipe"
     action_button_label = "Log recipe" if recipe_mode else "Log food"
-    meal_selector = MealSelector(events or [], selected_id=None) if not recipe_mode else ""
+    meal_selector = (
+        MealSelector(
+            events or [],
+            selected_id=(events[0].id if events else None),
+            plate_options=plate_options,
+            selected_plate_id=selected_plate_id,
+        )
+        if not recipe_mode
+        else ""
+    )
     recipe_ingredients = RecipeIngredientsBlock(int(entry.get("id") or 0), recipe_portions or []) if recipe_mode else ""
     action_button = (
         Button(
@@ -3039,7 +3106,7 @@ def FoodDetailPage(
             hx_target=f"#{msg_id}",
             hx_swap="innerHTML",
             hx_push_url="false",
-            hx_include=f"{'#meal_selector, ' if not recipe_mode else ''}#{form_id}",
+            hx_include=f"{'#meal_selector, #plate_selector, ' if not recipe_mode else ''}#{form_id}",
             data_skip_page_loading="true",
         )
         if not is_archived
@@ -3345,8 +3412,8 @@ def FoodDetailPage(
         ),
         Div(id=msg_id, cls="min-h-6 text-xs"),
         _searchable_autocomplete_bootstrap_script(),
-        Script(src="/js/cart_units.js", defer="defer"),
-        Script(src="/js/food_detail.js", defer="defer"),
+        Script(src=asset_busted("/js/cart_units.js"), defer="defer"),
+        Script(src=asset_busted("/js/food_detail.js"), defer="defer"),
         data_food_detail="true",
         data_detail_display_id=display_id,
         data_detail_select_id=select_id,
@@ -3437,6 +3504,19 @@ def RecipeIngredientPickerPage(recipe_entry: dict, foods: list[dict]):
     recipe_id = int(recipe_entry.get("id") or 0)
     return Div(
         Div(
+            Button(
+                "Back to recipe",
+                type="button",
+                cls="web_button self-start px-3 py-1.5 text-sm",
+                hx_get=f"/food/item/recipe/{recipe_id}",
+                hx_target="#main_content",
+                hx_swap="innerHTML",
+                hx_push_url="true",
+                **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
+            ),
+            cls="w-full flex justify-start",
+        ),
+        Div(
             H1(f"Add ingredient to {recipe_entry.get('name') or 'recipe'}", cls="text-xl font-bold text-gray-900"),
             P("Search in your Food and Manual intake lists.", cls="text-sm text-gray-600"),
             cls="flex flex-col gap-1 w-full",
@@ -3445,18 +3525,6 @@ def RecipeIngredientPickerPage(recipe_entry: dict, foods: list[dict]):
         Div(
             RecipeIngredientPickerList(recipe_id, foods),
             id="recipe-ingredient-list",
-            cls="w-full",
-        ),
-        Div(
-            Button(
-                "Back to recipe",
-                type="button",
-                cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-white/85 text-gray-800 border border-gray-300",
-                hx_get=f"/food/item/recipe/{recipe_id}",
-                hx_target="#main_content",
-                hx_swap="innerHTML",
-                hx_push_url="true",
-            ),
             cls="w-full",
         ),
         data_hide_cart="true",

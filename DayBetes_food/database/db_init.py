@@ -952,6 +952,143 @@ def _ensure_intake_event_schema(cursor):
     )
 
 
+def _ensure_portion_detail_schema(cursor):
+    """portion_detail: hook evolutivo de la tabla (§12.1).
+
+    Era la única tabla grande sin hook propio, así que el DDL aplicado a mano a
+    la base existente se quedaba fuera del código (hallazgo 16 de
+    audit/audit_portion_detail.md). Idempotente (§12.2).
+    """
+    # ---- H16: split_group_id era DDL aplicado a mano que nunca volvió al código ----
+    # varchar(64), 0 filas con valor, 0 referencias en el código, 0 commits. El
+    # diseño de tandas (decisión 2026-09-19) se apoya en intake_plate, no aquí.
+    cursor.execute("ALTER TABLE portion_detail DROP COLUMN IF EXISTS split_group_id;")
+
+    # ---- Tandas (platos) dentro de un evento (decisión 2026-09-19) ----
+    # La columna nace nullable a propósito: las filas existentes todavía no
+    # tienen tanda y el CHECK que lo exige se añade al final, después de la
+    # migración de datos.
+    cursor.execute("ALTER TABLE portion_detail ADD COLUMN IF NOT EXISTS plate_id INTEGER;")
+
+    if not _constraint_exists(cursor, "portion_detail", "fk_portion_detail_plate_id_intake_plate"):
+        cursor.execute(
+            "ALTER TABLE portion_detail "
+            "ADD CONSTRAINT fk_portion_detail_plate_id_intake_plate "
+            "FOREIGN KEY (plate_id) REFERENCES intake_plate(id) ON DELETE RESTRICT;"
+        )
+
+    # Migración (measurement_conventions.md §4.6.6): una tanda por evento que
+    # tenga porciones sin tanda, con name NULL —el nombre se deriva de sus
+    # ingredientes— y el offset menor de sus filas. Idempotente: solo mira las
+    # porciones de evento que aún no cuelgan de ninguna tanda.
+    cursor.execute(
+        """
+        INSERT INTO intake_plate (intake_event_id, name, offset_minutes)
+        SELECT pd.intake_event_id, NULL, MIN(pd.offset_minutes)
+        FROM portion_detail pd
+        WHERE pd.intake_event_id IS NOT NULL AND pd.plate_id IS NULL
+        GROUP BY pd.intake_event_id;
+        """
+    )
+    cursor.execute(
+        """
+        UPDATE portion_detail pd
+        SET plate_id = ip.id
+        FROM intake_plate ip
+        WHERE pd.intake_event_id = ip.intake_event_id
+          AND pd.plate_id IS NULL;
+        """
+    )
+
+    # Postcondición de la migración antes de declararla en la base (§12.5): si
+    # quedara una sola fila descuadrada, el CHECK fallaría a medias y dejaría el
+    # bootstrap en un estado peor que el inicial.
+    cursor.execute(
+        """
+        SELECT count(*) AS pending
+        FROM portion_detail
+        WHERE (intake_event_id IS NULL) <> (plate_id IS NULL);
+        """
+    )
+    pending = cursor.fetchone()["pending"]
+    if pending:
+        raise RuntimeError(
+            f"Migración de tandas incompleta: {pending} filas de portion_detail "
+            "sin correspondencia entre intake_event_id y plate_id."
+        )
+
+    if not _constraint_exists(cursor, "portion_detail", "ck_portion_detail_plate_only_for_event"):
+        cursor.execute(
+            "ALTER TABLE portion_detail "
+            "ADD CONSTRAINT ck_portion_detail_plate_only_for_event "
+            "CHECK ((intake_event_id IS NULL) = (plate_id IS NULL));"
+        )
+
+    # Índices de las dos claves foráneas nuevas (§11.7): el carrito lee las
+    # porciones por tanda y las tandas por evento en cada render.
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_portion_detail_plate_id ON portion_detail (plate_id);"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_intake_plate_intake_event_id "
+        "ON intake_plate (intake_event_id);"
+    )
+
+    # ---- Unicidad de un alimento dentro de una tanda (measurement §4.6.4) ----
+    # Consolidación previa de los duplicados históricos (§4.6.6, §12.7): la
+    # restricción no puede crearse sobre datos que ya la violan. Misma regla de
+    # fusión que aplicará la inserción: se suman las cantidades y el resto de
+    # campos son los de la fila más antigua del grupo.
+    _DUPLICATE_PORTION_GROUPS = """
+        WITH dup AS (
+            SELECT
+                min(id) AS keep_id,
+                array_agg(id) AS ids,
+                sum(amount_g) AS total_amount,
+                CASE
+                    WHEN bool_and(plate_amount IS NULL) THEN NULL
+                    ELSE sum(COALESCE(plate_amount, amount_g))
+                END AS total_plate_amount
+            FROM portion_detail
+            WHERE plate_id IS NOT NULL
+            GROUP BY plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state
+            HAVING count(*) > 1
+        )
+    """
+    cursor.execute(
+        _DUPLICATE_PORTION_GROUPS
+        + """
+        UPDATE portion_detail pd
+        SET amount_g = dup.total_amount,
+            plate_amount = dup.total_plate_amount
+        FROM dup
+        WHERE pd.id = dup.keep_id;
+        """
+    )
+    cursor.execute(
+        _DUPLICATE_PORTION_GROUPS
+        + """
+        DELETE FROM portion_detail pd
+        USING dup
+        WHERE pd.id = ANY(dup.ids) AND pd.id <> dup.keep_id;
+        """
+    )
+
+    # Índice único PARCIAL, no constraint de tabla: plate_id es NULL en las
+    # porciones de receta y de nevera, y con NULLS NOT DISTINCT esos nulos se
+    # considerarían iguales entre sí, de modo que el mismo alimento con la misma
+    # preparación en dos recetas distintas chocaría como falso duplicado. La
+    # unicidad es dentro de la tanda (§4.6.4).
+    cursor.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_portion_detail_plate_origin_preparation
+        ON portion_detail (plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state)
+        NULLS NOT DISTINCT
+        WHERE plate_id IS NOT NULL;
+        """
+    )
+
+
 def _ensure_insulin_injections_schema(cursor):
     cursor.execute(
         """
@@ -1404,6 +1541,7 @@ def init_db():
             DBSchema.intake_event(),
             DBSchema.insulin_injections(),
             DBSchema.meal_type_schedule(),
+            DBSchema.intake_plate,
             DBSchema.portion_detail,
         ]
 
@@ -1426,6 +1564,9 @@ def init_db():
         _ensure_auth_rate_limits_schema(cur)
         _ensure_intake_event_schema(cur)
         _ensure_insulin_injections_schema(cur)
+        # Después de intake_event: las tandas de portion_detail dependen de él
+        # por clave foránea, así que su DDL no puede correr antes (§12.3).
+        _ensure_portion_detail_schema(cur)
         _remove_legacy_user_sessions(cur)
         _remove_legacy_user_hidden_catalog(cur)
         _remove_legacy_user_columns(cur)

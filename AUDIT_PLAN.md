@@ -1,6 +1,6 @@
 # Plan de auditoría y estabilización — DayBetes
 
-Última actualización: 2026-09-08
+Última actualización: 2026-09-11
 
 ## Objetivo y marco de tiempo
 
@@ -155,6 +155,14 @@ Ya cerradas (sesión previa a este plan):
       deuda restante —H12, H13 parte de captura, clasificación
       archivable, H14/H15/H16 y la divergencia Python/Postgres del
       tiempo— en `audit/deuda_pendiente.md`)
+- [x] `intake_event` — 2026-09-11 (audit → plan → review → build, siete
+      pasadas de auditoría, 52 hallazgos: resueltos, diferidos por decisión
+      explícita o trasladados a su tabla; hallazgo 36 —commit pendiente y
+      `confirm` real por navegador— era el único bloqueante y quedó resuelto
+      en esta fecha; deuda restante —H13 defaults "inteligentes" parcial
+      (`meal_type` ya implementado), H15 `render_page()` transversal, H21
+      caducidad de `planned`, H27 interfaz de archivado, listeners
+      `addSuccess`/`addError`— en `audit/deuda_pendiente.md`)
 
 Fuera de alcance por ahora (decisión tuya, no técnica):
 - `fridge` — funcionalidad todavía no implementada, no se audita hasta que exista.
@@ -164,8 +172,20 @@ Fuera de alcance por ahora (decisión tuya, no técnica):
   de que lo confirmes** cuando lleguemos ahí — la dejo fuera de los
   grupos de abajo salvo que me digas lo contrario.
 
-Pendientes (7), agrupadas por tamaño/dependencia — dentro de cada
+**Nota sobre el orden real seguido**: la secuencia de grupos de abajo era la
+prevista el 2026-09-08, pero en la práctica se auditó `intake_event` (Grupo 4)
+antes que `recipe`/`catalog`/`manual_intake`/`user_favorites` (Grupos 2-3), por
+decisión del usuario en el momento. Se deja constancia aquí en vez de
+reescribir la secuencia con efecto retroactivo. `portion_detail` (también
+Grupo 4) es la tabla en curso ahora mismo por continuidad directa con
+`intake_event` (hallazgo 28 trasladado, dependencia de
+`measurement_conventions.md` §6.9.3).
+
+Pendientes (6), agrupadas por tamaño/dependencia — dentro de cada
 grupo el orden es libre, pero conviene mantener el orden entre grupos:
+
+### En curso
+- [ ] `portion_detail` — auditoría en marcha (`audit/audit_portion_detail.md`)
 
 ### Grupo 2 — Entidades principales de comida
 - [ ] `recipe`
@@ -174,10 +194,6 @@ grupo el orden es libre, pero conviene mantener el orden entre grupos:
 
 ### Grupo 3 — Relaciones dependientes
 - [ ] `user_favorites`
-
-### Grupo 4 — Núcleo transaccional (las más grandes; deja más margen)
-- [ ] `intake_event`
-- [ ] `portion_detail`
 
 ## Estimación orientativa (revisar tras las 2-3 primeras tablas)
 

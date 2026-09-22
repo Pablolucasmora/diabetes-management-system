@@ -25,6 +25,10 @@ from DayBetes_food.domain.intake_event import (
     INTAKE_EVENT_NAME_MAX_LENGTH,
     INTAKE_EVENT_NOTES_MAX_LENGTH,
 )
+from DayBetes_food.domain.intake_plate import (
+    INTAKE_PLATE_NAME_MAX_LENGTH,
+    derive_plate_name,
+)
 from DayBetes_food.time_utils import local_now, to_local
 
 
@@ -390,7 +394,238 @@ def _unit_options(default_portion_base: float, base_unit: str):
     ]
 
 
-def IngredientRow(event, grouped_item):
+def _portions_by_plate(portions):
+    """Reparte las porciones de un evento por tanda, conservando su orden.
+
+    La agrupación visual de filas iguales se hace **dentro** de cada tanda
+    (§7.8): agrupar por evento colapsaría en una sola fila el mismo alimento
+    presente en dos tandas, que es justo lo que la clave única de §4.6.4
+    permite distinguir.
+    """
+    by_plate = {}
+    for portion in portions:
+        plate_id = portion.get("plate_id")
+        if plate_id is None:
+            continue
+        by_plate.setdefault(int(plate_id), []).append(portion)
+    return by_plate
+
+
+def plate_display_name(plate, plate_portions) -> str:
+    """Nombre visible de una tanda: el propio, o el derivado (§4.6.3).
+
+    El derivado se calcula aquí, en el render, porque no se guarda: depende de
+    los ingredientes que la tanda tenga en este momento.
+    """
+    if plate.name:
+        return plate.name
+    return derive_plate_name([portion_name(portion) for portion in plate_portions])
+
+
+def _ApplyAllButton(plate, offset_input_id, card_target):
+    """`Apply all`: propaga un offset a toda la tanda (§4.6.2, §7.3/§7.4).
+
+    Envía el valor que haya en ese momento en el input de offset asociado, sea
+    el de la cabecera o el de una fila: el endpoint es el mismo y la semántica
+    también (fija el offset de la tanda y lo escribe en todas sus porciones).
+
+    `hx-sync` con el input es obligatorio, no cosmético: pulsar el botón
+    después de escribir en el input dispara su `change` por el blur, y las dos
+    peticiones refrescan la misma tarjeta. Sin sincronizar, el primer swap
+    borra del DOM el elemento de la segunda petición, su `htmx:afterRequest`
+    ya no llega al listener global y el overlay de carga se queda encendido
+    para siempre (page_loading.js cuenta peticiones pendientes). Con
+    `replace`, la del botón cancela la del input y solo hay un swap.
+    """
+    return Button(
+        "Apply all",
+        type="button",
+        aria_label="Apply this offset to the whole plate",
+        cls="web_button px-2 py-1 text-xs text-white shrink-0",
+        style="background-color:#1d4ed8;border-color:#1d4ed8;",
+        hx_post=f"/cart/plate/{plate.id}/apply_offset",
+        hx_target=card_target,
+        hx_swap="outerHTML",
+        hx_sync=f"#{offset_input_id}:replace",
+        **{"hx-vals": f"js:{{offset_minutes: document.getElementById('{offset_input_id}').value}}"},
+    )
+
+
+def _MoveIngredientSelect(plate, plates, plate_labels, origin, origin_id, item_key, ingredient_name, card_target):
+    """Selector `Move`: cambia el ingrediente de tanda (§7.5).
+
+    La opción `+ New plate` (valor 0) crea la tanda en el acto y mueve la fila
+    a ella. La tanda actual queda fuera de la lista: moverse a sí misma no es
+    una acción.
+
+    Las etiquetas llegan ya resueltas (`plate_labels`) porque el nombre de una
+    tanda sin nombre propio se deriva de **sus** ingredientes (§4.6.3), que
+    esta fila no tiene a mano.
+    """
+    move_id = f"move_select_{item_key}"
+    options = [Option("Move to…", value="", selected=True)]
+    for other in plates:
+        if other.id == plate.id:
+            continue
+        options.append(Option(plate_labels.get(other.id, ""), value=str(other.id)))
+    options.append(Option("+ New plate", value="0"))
+
+    return Div(
+        Label("Move", cls="text-xs text-gray-600", **{"for": move_id}),
+        Select(
+            *options,
+            id=move_id,
+            name="target_plate_id",
+            aria_label=f"Move {ingredient_name} to another plate",
+            cls="web_input border border-white rounded-lg px-2 py-1 text-xs md:text-sm",
+            hx_post=f"/cart/plate/{plate.id}/ingredient/{origin}/{origin_id}/move",
+            hx_trigger="change",
+            hx_target=card_target,
+            hx_swap="outerHTML",
+        ),
+        cls="flex items-center gap-2"
+    )
+
+
+def PlateHeader(event, plate, display_name, card_target):
+    """Cabecera de una tanda (§7.3): título, offset, `Apply all` y borrar.
+
+    El título se edita como el del evento (mismo control, autosave al salir).
+    Vaciarlo devuelve la tanda a su nombre derivado, que es lo que se muestra
+    como placeholder.
+    """
+    name_input_id = f"plate_name_{plate.id}"
+    offset_input_id = f"plate_offset_{plate.id}"
+    confirm_id = f"delete_plate_confirm_{plate.id}"
+    offset_value = plate.offset_minutes if plate.offset_minutes is not None else 0
+
+    return Div(
+        Form(
+            Label(
+                "Plate name",
+                **{"for": name_input_id},
+                style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;",
+            ),
+            Input(
+                type="text",
+                id=name_input_id,
+                name="name",
+                value=plate.name or "",
+                maxlength=str(INTAKE_PLATE_NAME_MAX_LENGTH),
+                placeholder=display_name,
+                aria_label="Plate name",
+                cls="""
+                    w-full font-semibold text-black truncate
+                    px-0 py-0 border-0 rounded-none
+                    bg-transparent shadow-none
+                    focus:outline-none
+                """,
+                style="background:transparent;border-color:transparent;box-shadow:none;",
+                hx_post=f"/cart/plate/{plate.id}/name",
+                hx_trigger="change",
+                hx_target=card_target,
+                hx_swap="outerHTML",
+                onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}",
+                onchange="this.blur();",
+                onclick="this.select();",
+            ),
+            # min-w-0 es lo que permite que `truncate` recorte el nombre en vez
+            # de empujar los controles fuera de la tarjeta en móvil (§7.9).
+            cls="min-w-0 flex-1",
+        ),
+        Div(
+            Label("Offset (min)", cls="text-xs text-gray-600", **{"for": offset_input_id}),
+            Input(
+                type="text",
+                id=offset_input_id,
+                name="offset_minutes",
+                inputmode="numeric",
+                pattern="-?[0-9]*",
+                value=str(offset_value),
+                aria_label="Plate offset minutes",
+                cls="web_input border border-white rounded-lg px-2 py-1 w-16 text-base",
+                hx_post=f"/cart/plate/{plate.id}/offset",
+                hx_trigger="change",
+                hx_target=card_target,
+                hx_swap="outerHTML",
+                onclick="this.select()",
+            ),
+            _ApplyAllButton(plate, offset_input_id, card_target),
+            Button(
+                Img(src="/images/content/delete.svg", alt="Delete plate", cls="w-5 h-5"),
+                type="button",
+                aria_label="Delete plate",
+                title="Delete plate",
+                cls="""
+                    web_button p-2 shrink-0
+                    border-red-600/40 shadow-none
+                    w-9 h-9
+                    flex items-center justify-center
+                    hover:bg-red-50
+                """,
+                style="color:#b91c1c;",
+                onclick=_open_modal_js(confirm_id),
+            ),
+            cls="flex items-center gap-2 shrink-0 flex-wrap justify-end"
+        ),
+        ConfirmActionModal(
+            modal_id=confirm_id,
+            title="Delete plate",
+            question="Are you sure you want to delete this plate?",
+            yes_button=Button(
+                "Yes",
+                type="button",
+                cls="web_button px-4 py-2 text-sm text-white",
+                style="background-color:#b91c1c;border-color:#b91c1c;",
+                hx_post=f"/cart/plate/{plate.id}/delete",
+                hx_target=card_target,
+                hx_swap="outerHTML",
+                onclick=_close_modal_js(confirm_id),
+            ),
+        ),
+        cls="flex items-center justify-between gap-2 flex-wrap"
+    )
+
+
+def PlateBlock(event, plate, plate_portions, show_header: bool, plates, plate_labels):
+    """Una tanda dentro de la tarjeta del evento: cabecera (si procede) y filas.
+
+    Con una sola tanda sin nombre no se pinta cabecera y la tarjeta se ve como
+    antes de existir las tandas (§7.2); en ese caso `Apply all` baja a cada
+    fila (§7.4).
+    """
+    card_target = f"#cart_card_event_{event.id}"
+    grouped = group_portions(plate_portions)
+    return Div(
+        PlateHeader(event, plate, plate_labels[plate.id], card_target) if show_header else None,
+        *[
+            IngredientRow(
+                event,
+                plate,
+                item,
+                plates=plates,
+                plate_labels=plate_labels,
+                show_apply_all=not show_header,
+            )
+            for item in grouped
+        ],
+        cls=(
+            "flex flex-col gap-3 border border-gray-300 rounded-2xl p-3"
+            if show_header
+            else "flex flex-col gap-3"
+        ),
+    )
+
+
+def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show_apply_all=False):
+    """Fila de un ingrediente dentro de una tanda.
+
+    `show_apply_all` implementa la regla de frontend_conventions.md §7.4: el
+    botón `Apply all` vive en la cabecera de la tanda y solo baja a la fila
+    cuando esa cabecera no se pinta (evento de una sola tanda sin nombre).
+    Nunca aparece en los dos sitios. El selector `Move` es el caso contrario:
+    solo tiene sentido cuando hay cabeceras que distinguir (§7.5).
+    """
     sample = grouped_item["sample"]
     origin = grouped_item["origin"]
     origin_id = grouped_item["origin_id"]
@@ -400,7 +635,9 @@ def IngredientRow(event, grouped_item):
     offset = sample.get("offset_minutes")
     offset_value = int(offset) if offset is not None else 0
     units_count = amount / unit_g if unit_g > 0 else 0.0
-    item_key = f"{event.id}_{origin}_{origin_id}"
+    # La clave lleva la tanda, no el evento: el mismo alimento puede estar en
+    # dos tandas de la misma comida y cada fila necesita ids propios.
+    item_key = f"{plate.id}_{origin}_{origin_id}"
     display_input_id = f"display_input_{item_key}"
     grams_input_id = f"grams_input_{item_key}"
     unit_select_id = f"unit_select_{item_key}"
@@ -416,10 +653,18 @@ def IngredientRow(event, grouped_item):
             Div(ingredient_name, cls="font-semibold"),
             Form(
                 Button(
-                    "Delete food",
+                    Img(src="/images/content/delete.svg", alt="Delete food", cls="w-5 h-5"),
                     type="button",
-                    cls="web_button px-2 py-1 text-xs text-white",
-                    style="background-color:#b91c1c;border-color:#b91c1c;",
+                    aria_label="Delete food",
+                    title="Delete food",
+                    cls="""
+                        web_button p-2
+                        border-red-600/40 shadow-none
+                        w-9 h-9
+                        flex items-center justify-center
+                        hover:bg-red-50
+                    """,
+                    style="color:#b91c1c;",
                     onclick=_open_modal_js(confirm_id),
                 ),
                 cls="flex flex-col items-end gap-2"
@@ -435,7 +680,7 @@ def IngredientRow(event, grouped_item):
                 type="button",
                 cls="web_button px-4 py-2 text-sm text-white",
                 style="background-color:#b91c1c;border-color:#b91c1c;",
-                hx_post=f"/cart/event/{event.id}/ingredient/{origin}/{origin_id}/amount",
+                hx_post=f"/cart/plate/{plate.id}/ingredient/{origin}/{origin_id}/amount",
                 hx_vals='{"amount_g":"0"}',
                 hx_target=card_target,
                 hx_swap="outerHTML",
@@ -462,7 +707,7 @@ def IngredientRow(event, grouped_item):
                     name="amount_g",
                     id=grams_input_id,
                     value=f"{amount:.6f}",
-                    hx_post=f"/cart/event/{event.id}/ingredient/{origin}/{origin_id}/amount",
+                    hx_post=f"/cart/plate/{plate.id}/ingredient/{origin}/{origin_id}/amount",
                     hx_trigger="change",
                     hx_include="closest form",
                     hx_target=card_target,
@@ -489,24 +734,32 @@ def IngredientRow(event, grouped_item):
                 id=offset_input_id,
                 name="offset_minutes",
                 inputmode="numeric",
-                pattern="[0-9]*",
+                pattern="-?[0-9]*",
                 value=str(offset_value),
                 aria_label=f"Offset minutes for {ingredient_name}",
                 cls="web_input border border-white rounded-lg px-2 py-1 w-24 text-base",
-                hx_post=f"/cart/event/{event.id}/ingredient/{origin}/{origin_id}/offset",
+                hx_post=f"/cart/plate/{plate.id}/ingredient/{origin}/{origin_id}/offset",
                 hx_trigger="change",
                 hx_target=card_target,
                 hx_swap="outerHTML",
                 onclick= "this.select()",
             ),
-            cls="flex items-center gap-2"
+            _ApplyAllButton(plate, offset_input_id, card_target) if show_apply_all else None,
+            cls="flex items-center gap-2 flex-wrap"
         ),
+        # `Move` aparece exactamente cuando hay cabecera de tanda, que es el
+        # caso complementario de `Apply all` en la fila (§7.4, §7.5).
+        _MoveIngredientSelect(
+            plate, plates, plate_labels or {}, origin, origin_id, item_key, ingredient_name, card_target
+        )
+        if not show_apply_all
+        else None,
         Div(
             Label("Strictly weighted", cls="text-xs text-gray-600"),
             _checkbox(
                 name="strictly_weighed",
                 checked=bool(sample.get("strictly_weighed")),
-                hx_post=f"/cart/event/{event.id}/ingredient/{origin}/{origin_id}/strictly_weighed",
+                hx_post=f"/cart/plate/{plate.id}/ingredient/{origin}/{origin_id}/strictly_weighed",
                 aria_label=f"Strictly weighted for {ingredient_name}",
                 hx_swap="outerHTML",
                 hx_target=f"#macros_summary_event_{event.id}",
@@ -518,7 +771,7 @@ def IngredientRow(event, grouped_item):
             _checkbox(
                 name="macros_quality",
                 checked=bool(sample.get("macros_quality")),
-                hx_post=f"/cart/event/{event.id}/ingredient/{origin}/{origin_id}/macros_quality",
+                hx_post=f"/cart/plate/{plate.id}/ingredient/{origin}/{origin_id}/macros_quality",
                 aria_label=f"Macros quality for {ingredient_name}",
                 hx_swap="outerHTML",
                 hx_target=f"#macros_summary_event_{event.id}",
@@ -530,7 +783,7 @@ def IngredientRow(event, grouped_item):
             _checkbox(
                 name="is_cooked_weight",
                 checked=bool(sample.get("is_cooked_weight")),
-                hx_post=f"/cart/event/{event.id}/ingredient/{origin}/{origin_id}/is_cooked_weight",
+                hx_post=f"/cart/plate/{plate.id}/ingredient/{origin}/{origin_id}/is_cooked_weight",
                 aria_label=f"Cooked weight for {ingredient_name}",
                 hx_swap="outerHTML",
                 hx_target=f"#macros_summary_event_{event.id}",
@@ -552,7 +805,7 @@ def NotesSection(event):
     """
     notes_id = f"event_notes_{event.id}"
     return Form(
-        Label("Notes", cls="text-xs text-gray-600", **{"for": notes_id}),
+        Label("Notes", cls="text-sm text-gray-600", **{"for": notes_id}),
         Input(
             type="text",
             id=notes_id,
@@ -746,8 +999,19 @@ def InjectionZoneModal(event):
     )
 
 
-def CartCard(event, portions):
-    grouped_portions = group_portions(portions)
+def CartCard(event, portions, plates=()):
+    plates = list(plates)
+    portions_by_plate = _portions_by_plate(portions)
+    # La cabecera de tanda se pinta si hay dos o más tandas o si alguna tiene
+    # nombre propio (§7.2): sin la segunda condición, nombrar la única tanda
+    # de una comida haría desaparecer ese nombre de la pantalla.
+    show_plate_headers = len(plates) > 1 or any(plate.name for plate in plates)
+    # Los nombres visibles se resuelven una sola vez: cada tanda los necesita
+    # para su cabecera y todas las filas los necesitan para el selector `Move`.
+    plate_labels = {
+        plate.id: plate_display_name(plate, portions_by_plate.get(plate.id, []))
+        for plate in plates
+    }
     confirm_id = f"delete_meal_confirm_{event.id}"
     eating_out_id = f"eating_out_{event.id}"
     insulin_dose_id = f"insulin_dose_{event.id}"
@@ -792,10 +1056,18 @@ def CartCard(event, portions):
                 cls=f"flex flex-col items-center gap-1 {'hidden' if not event.insulin_dose else ''}",
             ),
             Button(
-                "Delete meal",
+                Img(src="/images/content/delete.svg", alt="Delete meal", cls="w-5 h-5"),
                 type="button",
-                cls="web_button px-2 py-1 text-xs text-white",
-                style="background-color:#b91c1c;border-color:#b91c1c;",
+                aria_label="Delete meal",
+                title="Delete meal",
+                cls="""
+                    web_button p-2
+                    border-red-600/40 shadow-none
+                    w-9 h-9
+                    flex items-center justify-center
+                    hover:bg-red-50
+                """,
+                style="color:#b91c1c;",
                 onclick=_open_modal_js(confirm_id),
             ),
             cls="flex items-center justify-between gap-2"
@@ -807,16 +1079,35 @@ def CartCard(event, portions):
             id=f"macros_summary_event_{event.id}",
         ),
         Div(
-            H3("Ingredients", cls="font-semibold"),
-            *[IngredientRow(event, item) for item in grouped_portions],
+            H3("Plates", cls="font-semibold"),
+            *[
+                PlateBlock(
+                    event,
+                    plate,
+                    portions_by_plate.get(plate.id, []),
+                    show_plate_headers,
+                    plates,
+                    plate_labels,
+                )
+                for plate in plates
+            ],
             cls="flex flex-col gap-3"
+        ),
+        Button(
+            "+ Add plate",
+            type="button",
+            aria_label="Add plate to this meal",
+            cls="web_button w-full px-2 py-2 text-sm",
+            hx_post=f"/cart/event/{event.id}/plate",
+            hx_target=card_target,
+            hx_swap="outerHTML",
         ),
         NotesSection(event),
         ConfirmSection(event, portions),
         id=f"cart_card_event_{event.id}",
         cls="""
             web_container p-4 rounded-3xl
-            md:w-md lg:w-md w-xs
+            md:w-md lg:w-md w-[90vw]
             flex flex-col gap-4
             mx-auto
             transition-[width,margin,padding] duration-150

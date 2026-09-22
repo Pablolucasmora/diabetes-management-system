@@ -383,10 +383,27 @@ class DBSchema:
     );
     """
 
+    intake_plate = """
+    CREATE TABLE IF NOT EXISTS intake_plate (
+        id SERIAL CONSTRAINT pk_intake_plate PRIMARY KEY,
+        intake_event_id INTEGER NOT NULL
+            CONSTRAINT fk_intake_plate_intake_event_id_intake_event
+            REFERENCES intake_event(id) ON DELETE CASCADE, -- A plate only exists inside its event
+
+        name VARCHAR(255), -- NULL means the name is derived from the plate's first two ingredients (measurement_conventions.md 4.6.3); writing a name freezes it
+        offset_minutes INTEGER
+            CONSTRAINT ck_intake_plate_offset_minutes
+            CHECK (offset_minutes IS NULL OR (offset_minutes >= -300 AND offset_minutes <= 300)), -- Template inherited by the portions added to this plate, not a clinical value; same sanity range as portion_detail.offset_minutes (measurement_conventions.md 4.5, 4.6.2)
+
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    """
+
     portion_detail = """
     CREATE TABLE IF NOT EXISTS portion_detail (
         id SERIAL PRIMARY KEY,
-        
+
         -- ARC 1: Origin
         catalog_id INTEGER REFERENCES catalog(id) ON DELETE RESTRICT,
         manual_intake_id INTEGER REFERENCES manual_intake(id) ON DELETE RESTRICT,
@@ -397,7 +414,17 @@ class DBSchema:
         fridge_id INTEGER REFERENCES fridge(id) ON DELETE CASCADE,
         recipe_id INTEGER REFERENCES recipe(id) ON DELETE CASCADE,
         CHECK (num_nonnulls(intake_event_id, fridge_id, recipe_id) = 1),
-        
+
+        plate_id INTEGER
+            CONSTRAINT fk_portion_detail_plate_id_intake_plate
+            REFERENCES intake_plate(id) ON DELETE RESTRICT, -- Which plate (serving) of the event this portion belongs to; deleting a plate with portions is blocked on purpose (measurement_conventions.md 4.6.5)
+        CONSTRAINT ck_portion_detail_plate_only_for_event
+            CHECK ((intake_event_id IS NULL) = (plate_id IS NULL)), -- An event portion must have a plate; a fridge/recipe portion must not
+        -- Uniqueness of a food inside a plate (measurement_conventions.md 4.6.4) is a PARTIAL unique
+        -- index and therefore lives in db_init._ensure_portion_detail_schema, not here: a partial
+        -- index cannot be declared inline in CREATE TABLE.
+
+
         amount_g REAL NOT NULL, -- This is the cooked amount of a food item. For example, the user may cook 400g of quinoa but only plate 100g, saving the rest. This amount is then compared to plate_amount, and if greater, the difference is automatically saved to the fridge with the food's id, for easy reuse later.
         cooking VARCHAR(50), -- Cooking method, used to evaluate its effect on blood sugar levels (options: steam, boiled-al-dente, boiled-soft, fried, raw, oven, airfryer, toaster, griddle). Default: griddle
         conservation VARCHAR(50), -- Storage method: freezer, fridge, freshly-made, pre-cooked
