@@ -2,11 +2,12 @@ import logging
 import os
 from psycopg import sql
 
+from DayBetes_food.auth.models import USER_EMAIL_MAX_LENGTH, USER_USERNAME_MAX_LENGTH
 from DayBetes_food.auth.security import hash_password, normalize_identifier, sanitize_text
 from DayBetes_food.config import DB_RUNTIME_ROLE
 from DayBetes_food.database.connection import get_migrations_connection
 from DayBetes_food.database.schema import DBSchema
-from DayBetes_food.domain.constants import InsulinType, InjectionZone, sql_in_list
+from DayBetes_food.domain.constants import IntakeEventState, InsulinType, InjectionZone, MealType, sql_in_list
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +210,22 @@ def _ensure_default_user(cursor):
     if row:
         return
 
+    # §7.3: el exceso sobre el límite de columna se rechaza, no se trunca.
+    # Aquí la entrada es configuración, no una petición HTTP: no hay a quién
+    # devolver un 422, así que se falla al arrancar con un mensaje explícito
+    # en vez de crear la cuenta con un nombre distinto del configurado.
+    username = sanitize_text(DEFAULT_USER_USERNAME) or "default_user"
+    if len(username) > USER_USERNAME_MAX_LENGTH:
+        raise ValueError(
+            f"DEFAULT_USER_USERNAME excede {USER_USERNAME_MAX_LENGTH} caracteres "
+            f"(users.username es VARCHAR({USER_USERNAME_MAX_LENGTH}))"
+        )
+    if len(DEFAULT_USER_EMAIL or "") > USER_EMAIL_MAX_LENGTH:
+        raise ValueError(
+            f"DEFAULT_USER_EMAIL excede {USER_EMAIL_MAX_LENGTH} caracteres "
+            f"(users.email es VARCHAR({USER_EMAIL_MAX_LENGTH}))"
+        )
+
     cursor.execute(
         """
         INSERT INTO users (email, username, password_hash, is_active, created_at, updated_at)
@@ -216,7 +233,7 @@ def _ensure_default_user(cursor):
         """,
         {
             "email": DEFAULT_USER_EMAIL,
-            "username": sanitize_text(DEFAULT_USER_USERNAME, 50) or "default_user",
+            "username": username,
             "password_hash": hash_password(DEFAULT_USER_PASSWORD),
         },
     )
@@ -809,6 +826,132 @@ _CANONICAL_INJECTION_CONSTRAINTS = (
 )
 
 
+# Renombrados de constraints heredados a los nombres canónicos de §11.6.
+# Solo renombran: la definición del CHECK no cambia.
+_INTAKE_EVENT_CONSTRAINT_RENAMES = {
+    "intake_event_users_id_fkey": "fk_intake_event_users_id_users",
+    "intake_event_amount_confidence_check": "ck_intake_event_amount_confidence",
+    "intake_event_quality_confidence_check": "ck_intake_event_quality_confidence",
+    "intake_event_carbs_uncertainty_check": "ck_intake_event_carbs_uncertainty",
+    "intake_event_sugars_uncertainty_check": "ck_intake_event_sugars_uncertainty",
+    "intake_event_fats_uncertainty_check": "ck_intake_event_fats_uncertainty",
+    "intake_event_saturated_uncertainty_check": "ck_intake_event_saturated_uncertainty",
+    "intake_event_proteins_uncertainty_check": "ck_intake_event_proteins_uncertainty",
+    "intake_event_fiber_uncertainty_check": "ck_intake_event_fiber_uncertainty",
+}
+
+
+def _constraint_exists(cursor, table: str, name: str) -> bool:
+    cursor.execute(
+        "SELECT 1 AS ok FROM pg_constraint "
+        "WHERE conrelid = %(table)s::regclass AND conname = %(name)s;",
+        {"table": f"public.{table}", "name": name},
+    )
+    return cursor.fetchone() is not None
+
+
+def _ensure_intake_event_schema(cursor):
+    """intake_event: timestamps, soft-delete, TIMESTAMPTZ, NOT NULL, constraints e índice.
+
+    Cierra los hallazgos 3 (deleted_at), 4, 7, 8 y 9 de
+    audit/audit_intake_event.md. Idempotente (§12.2).
+    """
+    state_list = sql_in_list(IntakeEventState)
+    meal_type_list = sql_in_list(MealType)
+
+    # ---- H4 / H3: columnas de auditoría y soft-delete (primero nullable) ----
+    cursor.execute("ALTER TABLE intake_event ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;")
+    cursor.execute("ALTER TABLE intake_event ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;")
+    cursor.execute("ALTER TABLE intake_event ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;")
+    cursor.execute("ALTER TABLE intake_event ADD COLUMN IF NOT EXISTS timezone_at_event TEXT;")
+
+    # ---- H7: meal_time TIMESTAMP naive-UTC -> TIMESTAMPTZ (§10.5) ----
+    # El DEFAULT se quita antes del ALTER TYPE: PostgreSQL no puede convertir
+    # automáticamente un default de timestamp a timestamptz y abortaría.
+    data_type = (_column_data_type(cursor, "intake_event", "meal_time") or "").lower()
+    if data_type == "timestamp without time zone":
+        cursor.execute("ALTER TABLE intake_event ALTER COLUMN meal_time DROP DEFAULT;")
+        cursor.execute(
+            "ALTER TABLE intake_event "
+            "ALTER COLUMN meal_time TYPE TIMESTAMPTZ USING meal_time AT TIME ZONE 'UTC';"
+        )
+    cursor.execute("ALTER TABLE intake_event ALTER COLUMN meal_time SET DEFAULT CURRENT_TIMESTAMP;")
+
+    # ---- Backfill técnico de las columnas nuevas ----
+    # No cambia ningún dato existente: solo rellena columnas que antes no existían
+    # (decisión 2026-09-08 sobre datos históricos).
+    cursor.execute(
+        "UPDATE intake_event "
+        "SET created_at = COALESCE(created_at, meal_time, CURRENT_TIMESTAMP);"
+    )
+    cursor.execute("UPDATE intake_event SET updated_at = COALESCE(updated_at, created_at);")
+    cursor.execute(
+        "UPDATE intake_event SET timezone_at_event = COALESCE(timezone_at_event, 'Europe/Madrid');"
+    )
+
+    # ---- Defaults y NOT NULL ----
+    cursor.execute("ALTER TABLE intake_event ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;")
+    cursor.execute("ALTER TABLE intake_event ALTER COLUMN created_at SET NOT NULL;")
+    cursor.execute("ALTER TABLE intake_event ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;")
+    cursor.execute("ALTER TABLE intake_event ALTER COLUMN updated_at SET NOT NULL;")
+    cursor.execute("ALTER TABLE intake_event ALTER COLUMN timezone_at_event SET DEFAULT 'Europe/Madrid';")
+    cursor.execute("ALTER TABLE intake_event ALTER COLUMN timezone_at_event SET NOT NULL;")
+    # deleted_at se queda nullable: NULL = activo (§11.3).
+
+    # ---- H8: users_id NOT NULL ----
+    # Verificado el 2026-09-08: 0 filas con users_id NULL. Si apareciera alguna,
+    # este ALTER falla y aborta el bootstrap entero (§12.5), que es lo correcto.
+    cursor.execute("ALTER TABLE intake_event ALTER COLUMN users_id SET NOT NULL;")
+
+    # ---- H8: nombres canónicos (§11.6) ----
+    for old_name, new_name in _INTAKE_EVENT_CONSTRAINT_RENAMES.items():
+        if _constraint_exists(cursor, "intake_event", old_name) and not _constraint_exists(
+            cursor, "intake_event", new_name
+        ):
+            cursor.execute(
+                sql.SQL("ALTER TABLE intake_event RENAME CONSTRAINT {} TO {};").format(
+                    sql.Identifier(old_name), sql.Identifier(new_name)
+                )
+            )
+
+    # state y meal_type no se renombran: se regeneran desde los enums (§4.4).
+    cursor.execute("ALTER TABLE intake_event DROP CONSTRAINT IF EXISTS intake_event_state_check;")
+    cursor.execute("ALTER TABLE intake_event DROP CONSTRAINT IF EXISTS ck_intake_event_state;")
+    cursor.execute(
+        f"ALTER TABLE intake_event ADD CONSTRAINT ck_intake_event_state "
+        f"CHECK (state IN ({state_list}));"
+    )
+    cursor.execute("ALTER TABLE intake_event DROP CONSTRAINT IF EXISTS intake_event_meal_type_check;")
+    cursor.execute("ALTER TABLE intake_event DROP CONSTRAINT IF EXISTS ck_intake_event_meal_type;")
+    cursor.execute(
+        f"ALTER TABLE intake_event ADD CONSTRAINT ck_intake_event_meal_type "
+        f"CHECK (meal_type IS NULL OR meal_type IN ({meal_type_list}));"
+    )
+
+    # ---- H9: índice parcial del filtro real de todas las listas (§11.7) ----
+    cursor.execute("DROP INDEX IF EXISTS idx_intake_event_users_id_state_meal_time;")
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_intake_event_users_id_state_meal_time
+        ON intake_event (users_id, state, meal_time DESC, id DESC)
+        WHERE deleted_at IS NULL;
+        """
+    )
+
+    # ---- total_amount deja de persistirse: se calcula en vivo (decisión 2026-09-10) ----
+    cursor.execute("ALTER TABLE intake_event DROP COLUMN IF EXISTS total_amount;")
+
+    # ---- H32/H35: ingested_amount con límites de cordura (measurement_conventions.md
+    # §6.9.2, decisión 2026-09-10). Verificado el 2026-09-09: 0 filas negativas o
+    # fuera de rango; si apareciera alguna, este ALTER falla y aborta el bootstrap,
+    # que es lo correcto (§12.5). ----
+    cursor.execute("ALTER TABLE intake_event DROP CONSTRAINT IF EXISTS ck_intake_event_ingested_amount;")
+    cursor.execute(
+        "ALTER TABLE intake_event ADD CONSTRAINT ck_intake_event_ingested_amount "
+        "CHECK (ingested_amount IS NULL OR (ingested_amount >= 0 AND ingested_amount <= 100000));"
+    )
+
+
 def _ensure_insulin_injections_schema(cursor):
     cursor.execute(
         """
@@ -1280,6 +1423,7 @@ def init_db():
         _ensure_users_schema(cur)
         _ensure_auth_sessions_schema(cur)
         _ensure_auth_rate_limits_schema(cur)
+        _ensure_intake_event_schema(cur)
         _ensure_insulin_injections_schema(cur)
         _remove_legacy_user_sessions(cur)
         _remove_legacy_user_hidden_catalog(cur)

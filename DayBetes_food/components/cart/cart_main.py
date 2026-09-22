@@ -1,24 +1,31 @@
 from fasthtml.common import *
-from DayBetes_food.auth.context import get_current_user_id
 
 from DayBetes_food.components.cart.cart_components import CartCard
-from DayBetes_food.database.queries import (
-    get_cart_events,
-    get_portion_detail_by_events,
-    get_injection_zone_for_event,
-)
 
 
-def cart_main(connection):
-    user_id = get_current_user_id()
-    if not user_id:
-        return Div(H2("No users"), cls="flex flex-col items-center")
+def cart_events_list(events, portions_by_event):
+    """
+    Contenedor local de las tarjetas de evento (#cart_events_list). Es el
+    target de las acciones que pueden reordenar la lista (p.ej. meal_hour,
+    que cambia el orden `meal_time DESC`) sin necesidad de recargar el resto
+    de la página (decisión 2026-09-10, refresco local del carrito).
+    """
+    return Div(
+        *[CartCard(event, portions_by_event.get(event.id, [])) for event in events],
+        id="cart_events_list",
+        cls="flex flex-col items-center gap-6 w-full",
+    )
 
-    events = get_cart_events(connection, user_id)
-    for event in events:
-        event["selected_injection_zone"] = get_injection_zone_for_event(
-            connection, user_id=int(user_id), intake_event_id=event["id"]
-        )
+
+def cart_main(events, portions_by_event, oob: bool = False):
+    """
+    `oob=True` marca el Div raíz (#cart_body) como swap fuera de banda
+    (hx-swap-oob), para que un endpoint que borra/confirma el último evento
+    planificado pueda inyectar el estado "carrito vacío" sin recargar el
+    resto de la página (decisión 2026-09-10, refresco local del carrito).
+    """
+    oob_attrs = {"hx_swap_oob": "true"} if oob else {}
+
     if not events:
         return Div(
             Div(
@@ -51,6 +58,7 @@ def cart_main(connection):
                     flex flex-col items-center gap-3
                 """
             ),
+            id="cart_body",
             cls="""
                 flex flex-col items-center
                 justify-center gap-6
@@ -58,20 +66,14 @@ def cart_main(connection):
                 transition-[width,margin,padding] duration-150
             """,
             data_hide_cart="true",
+            **oob_attrs,
         )
-
-    event_ids = [event["id"] for event in events]
-    all_portions = get_portion_detail_by_events(connection, event_ids)
-    portions_by_event = {event_id: [] for event_id in event_ids}
-    for portion in all_portions:
-        portions_by_event.setdefault(portion["intake_event_id"], []).append(portion)
-
-    event_cards = [CartCard(event, portions_by_event.get(event["id"], [])) for event in events]
 
     return Div(
         H1("Food cart", cls="text-xl font-bold"),
-        *event_cards,
+        cart_events_list(events, portions_by_event),
         Script(src="/js/cart_units.js", defer="defer"),
+        id="cart_body",
         data_hide_cart="true",
         cls="""
             flex flex-col items-center
@@ -81,5 +83,6 @@ def cart_main(connection):
             w-full mx-auto
             md:mb-28 lg:mb-28 mb-24
             transition-[width,margin,padding] duration-150
-        """
+        """,
+        **oob_attrs,
     )

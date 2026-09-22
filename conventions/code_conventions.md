@@ -640,6 +640,27 @@ No se debe convertir silenciosamente una entrada inválida en un valor válido: 
 - No truncar silenciosamente.
 - Usar la misma normalización en Python y en los índices SQL de duplicados.
 
+La longitud máxima de un campo persistido es la de su columna. El boundary
+que recibe el texto debe comprobarla **antes** de llamar a persistencia y
+**rechazar** el exceso como `validation_error` (`422`), nunca truncarlo ni
+dejar que lo rechace PostgreSQL (`value too long for type character
+varying(N)` sale como `500`, un error de cliente convertido en fallo de
+servidor). El límite se declara una sola vez como constante en el módulo de
+dominio de la tabla (por ejemplo `INTAKE_EVENT_NAME_MAX_LENGTH` en
+`domain/intake_event.py`), y todas las rutas y formularios que escriben esa
+columna usan esa misma constante — incluido el `maxlength` del `Input`, que
+es ayuda de UX y no sustituye la comprobación en servidor. Decisión
+2026-09-09.
+
+Una columna `TEXT` no tiene límite físico, pero eso **no la exime** de la
+regla anterior: el límite es entonces una decisión de dominio y se declara
+igual, como constante en el módulo de dominio de la tabla (por ejemplo
+`INTAKE_EVENT_NOTES_MAX_LENGTH`), se comprueba en el boundary y se rechaza el
+exceso con `422` sin truncar. El comentario de la columna en `schema.py`
+indica que el límite es de dominio y dónde vive la constante. Una columna de
+texto libre sin límite declarado es un hallazgo de auditoría, no un caso
+permitido. Decisión 2026-09-10.
+
 ### 7.4 Campos obligatorios, opcionales y parciales
 
 Se distinguen tres estados:
@@ -997,6 +1018,33 @@ El refresco posterior solo ocurre cuando `event.detail.successful` es verdadero.
 - Los nombres de eventos son estables y describen el hecho ocurrido, no una implementación interna.
 - Un evento de éxito no se emite en una respuesta de validación fallida.
 - No mezclar `HX-Redirect`, `HX-Location` y fragmentos intercambiados para el mismo flujo sin una decisión documentada.
+
+#### Contrato HTMX del carrito
+
+El carrito usa **refresco local**: cada acción devuelve el fragmento mínimo
+que ha cambiado, no la página entera (decisión 2026-09-10). Como consecuencia
+el `hx-target` deja de ser uniforme, así que la relación acción → target → swap
+→ fragmento se declara aquí y no solo en el código. Toda acción HTMX del
+carrito exige el header `HX-Request` (`403` si falta) y lleva `hx-target`
+**explícito**: sin él, htmx toma como target el propio elemento que dispara la
+petición y el swap `outerHTML` lo destruye.
+
+| Acción (`POST /cart/event/{id}/…`) | `hx-target` | `hx-swap` | Fragmento de éxito |
+|---|---|---|---|
+| `meal_hour` (hora y fecha) | `#cart_events_list` | `outerHTML` | `cart_events_list(...)` — es la única acción que reordena la lista (`meal_time`) |
+| `name`, `notes`, `meal_type`, `eating_out`, `insulin_dose`, `injection_zone`, `ingredient/…/amount`, `ingredient/…/offset` | `#cart_card_event_{id}` | `outerHTML` | `CartCard(event, portions)` |
+| `ingredient/…/strictly_weighed`, `…/macros_quality`, `…/is_cooked_weight` | `#macros_summary_event_{id}` | `outerHTML` | `Div(MacrosSummary(...), id="macros_summary_event_{id}")` |
+| `delete`, `confirm` | `#cart_card_event_{id}` | `outerHTML` | cuerpo vacío (la tarjeta desaparece) y, si no queda ningún evento planificado, swap OOB de `#cart_body` con el carrito vacío |
+| `archive`, `restore` | página completa del carrito | `outerHTML` | `cart_main(...)`; no están enlazadas desde ninguna tarjeta todavía |
+
+Fragmento de error: ninguno. Las acciones del carrito son ediciones en línea,
+no un formulario de guardado, así que **no** aplican la excepción de `200` +
+fragmento de esta misma sección: conservan el status semántico de su categoría
+y el aviso viaja por el canal de error visible definido en
+`error_conventions.md` §7. Eventos `HX-Trigger`: solo `appError`.
+
+Añadir un botón nuevo al carrito obliga a elegir una de las filas de esta
+tabla o a añadir una nueva; no se deja el `hx-target` implícito.
 
 ### 9.6 Entrada, estados de carga y repetición
 
@@ -1374,6 +1422,8 @@ Una migración que añade una columna, un `CHECK` o un contrato nuevo (p. ej. "s
 - Backfillear, marcar como inconsistente o borrar datos preexistentes que incumplen la regla nueva es una decisión de producto explícita, no una consecuencia automática de la migración. Se documenta en `conventions/decisions.md` solo si el usuario decide desviarse del criterio por defecto.
 - Cualquier análisis, estadística o modelo que lea esa tabla debe considerar que puede haber filas anteriores a la regla nueva que no la cumplen.
 - Esto no exime de aplicar la regla a los datos nuevos desde el momento en que la migración se cierra.
+
+Aplicado sin excepción (criterio por defecto, sin entrada en `decisions.md`) en `intake_event` (hallazgo 17 de `audit/audit_intake_event.md`: 40 filas `consumed` con `insulin_dose = TRUE` sin inyección asociada, 48 de 51 sin métricas de confianza) e `insulin_injections` (9 de 9 filas con `intake_event_id IS NULL`), ambos verificados contra la base real el 2026-09-09.
 
 ## 13. Procedimiento obligatorio de auditoría por tabla
 

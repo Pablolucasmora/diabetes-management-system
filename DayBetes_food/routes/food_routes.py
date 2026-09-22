@@ -16,7 +16,6 @@ from DayBetes_food.database.queries import (
     get_all_catalog,
     get_all_manual_intakes,
     get_all_recipes,
-    add_intake_event,
     add_portion_detail,
     get_catalog_item,
     get_catalog_item_by_barcode,
@@ -25,7 +24,6 @@ from DayBetes_food.database.queries import (
     get_portion_detail_by_recipe,
     get_portion_detail,
     get_recipe_portions_by_origin,
-    get_intake_event,
     update_catalog_item,
     toggle_user_favorite,
     set_user_favorite,
@@ -52,13 +50,16 @@ from DayBetes_food.database.queries import (
     update_portion_detail_amount,
     update_portion_detail_fields,
     delete_portion_detail,
+    create_intake_event,
+    get_intake_event,
+    get_planned_intake_event,
+    list_planned_intake_events,
 )
 from DayBetes_food.components.food.foods import (
     GLYCEMIC_INDEX_OPTIONS,
     INITIAL_STATE_OPTIONS,
     COOKING_OPTIONS,
     CONSERVATION_OPTIONS,
-    MEAL_TYPES,
 )
 from DayBetes_food.components.food.foods import FoodSectionsContent, FoodCard, FavoriteButton, on_after
 from DayBetes_food.components.food.foods import (
@@ -74,7 +75,10 @@ from DayBetes_food.components.food.foods import (
     RecipeMacrosGrid,
 )
 from DayBetes_food.database.connection import get_connection
-from DayBetes_food.time_utils import local_naive_to_utc
+from DayBetes_food.domain.constants import IntakeEventState, MealType
+from DayBetes_food.domain.intake_event import INTAKE_EVENT_NAME_MAX_LENGTH, IntakeEventCreate
+from DayBetes_food.time_utils import local_naive_to_utc_aware, local_today, utc_now
+from DayBetes_food.errors import NotFoundError, ConflictError
 
 
 def _to_float(value: str):
@@ -1019,8 +1023,8 @@ def setup_food_routes(rt):
         if not meal_t:
             return render_fragment(P("Choose a valid time.", cls="text-xs text-red-700"))
 
-        local_dt = datetime.combine(date.today(), meal_t)
-        utc_dt = local_naive_to_utc(local_dt)
+        local_dt = datetime.combine(local_today(), meal_t)
+        utc_dt = local_naive_to_utc_aware(local_dt)
         with get_connection() as connection:
             user_id = get_current_user_id()
             if not user_id:
@@ -1035,16 +1039,16 @@ def setup_food_routes(rt):
                 return render_fragment(P("This food is archived and must be copied first.", cls="text-xs text-red-700"))
             try:
                 with connection.transaction():
-                    event_id = add_intake_event(
+                    event_id = create_intake_event(
                         connection,
-                        users_id=int(user_id),
-                        state="consumed",
-                        meal_type="rescue",
-                        meal_time=utc_dt,
+                        IntakeEventCreate(
+                            user_id=int(user_id),
+                            state=IntakeEventState.CONSUMED,
+                            meal_type=MealType.RESCUE,
+                            meal_time=utc_dt,
+                        ),
                         commit=False,
                     )
-                    if not event_id:
-                        raise ValueError("Could not create rescue event.")
                     if not add_portion_detail(
                         connection,
                         origin=origin_type,
@@ -1059,6 +1063,10 @@ def setup_food_routes(rt):
                         commit=False,
                     ):
                         raise ValueError("Could not register rescue.")
+            except NotFoundError:
+                return render_fragment(P("Meal event not found.", cls="text-red-700"))
+            except ConflictError:
+                return render_fragment(P("That meal has already been confirmed.", cls="text-red-700"))
             except ValueError as error:
                 return render_fragment(P(str(error), cls="text-xs text-red-700"))
         return render_fragment(P("Rescue registered.", cls="text-xs text-green-700"))
@@ -1082,16 +1090,17 @@ def setup_food_routes(rt):
             tags = get_entry_tags(connection, entry_type, entry_id)
             can_edit = _can_edit_entry(entry_type, entry, user_id)
             can_delete = can_edit
+            events = list_planned_intake_events(connection, int(user_id)) if user_id else []
         return render_page(
             request,
-            lambda conn: FoodDetailPage(
-                conn,
+            lambda _: FoodDetailPage(
                 user_id=user_id or 0,
                 entry_type=entry_type,
                 entry=entry,
                 summary=summary,
                     recipe_portions=recipe_portions,
                     tags=tags,
+                    events=events,
                     can_edit=can_edit,
                     can_delete=can_delete,
                     is_archived=(entry_type == "catalog" and entry.get("deleted_at") is not None),
@@ -1615,7 +1624,10 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             user_id = get_current_user_id()
             if not user_id:
-                return render_fragment(P("No users available.", cls="text-red-700"))
+                # Sin sesión: 401 (error_conventions.md §3.3), no fragmento con
+                # 200. Inalcanzable en producción porque el middleware ya cubre
+                # estas rutas; es defensa en profundidad (hallazgo 26).
+                return HTMLResponse(status_code=401)
             origin_item = None
             if entry_type == "catalog":
                 origin_item = get_catalog_item(connection, entry_id)
@@ -1631,18 +1643,17 @@ def setup_food_routes(rt):
             try:
                 with connection.transaction():
                     if intake_event_id and intake_event_id.isdigit() and int(intake_event_id) != 0:
-                        event_id = int(intake_event_id)
+                        event_id = get_planned_intake_event(connection, int(user_id), int(intake_event_id))
                     else:
-                        event_id = add_intake_event(
-                            connection, users_id=user_id, state="planned", commit=False
+                        event_id = create_intake_event(
+                            connection,
+                            IntakeEventCreate(user_id=int(user_id), state=IntakeEventState.PLANNED),
+                            commit=False,
                         )
-                    if not event_id:
-                        raise ValueError("Could not create meal event.")
-
-                    event_data = get_intake_event(connection, event_id)
+                    event_data = get_intake_event(connection, int(user_id), event_id)
                     offset_minutes = 0
-                    if event_data and event_data.get("meal_time"):
-                        delta = datetime.utcnow() - event_data["meal_time"]
+                    if event_data and event_data.meal_time:
+                        delta = utc_now() - event_data.meal_time
                         offset_minutes = int(delta.total_seconds() // 60)
 
                     created = []
@@ -1703,6 +1714,13 @@ def setup_food_routes(rt):
 
                     if not created or not all(created):
                         raise ValueError("Could not log food.")
+            except NotFoundError:
+                # intake_event_id ajeno o archivado: recurso inexistente (§5.4),
+                # no un fallo de servidor (hallazgo 23).
+                return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
+            except ConflictError:
+                # El evento ya no está 'planned'.
+                return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=409)
             except ValueError as error:
                 return render_fragment(P(str(error), cls="text-red-700"))
             return HTMLResponse("", headers={"HX-Redirect": "/food"})
@@ -1853,7 +1871,9 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             user_id = get_current_user_id()
             if not user_id:
-                return HTMLResponse("No users", status_code=400)
+                # Sin sesión: 401 (error_conventions.md §3.3). Defensa en
+                # profundidad; el middleware ya cubre estas rutas (hallazgo 26).
+                return HTMLResponse(status_code=401)
 
             catalog_item = get_catalog_item(connection, food_id)
             if (
@@ -1871,17 +1891,17 @@ def setup_food_routes(rt):
             try:
                 with connection.transaction():
                     if intake_event_id and intake_event_id.isdigit() and int(intake_event_id) != 0:
-                        event_id = int(intake_event_id)
+                        event_id = get_planned_intake_event(connection, int(user_id), int(intake_event_id))
                     else:
-                        event_id = add_intake_event(
-                            connection, users_id=user_id, state="planned", commit=False
+                        event_id = create_intake_event(
+                            connection,
+                            IntakeEventCreate(user_id=int(user_id), state=IntakeEventState.PLANNED),
+                            commit=False,
                         )
-                    if not event_id:
-                        raise ValueError("Could not create meal event.")
-                    event_data = get_intake_event(connection, event_id)
+                    event_data = get_intake_event(connection, int(user_id), event_id)
                     offset_minutes = 0
-                    if event_data and event_data.get("meal_time"):
-                        delta = datetime.utcnow() - event_data["meal_time"]
+                    if event_data and event_data.meal_time:
+                        delta = utc_now() - event_data.meal_time
                         offset_minutes = int(delta.total_seconds() // 60)
 
                     portion_id = add_portion_detail(
@@ -1897,6 +1917,10 @@ def setup_food_routes(rt):
                     )
                     if not portion_id:
                         raise ValueError("Could not add food.")
+            except NotFoundError:
+                return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
+            except ConflictError:
+                return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=409)
             except ValueError:
                 portion_id = None
 
@@ -1911,33 +1935,29 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             user_id = get_current_user_id()
             if not user_id:
-                return HTMLResponse("No users", status_code=400)
+                # Sin sesión: 401 (error_conventions.md §3.3). Defensa en
+                # profundidad; el middleware ya cubre estas rutas (hallazgo 26).
+                return HTMLResponse(status_code=401)
 
             intake_item = get_manual_intake(connection, intake_id)
             if not intake_item or not _can_view_entry("manual_intake", intake_item, user_id):
                 return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
 
-            event_id = None
-            if intake_event_id and intake_event_id.isdigit() and int(intake_event_id) != 0:
-                event_id = int(intake_event_id)
-                event_data = get_intake_event(connection, event_id)
-                if (
-                    not event_data
-                    or int(event_data.get("users_id") or 0) != int(user_id)
-                    or event_data.get("state") != "planned"
-                ):
-                    return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
             try:
                 with connection.transaction():
-                    if event_id is None:
-                        event_id = add_intake_event(connection, users_id=user_id, state="planned", commit=False)
-                    if not event_id:
-                        raise ValueError("Could not create meal event.")
+                    if intake_event_id and intake_event_id.isdigit() and int(intake_event_id) != 0:
+                        event_id = get_planned_intake_event(connection, int(user_id), int(intake_event_id))
+                    else:
+                        event_id = create_intake_event(
+                            connection,
+                            IntakeEventCreate(user_id=int(user_id), state=IntakeEventState.PLANNED),
+                            commit=False,
+                        )
                     portion_amount = float(intake_item.get("amount_g") or 100.0)
-                    event_data = get_intake_event(connection, event_id)
+                    event_data = get_intake_event(connection, int(user_id), event_id)
                     offset_minutes = 0
-                    if event_data and event_data.get("meal_time"):
-                        delta = datetime.utcnow() - event_data["meal_time"]
+                    if event_data and event_data.meal_time:
+                        delta = utc_now() - event_data.meal_time
                         offset_minutes = int(delta.total_seconds() // 60)
 
                     portion_id = add_portion_detail(
@@ -1953,6 +1973,10 @@ def setup_food_routes(rt):
                     )
                     if not portion_id:
                         raise ValueError("Could not add manual intake.")
+            except NotFoundError:
+                return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
+            except ConflictError:
+                return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=409)
             except ValueError:
                 portion_id = None
             headers = {"HX-Trigger": "addSuccess" if portion_id else "addError"}
@@ -1966,7 +1990,9 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             user_id = get_current_user_id()
             if not user_id:
-                return HTMLResponse("No users", status_code=400)
+                # Sin sesión: 401 (error_conventions.md §3.3). Defensa en
+                # profundidad; el middleware ya cubre estas rutas (hallazgo 26).
+                return HTMLResponse(status_code=401)
 
             recipe = get_recipe(connection, recipe_id)
             if not recipe or not _can_view_entry("recipe", recipe, user_id):
@@ -1975,23 +2001,27 @@ def setup_food_routes(rt):
             try:
                 with connection.transaction():
                     if intake_event_id and intake_event_id.isdigit() and int(intake_event_id) != 0:
-                        event_id = int(intake_event_id)
+                        event_id = get_planned_intake_event(connection, int(user_id), int(intake_event_id))
                     else:
-                        event_id = add_intake_event(
+                        try:
+                            recipe_meal_type = MealType(recipe["meal_type"]) if recipe.get("meal_type") else None
+                        except ValueError:
+                            recipe_meal_type = None
+                        event_id = create_intake_event(
                             connection,
-                            users_id=user_id,
-                            state="planned",
-                            meal_type=recipe.get("meal_type"),
-                            name=recipe.get("name"),
+                            IntakeEventCreate(
+                                user_id=int(user_id),
+                                state=IntakeEventState.PLANNED,
+                                meal_type=recipe_meal_type,
+                                name=recipe.get("name"),
+                            ),
                             commit=False,
                         )
-                    if not event_id:
-                        raise ValueError("Could not create meal event.")
 
-                    event_data = get_intake_event(connection, event_id)
+                    event_data = get_intake_event(connection, int(user_id), event_id)
                     offset_minutes = 0
-                    if event_data and event_data.get("meal_time"):
-                        delta = datetime.utcnow() - event_data["meal_time"]
+                    if event_data and event_data.meal_time:
+                        delta = utc_now() - event_data.meal_time
                         offset_minutes = int(delta.total_seconds() // 60)
 
                     recipe_portions = get_portion_detail_by_recipe(connection, recipe_id)
@@ -2022,6 +2052,10 @@ def setup_food_routes(rt):
                     if not recipe_portions or not created_ids or not all(created_ids):
                         raise ValueError("Could not add recipe.")
                     ok = True
+            except NotFoundError:
+                return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
+            except ConflictError:
+                return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=409)
             except ValueError:
                 ok = False
             headers = {"HX-Trigger": "addSuccess" if ok else "addError"}
@@ -2389,7 +2423,7 @@ def setup_food_routes(rt):
                 return _error_msg("Only the owner can edit this item. Create a copy to edit it.")
             clean_meal_type, meal_type_error = _coerce_choice(
                 meal_type,
-                options=MEAL_TYPES,
+                options=[meal_type.value for meal_type in MealType],
                 allow_add=False,
                 added=False,
                 required=False,
@@ -2757,7 +2791,7 @@ def setup_food_routes(rt):
                 return _error_msg("No users found.")
             clean_meal_type, meal_type_error = _coerce_choice(
                 meal_type,
-                options=MEAL_TYPES,
+                options=[meal_type.value for meal_type in MealType],
                 allow_add=False,
                 added=False,
                 required=False,
@@ -2809,6 +2843,7 @@ def setup_food_routes(rt):
                 placeholder="Meal name",
                 name="meal_name",
                 id="meal_name_input_text",
+                maxlength=str(INTAKE_EVENT_NAME_MAX_LENGTH),
                 autofocus="autofocus",
                 data_skip_page_loading="true",
                 cls="""
@@ -2850,17 +2885,27 @@ def setup_food_routes(rt):
     def post(request: Request, meal_name: str = ""):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
-        
+
+        clean_name = (meal_name or "").strip()
+        if len(clean_name) > INTAKE_EVENT_NAME_MAX_LENGTH:
+            # §7.3: no truncar silenciosamente; el exceso sobre el VARCHAR(255)
+            # se rechaza en el boundary (decisión 2026-09-09, hallazgo 24).
+            return HTMLResponse(status_code=422)
+
         with get_connection() as connection:
             user_id = get_current_user_id()
             if not user_id:
-                return HTMLResponse("No users", status_code=400)
+                # Sin sesión: 401 (error_conventions.md §3.3). Defensa en
+                # profundidad; el middleware ya cubre estas rutas (hallazgo 26).
+                return HTMLResponse(status_code=401)
 
-            event_id = add_intake_event(
+            event_id = create_intake_event(
                 connection,
-                users_id=user_id,
-                state="planned",
-                name=meal_name or None,
+                IntakeEventCreate(
+                    user_id=int(user_id),
+                    state=IntakeEventState.PLANNED,
+                    name=clean_name or None,
+                ),
             )
 
             headers = {"HX-Trigger": "addSuccess" if event_id else "addError"}

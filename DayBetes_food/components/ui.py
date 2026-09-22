@@ -29,6 +29,38 @@ def PageLoadingOverlay():
         """
     )
 
+def AppToast():
+    """
+    Canal único de avisos de error de la web (decisión 2026-09-10, hallazgo 37
+    de audit/audit_intake_event.md).
+
+    Las rutas HTMX conservan su status semántico (`422`/`404`/`409`, §3.2 y
+    §3.6 de error_conventions.md) y devuelven cuerpo vacío —htmx no hace swap
+    ante un `4xx`—, pero acompañan la respuesta con el código y el mensaje
+    público del catálogo de errores. `static/js/app_toast.js` los pinta aquí,
+    de modo que un error deja de ser invisible sin que ninguna ruta tenga que
+    reconstruir su fragmento (error_conventions.md §7: "no devolver un cuerpo
+    vacío para un error que el usuario necesita ver").
+    """
+    return Div(
+        Div(
+            id="app_toast_message",
+            cls="text-sm md:text-base",
+        ),
+        id="app_toast",
+        role="status",
+        aria_live="polite",
+        cls="""
+            fixed inset-x-0 bottom-24 z-[80]
+            mx-auto w-[92vw] max-w-md
+            web_container px-4 py-3 rounded-2xl
+            border border-red-200 bg-red-50 text-red-700
+            opacity-0 invisible pointer-events-none
+            transition-opacity duration-200
+        """,
+    )
+
+
 def _clean_fragment(fragment):
     if fragment is None or isinstance(fragment, bool):
         return None
@@ -72,6 +104,7 @@ def _base_html_shell(content_html: str) -> str:
     <script src="https://cdn.jsdelivr.net/gh/gnat/css-scope-inline@main/script.js" defer></script>
     <script src="/js/csrf.js" defer></script>
     <script src="/js/page_loading.js" defer></script>
+    <script src="/js/app_toast.js" defer></script>
     <script src="/js/island_indicator.js" defer></script>
     <script src="/js/browser_tweaks.js" defer></script>
     <script src="/js/food_quick_create.js?v=18" defer></script>
@@ -112,5 +145,6 @@ def render_page(request, content_fn, show_cart=True):
             FloatingIsland(),
             Cart(display=show_cart),
             PageLoadingOverlay(),
+            AppToast(),
         )
         return HTMLResponse(_base_html_shell(_safe_fragment_to_html(page_fragment)))

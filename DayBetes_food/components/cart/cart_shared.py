@@ -1,13 +1,3 @@
-MEAL_TYPES = [
-    "breakfast",
-    "brunch",
-    "lunch",
-    "afternoon_snack",
-    "dinner",
-    "snack",
-    "rescue",
-]
-
 MACRO_KEYS = [
     ("carbs", "Carbs", "carbs_uncertainty"),
     ("sugars", "Sugars", "sugars_uncertainty"),

@@ -3,6 +3,7 @@
 from typing import Any, Optional
 
 from DayBetes_food.database.queries.crud import _build_update_query, _execute_query, _execute_query_many, logger
+from DayBetes_food.errors import ValidationError
 
 
 _PORTION_ORIGIN_COLUMNS = {
@@ -208,6 +209,76 @@ def consolidate_event_portion_group_amount(
         if commit:
             connection.commit()
         return True
+    except Exception as e:
+        if commit:
+            connection.rollback()
+            logger.error("Error in query: %s", e, exc_info=True)
+            return False
+        raise
+
+
+def scale_event_portion_amounts(
+    connection,
+    event_id: int,
+    fraction: float,
+    commit: bool = True,
+) -> bool:
+    """Escala plate_amount de todas las porciones de un evento por `fraction`.
+
+    Único punto de escritura del flujo de `confirm` (measurement_conventions.md
+    §4.4/§6.9.1, decisión 2026-09-10): sobrescribe, una sola vez y con una única
+    sentencia SQL (no en un bucle Python), la cantidad servida por la cantidad
+    realmente consumida. `amount_g` no se toca.
+
+    `fraction` debe estar en [0, 1]; se valida aquí también como defensa en
+    profundidad, aunque el boundary HTTP ya lo rechaza con 422 antes de llegar.
+    El error de dominio es `ValidationError`, no `ValueError`, para que el
+    boundary lo traduzca a `422` y no a `500` (error_conventions.md §3.2;
+    hallazgo 41 de audit/audit_intake_event.md).
+
+    La cantidad escalada es `COALESCE(plate_amount, amount_g)`, la misma
+    definición que usa `cart_shared.portion_intake_amount` para calcular el
+    `total_amount` del que sale la fracción: si una fila tuviera
+    `plate_amount NULL`, escalar `NULL` la dejaría sin escalar mientras el
+    `ingested_amount` del evento sí reflejaría la fracción (hallazgo 41).
+    `amount_g` es `NOT NULL` y positivo por contrato (`add_portion_detail`),
+    así que el `COALESCE` no puede producir `NULL`; una fila con `amount_g <= 0`
+    sería un dato corrupto y se rechaza en vez de escalarse en silencio.
+
+    Devuelve True si había al menos una fila (evento con porciones). Un evento
+    sin porciones no es un error: no hay nada que escalar.
+    """
+    if not (0.0 <= fraction <= 1.0):
+        raise ValidationError("fraction must be between 0 and 1")
+
+    corrupt_query = """
+        SELECT COUNT(*) AS corrupt_rows FROM portion_detail
+        WHERE intake_event_id = %(event_id)s
+          AND (amount_g IS NULL OR amount_g <= 0);
+    """
+    query = """
+        UPDATE portion_detail
+        SET plate_amount = COALESCE(plate_amount, amount_g) * %(fraction)s
+        WHERE intake_event_id = %(event_id)s;
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(corrupt_query, {"event_id": event_id})
+            corrupt_row = cursor.fetchone()
+            if corrupt_row and corrupt_row["corrupt_rows"]:
+                raise ValidationError("portion_amount_not_positive")
+            cursor.execute(query, {"fraction": fraction, "event_id": event_id})
+            updated = cursor.rowcount
+        if commit:
+            connection.commit()
+        return updated > 0
+    except ValidationError:
+        # Error de dominio: nunca se degrada a False (error_conventions.md §11,
+        # "no ocultar errores SQL como resultados falsy"). El boundary lo
+        # traduce a 422.
+        if commit:
+            connection.rollback()
+        raise
     except Exception as e:
         if commit:
             connection.rollback()

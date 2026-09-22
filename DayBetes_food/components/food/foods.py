@@ -1,8 +1,8 @@
 import json
 from fasthtml.common import *
 
-from DayBetes_food.database.queries import get_cart_events
 from DayBetes_food.components.cart.cart_shared import CHECKBOX_CLS
+from DayBetes_food.domain.constants import MealType
 from DayBetes_food.time_utils import to_local
 
 
@@ -25,8 +25,6 @@ CATEGORY_OPTIONS = [
     "condiments",
     "supplements",
 ]
-
-MEAL_TYPES = ["breakfast", "brunch", "lunch", "afternoon_snack", "dinner", "snack", "rescue"]
 
 GLYCEMIC_INDEX_OPTIONS = ["high", "medium", "low"]
 
@@ -149,20 +147,18 @@ def ConfirmActionModal(modal_id: str, title: str, question: str, yes_button):
     )
 
 
-def MealSelector(connection, user_id: int, selected_id: int = None):
-    events = get_cart_events(connection, user_id)
-
+def MealSelector(events: list, selected_id: int = None):
     options = []
     for event in events:
-        local_meal_time = to_local(event.get("meal_time"))
-        label = event["name"] or (
-            f"Meal {local_meal_time.strftime('%H:%M')}" if local_meal_time else f"Meal {event['id']}"
+        local_meal_time = to_local(event.meal_time)
+        label = event.name or (
+            f"Meal {local_meal_time.strftime('%H:%M')}" if local_meal_time else f"Meal {event.id}"
         )
         options.append(
             Option(
                 label,
-                value=str(event["id"]),
-                selected=(event["id"] == selected_id),
+                value=str(event.id),
+                selected=(event.id == selected_id),
             )
         )
 
@@ -2031,7 +2027,7 @@ def CreateRecipePanel():
         Form(
             Div(
                 _labeled_input("Name*", "name"),
-                _labeled_select("Meal type", "meal_type", MEAL_TYPES),
+                _labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in MealType]),
                 Div(
                     Label("Notes", cls="text-xs text-gray-700"),
                     Textarea(
@@ -2263,7 +2259,7 @@ def CreateRecipePage(tag_options: list[str] | None = None):
     form = Form(
         Div(
             _labeled_input("Name*", "name", help_text="Recipe name. Required."),
-            _labeled_select("Meal type", "meal_type", MEAL_TYPES, help_text="When this recipe is usually eaten."),
+            _labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in MealType], help_text="When this recipe is usually eaten."),
             _create_flags_row(),
             _tags_multiselect_input(
                 tag_options=tag_options,
@@ -2551,7 +2547,7 @@ def EditRecipePage(
         Div(
             H2("Details", cls="font-semibold text-gray-900"),
             Div(
-                _edit_tile(_labeled_select("Meal type", "meal_type", MEAL_TYPES, selected_value=_input_value(entry.get("meal_type")))),
+                _edit_tile(_labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in MealType], selected_value=_input_value(entry.get("meal_type")))),
                 _edit_tile(
                     Div(
                         _label_with_help("Notes", "Optional instructions, comments, or context about this recipe.", for_id="edit_recipe_notes"),
@@ -2973,13 +2969,13 @@ def RecipeIngredientsBlock(recipe_id: int, portions: list[dict]):
 
 
 def FoodDetailPage(
-    connection,
     user_id: int,
     entry_type: str,
     entry: dict,
     summary: dict,
     recipe_portions: list[dict] | None = None,
     tags: list[dict] | list[str] | None = None,
+    events: list | None = None,
     can_edit: bool = True,
     can_delete: bool = False,
     is_archived: bool = False,
@@ -3032,7 +3028,7 @@ def FoodDetailPage(
 
     recipe_mode = entry_type == "recipe"
     action_button_label = "Log recipe" if recipe_mode else "Log food"
-    meal_selector = MealSelector(connection, user_id=user_id or 0) if not recipe_mode else ""
+    meal_selector = MealSelector(events or [], selected_id=None) if not recipe_mode else ""
     recipe_ingredients = RecipeIngredientsBlock(int(entry.get("id") or 0), recipe_portions or []) if recipe_mode else ""
     action_button = (
         Button(

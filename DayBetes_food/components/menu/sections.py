@@ -1,5 +1,4 @@
 from fasthtml.common import *
-from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.cart.cart_components import MacrosSummary
 from DayBetes_food.components.injection_zone import (
     BASE_INJECTION_ZONE_IMAGE,
@@ -8,34 +7,23 @@ from DayBetes_food.components.injection_zone import (
     asset_busted,
 )
 from DayBetes_food.domain.constants import InjectionZone
-from DayBetes_food.database.queries import (
-    get_cart_events,
-    get_portion_detail_by_event,
-)
 from DayBetes_food.time_utils import local_now
 
-def _menu_cart_summary(connection):
-    user_id = get_current_user_id()
-    if not user_id:
+def _menu_cart_summary(latest_event, portions):
+    if not latest_event:
         return P("No hay carrito", cls="text-xs md:text-sm text-gray-600 text-center")
 
-    events = get_cart_events(connection, user_id)
-    if not events:
-        return P("No hay carrito", cls="text-xs md:text-sm text-gray-600 text-center")
-
-    latest = events[0]
-    portions = get_portion_detail_by_event(connection, int(latest["id"]))
-    meal_name = latest.get("name") or f"Meal #{latest['id']}"
+    meal_name = latest_event.name or f"Meal #{latest_event.id}"
 
     return Div(
         P("Último carrito", cls="text-[11px] md:text-xs uppercase tracking-wide text-gray-600"),
         H2(meal_name, cls="font-semibold text-sm md:text-base truncate w-full"),
-        Div(MacrosSummary(latest, portions, compact=True), cls="w-full"),
+        Div(MacrosSummary(latest_event, portions, compact=True), cls="w-full"),
         cls="w-full flex flex-col gap-2"
     )
 
 
-def quick_actions(connection):
+def quick_actions(latest_event, portions):
     now = local_now()
     modal_id = "menu_injection_modal"
     open_modal_js = (
@@ -129,7 +117,7 @@ def quick_actions(connection):
             """
         ),
         Div(
-            _menu_cart_summary(connection),
+            _menu_cart_summary(latest_event, portions),
             role="button",
             tabindex="0",
             hx_get="/cart",
