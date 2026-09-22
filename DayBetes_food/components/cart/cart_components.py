@@ -404,7 +404,7 @@ def _portions_by_plate(portions):
     """
     by_plate = {}
     for portion in portions:
-        plate_id = portion.get("plate_id")
+        plate_id = portion.plate_id
         if plate_id is None:
             continue
         by_plate.setdefault(int(plate_id), []).append(portion)
@@ -451,8 +451,8 @@ def _ApplyAllButton(plate, offset_input_id, card_target):
     )
 
 
-def _MoveIngredientSelect(plate, plates, plate_labels, origin, origin_id, item_key, ingredient_name, card_target):
-    """Selector `Move`: cambia el ingrediente de tanda (§7.5).
+def _MoveIngredientSelect(plate, plates, plate_labels, portion_id, item_key, ingredient_name, card_target):
+    """Selector `Move`: cambia la porción de tanda (§7.5).
 
     La opción `+ New plate` (valor 0) crea la tanda en el acto y mueve la fila
     a ella. La tanda actual queda fuera de la lista: moverse a sí misma no es
@@ -478,7 +478,7 @@ def _MoveIngredientSelect(plate, plates, plate_labels, origin, origin_id, item_k
             name="target_plate_id",
             aria_label=f"Move {ingredient_name} to another plate",
             cls="web_input border border-white rounded-lg px-2 py-1 text-xs md:text-sm",
-            hx_post=f"/cart/plate/{plate.id}/ingredient/{origin}/{origin_id}/move",
+            hx_post=f"/cart/portion/{portion_id}/move",
             hx_trigger="change",
             hx_target=card_target,
             hx_swap="outerHTML",
@@ -627,17 +627,15 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
     solo tiene sentido cuando hay cabeceras que distinguir (§7.5).
     """
     sample = grouped_item["sample"]
-    origin = grouped_item["origin"]
-    origin_id = grouped_item["origin_id"]
+    portion_id = int(sample.id)
     unit_g = unit_amount(sample)
     unit_label = display_unit(sample)
     amount = float(grouped_item["total_amount_g"] or unit_g)
-    offset = sample.get("offset_minutes")
+    offset = sample.offset_minutes
     offset_value = int(offset) if offset is not None else 0
     units_count = amount / unit_g if unit_g > 0 else 0.0
-    # La clave lleva la tanda, no el evento: el mismo alimento puede estar en
-    # dos tandas de la misma comida y cada fila necesita ids propios.
-    item_key = f"{plate.id}_{origin}_{origin_id}"
+    # La clave lleva la tanda y la porción: cada fila necesita ids propios.
+    item_key = f"{plate.id}_{portion_id}"
     display_input_id = f"display_input_{item_key}"
     grams_input_id = f"grams_input_{item_key}"
     unit_select_id = f"unit_select_{item_key}"
@@ -680,8 +678,7 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
                 type="button",
                 cls="web_button px-4 py-2 text-sm text-white",
                 style="background-color:#b91c1c;border-color:#b91c1c;",
-                hx_post=f"/cart/plate/{plate.id}/ingredient/{origin}/{origin_id}/amount",
-                hx_vals='{"amount_g":"0"}',
+                hx_post=f"/cart/portion/{portion_id}/delete",
                 hx_target=card_target,
                 hx_swap="outerHTML",
                 onclick=_close_modal_js(confirm_id),
@@ -707,7 +704,7 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
                     name="amount_g",
                     id=grams_input_id,
                     value=f"{amount:.6f}",
-                    hx_post=f"/cart/plate/{plate.id}/ingredient/{origin}/{origin_id}/amount",
+                    hx_post=f"/cart/portion/{portion_id}/amount",
                     hx_trigger="change",
                     hx_include="closest form",
                     hx_target=card_target,
@@ -738,7 +735,7 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
                 value=str(offset_value),
                 aria_label=f"Offset minutes for {ingredient_name}",
                 cls="web_input border border-white rounded-lg px-2 py-1 w-24 text-base",
-                hx_post=f"/cart/plate/{plate.id}/ingredient/{origin}/{origin_id}/offset",
+                hx_post=f"/cart/portion/{portion_id}/offset",
                 hx_trigger="change",
                 hx_target=card_target,
                 hx_swap="outerHTML",
@@ -750,7 +747,7 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
         # `Move` aparece exactamente cuando hay cabecera de tanda, que es el
         # caso complementario de `Apply all` en la fila (§7.4, §7.5).
         _MoveIngredientSelect(
-            plate, plates, plate_labels or {}, origin, origin_id, item_key, ingredient_name, card_target
+            plate, plates, plate_labels or {}, portion_id, item_key, ingredient_name, card_target
         )
         if not show_apply_all
         else None,
@@ -758,8 +755,8 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
             Label("Strictly weighted", cls="text-xs text-gray-600"),
             _checkbox(
                 name="strictly_weighed",
-                checked=bool(sample.get("strictly_weighed")),
-                hx_post=f"/cart/plate/{plate.id}/ingredient/{origin}/{origin_id}/strictly_weighed",
+                checked=bool(sample.strictly_weighed),
+                hx_post=f"/cart/portion/{portion_id}/strictly_weighed",
                 aria_label=f"Strictly weighted for {ingredient_name}",
                 hx_swap="outerHTML",
                 hx_target=f"#macros_summary_event_{event.id}",
@@ -770,8 +767,8 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
             Label("Macros quality", cls="text-xs text-gray-600"),
             _checkbox(
                 name="macros_quality",
-                checked=bool(sample.get("macros_quality")),
-                hx_post=f"/cart/plate/{plate.id}/ingredient/{origin}/{origin_id}/macros_quality",
+                checked=bool(sample.macros_quality),
+                hx_post=f"/cart/portion/{portion_id}/macros_quality",
                 aria_label=f"Macros quality for {ingredient_name}",
                 hx_swap="outerHTML",
                 hx_target=f"#macros_summary_event_{event.id}",
@@ -782,8 +779,8 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
             Label("Cooked weight", cls="text-xs text-gray-600"),
             _checkbox(
                 name="is_cooked_weight",
-                checked=bool(sample.get("is_cooked_weight")),
-                hx_post=f"/cart/plate/{plate.id}/ingredient/{origin}/{origin_id}/is_cooked_weight",
+                checked=bool(sample.is_cooked_weight),
+                hx_post=f"/cart/portion/{portion_id}/is_cooked_weight",
                 aria_label=f"Cooked weight for {ingredient_name}",
                 hx_swap="outerHTML",
                 hx_target=f"#macros_summary_event_{event.id}",

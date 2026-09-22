@@ -16,14 +16,14 @@ from DayBetes_food.database.queries import (
     get_all_catalog,
     get_all_manual_intakes,
     get_all_recipes,
-    add_portion_detail,
+    create_portion_detail,
     get_catalog_item,
     get_catalog_item_by_barcode,
     get_manual_intake,
     get_recipe,
-    get_portion_detail_by_recipe,
     get_portion_detail,
-    get_recipe_portions_by_origin,
+    list_recipe_portions_by_origin,
+    list_portions_by_recipe,
     update_catalog_item,
     toggle_user_favorite,
     set_user_favorite,
@@ -47,7 +47,7 @@ from DayBetes_food.database.queries import (
     manual_intake_name_origin_exists,
     get_consumed_food_usage_rankings,
     get_rescue_entries_suggestions,
-    update_portion_detail_amount,
+    update_portion_amount,
     update_portion_detail_fields,
     delete_portion_detail,
     create_intake_event,
@@ -59,12 +59,16 @@ from DayBetes_food.database.queries import (
     ensure_default_plate,
     get_intake_plate,
 )
-from DayBetes_food.components.food.foods import (
-    GLYCEMIC_INDEX_OPTIONS,
-    INITIAL_STATE_OPTIONS,
-    COOKING_OPTIONS,
+from DayBetes_food.components.food.foods import GLYCEMIC_INDEX_OPTIONS
+from DayBetes_food.domain.constants import (
+    CLEAR,
     CONSERVATION_OPTIONS,
+    COOKING_OPTIONS,
+    INITIAL_STATE_OPTIONS,
+    PortionDestination,
+    PortionOrigin,
 )
+from DayBetes_food.domain.portion_detail import PortionDetailCreate, PortionDetailUpdate
 from DayBetes_food.components.food.foods import FoodSectionsContent, FoodCard, FavoriteButton, on_after
 from DayBetes_food.components.food.foods import (
     CreateCatalogPage,
@@ -486,10 +490,8 @@ def _parse_tags_json(raw: str) -> list[str]:
     return tags
 
 
-def _macro_value(row: dict, macro_key: str):
-    catalog_value = row.get(f"catalog_{macro_key}_100g")
-    manual_value = row.get(f"manual_{macro_key}_100g")
-    return catalog_value if catalog_value is not None else manual_value
+def _macro_value(portion, macro_key: str):
+    return getattr(portion.source, f"{macro_key}_100g", None)
 
 
 def _build_detail_summary(entry_type: str, entry: dict, recipe_portions: list | None = None) -> dict:
@@ -546,7 +548,7 @@ def _build_detail_summary(entry_type: str, entry: dict, recipe_portions: list | 
         }
 
     portions = recipe_portions or []
-    total_amount = sum(float(row.get("amount_g") or 0.0) for row in portions)
+    total_amount = sum(float(row.amount or 0.0) for row in portions)
     totals = {
         "calories_100g": 0.0,
         "carbs_100g": 0.0,
@@ -557,7 +559,7 @@ def _build_detail_summary(entry_type: str, entry: dict, recipe_portions: list | 
         "fiber_100g": 0.0,
     }
     for row in portions:
-        amount = float(row.get("amount_g") or 0.0)
+        amount = float(row.amount or 0.0)
         for key in list(totals.keys()):
             macro = _macro_value(row, key.replace("_100g", ""))
             if macro is None:
@@ -1123,21 +1125,22 @@ def setup_food_routes(rt):
                         IntakePlateCreate(intake_event_id=int(event_id), offset_minutes=0),
                         commit=False,
                     )
-                    if not add_portion_detail(
+                    create_portion_detail(
                         connection,
-                        origin=origin_type,
-                        origin_id=int(origin_id),
-                        destination="intake_event",
-                        destination_id=int(event_id),
-                        amount_g=float(grams),
-                        strictly_weighed=True,
-                        macros_quality=True,
-                        plate_amount=float(grams),
-                        offset_minutes=0,
-                        plate_id=plate_id,
+                        int(user_id),
+                        PortionDetailCreate(
+                            origin=PortionOrigin(origin_type),
+                            origin_id=int(origin_id),
+                            destination=PortionDestination.INTAKE_EVENT,
+                            destination_id=int(event_id),
+                            amount=float(grams),
+                            strictly_weighed=True,
+                            macros_quality=True,
+                            offset_minutes=0,
+                            plate_id=plate_id,
+                        ),
                         commit=False,
-                    ):
-                        raise ValueError("Could not register rescue.")
+                    )
             except NotFoundError:
                 return render_fragment(P("Meal event not found.", cls="text-red-700"))
             except ConflictError:
@@ -1158,7 +1161,7 @@ def setup_food_routes(rt):
                 entry = get_manual_intake(connection, entry_id, viewer_user_id=user_id)
             elif entry_type == "recipe":
                 entry = get_recipe(connection, entry_id, viewer_user_id=user_id)
-                recipe_portions = get_portion_detail_by_recipe(connection, entry_id) if entry else []
+                recipe_portions = list_portions_by_recipe(connection, int(user_id), entry_id) if entry else []
             if not entry or not _can_view_entry(entry_type, entry, user_id):
                 return HTMLResponse(status_code=404)
             summary = _build_detail_summary(entry_type, entry, recipe_portions=recipe_portions)
@@ -1170,7 +1173,7 @@ def setup_food_routes(rt):
             # (§7.7): sin esto el selector de tanda nacería vacío y solo se
             # llenaría al cambiar de comida.
             plate_options, selected_plate_id = (
-                plate_selector_options(connection, events[0].id) if events else ([], None)
+                plate_selector_options(connection, int(user_id), events[0].id) if events else ([], None)
             )
         return render_page(
             request,
@@ -1242,32 +1245,36 @@ def setup_food_routes(rt):
                     return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
                 amount_g = max(1.0, float(item.get("amount_g") or 100.0))
 
-            existing = get_recipe_portions_by_origin(connection, recipe_id=recipe_id, origin=entry_type, origin_id=entry_id)
+            existing = list_recipe_portions_by_origin(
+                connection, int(user_id), recipe_id, PortionOrigin(entry_type), entry_id
+            )
             if existing:
                 keep = existing[0]
-                total_amount = sum(float(row.get("amount_g") or 0.0) for row in existing) + amount_g
+                total_amount = sum(float(row.amount or 0.0) for row in existing) + amount_g
                 try:
                     with connection.transaction():
-                        if not update_portion_detail_amount(
-                            connection, portion_id=int(keep["id"]), amount_g=total_amount, commit=False
-                        ):
-                            raise ValueError("Could not update ingredient.")
+                        update_portion_amount(connection, int(user_id), int(keep.id), total_amount, commit=False)
                         for duplicate in existing[1:]:
-                            if not delete_portion_detail(connection, int(duplicate["id"]), commit=False):
-                                raise ValueError("Could not remove duplicate ingredient.")
+                            delete_portion_detail(connection, int(user_id), int(duplicate.id), commit=False)
                     ok = True
-                except ValueError:
+                except (ValidationError, NotFoundError, ConflictError):
                     ok = False
             else:
-                created = add_portion_detail(
-                    connection,
-                    origin=entry_type,
-                    origin_id=entry_id,
-                    destination="recipe",
-                    destination_id=recipe_id,
-                    amount_g=amount_g,
-                )
-                ok = bool(created)
+                try:
+                    create_portion_detail(
+                        connection,
+                        int(user_id),
+                        PortionDetailCreate(
+                            origin=PortionOrigin(entry_type),
+                            origin_id=entry_id,
+                            destination=PortionDestination.RECIPE,
+                            destination_id=recipe_id,
+                            amount=amount_g,
+                        ),
+                    )
+                    ok = True
+                except (ValidationError, NotFoundError, ConflictError):
+                    ok = False
 
         return HTMLResponse("", headers={"HX-Trigger": "addSuccess" if ok else "addError"})
 
@@ -1284,15 +1291,16 @@ def setup_food_routes(rt):
             recipe = get_recipe(connection, recipe_id)
             if not recipe or not _can_edit_entry("recipe", recipe, user_id):
                 return render_fragment(P("Recipe not found.", cls="text-red-700"))
-            portion = get_portion_detail(connection, portion_id)
-            if not portion or int(portion.get("recipe_id") or 0) != recipe_id:
+            try:
+                portion = get_portion_detail(connection, int(user_id), portion_id)
+            except NotFoundError:
                 return render_fragment(P("Ingredient not found.", cls="text-red-700"))
-            updated = update_portion_detail_amount(connection, portion_id=portion_id, amount_g=parsed_amount)
-            recipe_portions = get_portion_detail_by_recipe(connection, recipe_id) if updated else []
-            recipe_total_amount = sum(float(row.get("amount_g") or 0.0) for row in recipe_portions)
+            if portion.destination is not PortionDestination.RECIPE or int(portion.destination_id) != recipe_id:
+                return render_fragment(P("Ingredient not found.", cls="text-red-700"))
+            update_portion_amount(connection, int(user_id), portion_id, parsed_amount)
+            recipe_portions = list_portions_by_recipe(connection, int(user_id), recipe_id)
+            recipe_total_amount = sum(float(row.amount or 0.0) for row in recipe_portions)
 
-        if not updated:
-            return render_fragment(P("Could not update ingredient.", cls="text-red-700"))
         response = render_fragment(P("Saved", cls="text-green-700"))
         response.headers["HX-Trigger"] = json.dumps(
             {
@@ -1313,7 +1321,7 @@ def setup_food_routes(rt):
             recipe = get_recipe(connection, recipe_id)
             if not recipe or not _can_view_entry("recipe", recipe, user_id):
                 return HTMLResponse(status_code=404)
-            portions = get_portion_detail_by_recipe(connection, recipe_id)
+            portions = list_portions_by_recipe(connection, int(user_id), recipe_id)
             summary = _build_detail_summary("recipe", recipe, recipe_portions=portions)
             per100 = summary.get("per100") or {}
             total_amount = max(1.0, _to_float(str(summary.get("default_amount_g") or 0.0)) or 1.0)
@@ -1366,19 +1374,23 @@ def setup_food_routes(rt):
             recipe = get_recipe(connection, recipe_id)
             if not recipe or not _can_edit_entry("recipe", recipe, user_id):
                 return render_fragment(P("Recipe not found.", cls="text-red-700"))
-            portion = get_portion_detail(connection, portion_id)
-            if not portion or int(portion.get("recipe_id") or 0) != recipe_id:
+            try:
+                portion = get_portion_detail(connection, int(user_id), portion_id)
+            except NotFoundError:
                 return render_fragment(P("Ingredient not found.", cls="text-red-700"))
-            updated = update_portion_detail_fields(
+            if portion.destination is not PortionDestination.RECIPE or int(portion.destination_id) != recipe_id:
+                return render_fragment(P("Ingredient not found.", cls="text-red-700"))
+            update_portion_detail_fields(
                 connection,
-                portion_id=portion_id,
-                cooking=clean_cooking,
-                final_state=clean_final_state,
-                conservation=clean_conservation,
+                int(user_id),
+                portion_id,
+                PortionDetailUpdate(
+                    cooking=(CLEAR if clean_cooking is None else clean_cooking),
+                    final_state=(CLEAR if clean_final_state is None else clean_final_state),
+                    conservation=(CLEAR if clean_conservation is None else clean_conservation),
+                ),
             )
 
-        if not updated:
-            return render_fragment(P("Could not save advanced fields.", cls="text-red-700"))
         return render_fragment(P("Advanced saved", cls="text-green-700"))
 
     @rt("/food/recipe/{recipe_id}/ingredient/{portion_id}/delete")
@@ -1391,12 +1403,15 @@ def setup_food_routes(rt):
             recipe = get_recipe(connection, recipe_id)
             if not recipe or not _can_edit_entry("recipe", recipe, user_id):
                 return HTMLResponse(status_code=404)
-            portion = get_portion_detail(connection, portion_id)
-            if not portion or int(portion.get("recipe_id") or 0) != recipe_id:
+            try:
+                portion = get_portion_detail(connection, int(user_id), portion_id)
+            except NotFoundError:
                 return HTMLResponse(status_code=404)
-            ok = delete_portion_detail(connection, portion_id)
+            if portion.destination is not PortionDestination.RECIPE or int(portion.destination_id) != recipe_id:
+                return HTMLResponse(status_code=404)
+            delete_portion_detail(connection, int(user_id), portion_id)
 
-        return HTMLResponse("", status_code=200 if ok else 400)
+        return HTMLResponse("")
 
     @rt("/food/copy/{entry_type}/{entry_id}")
     def post(request: Request, entry_type: str, entry_id: int):
@@ -1508,30 +1523,29 @@ def setup_food_routes(rt):
                         )
                         if not created_id:
                             raise ValueError("Could not create editable copy.")
-                        source_portions = get_portion_detail_by_recipe(connection, int(source["id"]))
+                        source_portions = list_portions_by_recipe(connection, int(user_id), int(source["id"]))
                         for portion in source_portions:
-                            origin = "catalog" if portion.get("catalog_id") else "manual_intake"
-                            origin_id = int(portion.get("catalog_id") or portion.get("manual_intake_id") or 0)
-                            amount_g = float(portion.get("amount_g") or 0.0)
-                            if origin_id <= 0 or amount_g <= 0:
+                            amount_g = float(portion.amount or 0.0)
+                            if portion.origin_id <= 0 or amount_g <= 0:
                                 continue
-                            if not add_portion_detail(
+                            create_portion_detail(
                                 connection,
-                                origin=origin,
-                                origin_id=origin_id,
-                                destination="recipe",
-                                destination_id=int(created_id),
-                                amount_g=amount_g,
-                                cooking=portion.get("cooking"),
-                                conservation=portion.get("conservation"),
-                                final_state=portion.get("final_state"),
-                                strictly_weighed=portion.get("strictly_weighed"),
-                                macros_quality=portion.get("macros_quality"),
-                                plate_amount=portion.get("plate_amount"),
-                                is_cooked_weight=bool(portion.get("is_cooked_weight")),
+                                int(user_id),
+                                PortionDetailCreate(
+                                    origin=portion.origin,
+                                    origin_id=portion.origin_id,
+                                    destination=PortionDestination.RECIPE,
+                                    destination_id=int(created_id),
+                                    amount=amount_g,
+                                    cooking=portion.cooking,
+                                    conservation=portion.conservation,
+                                    final_state=portion.final_state,
+                                    strictly_weighed=portion.strictly_weighed,
+                                    macros_quality=portion.macros_quality,
+                                    is_cooked_weight=bool(portion.is_cooked_weight),
+                                ),
                                 commit=False,
-                            ):
-                                raise ValueError("Could not copy recipe ingredients.")
+                            )
                 except ValueError as error:
                     return _error_msg(str(error))
 
@@ -1747,26 +1761,28 @@ def setup_food_routes(rt):
                             connection, int(user_id), event_id, plate_id, offset_minutes
                         )
                         created.append(
-                            add_portion_detail(
+                            create_portion_detail(
                                 connection,
-                                origin=entry_type,
-                                origin_id=entry_id,
-                                destination="intake_event",
-                                destination_id=event_id,
-                                plate_id=target_plate_id,
-                                amount_g=parsed_amount,
-                                cooking=clean_cooking,
-                                final_state=clean_final_state,
-                                conservation=clean_conservation,
-                                strictly_weighed=True,
-                                macros_quality=True,
-                                plate_amount=parsed_amount,
+                                int(user_id),
+                                PortionDetailCreate(
+                                    origin=PortionOrigin(entry_type),
+                                    origin_id=entry_id,
+                                    destination=PortionDestination.INTAKE_EVENT,
+                                    destination_id=event_id,
+                                    plate_id=target_plate_id,
+                                    amount=parsed_amount,
+                                    cooking=clean_cooking,
+                                    final_state=clean_final_state,
+                                    conservation=clean_conservation,
+                                    strictly_weighed=True,
+                                    macros_quality=True,
+                                ),
                                 commit=False,
                             )
                         )
                     elif entry_type == "recipe":
-                        recipe_rows = get_portion_detail_by_recipe(connection, entry_id)
-                        total_recipe_amount = sum(float(row.get("amount_g") or 0.0) for row in recipe_rows)
+                        recipe_rows = list_portions_by_recipe(connection, int(user_id), entry_id)
+                        total_recipe_amount = sum(float(row.amount or 0.0) for row in recipe_rows)
                         if total_recipe_amount <= 0:
                             raise ValueError("Recipe has no ingredients to log.")
                         factor = parsed_amount / total_recipe_amount
@@ -1783,29 +1799,29 @@ def setup_food_routes(rt):
                             commit=False,
                         )
                         for row in recipe_rows:
-                            row_amount = float(row.get("amount_g") or 0.0) * factor
+                            row_amount = float(row.amount or 0.0) * factor
                             if row_amount <= 0:
                                 continue
-                            origin = "catalog" if row.get("catalog_id") else "manual_intake"
-                            origin_id = int(row.get("catalog_id") or row.get("manual_intake_id") or 0)
-                            if origin_id <= 0:
+                            if row.origin_id <= 0:
                                 continue
                             created.append(
-                                add_portion_detail(
+                                create_portion_detail(
                                     connection,
-                                    origin=origin,
-                                    origin_id=origin_id,
-                                    destination="intake_event",
-                                    destination_id=event_id,
-                                    plate_id=recipe_plate_id,
-                                    amount_g=row_amount,
-                                    cooking=row.get("cooking"),
-                                    conservation=row.get("conservation"),
-                                    final_state=row.get("final_state"),
-                                    strictly_weighed=True,
-                                    macros_quality=True,
-                                    plate_amount=row_amount,
-                                    is_cooked_weight=bool(row.get("is_cooked_weight")),
+                                    int(user_id),
+                                    PortionDetailCreate(
+                                        origin=row.origin,
+                                        origin_id=row.origin_id,
+                                        destination=PortionDestination.INTAKE_EVENT,
+                                        destination_id=event_id,
+                                        plate_id=recipe_plate_id,
+                                        amount=row_amount,
+                                        cooking=row.cooking,
+                                        conservation=row.conservation,
+                                        final_state=row.final_state,
+                                        strictly_weighed=True,
+                                        macros_quality=True,
+                                        is_cooked_weight=bool(row.is_cooked_weight),
+                                    ),
                                     commit=False,
                                 )
                             )
@@ -2008,15 +2024,18 @@ def setup_food_routes(rt):
                         connection, int(user_id), event_id, plate_id, offset_minutes
                     )
 
-                    portion_id = add_portion_detail(
+                    portion_id = create_portion_detail(
                         connection,
-                        origin="catalog",
-                        origin_id=food_id,
-                        destination="intake_event",
-                        destination_id=event_id,
-                        plate_id=target_plate_id,
-                        amount_g=portion_amount,
-                        macros_quality=True,
+                        int(user_id),
+                        PortionDetailCreate(
+                            origin=PortionOrigin.CATALOG,
+                            origin_id=food_id,
+                            destination=PortionDestination.INTAKE_EVENT,
+                            destination_id=event_id,
+                            plate_id=target_plate_id,
+                            amount=portion_amount,
+                            macros_quality=True,
+                        ),
                         commit=False,
                     )
                     if not portion_id:
@@ -2068,15 +2087,18 @@ def setup_food_routes(rt):
                         connection, int(user_id), event_id, plate_id, offset_minutes
                     )
 
-                    portion_id = add_portion_detail(
+                    portion_id = create_portion_detail(
                         connection,
-                        origin="manual_intake",
-                        origin_id=intake_id,
-                        destination="intake_event",
-                        destination_id=event_id,
-                        plate_id=target_plate_id,
-                        amount_g=portion_amount,
-                        macros_quality=True,
+                        int(user_id),
+                        PortionDetailCreate(
+                            origin=PortionOrigin.MANUAL_INTAKE,
+                            origin_id=intake_id,
+                            destination=PortionDestination.INTAKE_EVENT,
+                            destination_id=event_id,
+                            plate_id=target_plate_id,
+                            amount=portion_amount,
+                            macros_quality=True,
+                        ),
                         commit=False,
                     )
                     if not portion_id:
@@ -2144,28 +2166,28 @@ def setup_food_routes(rt):
                         commit=False,
                     )
 
-                    recipe_portions = get_portion_detail_by_recipe(connection, recipe_id)
+                    recipe_portions = list_portions_by_recipe(connection, int(user_id), recipe_id)
                     created_ids = []
                     for row in recipe_portions:
-                        origin = "catalog" if row.get("catalog_id") else "manual_intake"
-                        origin_id = int(row.get("catalog_id") or row.get("manual_intake_id") or 0)
-                        if origin_id <= 0:
+                        if row.origin_id <= 0:
                             continue
                         created_ids.append(
-                            add_portion_detail(
+                            create_portion_detail(
                                 connection,
-                                origin=origin,
-                                origin_id=origin_id,
-                                destination="intake_event",
-                                destination_id=event_id,
-                                plate_id=recipe_plate_id,
-                                amount_g=float(row.get("amount_g") or 0.0),
-                                cooking=row.get("cooking"),
-                                conservation=row.get("conservation"),
-                                final_state=row.get("final_state"),
-                                macros_quality=True,
-                                plate_amount=row.get("plate_amount"),
-                                is_cooked_weight=bool(row.get("is_cooked_weight")),
+                                int(user_id),
+                                PortionDetailCreate(
+                                    origin=row.origin,
+                                    origin_id=row.origin_id,
+                                    destination=PortionDestination.INTAKE_EVENT,
+                                    destination_id=event_id,
+                                    plate_id=recipe_plate_id,
+                                    amount=float(row.amount or 0.0),
+                                    cooking=row.cooking,
+                                    conservation=row.conservation,
+                                    final_state=row.final_state,
+                                    macros_quality=True,
+                                    is_cooked_weight=bool(row.is_cooked_weight),
+                                ),
                                 commit=False,
                             )
                         )
@@ -3024,7 +3046,7 @@ def setup_food_routes(rt):
                 return render_fragment(PlateSelector([]))
             # Preseleccionada la última tanda a la que se añadió algo: montando
             # el segundo plato se añaden varios alimentos seguidos al mismo (§7.7).
-            options, last_used = plate_selector_options(connection, event_id)
+            options, last_used = plate_selector_options(connection, int(user_id), event_id)
             return render_fragment(PlateSelector(options, selected_id=last_used))
 
     @rt("/create_named_event")
