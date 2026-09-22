@@ -1,3 +1,5 @@
+import json
+
 from fasthtml.common import *
 
 from DayBetes_food.components.cart.cart_shared import (
@@ -10,6 +12,7 @@ from DayBetes_food.components.cart.cart_shared import (
     macro_text_color,
     parse_source_macro,
     portion_intake_amount,
+    portion_macro_amount,
     portion_name,
     unit_amount,
 )
@@ -80,6 +83,41 @@ def _checkbox(
         ),
         _check_icon(),
         cls="flex items-center cursor-pointer relative h-5 w-5",
+    )
+
+
+def _TriStateFlag(name: str, value, hx_post: str, aria_label: str = "", hx_target: str = "", hx_swap: str = ""):
+    """Tri-state flag: NULL -> True -> False -> NULL (decision 2026-09-18).
+
+    A two-state checkbox cannot represent "no data": `NULL` must be visible and
+    distinguishable from an explicit `False` (frontend_conventions.md 6,
+    code_conventions.md 7.14). The next state is computed here, on the server,
+    and sent in `hx_vals`; the client does not decide the transition. The
+    "no data" state carries a small `–` marker next to the control.
+    """
+    if value is True:
+        next_value, glyph = "false", "✓"
+        style = "background-color:#111827;border-color:#111827;color:#ffffff;"
+    elif value is False:
+        next_value, glyph = "", ""
+        style = "background-color:#ffffff;border-color:#9ca3af;color:#111827;"
+    else:
+        next_value, glyph = "true", ""
+        style = "background-color:#ffffff;border-color:#d1d5db;color:#111827;"
+    return Div(
+        Button(
+            glyph,
+            type="button",
+            aria_label=aria_label or name.replace("_", " ").title(),
+            cls="w-5 h-5 rounded border flex items-center justify-center text-xs leading-none p-0",
+            style=style,
+            hx_post=hx_post,
+            hx_vals=json.dumps({"value": next_value}),
+            **({"hx_target": hx_target} if hx_target else {}),
+            **({"hx_swap": hx_swap} if hx_swap else {}),
+        ),
+        Span("–", cls="text-xs text-gray-500") if value is None else None,
+        cls="flex items-center gap-1",
     )
 
 
@@ -288,7 +326,7 @@ def MacrosSummary(event, portions, compact: bool = False):
         calories_100 = parse_source_macro(portion, "calories")
         if calories_100 is None:
             continue
-        total_calories += portion_intake_amount(portion) * float(calories_100) / 100.0
+        total_calories += portion_macro_amount(portion) * float(calories_100) / 100.0
 
     amount_confidence = event.amount_confidence
     quality_confidence = event.quality_confidence
@@ -309,7 +347,7 @@ def MacrosSummary(event, portions, compact: bool = False):
             continue
         total = 0.0
         for portion in portions:
-            amount = portion_intake_amount(portion)
+            amount = portion_macro_amount(portion)
             macro_100 = parse_source_macro(portion, macro_key)
             if macro_100 is None:
                 continue
@@ -377,20 +415,40 @@ def MacrosSummary(event, portions, compact: bool = False):
 
 
 def _unit_options(default_portion_base: float, base_unit: str):
-    hundred_label = f"100{base_unit}"
+    """Options of the amount unit selector.
+
+    The conversion factors come from the central enum (measurement §11): the
+    emitted value is the enum code and `data_factor` (presentation only) is
+    generated from `grams_factor`. `portion` has no constant factor: its factor
+    is the food's `unit_g`, resolved on the server from the database.
+    """
     one_label = base_unit
     return [
         Option(
             f"serving ({default_portion_base:.0f}{base_unit})",
-            value="portion",
+            value=AmountInputUnit.PORTION.value,
             selected=True,
             data_factor=f"{default_portion_base:.6f}",
             data_unit_label="serving",
         ),
-        Option(f"{hundred_label} (100{base_unit})", value="x100", data_factor="100.000000", data_unit_label=hundred_label),
-        Option(f"{one_label} (1{base_unit})", value=base_unit, data_factor="1.000000", data_unit_label=one_label),
-        Option(f"lb (453.59{base_unit})", value="lb", data_factor="453.592370", data_unit_label="lb"),
-        Option(f"oz (28.35{base_unit})", value="oz", data_factor="28.349523", data_unit_label="oz"),
+        Option(
+            f"{one_label} (1{base_unit})",
+            value=AmountInputUnit.GRAMS.value,
+            data_factor=f"{AmountInputUnit.GRAMS.grams_factor:.6f}",
+            data_unit_label=one_label,
+        ),
+        Option(
+            f"lb ({AmountInputUnit.LB.grams_factor:.2f}{base_unit})",
+            value=AmountInputUnit.LB.value,
+            data_factor=f"{AmountInputUnit.LB.grams_factor:.6f}",
+            data_unit_label="lb",
+        ),
+        Option(
+            f"oz ({AmountInputUnit.OZ.grams_factor:.2f}{base_unit})",
+            value=AmountInputUnit.OZ.value,
+            data_factor=f"{AmountInputUnit.OZ.grams_factor:.6f}",
+            data_unit_label="oz",
+        ),
     ]
 
 
@@ -596,6 +654,25 @@ def PlateBlock(event, plate, plate_portions, show_header: bool, plates, plate_la
     """
     card_target = f"#cart_card_event_{event.id}"
     grouped = group_portions(plate_portions)
+
+    # Unicidad por forma de preparación (§4.6.4): cuando una tanda tiene dos o
+    # más filas del mismo alimento, cada una marca solo los valores que difieren
+    # de la otra, para que se entienda por qué están separadas (§7.8).
+    by_food = {}
+    for item in grouped:
+        by_food.setdefault((item["origin"], item["origin_id"]), []).append(item)
+
+    def _differences(item):
+        siblings = by_food[(item["origin"], item["origin_id"])]
+        if len(siblings) < 2:
+            return []
+        sample = item["sample"]
+        result = []
+        for field, label in (("cooking", "Cooking"), ("conservation", "Conservation"), ("final_state", "Final state")):
+            if len({getattr(other["sample"], field) for other in siblings}) > 1:
+                result.append((label, getattr(sample, field)))
+        return result
+
     return Div(
         PlateHeader(event, plate, plate_labels[plate.id], card_target) if show_header else None,
         *[
@@ -606,6 +683,7 @@ def PlateBlock(event, plate, plate_portions, show_header: bool, plates, plate_la
                 plates=plates,
                 plate_labels=plate_labels,
                 show_apply_all=not show_header,
+                differences=_differences(item),
             )
             for item in grouped
         ],
@@ -617,7 +695,7 @@ def PlateBlock(event, plate, plate_portions, show_header: bool, plates, plate_la
     )
 
 
-def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show_apply_all=False):
+def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show_apply_all=False, differences=()):
     """Fila de un ingrediente dentro de una tanda.
 
     `show_apply_all` implementa la regla de frontend_conventions.md §7.4: el
@@ -648,7 +726,14 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
 
     return Div(
         Div(
-            Div(ingredient_name, cls="font-semibold"),
+            Div(
+                Div(ingredient_name, cls="font-semibold"),
+                Span(
+                    " · ".join(f"{label}: {value or '—'}" for label, value in differences),
+                    cls="text-[10px] text-gray-500",
+                ) if differences else None,
+                cls="flex flex-col min-w-0",
+            ),
             Form(
                 Button(
                     Img(src="/images/content/delete.svg", alt="Delete food", cls="w-5 h-5"),
@@ -685,33 +770,31 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
             ),
         ),
         Form(
-            Input(type="hidden", name="unit_g", value=f"{unit_g:.4f}"),
             Div(
                 Input(
                     type="text",
                     inputmode="decimal",
                     id=display_input_id,
+                    name="amount_value",
                     value=default_display,
                     aria_label=f"Amount for {ingredient_name}",
                     cls="web_input border border-white rounded-lg px-2 py-1 w-24 text-base",
-                    oninput=f"dbRecalcGrams('{display_input_id}','{unit_select_id}','{grams_input_id}')",
-                    onchange=f"dbRecalcGrams('{display_input_id}','{unit_select_id}','{grams_input_id}', true)",
-                    onclick="this.select()",
-                ),
-                Span("serving", id=side_unit_id, cls="text-xs text-gray-600"),
-                Input(
-                    type="hidden",
-                    name="amount_g",
-                    id=grams_input_id,
-                    value=f"{amount:.6f}",
                     hx_post=f"/cart/portion/{portion_id}/amount",
                     hx_trigger="change",
                     hx_include="closest form",
                     hx_target=card_target,
                     hx_swap="outerHTML",
-                ),Select(
+                    oninput=f"dbRecalcGrams('{display_input_id}','{unit_select_id}','{grams_input_id}')",
+                    onclick="this.select()",
+                ),
+                Span("serving", id=side_unit_id, cls="text-xs text-gray-600"),
+                # Presentation-only helper: it is not submitted (no name); the
+                # server converts `amount_value` + `amount_unit` itself (§7.13).
+                Input(type="hidden", id=grams_input_id, value=f"{amount:.6f}"),
+                Select(
                     *_unit_options(unit_g, unit_label),
                     id=unit_select_id,
+                    name="amount_unit",
                     data_display_id=display_input_id,
                     data_grams_id=grams_input_id,
                     data_side_unit_id=side_unit_id,
@@ -753,25 +836,25 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
         else None,
         Div(
             Label("Strictly weighted", cls="text-xs text-gray-600"),
-            _checkbox(
+            _TriStateFlag(
                 name="strictly_weighed",
-                checked=bool(sample.strictly_weighed),
+                value=sample.strictly_weighed,
                 hx_post=f"/cart/portion/{portion_id}/strictly_weighed",
                 aria_label=f"Strictly weighted for {ingredient_name}",
-                hx_swap="outerHTML",
                 hx_target=f"#macros_summary_event_{event.id}",
+                hx_swap="outerHTML",
             ),
             cls="flex items-center gap-2"
         ),
         Div(
             Label("Macros quality", cls="text-xs text-gray-600"),
-            _checkbox(
+            _TriStateFlag(
                 name="macros_quality",
-                checked=bool(sample.macros_quality),
+                value=sample.macros_quality,
                 hx_post=f"/cart/portion/{portion_id}/macros_quality",
                 aria_label=f"Macros quality for {ingredient_name}",
-                hx_swap="outerHTML",
                 hx_target=f"#macros_summary_event_{event.id}",
+                hx_swap="outerHTML",
             ),
             cls="flex items-center gap-2"
         ),

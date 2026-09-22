@@ -50,8 +50,8 @@ _DESTINATION_TABLE = {
     PortionDestination.FRIDGE: "fridge",
 }
 
-# Explicit column list, no `pd.*`: the read contract is declared, not inherited
-# from the physical table (finding 13).
+# Explicit column list: the read contract is declared, not inherited from the
+# physical table (finding 13).
 _PORTION_COLUMNS = """
     pd.id,
     pd.catalog_id,

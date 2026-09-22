@@ -51,17 +51,27 @@ class AmountInputUnit(str, Enum):
     texto libre en rutas ni componentes. Los valores son los códigos estables
     de §4.2 de ese mismo documento.
 
-    Solo están los dos que hoy emite algún control real (el selector de
-    cantidad ingerida del `confirm` del carrito). Los demás de §4.2
-    (`portion`, `lb`, `oz`) se añaden aquí, junto con su factor de conversión
-    a gramos, cuando exista la interfaz que los use; no se declaran antes para
-    no publicar unidades que ningún boundary sabe convertir.
+    `lb` y `oz` llevan en el propio enum su factor exacto a gramos y son la
+    única fuente de ese número (decisión 2026-09-22). `portion` no tiene factor
+    constante: su factor es el `unit_g` del alimento y se resuelve en tiempo de
+    ejecución. `percent` no es una masa: se interpreta contra el total y no se
+    admite en la ruta de cantidad.
 
     Ninguna de estas unidades se persiste: deciden cómo se interpreta la
     cantidad recibida antes de convertirla a la unidad canónica (gramos).
     """
-    GRAMS = "g"
-    PERCENT = "%"
+
+    def __new__(cls, code, grams_factor=None):
+        obj = str.__new__(cls, code)
+        obj._value_ = code
+        obj.grams_factor = grams_factor
+        return obj
+
+    GRAMS = ("g", 1.0)
+    PERCENT = ("%", None)
+    PORTION = ("portion", None)
+    LB = ("lb", 453.59237)
+    OZ = ("oz", 28.349523125)
 
 
 @unique

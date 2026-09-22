@@ -7,7 +7,7 @@ from DayBetes_food.components.stats.stats_shared import (
     empty_totals,
     to_float,
 )
-from DayBetes_food.components.cart.cart_shared import portion_intake_amount
+from DayBetes_food.components.cart.cart_shared import portion_intake_amount, portion_macro_amount
 from DayBetes_food.time_utils import to_local
 
 
@@ -18,14 +18,14 @@ def _portion_nutrient_100g(portion, nutrient_key: str):
 def _compute_totals_for_portions(portions: list[dict]) -> dict:
     totals = empty_totals()
     for portion in portions:
-        intake_amount = portion_intake_amount(portion)
-        if intake_amount <= 0:
+        if portion_intake_amount(portion) <= 0:
             continue
+        macro_amount = portion_macro_amount(portion)
         for nutrient_key, _, _ in NUTRIENT_SPECS:
             per_100g = _portion_nutrient_100g(portion, nutrient_key)
             if per_100g is None:
                 continue
-            totals[nutrient_key] += (intake_amount * to_float(per_100g)) / 100.0
+            totals[nutrient_key] += (macro_amount * to_float(per_100g)) / 100.0
     return totals
 
 

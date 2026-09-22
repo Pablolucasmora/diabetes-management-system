@@ -7,6 +7,7 @@ from DayBetes_food.domain.constants import (
     CONSERVATION_OPTIONS,
     COOKING_OPTIONS,
     INITIAL_STATE_OPTIONS,
+    AmountInputUnit,
     MealType,
     PortionOrigin,
 )
@@ -2727,31 +2728,48 @@ def _float_or_zero(value) -> float:
 
 
 def _display_base_unit(entry_type: str, item: dict) -> str:
-    if entry_type == "catalog" and (item.get("category") or "").strip().lower() == "beverages":
-        return "ml"
-    if entry_type == "manual_intake":
-        subtype = (item.get("subtype") or "").strip().lower()
-        liquid_hints = ("drink", "beverage", "juice", "soda", "smoothie", "milk", "coffee", "tea", "bebida")
-        if any(token in subtype for token in liquid_hints):
-            return "ml"
+    """Display unit of a food: grams for now.
+
+    Liquids/mashed/gel will show ml in the future (audit/deuda_pendiente.md);
+    until then every food is shown in grams.
+    """
     return "g"
 
 
 def _detail_unit_options(base_amount: float, base_unit: str):
-    hundred_label = f"100{base_unit}"
+    """Unit selector options of the ingredient page.
+
+    Factors come from the central enum (measurement §11); `data_factor` is
+    presentation only (the JS computes grams for the hidden field, which the
+    detail page still sends as grams). `portion` uses the food's base amount.
+    """
     one_label = base_unit
     return [
         Option(
             f"serving ({base_amount:.0f}{base_unit})",
-            value="portion",
+            value=AmountInputUnit.PORTION.value,
             selected=True,
             data_factor=f"{base_amount:.6f}",
             data_unit_label="serving",
         ),
-        Option(f"{hundred_label} (100{base_unit})", value="x100", data_factor="100.000000", data_unit_label=hundred_label),
-        Option(f"{one_label} (1{base_unit})", value=base_unit, data_factor="1.000000", data_unit_label=one_label),
-        Option(f"lb (453.59{base_unit})", value="lb", data_factor="453.592370", data_unit_label="lb"),
-        Option(f"oz (28.35{base_unit})", value="oz", data_factor="28.349523", data_unit_label="oz"),
+        Option(
+            f"{one_label} (1{base_unit})",
+            value=AmountInputUnit.GRAMS.value,
+            data_factor=f"{AmountInputUnit.GRAMS.grams_factor:.6f}",
+            data_unit_label=one_label,
+        ),
+        Option(
+            f"lb ({AmountInputUnit.LB.grams_factor:.2f}{base_unit})",
+            value=AmountInputUnit.LB.value,
+            data_factor=f"{AmountInputUnit.LB.grams_factor:.6f}",
+            data_unit_label="lb",
+        ),
+        Option(
+            f"oz ({AmountInputUnit.OZ.grams_factor:.2f}{base_unit})",
+            value=AmountInputUnit.OZ.value,
+            data_factor=f"{AmountInputUnit.OZ.grams_factor:.6f}",
+            data_unit_label="oz",
+        ),
     ]
 
 

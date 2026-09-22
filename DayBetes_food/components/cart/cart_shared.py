@@ -1,3 +1,5 @@
+from DayBetes_food.domain.constants import PortionOrigin
+
 MACRO_KEYS = [
     ("carbs", "Carbs", "carbs_uncertainty"),
     ("sugars", "Sugars", "sugars_uncertainty"),
@@ -71,14 +73,32 @@ def portion_intake_amount(portion) -> float:
     return float(portion.amount)
 
 
+def portion_macro_amount(portion) -> float:
+    """Amount used to compute macros (measurement_conventions.md 5.2).
+
+    catalog macros are expressed per 100 g of RAW food, so a weight taken
+    already cooked is converted back with cooking_factor = cooked/raw. The
+    conversion is never persisted: `amount` keeps what the user weighed
+    (decision 2026-09-18). Only catalog origins; manual_intake has no factor.
+    """
+    amount = float(portion.amount)
+    if not portion.is_cooked_weight or portion.origin is not PortionOrigin.CATALOG:
+        return amount
+    factor = portion.source.cooking_factor or 1.0
+    return amount / factor if factor > 0 else amount
+
+
 def calculate_macro_summary_metrics(portions) -> dict:
     total_amount = sum(portion_intake_amount(p) for p in portions)
     amount_confidence_num = 0.0
     quality_confidence_num = 0.0
     for portion in portions:
         amount = portion_intake_amount(portion)
-        amount_confidence_num += amount * float(bool(portion.strictly_weighed))
-        quality_confidence_num += amount * float(bool(portion.macros_quality))
+        # NULL means "no data" (decision 2026-09-18): it does not add to the
+        # numerator, same as False, but said explicitly instead of `bool()`
+        # (code_conventions.md 3.2: decide whether NULL is zero or absence).
+        amount_confidence_num += amount * (1.0 if portion.strictly_weighed is True else 0.0)
+        quality_confidence_num += amount * (1.0 if portion.macros_quality is True else 0.0)
 
     metrics = {
         "amount_confidence": (amount_confidence_num / total_amount) if total_amount > 0 else 0.0,
@@ -133,11 +153,10 @@ def group_portions(portions):
 
 
 def display_unit(portion) -> str:
-    catalog_category = (portion.source.category or "").strip().lower()
-    manual_subtype = (portion.source.subtype or "").strip().lower()
-    if catalog_category == "beverages":
-        return "ml"
-    liquid_hints = ("drink", "beverage", "juice", "soda", "smoothie", "milk", "coffee", "tea", "bebida")
-    if any(token in manual_subtype for token in liquid_hints):
-        return "ml"
+    """Display unit of a portion: grams for now.
+
+    Liquids/mashed/gel will show ml in the future (audit/deuda_pendiente.md);
+    until then every portion is shown in grams, so the emitted unit is always
+    the canonical one and the server converts with the enum.
+    """
     return "g"

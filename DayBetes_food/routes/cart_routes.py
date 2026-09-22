@@ -250,6 +250,25 @@ def _parse_strict_bool(raw_value: str) -> bool:
     raise ValidationError("boolean_not_recognized")
 
 
+def _parse_tristate_bool(raw_value: str):
+    """Parser estricto del tri-estado de `strictly_weighed`/`macros_quality` (§7.4/§7.6).
+
+    Distinto de `_parse_strict_bool` a propósito: en un checkbox la ausencia es
+    `False`, pero en un control de tres estados la ausencia es "sin dato"
+    (`None`). `"true"` -> `True`, `"false"` -> `False`, `""` -> `None`, cualquier
+    otra cosa -> `422`. El cliente no decide la transición: envía el valor que
+    el servidor calculó al renderizar (decisión 2026-09-18).
+    """
+    normalized = (raw_value or "").strip().lower()
+    if normalized == "":
+        return None
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise ValidationError("tristate_not_recognized")
+
+
 def _parse_ingested_unit(raw_value: str) -> AmountInputUnit:
     """
     Parser estricto de la unidad de la cantidad ingerida del `/confirm`.
@@ -270,6 +289,41 @@ def _parse_ingested_unit(raw_value: str) -> AmountInputUnit:
     if unit not in INTAKE_EVENT_INGESTED_UNITS:
         raise ValidationError("ingested_unit_not_accepted_here")
     return unit
+
+
+def _parse_amount_unit(raw_value: str) -> AmountInputUnit:
+    """Parser estricto de la unidad de cantidad del carrito (§7.7).
+
+    Acepta los miembros de `AmountInputUnit` (enum central, §11); `PERCENT` no
+    es una masa y no se admite en esta ruta. Cualquier otro valor, incluido el
+    vacío, es 422 en vez de interpretarse como gramos.
+    """
+    normalized = (raw_value or "").strip().lower()
+    try:
+        unit = AmountInputUnit(normalized)
+    except ValueError as exc:
+        raise ValidationError("amount_unit_not_recognized") from exc
+    if unit is AmountInputUnit.PERCENT:
+        raise ValidationError("amount_unit_not_admitted")
+    return unit
+
+
+def _to_grams(value: float, unit: AmountInputUnit, portion) -> float:
+    """Convert an amount in `unit` to grams (§4.2, §11).
+
+    The factor for `LB`/`OZ` comes from the central enum; `PORTION` resolves the
+    food's `unit_g` read from the database (not a hidden form field, §7.13);
+    `GRAMS` is identity. The result is validated by `update_portion_amount`.
+    """
+    if unit is AmountInputUnit.GRAMS:
+        return value
+    if unit is AmountInputUnit.LB:
+        return value * AmountInputUnit.LB.grams_factor
+    if unit is AmountInputUnit.OZ:
+        return value * AmountInputUnit.OZ.grams_factor
+    if unit is AmountInputUnit.PORTION:
+        return value * float(portion.source.unit_g or 100.0)
+    raise ValidationError("amount_unit_not_recognized")
 
 
 def _resync_consumed_event_metrics(connection, user_id: int, event_id: int, portions) -> None:
@@ -622,14 +676,18 @@ def setup_cart_routes(rt):
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/portion/{portion_id}/amount")
-    def post(request: Request, portion_id: int, amount_g: str = ""):
+    def post(request: Request, portion_id: int, amount_value: str = "", amount_unit: str = AmountInputUnit.GRAMS.value):
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
         if not user_id:
             return _error(request, AuthenticationError, _NO_SESSION)
         try:
-            amount = _to_float(amount_g)
+            unit = _parse_amount_unit(amount_unit)
+        except ValidationError as error:
+            return _error(request, ValidationError, str(error))
+        try:
+            value = _to_float(amount_value)
         except (TypeError, ValueError):
             # Cantidad no numérica: validation_error → 422.
             return _error(request, ValidationError, "La cantidad no es un número válido.")
@@ -638,11 +696,12 @@ def setup_cart_routes(rt):
             try:
                 portion = get_portion_detail(connection, int(user_id), portion_id)
                 event_id = _portion_event_id(connection, int(user_id), portion)
+                grams = _to_grams(value, unit, portion)
                 with connection.transaction():
                     # update_portion_amount valida finitud, > 0 y cota superior
                     # (T2.7): una cantidad 0 o inválida es 422 y no borra nada
                     # (T0.7: el borrado tiene ruta propia).
-                    update_portion_amount(connection, int(user_id), portion_id, amount, commit=False)
+                    update_portion_amount(connection, int(user_id), portion_id, grams, commit=False)
             except NotFoundError:
                 return _error(request, NotFoundError, _INGREDIENT_GONE)
             except ConflictError:
@@ -739,13 +798,17 @@ def setup_cart_routes(rt):
                 return _error(request, ValidationError, _INGREDIENT_FAILED)
             return _card_response(request, connection, int(user_id), event_id)
 
-    def _portion_flag_route(request: Request, portion_id: int, field_name: str, raw_value: str, label: str):
+    def _portion_flag_route(request: Request, portion_id: int, field_name: str, raw_value: str, label: str, *, tristate: bool = False):
         """
         Cuerpo común de los tres booleanos de porción (strictly_weighed,
         macros_quality, is_cooked_weight): mismo contrato HTMX
         (target #macros_summary_event_{id}, swap outerHTML) y mismo mapeo de
         errores, como exige §9.5 ("las acciones equivalentes deben usar el
         mismo patrón").
+
+        `tristate=True` para los dos campos de calidad del dato, que admiten
+        "sin dato" (`None`, decisión 2026-09-18); `is_cooked_weight` es de dos
+        estados.
 
         A diferencia de sus rutas hermanas de cantidad/offset, acepta también un
         evento `consumed`: las porciones de un evento confirmado son editables
@@ -760,7 +823,7 @@ def setup_cart_routes(rt):
         if not user_id:
             return _error(request, AuthenticationError, _NO_SESSION)
         try:
-            value = _parse_strict_bool(raw_value)
+            value = _parse_tristate_bool(raw_value) if tristate else _parse_strict_bool(raw_value)
         except ValidationError:
             return _error(request, ValidationError, f"No se ha entendido la casilla '{label}'.")
         with get_connection() as connection:
@@ -799,12 +862,12 @@ def setup_cart_routes(rt):
             return render_fragment(Div(MacrosSummary(event, portions), id=f"macros_summary_event_{event_id}"))
 
     @rt("/cart/portion/{portion_id}/strictly_weighed")
-    def post(request: Request, portion_id: int, strictly_weighed: str = ""):
-        return _portion_flag_route(request, portion_id, "strictly_weighed", strictly_weighed, "Strictly weighted")
+    def post(request: Request, portion_id: int, value: str = ""):
+        return _portion_flag_route(request, portion_id, "strictly_weighed", value, "Strictly weighted", tristate=True)
 
     @rt("/cart/portion/{portion_id}/macros_quality")
-    def post(request: Request, portion_id: int, macros_quality: str = ""):
-        return _portion_flag_route(request, portion_id, "macros_quality", macros_quality, "Macros quality")
+    def post(request: Request, portion_id: int, value: str = ""):
+        return _portion_flag_route(request, portion_id, "macros_quality", value, "Macros quality", tristate=True)
 
     @rt("/cart/portion/{portion_id}/is_cooked_weight")
     def post(request: Request, portion_id: int, is_cooked_weight: str = ""):
