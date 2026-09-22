@@ -66,8 +66,7 @@ def parse_source_macro(portion, macro_key: str):
 def portion_intake_amount(portion) -> float:
     """Amount of a portion in grams (measurement_conventions.md 4.4).
 
-    `portion_detail` has a single amount column since decision 2026-09-18: the
-    old `plate_amount`/`amount_g` fallback disappeared with the migration.
+    `portion_detail` has a single amount column since decision 2026-09-18.
     """
     return float(portion.amount)
 

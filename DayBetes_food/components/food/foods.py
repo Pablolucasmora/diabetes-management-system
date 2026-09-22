@@ -3252,6 +3252,25 @@ def FoodDetailPage(
                     data_detail_leftovers="true",
                     cls="text-xs text-gray-600",
                 ),
+                (
+                    Div(
+                        Label(
+                            "Cooked weight",
+                            cls="text-xs text-gray-600",
+                            **{"for": f"is_cooked_weight_{root_id}"},
+                        ),
+                        Input(
+                            type="checkbox",
+                            name="is_cooked_weight",
+                            id=f"is_cooked_weight_{root_id}",
+                            value="true",
+                            cls=CHECKBOX_CLS,
+                        ),
+                        cls="flex items-center gap-2",
+                    )
+                    if entry_type == "catalog"
+                    else ""
+                ),
                 Div(
                     Button(
                         "Advanced",

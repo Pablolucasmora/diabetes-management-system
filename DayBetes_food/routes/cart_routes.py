@@ -59,9 +59,8 @@ from DayBetes_food.domain.intake_plate import (
     IntakePlateCreate,
     IntakePlateUpdate,
 )
-from DayBetes_food.http_errors import app_error_headers
+from DayBetes_food.http_errors import app_error_response
 from DayBetes_food.errors import (
-    AppError,
     AuthenticationError,
     AuthorizationError,
     ConflictError,
@@ -77,43 +76,8 @@ def _no_user_cart():
 
 
 def _error(request: Request, error, message: str = ""):
-    """
-    Respuesta de error del carrito: status semántico + aviso visible.
-
-    Las acciones del carrito son ediciones en línea, no un formulario de
-    guardado, así que **no** usan la excepción de `code_conventions.md` §9.5
-    (`200` + fragmento dentro del formulario): conservan el status de su
-    categoría (`422` validación, `404` inexistente, `409` conflicto, §3.2/§3.5/
-    §3.6 de error_conventions.md) y devuelven cuerpo vacío, porque htmx no debe
-    hacer swap de un error sobre la tarjeta.
-
-    Para que el error no sea invisible —htmx ignora el cuerpo de un `4xx`, así
-    que sin esto el usuario ve exactamente lo mismo que si no hubiera pulsado
-    nada— la respuesta declara el mensaje público en cabeceras y, además, en el
-    evento `appError` de `HX-Trigger`. `static/js/app_toast.js` lo pinta en el
-    `#app_toast` del layout (decisión 2026-09-10, hallazgo 37 de
-    audit/audit_intake_event.md; error_conventions.md §7: "no devolver un
-    cuerpo vacío para un error que el usuario necesita ver").
-
-    `error` puede ser una clase de `DayBetes_food/errors.py` o una instancia; el
-    código y el mensaje por defecto salen siempre del catálogo central, nunca se
-    inventan por endpoint (error_conventions.md §8.3).
-
-    Las cabeceras las construye `http_errors.app_error_headers`, el mismo punto
-    que usa el middleware de `main.py`: incluye el `X-Request-ID` que §7 exige
-    en toda respuesta de error —estas rutas **devuelven** el error en vez de
-    levantarlo, así que no pasan por el boundary global que lo añadía
-    (hallazgo 50)— y sanea el mensaje a latin-1, la codificación de cabecera de
-    Starlette, para que un guion largo o unas comillas tipográficas no
-    conviertan el `4xx` en un `500` (hallazgo 51).
-    """
-    if isinstance(error, type) and issubclass(error, AppError):
-        error = error()
-    return HTMLResponse(
-        "",
-        status_code=error.status_code,
-        headers=app_error_headers(request, error, message),
-    )
+    """Alias de `http_errors.app_error_response` (helper compartido, §7.1)."""
+    return app_error_response(request, error, message)
 
 
 def _load_events_and_portions(connection, user_id: int):
@@ -295,7 +259,7 @@ def _parse_ingested_unit(raw_value: str) -> AmountInputUnit:
     boundary por `INTAKE_EVENT_INGESTED_UNITS`); cualquier otro valor
     —incluido el vacío— se rechaza con `422` en vez de degradarse al `else`
     de gramos. Sin esto, `ingested_unit=kg` con `ingested_value=0.05`
-    confirmaba la comida como 0,05 g y sobrescribía `plate_amount`, que es un
+    confirmaba la comida como 0,05 g y sobrescribía `amount`, que es un
     dato clínico irrecuperable (hallazgo 47 de audit/audit_intake_event.md).
     """
     normalized = (raw_value or "").strip()
@@ -323,7 +287,7 @@ def _resync_consumed_event_metrics(connection, user_id: int, event_id: int, port
     sobre las porciones tal y como están guardadas (ya escaladas por la
     fracción consumida en el `confirm`, §6.9.1); una escala uniforme no las
     altera. `ingested_amount` no se toca aquí porque estos flags no cambian
-    `plate_amount`; la ruta que llegue a cambiarlo deberá recalcularlo también.
+    `amount`; la ruta que llegue a cambiarlo deberá recalcularlo también.
 
     No hace nada si el evento sigue en `planned`: ahí el snapshot todavía no
     existe y lo escribe el `confirm`.
@@ -977,7 +941,7 @@ def setup_cart_routes(rt):
         - vacío -> se asume el 100% (todo el plato).
         - ingested_unit == "%" -> fracción = ingested_value / 100.
         - ingested_unit == "g" -> fracción = ingested_value / total_amount
-          (suma en vivo de plate_amount, calculada en este mismo request).
+          (suma en vivo de amount, calculada en este mismo request).
         No hay más unidades: cualquier otro valor es 422, nunca gramos por
         defecto (hallazgo 47).
         fracción debe quedar en [0, 1]; fuera de rango es 422.
@@ -1024,7 +988,7 @@ def setup_cart_routes(rt):
                 # ventana en la que otra petición podía insertar una porción
                 # que se escalaría sin haber contado en total_amount, así que
                 # el ingested_amount guardado no correspondía a la suma real de
-                # plate_amount (hallazgo 46, punto 11 de §13).
+                # amount (hallazgo 46, punto 11 de §13).
                 with connection.transaction():
                     portions = list_portions_by_event(connection, int(user_id), event_id)
                     if not portions:
@@ -1065,7 +1029,7 @@ def setup_cart_routes(rt):
                     confirm_intake_event(
                         connection, user_id=int(user_id), event_id=event_id, commit=False
                     )
-                    # 5) Sobrescribe plate_amount = plate_amount * fracción para todas
+                    # 5) Sobrescribe amount = amount * fracción para todas
                     # las porciones del evento, en una sola sentencia SQL (§6.9.1).
                     scale_event_portion_amounts(
                         connection, int(user_id), event_id, fraction, commit=False

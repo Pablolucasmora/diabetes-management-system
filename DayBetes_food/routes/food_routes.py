@@ -11,6 +11,7 @@ from urllib.parse import urlencode
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.food.food_main import food_main, plate_selector_options
 from DayBetes_food.components.ui import render_fragment, render_page
+from DayBetes_food.http_errors import app_error_response
 from DayBetes_food.database.queries import (
     add_catalog_item,
     get_all_catalog,
@@ -23,6 +24,7 @@ from DayBetes_food.database.queries import (
     get_recipe,
     get_portion_detail,
     list_recipe_portions_by_origin,
+    list_recipe_portions_for_copy,
     list_portions_by_recipe,
     update_catalog_item,
     toggle_user_favorite,
@@ -160,6 +162,21 @@ def _to_float(value: str):
         return float(normalized)
     except (TypeError, ValueError):
         return None
+
+
+def _parse_strict_bool(raw_value: str) -> bool:
+    """Strict parser for HTML transport booleans (§7.6).
+
+    Absent/empty -> False (that is how an unchecked checkbox arrives);
+    "true" -> True; any other present value is rejected with ValidationError
+    instead of silently becoming False.
+    """
+    normalized = (raw_value or "").strip().lower()
+    if normalized == "":
+        return False
+    if normalized == "true":
+        return True
+    raise ValidationError("boolean_not_recognized")
 
 
 MANUAL_NUMERIC_LIMITS = {
@@ -1103,7 +1120,7 @@ def setup_food_routes(rt):
             else:
                 origin = get_manual_intake(connection, int(origin_id))
             if not origin or not _can_view_entry(origin_type, origin, user_id):
-                return render_fragment(P("Rescue item not found.", cls="text-xs text-red-700"))
+                return app_error_response(request, NotFoundError, "Rescue item not found.")
             if origin_type == "catalog" and origin.get("deleted_at") is not None:
                 return render_fragment(P("This food is archived and must be copied first.", cls="text-xs text-red-700"))
             try:
@@ -1134,15 +1151,13 @@ def setup_food_routes(rt):
                             destination=PortionDestination.INTAKE_EVENT,
                             destination_id=int(event_id),
                             amount=float(grams),
-                            strictly_weighed=True,
-                            macros_quality=True,
                             offset_minutes=0,
                             plate_id=plate_id,
                         ),
                         commit=False,
                     )
             except NotFoundError:
-                return render_fragment(P("Meal event not found.", cls="text-red-700"))
+                return app_error_response(request, NotFoundError, "Meal event not found.")
             except ConflictError:
                 return render_fragment(P("That meal has already been confirmed.", cls="text-red-700"))
             except ValueError as error:
@@ -1284,19 +1299,19 @@ def setup_food_routes(rt):
             return HTMLResponse(status_code=403)
         parsed_amount = _to_float(amount_g)
         if parsed_amount is None or parsed_amount <= 0:
-            return render_fragment(P("Invalid amount.", cls="text-red-700"))
+            return app_error_response(request, ValidationError, "Invalid amount.")
 
         with get_connection() as connection:
             user_id = get_current_user_id()
             recipe = get_recipe(connection, recipe_id)
             if not recipe or not _can_edit_entry("recipe", recipe, user_id):
-                return render_fragment(P("Recipe not found.", cls="text-red-700"))
+                return app_error_response(request, NotFoundError, "Recipe not found.")
             try:
                 portion = get_portion_detail(connection, int(user_id), portion_id)
             except NotFoundError:
-                return render_fragment(P("Ingredient not found.", cls="text-red-700"))
+                return app_error_response(request, NotFoundError, "Ingredient not found.")
             if portion.destination is not PortionDestination.RECIPE or int(portion.destination_id) != recipe_id:
-                return render_fragment(P("Ingredient not found.", cls="text-red-700"))
+                return app_error_response(request, NotFoundError, "Ingredient not found.")
             update_portion_amount(connection, int(user_id), portion_id, parsed_amount)
             recipe_portions = list_portions_by_recipe(connection, int(user_id), recipe_id)
             recipe_total_amount = sum(float(row.amount or 0.0) for row in recipe_portions)
@@ -1373,13 +1388,13 @@ def setup_food_routes(rt):
             user_id = get_current_user_id()
             recipe = get_recipe(connection, recipe_id)
             if not recipe or not _can_edit_entry("recipe", recipe, user_id):
-                return render_fragment(P("Recipe not found.", cls="text-red-700"))
+                return app_error_response(request, NotFoundError, "Recipe not found.")
             try:
                 portion = get_portion_detail(connection, int(user_id), portion_id)
             except NotFoundError:
-                return render_fragment(P("Ingredient not found.", cls="text-red-700"))
+                return app_error_response(request, NotFoundError, "Ingredient not found.")
             if portion.destination is not PortionDestination.RECIPE or int(portion.destination_id) != recipe_id:
-                return render_fragment(P("Ingredient not found.", cls="text-red-700"))
+                return app_error_response(request, NotFoundError, "Ingredient not found.")
             update_portion_detail_fields(
                 connection,
                 int(user_id),
@@ -1402,13 +1417,13 @@ def setup_food_routes(rt):
             user_id = get_current_user_id()
             recipe = get_recipe(connection, recipe_id)
             if not recipe or not _can_edit_entry("recipe", recipe, user_id):
-                return HTMLResponse(status_code=404)
+                return app_error_response(request, NotFoundError, "Recipe not found.")
             try:
                 portion = get_portion_detail(connection, int(user_id), portion_id)
             except NotFoundError:
-                return HTMLResponse(status_code=404)
+                return app_error_response(request, NotFoundError, "Ingredient not found.")
             if portion.destination is not PortionDestination.RECIPE or int(portion.destination_id) != recipe_id:
-                return HTMLResponse(status_code=404)
+                return app_error_response(request, NotFoundError, "Ingredient not found.")
             delete_portion_detail(connection, int(user_id), portion_id)
 
         return HTMLResponse("")
@@ -1523,7 +1538,7 @@ def setup_food_routes(rt):
                         )
                         if not created_id:
                             raise ValueError("Could not create editable copy.")
-                        source_portions = list_portions_by_recipe(connection, int(user_id), int(source["id"]))
+                        source_portions = list_recipe_portions_for_copy(connection, int(user_id), int(source["id"]))
                         for portion in source_portions:
                             amount_g = float(portion.amount or 0.0)
                             if portion.origin_id <= 0 or amount_g <= 0:
@@ -1678,10 +1693,15 @@ def setup_food_routes(rt):
         cooking: str = "",
         final_state: str = "",
         conservation: str = "",
+        is_cooked_weight: str = "",
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
 
+        try:
+            cooked_weight = _parse_strict_bool(is_cooked_weight)
+        except ValidationError:
+            return app_error_response(request, ValidationError, "No se ha entendido la casilla 'Cooked weight'.")
         parsed_amount = _to_float(amount_g)
         parsed_total = _to_float(total_amount_g)
         if parsed_amount is None or parsed_amount <= 0:
@@ -1734,7 +1754,7 @@ def setup_food_routes(rt):
             elif entry_type == "recipe":
                 origin_item = get_recipe(connection, entry_id)
             if not origin_item or not _can_view_entry(entry_type, origin_item, user_id):
-                return render_fragment(P("Item not found.", cls="text-red-700"))
+                return app_error_response(request, NotFoundError, "Item not found.")
             if entry_type == "catalog" and origin_item.get("deleted_at") is not None:
                 return render_fragment(P("This food is archived and must be copied first.", cls="text-red-700"))
 
@@ -1774,8 +1794,7 @@ def setup_food_routes(rt):
                                     cooking=clean_cooking,
                                     final_state=clean_final_state,
                                     conservation=clean_conservation,
-                                    strictly_weighed=True,
-                                    macros_quality=True,
+                                    is_cooked_weight=(cooked_weight if entry_type == "catalog" else False),
                                 ),
                                 commit=False,
                             )
@@ -1818,8 +1837,6 @@ def setup_food_routes(rt):
                                         cooking=row.cooking,
                                         conservation=row.conservation,
                                         final_state=row.final_state,
-                                        strictly_weighed=True,
-                                        macros_quality=True,
                                         is_cooked_weight=bool(row.is_cooked_weight),
                                     ),
                                     commit=False,
@@ -2034,7 +2051,6 @@ def setup_food_routes(rt):
                             destination_id=event_id,
                             plate_id=target_plate_id,
                             amount=portion_amount,
-                            macros_quality=True,
                         ),
                         commit=False,
                     )
@@ -2097,7 +2113,6 @@ def setup_food_routes(rt):
                             destination_id=event_id,
                             plate_id=target_plate_id,
                             amount=portion_amount,
-                            macros_quality=True,
                         ),
                         commit=False,
                     )
@@ -2185,7 +2200,6 @@ def setup_food_routes(rt):
                                     cooking=row.cooking,
                                     conservation=row.conservation,
                                     final_state=row.final_state,
-                                    macros_quality=True,
                                     is_cooked_weight=bool(row.is_cooked_weight),
                                 ),
                                 commit=False,

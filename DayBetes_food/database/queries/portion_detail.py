@@ -112,6 +112,18 @@ _PORTION_OWNED_BY_USER = """
     )
 """
 
+# Visibility of a recipe portion for reading it in the copy flow (5.4): a
+# public recipe (is_private = FALSE) is readable by anyone, but only its owner
+# may mutate it. This fragment is used by list_recipe_portions_for_copy and
+# never by a mutation.
+_PORTION_VISIBLE_RECIPE = """
+    AND EXISTS (
+        SELECT 1 FROM recipe r
+        WHERE r.id = pd.recipe_id
+          AND (r.users_id = %(user_id)s OR r.is_private = FALSE)
+    )
+"""
+
 
 def _rows_to_reads(rows) -> list[PortionDetailRead]:
     return [portion_detail_read_from_row(row) for row in (rows or [])]
@@ -304,6 +316,27 @@ def list_recipe_portions_by_origin(
         query,
         {"recipe_id": recipe_id, "origin_id": origin_id, "user_id": user_id},
         commit=False,
+    )
+    return _rows_to_reads(rows)
+
+
+def list_recipe_portions_for_copy(connection, user_id: int, recipe_id: int) -> list[PortionDetailRead]:
+    """Recipe portions readable for copying a recipe the user may only view.
+
+    `/food/copy` copies a recipe that can be public (`is_private = FALSE`) and
+    therefore not owned by the user: reading it requires viewability, not
+    ownership. The write side still goes through `create_portion_detail` on a
+    destination owned by the user, so this read cannot mutate anything.
+    """
+    query = f"""
+        SELECT {_PORTION_COLUMNS}
+        {_PORTION_FROM}
+        WHERE pd.recipe_id = %(recipe_id)s
+        {_PORTION_VISIBLE_RECIPE}
+        ORDER BY pd.id;
+    """
+    rows = _execute_query_many(
+        connection, query, {"recipe_id": recipe_id, "user_id": user_id}, commit=False
     )
     return _rows_to_reads(rows)
 

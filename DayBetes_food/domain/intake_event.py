@@ -59,9 +59,9 @@ class IntakeEventRead:
     en estado 'consumed' (decisión 2026-09-08).
     ingested_amount es el único snapshot de cantidad total del evento: se
     calcula una vez en confirm_intake_event y equivale a la suma de
-    portion_detail.plate_amount tras escalarlas por la fracción realmente
+    portion_detail.amount tras escalarlas por la fracción realmente
     consumida. No existe total_amount como columna: se calcula en vivo con
-    SUM(plate_amount) cuando haga falta (decisión 2026-09-10,
+    SUM(amount) cuando haga falta (decisión 2026-09-10,
     measurement_conventions.md §4.4/§6.9.1).
     """
     id: int
