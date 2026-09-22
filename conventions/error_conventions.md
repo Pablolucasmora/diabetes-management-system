@@ -401,6 +401,11 @@ Reglas de construcción del canal (decisión 2026-09-10, hallazgos 50-52 de
   convertirían el `4xx` en un `500`. El helper sustituye los caracteres no
   representables; el texto íntegro viaja en el JSON de `HX-Trigger`, que no
   tiene esa limitación. Aun así, los mensajes públicos se redactan en latin-1.
+- El helper que construye la respuesta de error de una ruta (status semántico + cuerpo vacío +
+  cabeceras) es **compartido y vive junto a las cabeceras**, en
+  `DayBetes_food/http_errors.py`; no se declara uno privado por módulo de rutas. Un módulo que no
+  pueda usarlo acaba devolviendo `200` con un fragmento de texto para un "no existe", que es lo
+  que esta sección evita (decisión 2026-09-22).
 
 ## 8. Traducción por capa
 

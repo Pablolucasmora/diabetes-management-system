@@ -8,8 +8,8 @@ Las convenciones se aplican inmediatamente al código nuevo. El código existent
 
 Durante la fase de desarrollo personal (TFG, un único desarrollador, un único usuario) no se exige una suite de tests automatizados. La verificación manual del comportamiento afectado es suficiente antes de dar por cerrada una tabla o módulo. Esta decisión se revisará cuando el proyecto salga de esta fase; no debe señalarse como convención faltante en auditorías mientras siga vigente.
 
+**Idioma del código (obligatorio).** Todo el código escrito se redacta en inglés: identificadores, nombres de funciones y variables, docstrings, **comentarios** y mensajes internos de excepción y de log. Los comentarios no son una excepción: un comentario en español en código nuevo es un defecto, no un detalle de estilo, y el código existente que se toque debe traducirse en la misma pasada (sin mezclar esa traducción con cambios funcionales no relacionados, §12.1). La única excepción es el texto que ve el usuario (etiquetas y contenido de la interfaz, y los mensajes públicos de error): su idioma se rige por `frontend_conventions.md` §7.12 y `error_conventions.md` §7, y la decisión de internacionalización —elegir idioma y traducir las listas de categorías y estados de los alimentos— sigue pendiente y no se resuelve aquí.
 
-**IMPORTANTE RECORDAR QUE TODO EL CÓDIGO ESCRITO DEBE DE SER EN INGLÉS, COMO SE HA IDO HACIENDO DURANTE EL PROYECTO, LO ÚNICO QUE HAY QUE HABLAR CON EL USUARIO SOBRE EN QUE IDIOMA HAY QUE HACERLO Y QUE ES UNA COSA QUE SE VERÁ EN UN FUTURO ES EL TEMA DE LAS LISTAS Y TEXTO DE LA INTERFAZ (LISTAS DE CATEGORIAS DE ALIMENTOS, ESTADOS DE LOS ALIMENTOS...) QUE HABRÁ QUE VER SI PONERLO TODO EN UN IDIOMA, SI SE PODRÁ ELEGIR EL IDIOMA...**
 ## 1. Capas y responsabilidades
 
 El proyecto se divide estrictamente en cuatro responsabilidades. Una capa inferior no debe conocer detalles de una capa superior.
@@ -156,6 +156,13 @@ Los helpers genéricos deben distinguir los dos modos:
 
 - En modo propietario (`commit=True`), pueden hacer rollback y devolver el resultado de error definido por el contrato.
 - En modo caller-owned (`commit=False`), deben propagar la excepción SQL y no hacer rollback.
+
+El modo se deriva del contrato, no de un argumento que cada call site deba recordar: el parámetro
+`rollback_on_error` de los helpers genéricos vale `commit` cuando no se indica otra cosa
+(decisión 2026-09-22). Un default "siempre rollback" convierte todas las lecturas —que llaman con
+`commit=False`— en infractoras de la regla anterior, y dentro de un `connection.transaction()`
+produce `ProgrammingError: Explicit rollback() forbidden within a Transaction context`, que
+enmascara el error real.
 
 Un error de infraestructura nunca se convierte silenciosamente en un resultado exitoso.
 
@@ -1042,10 +1049,16 @@ petición y el swap `outerHTML` lo destruye.
 | Acción (`POST /cart/event/{id}/…`) | `hx-target` | `hx-swap` | Fragmento de éxito |
 |---|---|---|---|
 | `meal_hour` (hora y fecha) | `#cart_events_list` | `outerHTML` | `cart_events_list(...)` — es la única acción que reordena la lista (`meal_time`) |
-| `name`, `notes`, `meal_type`, `eating_out`, `insulin_dose`, `injection_zone`, `ingredient/…/amount`, `ingredient/…/offset` | `#cart_card_event_{id}` | `outerHTML` | `CartCard(event, portions)` |
-| `ingredient/…/strictly_weighed`, `…/macros_quality`, `…/is_cooked_weight` | `#macros_summary_event_{id}` | `outerHTML` | `Div(MacrosSummary(...), id="macros_summary_event_{id}")` |
+| `name`, `notes`, `meal_type`, `eating_out`, `insulin_dose`, `injection_zone` | `#cart_card_event_{id}` | `outerHTML` | `CartCard(event, portions, plates)` |
+| `POST /cart/portion/{portion_id}/amount` (payload `amount_value` + `amount_unit`), `…/offset`, `…/move`, `…/delete` | `#cart_card_event_{id}` | `outerHTML` | `CartCard(event, portions, plates)` |
+| `POST /cart/portion/{portion_id}/strictly_weighed`, `…/macros_quality`, `…/is_cooked_weight` | `#macros_summary_event_{id}` | `outerHTML` | `Div(MacrosSummary(...), id="macros_summary_event_{id}")` |
+| `POST /cart/event/{id}/plate`, `POST /cart/plate/{plate_id}/name`, `…/offset`, `…/apply_offset`, `…/delete` | `#cart_card_event_{id}` | `outerHTML` | `CartCard(event, portions, plates)` |
 | `delete`, `confirm` | `#cart_card_event_{id}` | `outerHTML` | cuerpo vacío (la tarjeta desaparece) y, si no queda ningún evento planificado, swap OOB de `#cart_body` con el carrito vacío |
 | `archive`, `restore` | página completa del carrito | `outerHTML` | `cart_main(...)`; no están enlazadas desde ninguna tarjeta todavía |
+
+El borrado de un ingrediente tiene **ruta propia** (`…/delete`) y no se expresa como cantidad `0`
+(decisión 2026-09-22): `…/amount` responde `422` a `<= 0`. Un mismo endpoint no puede tener dos
+comportamientos irreversiblemente distintos según el payload (§9.1, §9.2).
 
 Fragmento de error: ninguno. Las acciones del carrito son ediciones en línea,
 no un formulario de guardado, así que **no** aplican la excepción de `200` +

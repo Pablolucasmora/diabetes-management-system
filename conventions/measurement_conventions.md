@@ -129,7 +129,7 @@ No almacenar “1 porción” como si fuera `1 g`. El valor persistido siempre d
 - **cantidad cocinada**: no es una columna. Es un campo del formulario (`total_amount_g`) que solo existe en el instante de emplatar, para calcular el sobrante que se guarda en `fridge`. `portion_detail` nunca la persiste (decisión 2026-09-18).
 - `total_amount`: suma de `amount` de las porciones de un evento, calculada siempre en vivo (§4.1), nunca almacenada. Antes de confirmar es la cantidad servida total; en el instante de confirmar es el denominador usado para interpretar `ingested_value` cuando se introduce en gramos.
 - `ingested_amount` (`intake_event`): único campo persistido a nivel de evento con el total realmente consumido. Es un snapshot (§6.9) calculado en el propio `confirm` como `total_amount (en ese instante) * fracción`.
-- `fracción`: número en `[0, 1]` que representa la proporción del plato servido que se ha consumido. Se obtiene de los campos `ingested_value`/`ingested_unit` del formulario de confirmación: si `ingested_unit = "%"`, `fracción = ingested_value / 100`; si es gramos, `fracción = ingested_value_g / total_amount`. Si el usuario no rellena `ingested_value`, `fracción = 1.0` (se asume que se ha comido todo el plato). Un valor fuera de `[0, 1]` se rechaza como `validation_error` (`422`), no se recorta silenciosamente.
+- `fracción`: número en `(0, 1]` que representa la proporción del plato servido que se ha consumido. Se obtiene de los campos `ingested_value`/`ingested_unit` del formulario de confirmación: si `ingested_unit = "%"`, `fracción = ingested_value / 100`; si es gramos, `fracción = ingested_value_g / total_amount`. Si el usuario no rellena `ingested_value`, `fracción = 1.0` (se asume que se ha comido todo el plato). Un valor fuera de `(0, 1]` se rechaza como `validation_error` (`422`), no se recorta silenciosamente. **`0` no es un valor admisible** (decisión 2026-09-22): si no se ha comido nada del evento, el evento se borra, no se confirma.
 - cantidad sobrante por ingrediente: `amount_original - amount_final` (equivalente a `amount_original * (1 - fracción)`). Solo puede calcularse en el propio instante de `confirm`, antes de sobrescribir la fila, porque `amount_original` no se conserva después. Mientras no exista la funcionalidad de nevera (`fridge`, tabla sin implementar — `audit/deuda_pendiente.md`), este sobrante no se persiste en ningún sitio: se pierde igual que se perdía antes de esta decisión.
 
 Excepción documentada a la regla general de §1 ("el valor original introducido por el usuario no se sobreescribe cuando sea necesario conservarlo para trazabilidad"): esta sobreescritura de `amount` en `confirm` es la única excepción admitida, limitada a esta tabla y a esta transición de estado (decisión 2026-09-10). Ningún otro campo ni tabla puede apoyarse en este precedente sin una decisión propia.
@@ -137,13 +137,16 @@ Excepción documentada a la regla general de §1 ("el valor original introducido
 Reglas:
 
 ```text
-amount <= 100000            # cota de cordura, la misma de §6.9.2
+0 < amount <= 100000        # cota de cordura superior, la misma de §6.9.2
 amount finito               # NaN e Infinity se rechazan con 422 y con CHECK
-0 <= fracción <= 1
+0 < fracción <= 1
 ingested_amount = total_amount (en el instante de confirmar) * fracción
 ```
 
-La **cota inferior de `amount` está pendiente de decisión** (`audit/feedback_portion_detail.md`): `> 0` entra en conflicto con confirmar habiendo comido `0` (§6.9.2 admite ese caso) y con el borrado de ingrediente expresado hoy como cantidad `0`. Hasta que se resuelva no se escribe ese `CHECK`.
+La cota inferior es **`> 0`** (decisión 2026-09-22): una porción de cantidad `0` no describe
+nada. Si un ingrediente o una tanda no se ha consumido, se borra —el borrado tiene ruta propia
+desde esa misma decisión—, no se deja a cero. Constraint:
+`ck_portion_detail_amount_range CHECK (amount > 0 AND amount <= 100000)`.
 
 ### 4.5 Offset de una porción respecto al evento (decisión 2026-09-18)
 
@@ -230,6 +233,12 @@ WHERE plate_id IS NOT NULL
 - `offset_minutes` no necesita regla: dentro de una misma tanda el offset heredado ya coincide.
 
 La misma regla se aplicó retroactivamente al histórico en la migración (§4.6.6).
+
+**La fusión también ocurre al editar la preparación** (decisión 2026-09-20). `cooking`,
+`conservation` y `final_state` forman parte de la clave, así que cambiarlos o vaciarlos puede
+hacer que la fila coincida con otra hermana de la misma tanda. En ese caso **se suma `amount` en
+la fila existente y se elimina la editada**, en la misma transacción: mismo criterio que al añadir
+y que al mover entre tandas, y nunca un error de integridad devuelto como `500`.
 
 #### 4.6.5 Ciclo de vida
 
@@ -496,7 +505,7 @@ El único punto donde se persiste algo es la transición `planned -> consumed`, 
 1. Se leen las porciones actuales del evento (`portion_detail`, todavía sin tocar).
 2. `total_amount = SUM(amount)` de esas porciones, calculado en vivo (§4.4).
 3. `amount_confidence`, `quality_confidence` y `*_uncertainty` (§6.3-§6.6) se calculan sobre esas porciones **antes** de escalarlas. Al ser proporciones (peso que cumple una condición / peso total), una escala uniforme de todas las porciones por el mismo factor no cambia el resultado, así que da igual calcularlas antes o después del paso 5.
-4. Se obtiene la `fracción` (`[0, 1]`) a partir de `ingested_value`/`ingested_unit`, según la fórmula de §4.4. Fuera de rango es `422`.
+4. Se obtiene la `fracción` (`(0, 1]`) a partir de `ingested_value`/`ingested_unit`, según la fórmula de §4.4. Fuera de rango es `422`.
 5. `UPDATE portion_detail SET amount = amount * fracción WHERE intake_event_id = ...`: una sola sentencia SQL para todas las porciones del evento, no un recálculo recursivo en Python.
 6. `intake_event.ingested_amount = total_amount (paso 2) * fracción`, junto con el resto de campos del snapshot (paso 3) y la transición de `state`.
 
@@ -509,7 +518,7 @@ Pendiente, fuera de alcance de esta decisión (ver `audit/deuda_pendiente.md`): 
 `ingested_amount` es la única masa que `intake_event` sigue persistiendo (§6.9.1; `total_amount` ya no es columna, se calcula en vivo). Como toda cantidad en gramos, debe validarse antes de guardarse:
 
 - **No finitos**: `NaN` e `Infinity` se rechazan con `422` en el boundary (`math.isfinite`), nunca se guardan. Un valor no finito no es "sin dato" (eso es `NULL`); es una entrada corrupta.
-- **Límite inferior**: `>= 0`. `0` es un valor válido (fracción de ingesta `0`, evento confirmado sin haber comido nada de lo servido) y no se confunde con "sin dato" (`NULL`).
+- **Límite inferior**: `>= 0`. El `CHECK` no cambia, porque hay eventos históricos con `ingested_amount = 0` y §12.7 los protege, pero `0` pasa a ser un valor **histórico, no producible**: desde la decisión 2026-09-22 la fracción de ingesta está en `(0, 1]` y ningún confirm nuevo puede escribir un `0`. Sigue sin confundirse con "sin dato" (`NULL`).
 - **Límite superior**: `100000` (100 kg). No es una cota clínica ni nutricional, es una cota de cordura: ninguna comida humana real la alcanza; su único propósito es que un valor corrupto o manipulado no se guarde como si fuera un dato plausible.
 
 Constraint: `ck_intake_event_ingested_amount CHECK (ingested_amount IS NULL OR (ingested_amount >= 0 AND ingested_amount <= 100000))`, con el mismo nombre canónico (§11.6 de `code_conventions.md`) que el resto de columnas de la tabla.
@@ -543,6 +552,14 @@ persistidos.
 
 Mientras el evento está `planned` no hay snapshot que reescribir: las métricas
 se recalculan en memoria en cada petición (§6.9).
+
+**Qué está abierto hoy y qué no** (2026-09-22): las rutas del carrito de cantidad, offset, alta y
+baja de ingrediente, y las de tandas, exigen `state = planned` y responden `409` sobre un evento
+confirmado. Eso es una **limitación de interfaz, no la regla**: la regla es que las porciones de un
+evento `consumed` son editables. El día que se construya la interfaz del histórico, cada ruta que
+se abra a `consumed` deberá recalcular el snapshot en la misma transacción —métricas siempre, e
+`ingested_amount` si toca `amount`—, exactamente como ya hacen las tres rutas de flags. Queda
+anotado en `audit/deuda_pendiente.md` decidir entonces qué operaciones se abren.
 
 ## 7. Factor de cocinado
 
@@ -686,7 +703,21 @@ Factor: 28.349523125
 
 El código interno de una unidad cerrada debe formar parte del enum central de unidades. Las unidades no se introducen como texto libre.
 
-Ese enum central es `AmountInputUnit` (`DayBetes_food/domain/constants.py`). Contiene solo las unidades que algún control real emite hoy (`g` y `%`); las demás de §4.2 se añaden cuando exista la interfaz que las use, junto con su factor de conversión. El boundary que recibe una unidad la convierte con ese enum y rechaza con `422` cualquier valor que no pertenezca al subconjunto que acepta —nunca la interpreta como la unidad canónica por defecto, porque eso guarda una cantidad falsa en vez de rechazar la entrada (decisión 2026-09-10, hallazgo 47 de `audit/audit_intake_event.md`).
+Ese enum central es `AmountInputUnit` (`DayBetes_food/domain/constants.py`). Contiene `g`, `%`,
+`portion`, `lb` y `oz` (decisión 2026-09-22): `lb` y `oz` llevan en el propio enum su factor
+exacto a gramos (`453.59237`, `28.349523125`), y son la **única** fuente de ese número — los
+`data_factor` del HTML se generan desde ahí, nunca se escriben a mano en una plantilla.
+`portion` no tiene factor constante: su factor es el `unit_g` del alimento y se resuelve en
+tiempo de ejecución contra la fila de origen, no contra un campo oculto del formulario (§7.13
+de `code_conventions.md`).
+
+**La conversión a la unidad canónica ocurre en el servidor.** Un boundary que acepte una unidad
+alternativa recibe valor + unidad (`amount_value`/`amount_unit`, `ingested_value`/
+`ingested_unit`), convierte la unidad con el enum, calcula los gramos y valida el resultado ya
+convertido. El JavaScript puede repintar el número al cambiar de unidad, pero no decide lo que se
+persiste.
+
+El boundary que recibe una unidad la convierte con ese enum y rechaza con `422` cualquier valor que no pertenezca al subconjunto que acepta —nunca la interpreta como la unidad canónica por defecto, porque eso guarda una cantidad falsa en vez de rechazar la entrada (decisión 2026-09-10, hallazgo 47 de `audit/audit_intake_event.md`).
 
 ## 12. Fuentes y calidad del dato
 
