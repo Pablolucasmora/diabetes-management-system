@@ -3,7 +3,14 @@ from fasthtml.common import *
 
 from DayBetes_food.components.cart.cart_shared import CHECKBOX_CLS
 from DayBetes_food.components.injection_zone import asset_busted
-from DayBetes_food.domain.constants import MealType
+from DayBetes_food.domain.constants import (
+    CONSERVATION_OPTIONS,
+    COOKING_OPTIONS,
+    INITIAL_STATE_OPTIONS,
+    AmountInputUnit,
+    MealType,
+    PortionOrigin,
+)
 from DayBetes_food.time_utils import to_local
 
 
@@ -28,10 +35,6 @@ CATEGORY_OPTIONS = [
 ]
 
 GLYCEMIC_INDEX_OPTIONS = ["high", "medium", "low"]
-
-INITIAL_STATE_OPTIONS = ["solid", "mashed/creamy", "liquid", "gel"]
-COOKING_OPTIONS = ["steam", "boiled-al-dente", "boiled-soft", "fried", "raw", "oven", "airfryer", "toaster", "griddle"]
-CONSERVATION_OPTIONS = ["freshly-made", "fridge", "freezer", "pre-cooked"]
 
 FILTER_ITEM_CLS = """
     px-3 py-1.5
@@ -2725,31 +2728,49 @@ def _float_or_zero(value) -> float:
 
 
 def _display_base_unit(entry_type: str, item: dict) -> str:
-    if entry_type == "catalog" and (item.get("category") or "").strip().lower() == "beverages":
-        return "ml"
-    if entry_type == "manual_intake":
-        subtype = (item.get("subtype") or "").strip().lower()
-        liquid_hints = ("drink", "beverage", "juice", "soda", "smoothie", "milk", "coffee", "tea", "bebida")
-        if any(token in subtype for token in liquid_hints):
-            return "ml"
+    """Display unit of a food: grams for now.
+
+    Liquids/mashed/gel will show ml in the future (audit/deuda_pendiente.md);
+    until then every food is shown in grams.
+    """
     return "g"
 
 
 def _detail_unit_options(base_amount: float, base_unit: str):
-    hundred_label = f"100{base_unit}"
+    """Unit selector options of the ingredient page.
+
+    Factors come from the central enum (measurement §11); `data_factor` is
+    presentation only: the form sends `amount_value` + `amount_unit` and the
+    server converts them (decision 2026-09-22). `portion` uses the food's
+    serving, which the server resolves again from the database.
+    """
     one_label = base_unit
     return [
         Option(
             f"serving ({base_amount:.0f}{base_unit})",
-            value="portion",
+            value=AmountInputUnit.PORTION.value,
             selected=True,
             data_factor=f"{base_amount:.6f}",
             data_unit_label="serving",
         ),
-        Option(f"{hundred_label} (100{base_unit})", value="x100", data_factor="100.000000", data_unit_label=hundred_label),
-        Option(f"{one_label} (1{base_unit})", value=base_unit, data_factor="1.000000", data_unit_label=one_label),
-        Option(f"lb (453.59{base_unit})", value="lb", data_factor="453.592370", data_unit_label="lb"),
-        Option(f"oz (28.35{base_unit})", value="oz", data_factor="28.349523", data_unit_label="oz"),
+        Option(
+            f"{one_label} (1{base_unit})",
+            value=AmountInputUnit.GRAMS.value,
+            data_factor=f"{AmountInputUnit.GRAMS.grams_factor:.6f}",
+            data_unit_label=one_label,
+        ),
+        Option(
+            f"lb ({AmountInputUnit.LB.grams_factor:.2f}{base_unit})",
+            value=AmountInputUnit.LB.value,
+            data_factor=f"{AmountInputUnit.LB.grams_factor:.6f}",
+            data_unit_label="lb",
+        ),
+        Option(
+            f"oz ({AmountInputUnit.OZ.grams_factor:.2f}{base_unit})",
+            value=AmountInputUnit.OZ.value,
+            data_factor=f"{AmountInputUnit.OZ.grams_factor:.6f}",
+            data_unit_label="oz",
+        ),
     ]
 
 
@@ -2801,41 +2822,34 @@ def _detail_info_rows(rows: list[tuple[str, str]]):
     return Div(*blocks, cls="grid grid-cols-1 md:grid-cols-2 gap-2")
 
 
-def _recipe_portion_name(portion: dict) -> str:
-    return portion.get("catalog_name") or portion.get("manual_intake_name") or f"Ingredient #{portion.get('id')}"
+def _recipe_portion_name(portion) -> str:
+    return portion.source.name or f"Ingredient #{portion.id}"
 
 
-def _recipe_portion_entry_type(portion: dict) -> str:
-    return "catalog" if portion.get("catalog_id") else "manual_intake"
+def _recipe_portion_entry_type(portion) -> str:
+    return portion.origin.value
 
 
-def _recipe_portion_meta(portion: dict) -> str:
-    carbs = portion.get("catalog_carbs_100g")
-    if carbs is None:
-        carbs = portion.get("manual_carbs_100g")
-    entry_label = "Food" if portion.get("catalog_id") else "Manual"
+def _recipe_portion_meta(portion) -> str:
+    carbs = portion.source.carbs_100g
+    entry_label = "Food" if portion.origin is PortionOrigin.CATALOG else "Manual"
     return f"{entry_label} · {carbs if carbs is not None else '-'} CH"
 
 
-def _recipe_portion_base_amount(portion: dict) -> float:
-    if portion.get("catalog_id"):
-        return max(1.0, _float_or_zero(portion.get("catalog_default_portion")) or 100.0)
-    return max(1.0, _float_or_zero(portion.get("manual_amount_g")) or 100.0)
+def _recipe_portion_base_amount(portion) -> float:
+    return max(1.0, _float_or_zero(portion.source.unit_g) or 100.0)
 
 
-def _recipe_portion_base_unit(portion: dict) -> str:
-    if portion.get("catalog_id"):
-        item = {"category": portion.get("catalog_category")}
-        return _display_base_unit("catalog", item)
-    item = {"subtype": portion.get("manual_subtype")}
-    return _display_base_unit("manual_intake", item)
+def _recipe_portion_base_unit(portion) -> str:
+    item = {"category": portion.source.category, "subtype": portion.source.subtype}
+    return _display_base_unit(portion.origin.value, item)
 
 
-def RecipeIngredientRow(recipe_id: int, portion: dict):
-    portion_id = int(portion.get("id") or 0)
+def RecipeIngredientRow(recipe_id: int, portion):
+    portion_id = int(portion.id or 0)
     base_amount = _recipe_portion_base_amount(portion)
     base_unit = _recipe_portion_base_unit(portion)
-    grams_value = max(0.0, _float_or_zero(portion.get("amount_g")))
+    grams_value = max(0.0, _float_or_zero(portion.amount))
     display_value = (grams_value / base_amount) if base_amount > 0 else grams_value
     display_id = f"recipe_portion_display_{portion_id}"
     select_id = f"recipe_portion_select_{portion_id}"
@@ -2863,6 +2877,7 @@ def RecipeIngredientRow(recipe_id: int, portion: dict):
                             Input(
                                 type="text",
                                 id=display_id,
+                                name="amount_value",
                                 inputmode="decimal",
                                 value=f"{display_value:.2f}".replace(".", ","),
                                 cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 w-16 text-base",
@@ -2876,6 +2891,7 @@ def RecipeIngredientRow(recipe_id: int, portion: dict):
                         Select(
                             *_detail_unit_options(base_amount, base_unit),
                             id=select_id,
+                            name="amount_unit",
                             data_display_id=display_id,
                             data_grams_id=grams_id,
                             data_side_unit_id=side_unit_id,
@@ -2883,7 +2899,10 @@ def RecipeIngredientRow(recipe_id: int, portion: dict):
                             cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-xs w-full md:w-auto",
                             onchange=f"dbRecalcGrams('{display_id}','{select_id}','{grams_id}', true)",
                         ),
-                        Input(type="hidden", id=grams_id, name="amount_g", value=f"{grams_value:.6f}"),
+                        # Presentation-only: no `name`, it only fires the form's
+                        # `change` trigger; the server converts `amount_value` +
+                        # `amount_unit` itself (code_conventions.md 7.13).
+                        Input(type="hidden", id=grams_id, value=f"{grams_value:.6f}"),
                         cls="flex flex-col items-end gap-2 md:flex-row md:items-center md:justify-end",
                     ),
                     Div(id=msg_id, cls="min-h-4 text-[10px] text-right text-gray-600"),
@@ -2951,7 +2970,7 @@ def RecipeIngredientRow(recipe_id: int, portion: dict):
                         _searchable_compact_input(
                             name="cooking",
                             options=COOKING_OPTIONS,
-                            value=(portion.get("cooking") or ""),
+                            value=(portion.cooking or ""),
                             placeholder="Cooking",
                             allow_add=False,
                             autosave=True,
@@ -2962,7 +2981,7 @@ def RecipeIngredientRow(recipe_id: int, portion: dict):
                         _searchable_compact_input(
                             name="final_state",
                             options=INITIAL_STATE_OPTIONS,
-                            value=(portion.get("final_state") or ""),
+                            value=(portion.final_state or ""),
                             placeholder="Final state",
                             allow_add=False,
                             autosave=True,
@@ -2973,7 +2992,7 @@ def RecipeIngredientRow(recipe_id: int, portion: dict):
                         _searchable_compact_input(
                             name="conservation",
                             options=CONSERVATION_OPTIONS,
-                            value=(portion.get("conservation") or ""),
+                            value=(portion.conservation or ""),
                             placeholder="Conservation",
                             allow_add=False,
                             autosave=True,
@@ -3185,6 +3204,7 @@ def FoodDetailPage(
                     Input(
                         type="text",
                         id=display_id,
+                        name="amount_value",
                         inputmode="decimal",
                         value=amount_display,
                         aria_label="Food amount",
@@ -3201,6 +3221,7 @@ def FoodDetailPage(
                     Select(
                         *_detail_unit_options(default_amount, base_unit),
                         id=select_id,
+                        name="amount_unit",
                         data_display_id=display_id,
                         data_grams_id=grams_id,
                         data_side_unit_id=side_unit_id,
@@ -3209,7 +3230,10 @@ def FoodDetailPage(
                         cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-xs md:text-sm justify-self-end",
                         onchange=f"dbFoodDetailOnUnitChange('{root_id}')",
                     ),
-                    Input(type="hidden", name="total_amount_g", id=grams_id, value=f"{default_amount:.6f}"),
+                    # Presentation-only helpers for food_detail.js: they have no
+                    # `name`, so they are not submitted; the server converts the
+                    # typed values itself (code_conventions.md 7.13).
+                    Input(type="hidden", id=grams_id, value=f"{default_amount:.6f}"),
                     cls="flex items-center gap-2",
                 ),
                 Div(
@@ -3222,6 +3246,7 @@ def FoodDetailPage(
                     Input(
                         type="text",
                         id=plate_value_id,
+                        name="plate_value",
                         inputmode="decimal",
                         value="100",
                         aria_label="Amount to plate",
@@ -3241,8 +3266,8 @@ def FoodDetailPage(
                             border border-gray-300 bg-white/85
                         """,
                     ),
-                    Input(type="hidden", id=plate_unit_id, value="%"),
-                    Input(type="hidden", name="amount_g", id=plate_grams_id, value=f"{default_amount:.6f}"),
+                    Input(type="hidden", id=plate_unit_id, name="plate_unit", value=AmountInputUnit.PERCENT.value),
+                    Input(type="hidden", id=plate_grams_id, value=f"{default_amount:.6f}"),
                     cls="flex items-center gap-2",
                 ),
                 P(
@@ -3256,6 +3281,25 @@ def FoodDetailPage(
                     id=leftovers_id,
                     data_detail_leftovers="true",
                     cls="text-xs text-gray-600",
+                ),
+                (
+                    Div(
+                        Label(
+                            "Cooked weight",
+                            cls="text-xs text-gray-600",
+                            **{"for": f"is_cooked_weight_{root_id}"},
+                        ),
+                        Input(
+                            type="checkbox",
+                            name="is_cooked_weight",
+                            id=f"is_cooked_weight_{root_id}",
+                            value="true",
+                            cls=CHECKBOX_CLS,
+                        ),
+                        cls="flex items-center gap-2",
+                    )
+                    if entry_type == "catalog"
+                    else ""
                 ),
                 Div(
                     Button(

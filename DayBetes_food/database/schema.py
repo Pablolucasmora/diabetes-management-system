@@ -348,11 +348,11 @@ class DBSchema:
 
         ingested_amount REAL
             CONSTRAINT ck_intake_event_ingested_amount
-            CHECK (ingested_amount IS NULL OR (ingested_amount >= 0 AND ingested_amount <= 100000)), -- Snapshot set once at confirm: sum of plate_amount from portion_detail (already scaled to what was actually eaten) at that instant. total_amount is never stored; it is computed live as SUM(plate_amount) whenever needed (decision 2026-09-10). 100000 g (100 kg) is a sanity ceiling, not a clinical one (measurement_conventions.md §6.9.2, decision 2026-09-10).
+            CHECK (ingested_amount IS NULL OR (ingested_amount >= 0 AND ingested_amount <= 100000)), -- Snapshot set once at confirm: sum of amount from portion_detail (already scaled to what was actually eaten) at that instant. total_amount is never stored; it is computed live as SUM(amount) whenever needed (decision 2026-09-10). 100000 g (100 kg) is a sanity ceiling, not a clinical one (measurement_conventions.md §6.9.2, decision 2026-09-10).
 
         amount_confidence REAL
             CONSTRAINT ck_intake_event_amount_confidence
-            CHECK (amount_confidence >= 0 AND amount_confidence <= 1), -- Weighted average based on each food's amount and whether it was strictly weighed: (amount1 * strictly_weighed1 + amount2 * strictly_weighed2) divided by the live sum of portion_detail.plate_amount for the event (total_amount is not a column; see cart_shared.calculate_macro_summary_metrics, decision 2026-09-10)
+            CHECK (amount_confidence >= 0 AND amount_confidence <= 1), -- Weighted average based on each food's amount and whether it was strictly weighed: (amount1 * strictly_weighed1 + amount2 * strictly_weighed2) divided by the live sum of portion_detail.amount for the event (total_amount is not a column; see cart_shared.calculate_macro_summary_metrics, decision 2026-09-10)
         quality_confidence REAL
             CONSTRAINT ck_intake_event_quality_confidence
             CHECK (quality_confidence >= 0 AND quality_confidence <= 1), -- Value between 0 and 1 indicating confidence in the nutritional information. Same calculation as amount_confidence but using each ingredient's macros_quality
@@ -402,18 +402,30 @@ class DBSchema:
 
     portion_detail = """
     CREATE TABLE IF NOT EXISTS portion_detail (
-        id SERIAL PRIMARY KEY,
+        id SERIAL CONSTRAINT pk_portion_detail PRIMARY KEY,
 
         -- ARC 1: Origin
-        catalog_id INTEGER REFERENCES catalog(id) ON DELETE RESTRICT,
-        manual_intake_id INTEGER REFERENCES manual_intake(id) ON DELETE RESTRICT,
-        CHECK (num_nonnulls(catalog_id, manual_intake_id) = 1),
+        catalog_id INTEGER
+            CONSTRAINT fk_portion_detail_catalog_id_catalog
+            REFERENCES catalog(id) ON DELETE RESTRICT,
+        manual_intake_id INTEGER
+            CONSTRAINT fk_portion_detail_manual_intake_id_manual_intake
+            REFERENCES manual_intake(id) ON DELETE RESTRICT,
+        CONSTRAINT ck_portion_detail_single_origin
+            CHECK (num_nonnulls(catalog_id, manual_intake_id) = 1),
         
         -- ARC 2: Destination
-        intake_event_id INTEGER REFERENCES intake_event(id) ON DELETE CASCADE,
-        fridge_id INTEGER REFERENCES fridge(id) ON DELETE CASCADE,
-        recipe_id INTEGER REFERENCES recipe(id) ON DELETE CASCADE,
-        CHECK (num_nonnulls(intake_event_id, fridge_id, recipe_id) = 1),
+        intake_event_id INTEGER
+            CONSTRAINT fk_portion_detail_intake_event_id_intake_event
+            REFERENCES intake_event(id) ON DELETE CASCADE,
+        fridge_id INTEGER
+            CONSTRAINT fk_portion_detail_fridge_id_fridge
+            REFERENCES fridge(id) ON DELETE CASCADE,
+        recipe_id INTEGER
+            CONSTRAINT fk_portion_detail_recipe_id_recipe
+            REFERENCES recipe(id) ON DELETE CASCADE,
+        CONSTRAINT ck_portion_detail_single_destination
+            CHECK (num_nonnulls(intake_event_id, fridge_id, recipe_id) = 1),
 
         plate_id INTEGER
             CONSTRAINT fk_portion_detail_plate_id_intake_plate
@@ -425,17 +437,24 @@ class DBSchema:
         -- index cannot be declared inline in CREATE TABLE.
 
 
-        amount_g REAL NOT NULL, -- This is the cooked amount of a food item. For example, the user may cook 400g of quinoa but only plate 100g, saving the rest. This amount is then compared to plate_amount, and if greater, the difference is automatically saved to the fridge with the food's id, for easy reuse later.
+        amount REAL NOT NULL
+            CONSTRAINT ck_portion_detail_amount_range
+            CHECK (amount > 0 AND amount <= 100000), -- The only amount column of the table (decision 2026-09-18): the quantity of this food in its destination, in grams. While the event is 'planned' it is the served amount; at confirm it is overwritten once with what was actually eaten (measurement_conventions.md 4.4). The cooked amount is NOT stored: it only exists as a form field when plating. 100000 g is the same sanity ceiling as intake_event.ingested_amount (6.9.2); the lower bound is > 0 (decision 2026-09-22): an unconsumed ingredient is deleted, not set to zero. NaN/Infinity are rejected by this same CHECK.
         cooking VARCHAR(50), -- Cooking method, used to evaluate its effect on blood sugar levels (options: steam, boiled-al-dente, boiled-soft, fried, raw, oven, airfryer, toaster, griddle). Default: griddle
         conservation VARCHAR(50), -- Storage method: freezer, fridge, freshly-made, pre-cooked
         final_state VARCHAR(50), -- Final state among: 'solid', 'mashed/creamy', 'liquid', 'gel' — in case the state changed from the initial one
-        strictly_weighed BOOLEAN, -- Whether or not the food was weighed before consumption
-        macros_quality BOOLEAN, -- Whether the macros were estimated or read from the product label
+        strictly_weighed BOOLEAN, -- Whether or not the food was weighed before consumption. NULL means "no data" and is a state of its own, not FALSE (decision 2026-09-18)
+        macros_quality BOOLEAN, -- Whether the macros were estimated or read from the product label. NULL means "no data" and is a state of its own, not FALSE (decision 2026-09-18)
         
-        plate_amount REAL, -- The amount actually plated. Defaults to the same value as amount_g. While the event is 'planned', this is the served amount; at confirm it is overwritten once with the amount actually consumed (plate_amount * fraction), and stays that way for a 'consumed' event (decision 2026-09-10, measurement_conventions.md §4.4).
-        is_cooked_weight BOOLEAN DEFAULT FALSE, -- If the food was weighed already cooked, the cooking_factor is used to back-calculate the raw weight and obtain accurate macros
-        offset_minutes INTEGER, -- Only for intake_event. Adjusted during the planning phase (not when added to the cart), and defaults to the difference in minutes between the intake_event timestamp and the moment this food is added to the cart
+        is_cooked_weight BOOLEAN DEFAULT FALSE, -- If the food was weighed already cooked, catalog.cooking_factor back-calculates the raw weight ONLY inside the macro calculation; `amount` always keeps what the user weighed and is never overwritten (measurement_conventions.md 5.2, decision 2026-09-18). Only for catalog origins.
+        offset_minutes INTEGER
+            CONSTRAINT ck_portion_detail_offset_minutes
+            CHECK (offset_minutes IS NULL OR (offset_minutes >= -300 AND offset_minutes <= 300)), -- Minutes between the event's meal_time and the moment this food is eaten. Literal value, never recalculated (measurement_conventions.md 4.5); inherited from its plate on insert (4.6.2).
 
-        CHECK (offset_minutes IS NULL OR intake_event_id IS NOT NULL)
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+        CONSTRAINT ck_portion_detail_offset_only_for_event
+            CHECK (offset_minutes IS NULL OR intake_event_id IS NOT NULL)
     );
     """

@@ -210,20 +210,20 @@ def _ensure_default_user(cursor):
     if row:
         return
 
-    # §7.3: el exceso sobre el límite de columna se rechaza, no se trunca.
-    # Aquí la entrada es configuración, no una petición HTTP: no hay a quién
-    # devolver un 422, así que se falla al arrancar con un mensaje explícito
-    # en vez de crear la cuenta con un nombre distinto del configurado.
+    # §7.3: exceeding the column limit is rejected, not truncated. Here the input
+    # is configuration, not an HTTP request: there is no one to return a 422 to,
+    # so startup fails with an explicit message instead of creating the account
+    # with a name different from the configured one.
     username = sanitize_text(DEFAULT_USER_USERNAME) or "default_user"
     if len(username) > USER_USERNAME_MAX_LENGTH:
         raise ValueError(
-            f"DEFAULT_USER_USERNAME excede {USER_USERNAME_MAX_LENGTH} caracteres "
-            f"(users.username es VARCHAR({USER_USERNAME_MAX_LENGTH}))"
+            f"DEFAULT_USER_USERNAME exceeds {USER_USERNAME_MAX_LENGTH} characters "
+            f"(users.username is VARCHAR({USER_USERNAME_MAX_LENGTH}))"
         )
     if len(DEFAULT_USER_EMAIL or "") > USER_EMAIL_MAX_LENGTH:
         raise ValueError(
-            f"DEFAULT_USER_EMAIL excede {USER_EMAIL_MAX_LENGTH} caracteres "
-            f"(users.email es VARCHAR({USER_EMAIL_MAX_LENGTH}))"
+            f"DEFAULT_USER_EMAIL exceeds {USER_EMAIL_MAX_LENGTH} characters "
+            f"(users.email is VARCHAR({USER_EMAIL_MAX_LENGTH}))"
         )
 
     cursor.execute(
@@ -625,7 +625,7 @@ def _ensure_food_name_origin_uniqueness(cursor):
 def _ensure_food_brands_schema(cursor):
     """Migrate food_brands schema from legacy (name) to new (code, label, is_active, created_by, updated_at)."""
     
-    # (A) food_brands: forma nueva
+    # (A) food_brands: new shape
     if _has_column(cursor, "food_brands", "name"):
         cursor.execute("ALTER TABLE food_brands RENAME COLUMN name TO label;")
     
@@ -730,9 +730,9 @@ def _ensure_food_brands_schema(cursor):
     # (C) catalog.brand_id
     cursor.execute("ALTER TABLE catalog ADD COLUMN IF NOT EXISTS brand_id INTEGER;")
     
-    # (D)-(F) solo aplican mientras exista catalog.brand: en una ejecución previa
-    # de este mismo bootstrap ya se pudo migrar y eliminar la columna (paso H),
-    # y estas sentencias no son válidas sobre una columna que ya no existe.
+    # (D)-(F) only apply while catalog.brand exists: a previous run of this same
+    # bootstrap may already have migrated and dropped the column (step H), and
+    # these statements are not valid over a column that no longer exists.
     if _has_column(cursor, "catalog", "brand"):
         # (D) High of brands that only exist in catalog
         cursor.execute(
@@ -813,21 +813,22 @@ def _ensure_food_brands_schema(cursor):
     cursor.execute("ALTER TABLE catalog DROP COLUMN IF EXISTS brand;")
 
 
-# Constraints que este bootstrap declara como canónicos para insulin_injections
-# (§11.6). Cualquier CHECK o FK de la tabla que no esté aquí se elimina en
-# _ensure_insulin_injections_schema: el bootstrap es la única fuente del esquema (§12.1).
+# Constraints that this bootstrap declares as canonical for insulin_injections
+# (§11.6). Any CHECK or FK of the table that is not here is dropped in
+# _ensure_insulin_injections_schema: the bootstrap is the only source of the
+# schema (§12.1).
 _CANONICAL_INJECTION_CONSTRAINTS = (
     "fk_insulin_injections_users_id_users",
     "fk_insulin_injections_intake_event_id_intake_event",
     "ck_insulin_injections_insulin_type",
     "ck_insulin_injections_injection_zone",
-    "ck_insulin_injections_units_by_type",     # H5: regla de coherencia por tipo
-    "ck_insulin_injections_units_step",        # H5: múltiplos de 0.5 U
+    "ck_insulin_injections_units_by_type",     # H5: coherence rule by type
+    "ck_insulin_injections_units_step",        # H5: multiples of 0.5 U
 )
 
 
-# Renombrados de constraints heredados a los nombres canónicos de §11.6.
-# Solo renombran: la definición del CHECK no cambia.
+# Renames of inherited constraints to the canonical names of §11.6.
+# They only rename: the CHECK definition does not change.
 _INTAKE_EVENT_CONSTRAINT_RENAMES = {
     "intake_event_users_id_fkey": "fk_intake_event_users_id_users",
     "intake_event_amount_confidence_check": "ck_intake_event_amount_confidence",
@@ -851,23 +852,23 @@ def _constraint_exists(cursor, table: str, name: str) -> bool:
 
 
 def _ensure_intake_event_schema(cursor):
-    """intake_event: timestamps, soft-delete, TIMESTAMPTZ, NOT NULL, constraints e índice.
+    """intake_event: timestamps, soft-delete, TIMESTAMPTZ, NOT NULL, constraints and index.
 
-    Cierra los hallazgos 3 (deleted_at), 4, 7, 8 y 9 de
-    audit/audit_intake_event.md. Idempotente (§12.2).
+    Closes findings 3 (deleted_at), 4, 7, 8 and 9 of
+    audit/audit_intake_event.md. Idempotent (§12.2).
     """
     state_list = sql_in_list(IntakeEventState)
     meal_type_list = sql_in_list(MealType)
 
-    # ---- H4 / H3: columnas de auditoría y soft-delete (primero nullable) ----
+    # ---- H4 / H3: audit and soft-delete columns (nullable first) ----
     cursor.execute("ALTER TABLE intake_event ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;")
     cursor.execute("ALTER TABLE intake_event ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;")
     cursor.execute("ALTER TABLE intake_event ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;")
     cursor.execute("ALTER TABLE intake_event ADD COLUMN IF NOT EXISTS timezone_at_event TEXT;")
 
     # ---- H7: meal_time TIMESTAMP naive-UTC -> TIMESTAMPTZ (§10.5) ----
-    # El DEFAULT se quita antes del ALTER TYPE: PostgreSQL no puede convertir
-    # automáticamente un default de timestamp a timestamptz y abortaría.
+    # The DEFAULT is dropped before ALTER TYPE: PostgreSQL cannot automatically
+    # convert a timestamp default to timestamptz and would abort.
     data_type = (_column_data_type(cursor, "intake_event", "meal_time") or "").lower()
     if data_type == "timestamp without time zone":
         cursor.execute("ALTER TABLE intake_event ALTER COLUMN meal_time DROP DEFAULT;")
@@ -877,9 +878,9 @@ def _ensure_intake_event_schema(cursor):
         )
     cursor.execute("ALTER TABLE intake_event ALTER COLUMN meal_time SET DEFAULT CURRENT_TIMESTAMP;")
 
-    # ---- Backfill técnico de las columnas nuevas ----
-    # No cambia ningún dato existente: solo rellena columnas que antes no existían
-    # (decisión 2026-09-08 sobre datos históricos).
+    # ---- Technical backfill of the new columns ----
+    # It changes no existing data: it only fills columns that did not exist
+    # before (decision 2026-09-08 about historical data).
     cursor.execute(
         "UPDATE intake_event "
         "SET created_at = COALESCE(created_at, meal_time, CURRENT_TIMESTAMP);"
@@ -889,21 +890,21 @@ def _ensure_intake_event_schema(cursor):
         "UPDATE intake_event SET timezone_at_event = COALESCE(timezone_at_event, 'Europe/Madrid');"
     )
 
-    # ---- Defaults y NOT NULL ----
+    # ---- Defaults and NOT NULL ----
     cursor.execute("ALTER TABLE intake_event ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;")
     cursor.execute("ALTER TABLE intake_event ALTER COLUMN created_at SET NOT NULL;")
     cursor.execute("ALTER TABLE intake_event ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;")
     cursor.execute("ALTER TABLE intake_event ALTER COLUMN updated_at SET NOT NULL;")
     cursor.execute("ALTER TABLE intake_event ALTER COLUMN timezone_at_event SET DEFAULT 'Europe/Madrid';")
     cursor.execute("ALTER TABLE intake_event ALTER COLUMN timezone_at_event SET NOT NULL;")
-    # deleted_at se queda nullable: NULL = activo (§11.3).
+    # deleted_at stays nullable: NULL = active (§11.3).
 
     # ---- H8: users_id NOT NULL ----
-    # Verificado el 2026-09-08: 0 filas con users_id NULL. Si apareciera alguna,
-    # este ALTER falla y aborta el bootstrap entero (§12.5), que es lo correcto.
+    # Verified on 2026-09-08: 0 rows with users_id NULL. If any appeared, this
+    # ALTER would fail and abort the whole bootstrap (§12.5), which is correct.
     cursor.execute("ALTER TABLE intake_event ALTER COLUMN users_id SET NOT NULL;")
 
-    # ---- H8: nombres canónicos (§11.6) ----
+    # ---- H8: canonical names (§11.6) ----
     for old_name, new_name in _INTAKE_EVENT_CONSTRAINT_RENAMES.items():
         if _constraint_exists(cursor, "intake_event", old_name) and not _constraint_exists(
             cursor, "intake_event", new_name
@@ -914,7 +915,7 @@ def _ensure_intake_event_schema(cursor):
                 )
             )
 
-    # state y meal_type no se renombran: se regeneran desde los enums (§4.4).
+    # state and meal_type are not renamed: they are regenerated from the enums (§4.4).
     cursor.execute("ALTER TABLE intake_event DROP CONSTRAINT IF EXISTS intake_event_state_check;")
     cursor.execute("ALTER TABLE intake_event DROP CONSTRAINT IF EXISTS ck_intake_event_state;")
     cursor.execute(
@@ -928,7 +929,7 @@ def _ensure_intake_event_schema(cursor):
         f"CHECK (meal_type IS NULL OR meal_type IN ({meal_type_list}));"
     )
 
-    # ---- H9: índice parcial del filtro real de todas las listas (§11.7) ----
+    # ---- H9: partial index for the real filter of every list (§11.7) ----
     cursor.execute("DROP INDEX IF EXISTS idx_intake_event_users_id_state_meal_time;")
     cursor.execute(
         """
@@ -938,13 +939,13 @@ def _ensure_intake_event_schema(cursor):
         """
     )
 
-    # ---- total_amount deja de persistirse: se calcula en vivo (decisión 2026-09-10) ----
+    # ---- total_amount is no longer persisted: it is computed live (decision 2026-09-10) ----
     cursor.execute("ALTER TABLE intake_event DROP COLUMN IF EXISTS total_amount;")
 
-    # ---- H32/H35: ingested_amount con límites de cordura (measurement_conventions.md
-    # §6.9.2, decisión 2026-09-10). Verificado el 2026-09-09: 0 filas negativas o
-    # fuera de rango; si apareciera alguna, este ALTER falla y aborta el bootstrap,
-    # que es lo correcto (§12.5). ----
+    # ---- H32/H35: ingested_amount with sanity limits (measurement_conventions.md
+    # §6.9.2, decision 2026-09-10). Verified on 2026-09-09: 0 rows negative or out
+    # of range; if any appeared, this ALTER would fail and abort the bootstrap,
+    # which is correct (§12.5). ----
     cursor.execute("ALTER TABLE intake_event DROP CONSTRAINT IF EXISTS ck_intake_event_ingested_amount;")
     cursor.execute(
         "ALTER TABLE intake_event ADD CONSTRAINT ck_intake_event_ingested_amount "
@@ -953,21 +954,57 @@ def _ensure_intake_event_schema(cursor):
 
 
 def _ensure_portion_detail_schema(cursor):
-    """portion_detail: hook evolutivo de la tabla (§12.1).
+    """portion_detail: evolutionary table hook (§12.1).
 
-    Era la única tabla grande sin hook propio, así que el DDL aplicado a mano a
-    la base existente se quedaba fuera del código (hallazgo 16 de
-    audit/audit_portion_detail.md). Idempotente (§12.2).
+    It was the only large table without its own hook, so the DDL applied by hand
+    to the existing database stayed out of the code (finding 16 of
+    audit/audit_portion_detail.md). Idempotent (§12.2).
     """
-    # ---- H16: split_group_id era DDL aplicado a mano que nunca volvió al código ----
-    # varchar(64), 0 filas con valor, 0 referencias en el código, 0 commits. El
-    # diseño de tandas (decisión 2026-09-19) se apoya en intake_plate, no aquí.
+    # ---- H16: split_group_id was hand-applied DDL that never returned to code ----
+    # varchar(64), 0 rows with a value, 0 references in the code, 0 commits. The
+    # plates design (decision 2026-09-19) relies on intake_plate, not here.
     cursor.execute("ALTER TABLE portion_detail DROP COLUMN IF EXISTS split_group_id;")
 
-    # ---- Tandas (platos) dentro de un evento (decisión 2026-09-19) ----
-    # La columna nace nullable a propósito: las filas existentes todavía no
-    # tienen tanda y el CHECK que lo exige se añade al final, después de la
-    # migración de datos.
+    # ---- T1.2: blocking pre-checks before writing the new CHECKs (decision 2026-09-22) ----
+    # The amount check can only run while amount_g still exists; after T1.3 the
+    # column is unreachable. Both checks abort the bootstrap instead of cleaning
+    # data (§12.5, §12.7): a pre-existing row that violates the new rule is a data
+    # decision, not something a migration may silently rewrite.
+    if _column_data_type(cursor, "portion_detail", "amount_g") is not None:
+        cursor.execute(
+            """
+            SELECT count(*) AS zero_rows
+            FROM portion_detail
+            WHERE COALESCE(plate_amount, amount_g) = 0;
+            """
+        )
+        zero_rows = cursor.fetchone()["zero_rows"]
+        if zero_rows:
+            raise RuntimeError(
+                f"{zero_rows} portion_detail rows have amount 0; the new "
+                "ck_portion_detail_amount_range (amount > 0) cannot be created. "
+                "This needs an explicit data decision (code_conventions.md 12.7)."
+            )
+
+    cursor.execute(
+        """
+        SELECT count(*) AS out_of_range
+        FROM portion_detail
+        WHERE offset_minutes IS NOT NULL
+          AND (offset_minutes < -300 OR offset_minutes > 300);
+        """
+    )
+    out_of_range = cursor.fetchone()["out_of_range"]
+    if out_of_range:
+        raise RuntimeError(
+            f"{out_of_range} portion_detail rows have offset_minutes outside -300..300; "
+            "ck_portion_detail_offset_minutes cannot be created."
+        )
+
+    # ---- Plates (servings) inside an event (decision 2026-09-19) ----
+    # The column is born nullable on purpose: existing rows do not have a plate
+    # yet and the CHECK that requires one is added at the end, after the data
+    # migration.
     cursor.execute("ALTER TABLE portion_detail ADD COLUMN IF NOT EXISTS plate_id INTEGER;")
 
     if not _constraint_exists(cursor, "portion_detail", "fk_portion_detail_plate_id_intake_plate"):
@@ -977,10 +1014,10 @@ def _ensure_portion_detail_schema(cursor):
             "FOREIGN KEY (plate_id) REFERENCES intake_plate(id) ON DELETE RESTRICT;"
         )
 
-    # Migración (measurement_conventions.md §4.6.6): una tanda por evento que
-    # tenga porciones sin tanda, con name NULL —el nombre se deriva de sus
-    # ingredientes— y el offset menor de sus filas. Idempotente: solo mira las
-    # porciones de evento que aún no cuelgan de ninguna tanda.
+    # Migration (measurement_conventions.md §4.6.6): one plate per event having
+    # portions without one, with name NULL —the name is derived from its
+    # ingredients— and the smallest offset of its rows. Idempotent: it only looks
+    # at event portions that do not belong to a plate yet.
     cursor.execute(
         """
         INSERT INTO intake_plate (intake_event_id, name, offset_minutes)
@@ -1000,9 +1037,9 @@ def _ensure_portion_detail_schema(cursor):
         """
     )
 
-    # Postcondición de la migración antes de declararla en la base (§12.5): si
-    # quedara una sola fila descuadrada, el CHECK fallaría a medias y dejaría el
-    # bootstrap en un estado peor que el inicial.
+    # Migration postcondition before declaring it in the database (§12.5): a
+    # single mismatched row would make the CHECK fail halfway and leave the
+    # bootstrap in a worse state than the initial one.
     cursor.execute(
         """
         SELECT count(*) AS pending
@@ -1013,8 +1050,8 @@ def _ensure_portion_detail_schema(cursor):
     pending = cursor.fetchone()["pending"]
     if pending:
         raise RuntimeError(
-            f"Migración de tandas incompleta: {pending} filas de portion_detail "
-            "sin correspondencia entre intake_event_id y plate_id."
+            f"Incomplete plate migration: {pending} portion_detail rows without "
+            "a matching pair of intake_event_id and plate_id."
         )
 
     if not _constraint_exists(cursor, "portion_detail", "ck_portion_detail_plate_only_for_event"):
@@ -1024,8 +1061,8 @@ def _ensure_portion_detail_schema(cursor):
             "CHECK ((intake_event_id IS NULL) = (plate_id IS NULL));"
         )
 
-    # Índices de las dos claves foráneas nuevas (§11.7): el carrito lee las
-    # porciones por tanda y las tandas por evento en cada render.
+    # Indexes for the two new foreign keys (§11.7): the cart reads portions by
+    # plate and plates by event on every render.
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_portion_detail_plate_id ON portion_detail (plate_id);"
     )
@@ -1034,21 +1071,68 @@ def _ensure_portion_detail_schema(cursor):
         "ON intake_plate (intake_event_id);"
     )
 
-    # ---- Unicidad de un alimento dentro de una tanda (measurement §4.6.4) ----
-    # Consolidación previa de los duplicados históricos (§4.6.6, §12.7): la
-    # restricción no puede crearse sobre datos que ya la violan. Misma regla de
-    # fusión que aplicará la inserción: se suman las cantidades y el resto de
-    # campos son los de la fila más antigua del grupo.
+    # ---- T1.4: offset_minutes range CHECK (finding 9) ----
+    # Same name and rule as ck_intake_plate_offset_minutes, already present: the
+    # template cannot accept values that the row would reject (measurement
+    # conventions.md 4.6.2).
+    if not _constraint_exists(cursor, "portion_detail", "ck_portion_detail_offset_minutes"):
+        cursor.execute(
+            "ALTER TABLE portion_detail ADD CONSTRAINT ck_portion_detail_offset_minutes "
+            "CHECK (offset_minutes IS NULL OR (offset_minutes >= -300 AND offset_minutes <= 300));"
+        )
+
+    # ---- T1.5: created_at / updated_at (finding 11, decision 2026-09-22) ----
+    # Technical backfill (§12.7): the event date is the closest thing to "when
+    # this portion was added". Recipe portions have no source and get the
+    # migration instant. No actor column (decision 2026-09-22).
+    cursor.execute("ALTER TABLE portion_detail ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;")
+    cursor.execute("ALTER TABLE portion_detail ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;")
+    cursor.execute(
+        """
+        UPDATE portion_detail pd
+        SET created_at = COALESCE(pd.created_at, ie.meal_time, ie.created_at, CURRENT_TIMESTAMP)
+        FROM intake_event ie
+        WHERE ie.id = pd.intake_event_id AND pd.created_at IS NULL;
+        """
+    )
+    cursor.execute("UPDATE portion_detail SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL;")
+    cursor.execute("UPDATE portion_detail SET updated_at = created_at WHERE updated_at IS NULL;")
+    cursor.execute("ALTER TABLE portion_detail ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;")
+    cursor.execute("ALTER TABLE portion_detail ALTER COLUMN created_at SET NOT NULL;")
+    cursor.execute("ALTER TABLE portion_detail ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;")
+    cursor.execute("ALTER TABLE portion_detail ALTER COLUMN updated_at SET NOT NULL;")
+
+    # ---- T1.3: single amount column (findings 2, 14, 26; decisions 2026-09-18 and 2026-09-22) ----
+    # amount = COALESCE(plate_amount, amount_g) is exactly what every read already
+    # computed (portion_intake_amount, the COALESCE of scale_event_portion_amounts,
+    # group_portions): it asserts nothing new about historical meals, it freezes in
+    # the data what the code already did. The rename breaks any unmigrated read on
+    # purpose (decision 2026-09-18), which is why T2/T3 must ship in the same cycle.
+    # This must run before the duplicate consolidation below, which from now on
+    # sums `amount`. Destructive migration (§12.4): the two columns are dropped in
+    # the same transaction as the backfill, all or nothing.
+    if _column_data_type(cursor, "portion_detail", "amount") is None:
+        cursor.execute("ALTER TABLE portion_detail ADD COLUMN amount REAL;")
+    if _column_data_type(cursor, "portion_detail", "amount_g") is not None:
+        cursor.execute(
+            "UPDATE portion_detail SET amount = COALESCE(plate_amount, amount_g) "
+            "WHERE amount IS NULL;"
+        )
+        cursor.execute("ALTER TABLE portion_detail DROP COLUMN plate_amount;")
+        cursor.execute("ALTER TABLE portion_detail DROP COLUMN amount_g;")
+    cursor.execute("ALTER TABLE portion_detail ALTER COLUMN amount SET NOT NULL;")
+
+    # ---- Uniqueness of a food inside a plate (measurement §4.6.4) ----
+    # Prior consolidation of historical duplicates (§4.6.6, §12.7): the constraint
+    # cannot be created over data that already violates it. Same merge rule the
+    # insert will apply: amounts are summed and the rest of the fields are those
+    # of the oldest row of the group.
     _DUPLICATE_PORTION_GROUPS = """
         WITH dup AS (
             SELECT
                 min(id) AS keep_id,
                 array_agg(id) AS ids,
-                sum(amount_g) AS total_amount,
-                CASE
-                    WHEN bool_and(plate_amount IS NULL) THEN NULL
-                    ELSE sum(COALESCE(plate_amount, amount_g))
-                END AS total_plate_amount
+                sum(amount) AS total_amount
             FROM portion_detail
             WHERE plate_id IS NOT NULL
             GROUP BY plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state
@@ -1059,8 +1143,7 @@ def _ensure_portion_detail_schema(cursor):
         _DUPLICATE_PORTION_GROUPS
         + """
         UPDATE portion_detail pd
-        SET amount_g = dup.total_amount,
-            plate_amount = dup.total_plate_amount
+        SET amount = dup.total_amount
         FROM dup
         WHERE pd.id = dup.keep_id;
         """
@@ -1074,11 +1157,11 @@ def _ensure_portion_detail_schema(cursor):
         """
     )
 
-    # Índice único PARCIAL, no constraint de tabla: plate_id es NULL en las
-    # porciones de receta y de nevera, y con NULLS NOT DISTINCT esos nulos se
-    # considerarían iguales entre sí, de modo que el mismo alimento con la misma
-    # preparación en dos recetas distintas chocaría como falso duplicado. La
-    # unicidad es dentro de la tanda (§4.6.4).
+    # PARTIAL unique index, not a table constraint: plate_id is NULL in recipe
+    # and fridge portions, and with NULLS NOT DISTINCT those nulls would be
+    # considered equal to each other, so the same food with the same preparation
+    # in two different recipes would clash as a false duplicate. Uniqueness is
+    # inside the plate (§4.6.4).
     cursor.execute(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS uq_portion_detail_plate_origin_preparation
@@ -1087,6 +1170,87 @@ def _ensure_portion_detail_schema(cursor):
         WHERE plate_id IS NOT NULL;
         """
     )
+
+    # ---- T1.3: amount range CHECK, after the consolidation above ----
+    # NaN and Infinity are rejected by this same CHECK: in PostgreSQL NaN is
+    # greater than any value in real, so NaN <= 100000 is false, and Infinity is
+    # not finite either. No separate amount <> 'NaN'::real is needed.
+    if not _constraint_exists(cursor, "portion_detail", "ck_portion_detail_amount_range"):
+        cursor.execute(
+            "ALTER TABLE portion_detail ADD CONSTRAINT ck_portion_detail_amount_range "
+            "CHECK (amount > 0 AND amount <= 100000);"
+        )
+
+    # ---- T1.6: canonical constraint names (§11.6, finding 17) ----
+    # The audit list predates the plates work and finding 2, so the rule is
+    # derived from the live schema by reading each constraint definition instead
+    # of trusting that list. Constraints whose name does not start with
+    # portion_detail_ (those born with the plates work or created by T1.3/T1.4)
+    # are already canonical and never enter the loop.
+    _PORTION_DETAIL_CONSTRAINT_RULES = (
+        ("num_nonnulls(catalog_id, manual_intake_id)", "ck_portion_detail_single_origin"),
+        ("num_nonnulls(intake_event_id, fridge_id, recipe_id)", "ck_portion_detail_single_destination"),
+        ("offset_minutes IS NULL", "ck_portion_detail_offset_only_for_event"),
+    )
+    _PORTION_DETAIL_FK_RENAMES = {
+        "portion_detail_catalog_id_fkey": "fk_portion_detail_catalog_id_catalog",
+        "portion_detail_manual_intake_id_fkey": "fk_portion_detail_manual_intake_id_manual_intake",
+        "portion_detail_intake_event_id_fkey": "fk_portion_detail_intake_event_id_intake_event",
+        "portion_detail_recipe_id_fkey": "fk_portion_detail_recipe_id_recipe",
+        "portion_detail_fridge_id_fkey": "fk_portion_detail_fridge_id_fridge",
+        "portion_detail_pkey": "pk_portion_detail",
+    }
+    cursor.execute(
+        """
+        SELECT conname, pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint
+        WHERE conrelid = 'public.portion_detail'::regclass
+          AND (conname LIKE 'portion\\_detail\\_%' ESCAPE '\\');
+        """
+    )
+    for row in cursor.fetchall() or []:
+        old_name = row["conname"]
+        definition = row["definition"] or ""
+        new_name = _PORTION_DETAIL_FK_RENAMES.get(old_name)
+        if new_name is None:
+            for needle, candidate in _PORTION_DETAIL_CONSTRAINT_RULES:
+                if needle in definition:
+                    new_name = candidate
+                    break
+        if not new_name:
+            # Renaming blindly a rule that has not been identified is worse than
+            # leaving it: register it and move on.
+            logger.warning(
+                "portion_detail: constraint %s does not match any rename rule; "
+                "left as is. definition=%s",
+                old_name,
+                definition,
+            )
+            continue
+        if _constraint_exists(cursor, "portion_detail", new_name):
+            continue
+        cursor.execute(
+            sql.SQL("ALTER TABLE portion_detail RENAME CONSTRAINT {} TO {};").format(
+                sql.Identifier(old_name), sql.Identifier(new_name)
+            )
+        )
+
+    # ---- T1.7: FK indexes (finding 18) ----
+    # The four are needed: intake_event_id filters the two list reads and is the
+    # target of the event ON DELETE CASCADE; recipe_id filters recipe reads;
+    # catalog_id and manual_intake_id are checked by RESTRICT on every food
+    # delete, and the partial unique index does not serve them because plate_id
+    # comes first.
+    for column in ("intake_event_id", "recipe_id", "catalog_id", "manual_intake_id"):
+        cursor.execute(
+            sql.SQL("CREATE INDEX IF NOT EXISTS {} ON portion_detail ({});").format(
+                sql.Identifier(f"idx_portion_detail_{column}"), sql.Identifier(column)
+            )
+        )
+    # Redundant with uq_portion_detail_plate_origin_preparation, whose first
+    # column is plate_id: same prefix, same use (§11.7). The index is created
+    # earlier in this same hook and dropped here.
+    cursor.execute("DROP INDEX IF EXISTS idx_portion_detail_plate_id;")
 
 
 def _ensure_insulin_injections_schema(cursor):
@@ -1156,11 +1320,11 @@ def _ensure_insulin_injections_schema(cursor):
         """
     )
 
-    # Fusión de las tablas legadas (§12.2). Va justo después del CREATE TABLE y antes de
-    # H4/H5 para que las filas migradas reciban el mismo backfill de timestamps y sean
-    # validadas por los constraints canónicos como cualquier otra fila.
-    # El nombre físico de la columna de dosis depende del histórico de cada base:
-    # tabla legada -> basal_units; tabla creada por este bootstrap -> units.
+    # Merge of the legacy tables (§12.2). It runs right after CREATE TABLE and
+    # before H4/H5 so that the migrated rows receive the same timestamp backfill
+    # and are validated by the canonical constraints like any other row.
+    # The physical name of the dose column depends on each database's history:
+    # legacy table -> basal_units; table created by this bootstrap -> units.
     for legacy_table in ("injection_zone", "injection_zones"):
         cursor.execute("SELECT to_regclass(%s) AS reg;", (f"public.{legacy_table}",))
         if (cursor.fetchone() or {}).get("reg") is None:
@@ -1188,13 +1352,13 @@ def _ensure_insulin_injections_schema(cursor):
         )
         cursor.execute(sql.SQL("DROP TABLE {};").format(sql.Identifier(legacy_table)))
 
-    # ========== H4: TIMESTAMPTZ y timestamps de auditoría ==========
-    # 1) Columnas nuevas (primero nullable)
+    # ========== H4: TIMESTAMPTZ and audit timestamps ==========
+    # 1) New columns (nullable first)
     cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;")
     cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;")
     cursor.execute("ALTER TABLE insulin_injections ADD COLUMN IF NOT EXISTS timezone_at_event TEXT;")
 
-    # 2) Convertir shot_time a TIMESTAMPTZ (solo si sigue siendo naive)
+    # 2) Convert shot_time to TIMESTAMPTZ (only if it is still naive)
     data_type = (_column_data_type(cursor, "insulin_injections", "shot_time") or "").lower()
     if data_type == "timestamp without time zone":
         cursor.execute(
@@ -1202,12 +1366,12 @@ def _ensure_insulin_injections_schema(cursor):
             "ALTER COLUMN shot_time TYPE TIMESTAMPTZ USING shot_time AT TIME ZONE 'UTC';"
         )
 
-    # 3) Backfill de timestamps
+    # 3) Timestamp backfill
     cursor.execute("UPDATE insulin_injections SET created_at = COALESCE(created_at, shot_time, CURRENT_TIMESTAMP);")
     cursor.execute("UPDATE insulin_injections SET updated_at = COALESCE(updated_at, created_at);")
     cursor.execute("UPDATE insulin_injections SET timezone_at_event = COALESCE(timezone_at_event, 'Europe/Madrid');")
 
-    # 4) Defaults y NOT NULL
+    # 4) Defaults and NOT NULL
     cursor.execute("ALTER TABLE insulin_injections ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;")
     cursor.execute("ALTER TABLE insulin_injections ALTER COLUMN created_at SET NOT NULL;")
     cursor.execute("ALTER TABLE insulin_injections ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;")
@@ -1215,20 +1379,20 @@ def _ensure_insulin_injections_schema(cursor):
     cursor.execute("ALTER TABLE insulin_injections ALTER COLUMN timezone_at_event SET DEFAULT 'Europe/Madrid';")
     cursor.execute("ALTER TABLE insulin_injections ALTER COLUMN timezone_at_event SET NOT NULL;")
 
-    # ========== H5: Rename basal_units → units, agregar NOT NULL ==========
-    # Renombrar columna
+    # ========== H5: rename basal_units -> units, add NOT NULL ==========
+    # Rename the column
     if _has_column(cursor, "insulin_injections", "basal_units") and not _has_column(cursor, "insulin_injections", "units"):
         cursor.execute("ALTER TABLE insulin_injections RENAME COLUMN basal_units TO units;")
 
-    # NOT NULL en users_id e insulin_type
+    # NOT NULL on users_id and insulin_type
     cursor.execute("ALTER TABLE insulin_injections ALTER COLUMN users_id SET NOT NULL;")
     cursor.execute("ALTER TABLE insulin_injections ALTER COLUMN insulin_type SET NOT NULL;")
 
-    # Convergencia de constraints (§12.2): se elimina cualquier CHECK o FK de la tabla
-    # cuyo nombre no sea canónico — tanto los heredados de injection_zone/injection_zones
-    # como los autogenerados por PostgreSQL en instalaciones limpias anteriores
-    # (insulin_injections_*_check, *_fkey). Se excluyen PRIMARY KEY y UNIQUE ('p','u'),
-    # que se tratan por renombrado más abajo.
+    # Constraint convergence (§12.2): any CHECK or FK of the table whose name is
+    # not canonical is dropped — both those inherited from
+    # injection_zone/injection_zones and those auto-generated by PostgreSQL in
+    # earlier clean installs (insulin_injections_*_check, *_fkey). PRIMARY KEY and
+    # UNIQUE ('p', 'u') are excluded; they are handled by rename further below.
     cursor.execute(
         """
         SELECT conname
@@ -1246,7 +1410,7 @@ def _ensure_insulin_injections_schema(cursor):
             )
         )
 
-    # Renombrar PK y secuencia a nombres canónicos si existen con nombres heredados (§12.2)
+    # Rename PK and sequence to canonical names if they exist under inherited names (§12.2)
     cursor.execute(
         """
         DO $$
@@ -1523,8 +1687,8 @@ def init_db():
     conn = get_migrations_connection()
     cur = conn.cursor()
     try:
-        # Advisory lock transaccional (§12.5): evita condiciones de carrera
-        # en arranques concurrentes con DB_INIT_ON_STARTUP=true.
+        # Transactional advisory lock (§12.5): avoids race conditions on
+        # concurrent startups with DB_INIT_ON_STARTUP=true.
         cur.execute("SELECT pg_advisory_xact_lock(%s)", (742001,))
         tables = [
             DBSchema.users,
@@ -1564,17 +1728,16 @@ def init_db():
         _ensure_auth_rate_limits_schema(cur)
         _ensure_intake_event_schema(cur)
         _ensure_insulin_injections_schema(cur)
-        # Después de intake_event: las tandas de portion_detail dependen de él
-        # por clave foránea, así que su DDL no puede correr antes (§12.3).
+        # After intake_event: portion_detail plates depend on it through a
+        # foreign key, so their DDL cannot run earlier (§12.3).
         _ensure_portion_detail_schema(cur)
         _remove_legacy_user_sessions(cur)
         _remove_legacy_user_hidden_catalog(cur)
         _remove_legacy_user_columns(cur)
         _ensure_default_user(cur)
 
-        # Conceder DML al rol de runtime (§12.6): los objetos creados nacen
-        # propiedad de la identidad de migraciones, así que el runtime se quedaría
-        # sin permisos.
+        # Grant DML to the runtime role (§12.6): created objects are owned by the
+        # migrations identity, so the runtime would be left without permissions.
         role = sql.Identifier(DB_RUNTIME_ROLE)
         cur.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(role))
         cur.execute(sql.SQL("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {}").format(role))
@@ -1586,9 +1749,9 @@ def init_db():
         logger.info("Database initialized successfully.")
     except Exception as e:
         conn.rollback()
-        # Fallo de arranque (sección 12.5 de code_conventions.md): una
-        # migración obligatoria fallida aborta el arranque, no continúa
-        # como si el esquema fuese correcto.
+        # Startup failure (section 12.5 of code_conventions.md): a failed
+        # mandatory migration aborts startup, it does not continue as if the
+        # schema were correct.
         logger.critical("Error initializing database: %s", e, exc_info=True)
         raise
     finally:

@@ -67,9 +67,16 @@ def _execute_query(
     query: str,
     params: dict = None,
     commit: bool = True,
-    rollback_on_error: bool = True,
+    rollback_on_error: Optional[bool] = None,
 ) -> Optional[Any]:
-    """Generic helper to execute queries."""
+    """Generic helper to execute queries.
+
+    `rollback_on_error` defaults to `commit` (decision 2026-09-22): in
+    caller-owned mode (`commit=False`) the exception propagates and no
+    rollback is issued, as 2.4/2.5 require.
+    """
+    if rollback_on_error is None:
+        rollback_on_error = commit
     try:
         with connection.cursor() as cursor:
             cursor.execute(query, params or {})
@@ -89,9 +96,14 @@ def _execute_query_many(
     query: str,
     params: dict = None,
     commit: bool = True,
-    rollback_on_error: bool = True,
+    rollback_on_error: Optional[bool] = None,
 ) -> list:
-    """Generic helper to execute queries that return multiple rows."""
+    """Generic helper to execute queries that return multiple rows.
+
+    `rollback_on_error` defaults to `commit`, same contract as `_execute_query`.
+    """
+    if rollback_on_error is None:
+        rollback_on_error = commit
     try:
         with connection.cursor() as cursor:
             cursor.execute(query, params or {})

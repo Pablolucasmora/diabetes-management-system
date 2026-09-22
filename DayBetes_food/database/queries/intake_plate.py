@@ -228,7 +228,8 @@ def apply_plate_offset_to_portions(
             cursor.execute(
                 """
                 UPDATE portion_detail
-                SET offset_minutes = %(offset_minutes)s
+                SET offset_minutes = %(offset_minutes)s,
+                    updated_at = NOW()
                 WHERE plate_id = %(plate_id)s;
                 """,
                 {"offset_minutes": offset_minutes, "plate_id": plate_id},

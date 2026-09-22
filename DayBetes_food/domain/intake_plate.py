@@ -14,17 +14,23 @@ siguen midiéndose contra el mismo `meal_time` (§4.6).
 from dataclasses import dataclass
 from datetime import datetime
 
+from DayBetes_food.domain.portion_detail import (
+    PORTION_DETAIL_OFFSET_MAX_MINUTES,
+    PORTION_DETAIL_OFFSET_MIN_MINUTES,
+)
+
 # Longitud máxima de intake_plate.name, igual al VARCHAR(255) de la columna
 # (database/schema.py). §7.3 exige declarar la longitud máxima por campo y
 # rechazar el exceso en el boundary con 422, sin truncar.
 INTAKE_PLATE_NAME_MAX_LENGTH = 255
 
-# Cota de cordura del offset de la tanda, idéntica a la de
-# portion_detail.offset_minutes (measurement_conventions.md §4.5): la
-# plantilla no puede admitir valores que la fila rechazaría. Igual al CHECK
+# Cota de cordura del offset de la tanda: es la de
+# portion_detail.offset_minutes, importada y no repetida (§4.7), porque la
+# plantilla no puede admitir valores que la fila rechazaría
+# (measurement_conventions.md §4.5, §4.6.2). Igual al CHECK
 # ck_intake_plate_offset_minutes de database/schema.py.
-INTAKE_PLATE_OFFSET_MIN_MINUTES = -300
-INTAKE_PLATE_OFFSET_MAX_MINUTES = 300
+INTAKE_PLATE_OFFSET_MIN_MINUTES = PORTION_DETAIL_OFFSET_MIN_MINUTES
+INTAKE_PLATE_OFFSET_MAX_MINUTES = PORTION_DETAIL_OFFSET_MAX_MINUTES
 
 # Nombre mostrado cuando la tanda no tiene nombre propio ni ingredientes de
 # los que derivarlo (measurement_conventions.md §4.6.3). Es interfaz, y la

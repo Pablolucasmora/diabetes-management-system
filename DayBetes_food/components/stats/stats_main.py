@@ -9,9 +9,9 @@ from DayBetes_food.components.stats.stats_sections import (
 )
 from DayBetes_food.components.stats.stats_shared import STATS_PAGE_CLS
 from DayBetes_food.database.queries import (
-    get_portion_detail_by_events,
     list_consumed_intake_events,
     list_consumed_intake_events_for_day,
+    list_portions_by_events,
 )
 from DayBetes_food.time_utils import local_today
 
@@ -24,11 +24,11 @@ def stats_main(connection):
     today = local_today()
     today_events = list_consumed_intake_events_for_day(connection, user_id=user_id, day=today)
     today_event_ids = [event.id for event in today_events]
-    today_portions = get_portion_detail_by_events(connection, today_event_ids)
+    today_portions = list_portions_by_events(connection, int(user_id), today_event_ids)
 
     all_consumed_events = list_consumed_intake_events(connection, user_id=user_id)
     all_event_ids = [event.id for event in all_consumed_events]
-    all_portions = get_portion_detail_by_events(connection, all_event_ids)
+    all_portions = list_portions_by_events(connection, int(user_id), all_event_ids)
 
     payload = compute_stats_payload(today_events, today_portions, all_consumed_events, all_portions)
 

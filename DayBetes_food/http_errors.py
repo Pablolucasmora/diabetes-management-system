@@ -17,6 +17,8 @@ import json
 import re
 import uuid
 
+from starlette.responses import HTMLResponse
+
 from DayBetes_food.errors import AppError
 
 
@@ -65,6 +67,40 @@ def app_error_headers(request, error, message: str = "") -> dict:
             {"appError": {"code": error.code, "message": public_message}}
         ),
     }
+
+
+def app_error_response(request, error, message: str = ""):
+    """Respuesta de error de una ruta: status semántico, cuerpo vacío y cabeceras (§7.1).
+
+    La usan las rutas que **devuelven** el error en vez de levantarlo. Las
+    acciones en línea (carrito, ingredientes de receta) no son un formulario de
+    guardado, así que **no** usan la excepción de `code_conventions.md` §9.5
+    (`200` + fragmento dentro del formulario): conservan el status de su
+    categoría (`422` validación, `404` inexistente, `409` conflicto, §3.2/§3.5/
+    §3.6 de error_conventions.md) y devuelven cuerpo vacío, porque htmx no debe
+    hacer swap de un error sobre el componente.
+
+    Para que el error no sea invisible —htmx ignora el cuerpo de un `4xx`, así
+    que sin esto el usuario ve exactamente lo mismo que si no hubiera pulsado
+    nada— la respuesta publica el mensaje por las cabeceras de
+    `app_error_headers` (incluido el evento `appError` de `HX-Trigger`, pintado
+    en `#app_toast` por `static/js/app_toast.js`).
+
+    Es un helper **compartido**: vive junto a las cabeceras y lo usan todas las
+    rutas que devuelven el error en vez de reimplementar una copia privada por
+    módulo, que es lo que esta sección evita (decisión 2026-09-22).
+
+    `error` puede ser una clase de `DayBetes_food/errors.py` o una instancia; el
+    código y el mensaje por defecto salen siempre del catálogo central, nunca se
+    inventan por endpoint (error_conventions.md §8.3).
+    """
+    if isinstance(error, type) and issubclass(error, AppError):
+        error = error()
+    return HTMLResponse(
+        "",
+        status_code=error.status_code,
+        headers=app_error_headers(request, error, message),
+    )
 
 
 def error_json_body(error, request_id_value: str) -> dict:

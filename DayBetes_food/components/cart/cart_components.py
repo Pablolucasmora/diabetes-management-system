@@ -1,3 +1,5 @@
+import json
+
 from fasthtml.common import *
 
 from DayBetes_food.components.cart.cart_shared import (
@@ -10,6 +12,7 @@ from DayBetes_food.components.cart.cart_shared import (
     macro_text_color,
     parse_source_macro,
     portion_intake_amount,
+    portion_macro_amount,
     portion_name,
     unit_amount,
 )
@@ -20,7 +23,7 @@ from DayBetes_food.components.injection_zone import (
     injection_zone_label,
     asset_busted,
 )
-from DayBetes_food.domain.constants import AmountInputUnit, InjectionZone, MealType
+from DayBetes_food.domain.constants import AmountInputUnit, InjectionZone, MealType, PortionOrigin
 from DayBetes_food.domain.intake_event import (
     INTAKE_EVENT_NAME_MAX_LENGTH,
     INTAKE_EVENT_NOTES_MAX_LENGTH,
@@ -80,6 +83,84 @@ def _checkbox(
         ),
         _check_icon(),
         cls="flex items-center cursor-pointer relative h-5 w-5",
+    )
+
+
+# Visible label of each tri-state flag (the interface is in English, 7.12).
+_TRI_STATE_FLAG_LABELS = {
+    "strictly_weighed": "Strictly weighted",
+    "macros_quality": "Macros quality",
+}
+
+
+def tri_state_flag_id(name: str, portion_id: int) -> str:
+    """Stable id of a tri-state control, target of its own OOB repaint (9.5)."""
+    return f"portion_flag_{name}_{portion_id}"
+
+
+def PortionTriStateFlag(event_id: int, portion, name: str, ingredient_name: str, oob: bool = False):
+    """Tri-state control of one portion flag (`strictly_weighed`/`macros_quality`).
+
+    Single builder for the row and for the route response: the route repaints
+    this control out of band next to `MacrosSummary`, so the next state it
+    sends is always the one computed from the row just saved (9.5 cart HTMX
+    contract, frontend_conventions.md 6).
+    """
+    return _TriStateFlag(
+        name=name,
+        value=getattr(portion, name),
+        hx_post=f"/cart/portion/{portion.id}/{name}",
+        aria_label=f"{_TRI_STATE_FLAG_LABELS[name]} for {ingredient_name}",
+        hx_target=f"#macros_summary_event_{event_id}",
+        hx_swap="outerHTML",
+        element_id=tri_state_flag_id(name, portion.id),
+        oob=oob,
+    )
+
+
+def _TriStateFlag(
+    name: str,
+    value,
+    hx_post: str,
+    aria_label: str = "",
+    hx_target: str = "",
+    hx_swap: str = "",
+    element_id: str = "",
+    oob: bool = False,
+):
+    """Tri-state flag: NULL -> True -> False -> NULL (decision 2026-09-18).
+
+    A two-state checkbox cannot represent "no data": `NULL` must be visible and
+    distinguishable from an explicit `False` (frontend_conventions.md 6,
+    code_conventions.md 7.14). The next state is computed here, on the server,
+    and sent in `hx_vals`; the client does not decide the transition. The
+    "no data" state carries a small `–` marker next to the control.
+    """
+    if value is True:
+        next_value, glyph = "false", "✓"
+        style = "background-color:#111827;border-color:#111827;color:#ffffff;"
+    elif value is False:
+        next_value, glyph = "", ""
+        style = "background-color:#ffffff;border-color:#9ca3af;color:#111827;"
+    else:
+        next_value, glyph = "true", ""
+        style = "background-color:#ffffff;border-color:#d1d5db;color:#111827;"
+    return Div(
+        Button(
+            glyph,
+            type="button",
+            aria_label=aria_label or name.replace("_", " ").title(),
+            cls="w-5 h-5 rounded border flex items-center justify-center text-xs leading-none p-0",
+            style=style,
+            hx_post=hx_post,
+            hx_vals=json.dumps({"value": next_value}),
+            **({"hx_target": hx_target} if hx_target else {}),
+            **({"hx_swap": hx_swap} if hx_swap else {}),
+        ),
+        Span("–", cls="text-xs text-gray-500") if value is None else None,
+        cls="flex items-center gap-1",
+        **({"id": element_id} if element_id else {}),
+        **({"hx_swap_oob": "true"} if oob else {}),
     )
 
 
@@ -288,7 +369,7 @@ def MacrosSummary(event, portions, compact: bool = False):
         calories_100 = parse_source_macro(portion, "calories")
         if calories_100 is None:
             continue
-        total_calories += portion_intake_amount(portion) * float(calories_100) / 100.0
+        total_calories += portion_macro_amount(portion) * float(calories_100) / 100.0
 
     amount_confidence = event.amount_confidence
     quality_confidence = event.quality_confidence
@@ -309,7 +390,7 @@ def MacrosSummary(event, portions, compact: bool = False):
             continue
         total = 0.0
         for portion in portions:
-            amount = portion_intake_amount(portion)
+            amount = portion_macro_amount(portion)
             macro_100 = parse_source_macro(portion, macro_key)
             if macro_100 is None:
                 continue
@@ -377,20 +458,40 @@ def MacrosSummary(event, portions, compact: bool = False):
 
 
 def _unit_options(default_portion_base: float, base_unit: str):
-    hundred_label = f"100{base_unit}"
+    """Options of the amount unit selector.
+
+    The conversion factors come from the central enum (measurement §11): the
+    emitted value is the enum code and `data_factor` (presentation only) is
+    generated from `grams_factor`. `portion` has no constant factor: its factor
+    is the food's `unit_g`, resolved on the server from the database.
+    """
     one_label = base_unit
     return [
         Option(
             f"serving ({default_portion_base:.0f}{base_unit})",
-            value="portion",
+            value=AmountInputUnit.PORTION.value,
             selected=True,
             data_factor=f"{default_portion_base:.6f}",
             data_unit_label="serving",
         ),
-        Option(f"{hundred_label} (100{base_unit})", value="x100", data_factor="100.000000", data_unit_label=hundred_label),
-        Option(f"{one_label} (1{base_unit})", value=base_unit, data_factor="1.000000", data_unit_label=one_label),
-        Option(f"lb (453.59{base_unit})", value="lb", data_factor="453.592370", data_unit_label="lb"),
-        Option(f"oz (28.35{base_unit})", value="oz", data_factor="28.349523", data_unit_label="oz"),
+        Option(
+            f"{one_label} (1{base_unit})",
+            value=AmountInputUnit.GRAMS.value,
+            data_factor=f"{AmountInputUnit.GRAMS.grams_factor:.6f}",
+            data_unit_label=one_label,
+        ),
+        Option(
+            f"lb ({AmountInputUnit.LB.grams_factor:.2f}{base_unit})",
+            value=AmountInputUnit.LB.value,
+            data_factor=f"{AmountInputUnit.LB.grams_factor:.6f}",
+            data_unit_label="lb",
+        ),
+        Option(
+            f"oz ({AmountInputUnit.OZ.grams_factor:.2f}{base_unit})",
+            value=AmountInputUnit.OZ.value,
+            data_factor=f"{AmountInputUnit.OZ.grams_factor:.6f}",
+            data_unit_label="oz",
+        ),
     ]
 
 
@@ -404,7 +505,7 @@ def _portions_by_plate(portions):
     """
     by_plate = {}
     for portion in portions:
-        plate_id = portion.get("plate_id")
+        plate_id = portion.plate_id
         if plate_id is None:
             continue
         by_plate.setdefault(int(plate_id), []).append(portion)
@@ -451,8 +552,8 @@ def _ApplyAllButton(plate, offset_input_id, card_target):
     )
 
 
-def _MoveIngredientSelect(plate, plates, plate_labels, origin, origin_id, item_key, ingredient_name, card_target):
-    """Selector `Move`: cambia el ingrediente de tanda (§7.5).
+def _MoveIngredientSelect(plate, plates, plate_labels, portion_id, item_key, ingredient_name, card_target):
+    """Selector `Move`: cambia la porción de tanda (§7.5).
 
     La opción `+ New plate` (valor 0) crea la tanda en el acto y mueve la fila
     a ella. La tanda actual queda fuera de la lista: moverse a sí misma no es
@@ -478,7 +579,7 @@ def _MoveIngredientSelect(plate, plates, plate_labels, origin, origin_id, item_k
             name="target_plate_id",
             aria_label=f"Move {ingredient_name} to another plate",
             cls="web_input border border-white rounded-lg px-2 py-1 text-xs md:text-sm",
-            hx_post=f"/cart/plate/{plate.id}/ingredient/{origin}/{origin_id}/move",
+            hx_post=f"/cart/portion/{portion_id}/move",
             hx_trigger="change",
             hx_target=card_target,
             hx_swap="outerHTML",
@@ -596,6 +697,25 @@ def PlateBlock(event, plate, plate_portions, show_header: bool, plates, plate_la
     """
     card_target = f"#cart_card_event_{event.id}"
     grouped = group_portions(plate_portions)
+
+    # Unicidad por forma de preparación (§4.6.4): cuando una tanda tiene dos o
+    # más filas del mismo alimento, cada una marca solo los valores que difieren
+    # de la otra, para que se entienda por qué están separadas (§7.8).
+    by_food = {}
+    for item in grouped:
+        by_food.setdefault((item["origin"], item["origin_id"]), []).append(item)
+
+    def _differences(item):
+        siblings = by_food[(item["origin"], item["origin_id"])]
+        if len(siblings) < 2:
+            return []
+        sample = item["sample"]
+        result = []
+        for field, label in (("cooking", "Cooking"), ("conservation", "Conservation"), ("final_state", "Final state")):
+            if len({getattr(other["sample"], field) for other in siblings}) > 1:
+                result.append((label, getattr(sample, field)))
+        return result
+
     return Div(
         PlateHeader(event, plate, plate_labels[plate.id], card_target) if show_header else None,
         *[
@@ -606,6 +726,7 @@ def PlateBlock(event, plate, plate_portions, show_header: bool, plates, plate_la
                 plates=plates,
                 plate_labels=plate_labels,
                 show_apply_all=not show_header,
+                differences=_differences(item),
             )
             for item in grouped
         ],
@@ -617,7 +738,7 @@ def PlateBlock(event, plate, plate_portions, show_header: bool, plates, plate_la
     )
 
 
-def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show_apply_all=False):
+def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show_apply_all=False, differences=()):
     """Fila de un ingrediente dentro de una tanda.
 
     `show_apply_all` implementa la regla de frontend_conventions.md §7.4: el
@@ -627,17 +748,15 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
     solo tiene sentido cuando hay cabeceras que distinguir (§7.5).
     """
     sample = grouped_item["sample"]
-    origin = grouped_item["origin"]
-    origin_id = grouped_item["origin_id"]
+    portion_id = int(sample.id)
     unit_g = unit_amount(sample)
     unit_label = display_unit(sample)
     amount = float(grouped_item["total_amount_g"] or unit_g)
-    offset = sample.get("offset_minutes")
+    offset = sample.offset_minutes
     offset_value = int(offset) if offset is not None else 0
     units_count = amount / unit_g if unit_g > 0 else 0.0
-    # La clave lleva la tanda, no el evento: el mismo alimento puede estar en
-    # dos tandas de la misma comida y cada fila necesita ids propios.
-    item_key = f"{plate.id}_{origin}_{origin_id}"
+    # La clave lleva la tanda y la porción: cada fila necesita ids propios.
+    item_key = f"{plate.id}_{portion_id}"
     display_input_id = f"display_input_{item_key}"
     grams_input_id = f"grams_input_{item_key}"
     unit_select_id = f"unit_select_{item_key}"
@@ -650,7 +769,14 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
 
     return Div(
         Div(
-            Div(ingredient_name, cls="font-semibold"),
+            Div(
+                Div(ingredient_name, cls="font-semibold"),
+                Span(
+                    " · ".join(f"{label}: {value or '—'}" for label, value in differences),
+                    cls="text-[10px] text-gray-500",
+                ) if differences else None,
+                cls="flex flex-col min-w-0",
+            ),
             Form(
                 Button(
                     Img(src="/images/content/delete.svg", alt="Delete food", cls="w-5 h-5"),
@@ -680,41 +806,38 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
                 type="button",
                 cls="web_button px-4 py-2 text-sm text-white",
                 style="background-color:#b91c1c;border-color:#b91c1c;",
-                hx_post=f"/cart/plate/{plate.id}/ingredient/{origin}/{origin_id}/amount",
-                hx_vals='{"amount_g":"0"}',
+                hx_post=f"/cart/portion/{portion_id}/delete",
                 hx_target=card_target,
                 hx_swap="outerHTML",
                 onclick=_close_modal_js(confirm_id),
             ),
         ),
         Form(
-            Input(type="hidden", name="unit_g", value=f"{unit_g:.4f}"),
             Div(
                 Input(
                     type="text",
                     inputmode="decimal",
                     id=display_input_id,
+                    name="amount_value",
                     value=default_display,
                     aria_label=f"Amount for {ingredient_name}",
                     cls="web_input border border-white rounded-lg px-2 py-1 w-24 text-base",
-                    oninput=f"dbRecalcGrams('{display_input_id}','{unit_select_id}','{grams_input_id}')",
-                    onchange=f"dbRecalcGrams('{display_input_id}','{unit_select_id}','{grams_input_id}', true)",
-                    onclick="this.select()",
-                ),
-                Span("serving", id=side_unit_id, cls="text-xs text-gray-600"),
-                Input(
-                    type="hidden",
-                    name="amount_g",
-                    id=grams_input_id,
-                    value=f"{amount:.6f}",
-                    hx_post=f"/cart/plate/{plate.id}/ingredient/{origin}/{origin_id}/amount",
+                    hx_post=f"/cart/portion/{portion_id}/amount",
                     hx_trigger="change",
                     hx_include="closest form",
                     hx_target=card_target,
                     hx_swap="outerHTML",
-                ),Select(
+                    oninput=f"dbRecalcGrams('{display_input_id}','{unit_select_id}','{grams_input_id}')",
+                    onclick="this.select()",
+                ),
+                Span("serving", id=side_unit_id, cls="text-xs text-gray-600"),
+                # Presentation-only helper: it is not submitted (no name); the
+                # server converts `amount_value` + `amount_unit` itself (§7.13).
+                Input(type="hidden", id=grams_input_id, value=f"{amount:.6f}"),
+                Select(
                     *_unit_options(unit_g, unit_label),
                     id=unit_select_id,
+                    name="amount_unit",
                     data_display_id=display_input_id,
                     data_grams_id=grams_input_id,
                     data_side_unit_id=side_unit_id,
@@ -738,7 +861,7 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
                 value=str(offset_value),
                 aria_label=f"Offset minutes for {ingredient_name}",
                 cls="web_input border border-white rounded-lg px-2 py-1 w-24 text-base",
-                hx_post=f"/cart/plate/{plate.id}/ingredient/{origin}/{origin_id}/offset",
+                hx_post=f"/cart/portion/{portion_id}/offset",
                 hx_trigger="change",
                 hx_target=card_target,
                 hx_swap="outerHTML",
@@ -750,46 +873,34 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
         # `Move` aparece exactamente cuando hay cabecera de tanda, que es el
         # caso complementario de `Apply all` en la fila (§7.4, §7.5).
         _MoveIngredientSelect(
-            plate, plates, plate_labels or {}, origin, origin_id, item_key, ingredient_name, card_target
+            plate, plates, plate_labels or {}, portion_id, item_key, ingredient_name, card_target
         )
         if not show_apply_all
         else None,
         Div(
             Label("Strictly weighted", cls="text-xs text-gray-600"),
-            _checkbox(
-                name="strictly_weighed",
-                checked=bool(sample.get("strictly_weighed")),
-                hx_post=f"/cart/plate/{plate.id}/ingredient/{origin}/{origin_id}/strictly_weighed",
-                aria_label=f"Strictly weighted for {ingredient_name}",
-                hx_swap="outerHTML",
-                hx_target=f"#macros_summary_event_{event.id}",
-            ),
+            PortionTriStateFlag(event.id, sample, "strictly_weighed", ingredient_name),
             cls="flex items-center gap-2"
         ),
         Div(
             Label("Macros quality", cls="text-xs text-gray-600"),
-            _checkbox(
-                name="macros_quality",
-                checked=bool(sample.get("macros_quality")),
-                hx_post=f"/cart/plate/{plate.id}/ingredient/{origin}/{origin_id}/macros_quality",
-                aria_label=f"Macros quality for {ingredient_name}",
-                hx_swap="outerHTML",
-                hx_target=f"#macros_summary_event_{event.id}",
-            ),
+            PortionTriStateFlag(event.id, sample, "macros_quality", ingredient_name),
             cls="flex items-center gap-2"
         ),
+        # Only catalog origins: manual_intake has no cooking_factor, so the
+        # flag would not change anything (decision 2026-09-18, finding 12).
         Div(
             Label("Cooked weight", cls="text-xs text-gray-600"),
             _checkbox(
                 name="is_cooked_weight",
-                checked=bool(sample.get("is_cooked_weight")),
-                hx_post=f"/cart/plate/{plate.id}/ingredient/{origin}/{origin_id}/is_cooked_weight",
+                checked=bool(sample.is_cooked_weight),
+                hx_post=f"/cart/portion/{portion_id}/is_cooked_weight",
                 aria_label=f"Cooked weight for {ingredient_name}",
                 hx_swap="outerHTML",
                 hx_target=f"#macros_summary_event_{event.id}",
             ),
             cls="flex items-center gap-2"
-        ),
+        ) if sample.origin is PortionOrigin.CATALOG else None,
         cls="web_container p-4 rounded-2xl flex flex-col gap-3 "
     )
 

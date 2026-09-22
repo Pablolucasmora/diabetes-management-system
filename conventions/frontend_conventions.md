@@ -146,11 +146,17 @@ En la pantalla de añadir alimento, **junto al selector de comida (meal selector
 
 ### 7.8 Agrupación de filas iguales
 
-La agrupación visual de porciones del mismo alimento (`group_portions`) se hace **dentro de cada tanda**, no sobre todo el evento. Agrupar por evento colapsaría en una sola fila el mismo alimento presente en dos tandas, que es precisamente lo que la clave única de §4.6.4 permite distinguir.
+La agrupación visual de porciones del mismo alimento (`group_portions`) se hace **dentro de cada
+tanda** y **por forma de preparación**, con la misma clave que la unicidad de §4.6.4
+(`cooking`, `conservation`, `final_state`): agrupar ignorándola colapsaría en una fila los 100 g
+de arroz hervido y los 50 g de arroz frito, y editar la cantidad los consolidaría en uno solo.
+Cuando una tanda tiene **dos o más filas del mismo alimento**, cada una marca en pequeño, junto a
+su nombre, **los valores que difieren** de la otra (solo esos, no los tres siempre), para que se
+entienda por qué están separadas.
 
 ### 7.9 Ancho en móvil
 
-La tarjeta del evento mide `w-xs` (~320 px), así que la cabecera de tanda es el elemento con más riesgo de desbordar. Reglas:
+La tarjeta del evento mide `w-[90vw]` en móvil (~325 px en un teléfono de 360 px, ~350 px en uno de 390 px; antes `w-xs`, 320 px fijos, que dejaba márgenes laterales excesivos y el selector de unidad se salía), así que la cabecera de tanda es el elemento con más riesgo de desbordar. Reglas:
 
 - El **título** es el único elemento elástico: `min-w-0` + `truncate`. Si el nombre derivado es largo, se corta con puntos suspensivos; no empuja a los controles fuera de la tarjeta.
 - El grupo **offset + `Apply all`** lleva `shrink-0`, con el input estrecho (signo y tres dígitos bastan por el rango `-300..300`) y el botón compacto.
