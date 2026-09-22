@@ -3,7 +3,7 @@ import logging
 from fasthtml.common import *
 from html import escape
 from urllib.parse import quote_plus
-from DayBetes_food.database.queries.crud import update_password_hash
+from DayBetes_food.database.queries import update_password_hash
 
 logger = logging.getLogger(__name__)
 

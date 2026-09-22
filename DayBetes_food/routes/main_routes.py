@@ -7,8 +7,7 @@ from DayBetes_food.components.menu.main_menu import main_menu
 from DayBetes_food.components.scanner.scanner_main import scanner_main
 from DayBetes_food.components.ui import render_fragment, render_page
 from DayBetes_food.database.connection import get_connection
-from DayBetes_food.database.queries.crud import get_catalog_item_by_barcode
-from DayBetes_food.database.queries.insulin_injections import create_insulin_injection
+from DayBetes_food.database.queries import get_catalog_item_by_barcode, create_insulin_injection
 from DayBetes_food.domain.constants import InsulinType, InjectionZone
 from DayBetes_food.domain.insulin import InsulinInjectionCreate
 from DayBetes_food.errors import ValidationError

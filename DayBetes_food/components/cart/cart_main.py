@@ -2,11 +2,11 @@ from fasthtml.common import *
 from DayBetes_food.auth.context import get_current_user_id
 
 from DayBetes_food.components.cart.cart_components import CartCard
-from DayBetes_food.database.queries.crud import (
+from DayBetes_food.database.queries import (
     get_cart_events,
     get_portion_detail_by_events,
+    get_injection_zone_for_event,
 )
-from DayBetes_food.database.queries.intake_event import get_injection_zone_for_event
 
 
 def cart_main(connection):

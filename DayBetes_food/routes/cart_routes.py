@@ -6,7 +6,7 @@ from DayBetes_food.components.ui import render_fragment, render_page
 from datetime import datetime
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.time_utils import local_naive_to_utc, to_local
-from DayBetes_food.database.queries.crud import (
+from DayBetes_food.database.queries import (
     consolidate_event_portion_group_amount,
     delete_event_portion_group,
     delete_intake_event,
@@ -15,8 +15,6 @@ from DayBetes_food.database.queries.crud import (
     update_event_portion_group_field,
     update_intake_event_name,
     update_intake_event,
-)
-from DayBetes_food.database.queries.intake_event import (
     set_injection_zone,
     create_injection_for_event,
     confirm_intake_event,

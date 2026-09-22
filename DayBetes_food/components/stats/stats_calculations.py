@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from DayBetes_food.database.queries.crud import (
+from DayBetes_food.database.queries import (
     get_consumed_events,
     get_consumed_events_for_day,
     get_portion_detail_by_events,

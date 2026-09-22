@@ -63,6 +63,16 @@ Un CRUD:
 - no construye respuestas HTTP;
 - no devuelve HTML, JSON ni interpreta headers HTMX.
 
+#### 1.3.1 Organización de archivos en `database/queries/`
+
+`database/queries/` no es un único archivo: un módulo por tabla física, nombrado como la tabla (`users.py`, `catalog.py`, `manual_intake.py`, `recipe.py`, `tags.py`, `linked_tags.py`, `user_favorites.py`, `food_brands.py`, `intake_event.py`, `insulin_injections.py`, `portion_detail.py`, `auth_sessions.py`, `auth_rate_limits.py`, ...).
+
+- **`crud.py`** contiene únicamente helpers genéricos compartidos por varios módulos de tabla: ejecución de queries (`_execute_query`, `_execute_query_many`), el constructor seguro de `UPDATE` dinámico (`_build_update_query` y su whitelist), búsqueda difusa (`_build_fuzzy_search`, `_add_fuzzy_name_condition`) y los filtros de ownership/favorito reutilizados por varias tablas (`_add_entity_filters`, `_favorite_filter_sql`). No contiene CRUD de ninguna tabla. Un helper usado por más de un módulo de tabla vive en `crud.py`, aunque físicamente resida hoy dentro del bloque de una tabla concreta; no se decide por dónde está escrito hoy sino por quién lo usa.
+- Una función va en el archivo de la tabla sobre la que ejecuta su SQL. Si su `FROM`/`UPDATE`/`INSERT` principal toca la tabla puente de una relación N:M (`linked_tags`, `user_favorites`), va en el archivo de esa tabla puente, no en el de las tablas que relaciona.
+- Una lectura que agrega o combina varias tablas sin tabla dueña clara (autocompletado que unifica `catalog`+`manual_intake`, rankings de uso que cruzan `portion_detail`+`intake_event`, etc.) va en **`entries.py`**, reservado para lecturas cross-entity. No se fuerza en el archivo de la primera tabla que aparece en el `FROM` porque eso es arbitrario.
+- **`__init__.py`** re-exporta toda la API pública de todos los módulos de tabla y de `entries.py` (no los helpers privados de `crud.py`). El resto de la aplicación (`routes/`, `services/`, `components/`) importa siempre `from DayBetes_food.database.queries import <nombre>`, nunca del módulo de tabla concreto — así ningún punto de import fuera de `database/queries/` depende de en qué archivo vive cada query.
+- Añadir una tabla nueva implica: crear su módulo, añadir sus funciones públicas al re-export de `__init__.py`, y mover a `crud.py` cualquier helper que termine siendo compartido con otra tabla.
+
 ### 1.4 Componentes y frontend
 
 Las funciones de `components/` reciben datos ya consultados y renderizan HTML o configuran HTMX.

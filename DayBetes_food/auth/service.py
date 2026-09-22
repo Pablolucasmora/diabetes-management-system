@@ -22,14 +22,12 @@ from DayBetes_food.auth.models import (
 )
 from DayBetes_food.auth.security import hash_token, normalize_identifier
 from DayBetes_food.errors import AppError, ConflictError, InfrastructureError
-from DayBetes_food.database.queries.auth_sessions import (
+from DayBetes_food.database.queries import (
     create_auth_session,
     get_auth_session_with_user as query_get_auth_session_with_user,
     purge_auth_sessions,
     refresh_auth_session,
     revoke_auth_session,
-)
-from DayBetes_food.database.queries.auth_rate_limits import (
     delete_auth_rate_limit,
     get_auth_rate_limit,
     upsert_auth_rate_limit,
