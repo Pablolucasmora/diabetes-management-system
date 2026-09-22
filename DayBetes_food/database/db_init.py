@@ -1403,6 +1403,7 @@ def init_db():
             DBSchema.linked_tags,
             DBSchema.intake_event(),
             DBSchema.insulin_injections(),
+            DBSchema.meal_type_schedule(),
             DBSchema.portion_detail,
         ]
 

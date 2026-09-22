@@ -54,6 +54,7 @@ from DayBetes_food.database.queries import (
     get_intake_event,
     get_planned_intake_event,
     list_planned_intake_events,
+    get_meal_type_schedule,
 )
 from DayBetes_food.components.food.foods import (
     GLYCEMIC_INDEX_OPTIONS,
@@ -77,8 +78,26 @@ from DayBetes_food.components.food.foods import (
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.domain.constants import IntakeEventState, MealType
 from DayBetes_food.domain.intake_event import INTAKE_EVENT_NAME_MAX_LENGTH, IntakeEventCreate
-from DayBetes_food.time_utils import local_naive_to_utc_aware, local_today, utc_now
+from DayBetes_food.domain.meal_type_schedule import resolve_meal_type_for_time
+from DayBetes_food.time_utils import local_naive_to_utc_aware, local_now, local_today, utc_now
 from DayBetes_food.errors import NotFoundError, ConflictError
+
+
+def _default_meal_type_now(connection, user_id: int) -> MealType | None:
+    """
+    `meal_type` automático para un `intake_event` creado sin pasar por el
+    carrito (añadir un alimento directo), a partir de la hora local actual y
+    de las franjas horarias del usuario (o los defaults si no las ha
+    personalizado en /settings/meal_type_schedule).
+
+    Se calcula aquí, en el momento de crear la fila, y no en el componente
+    que la muestra: el `<select>` de `EventHeader` (cart_components.py) debe
+    poder confiar en que `event.meal_type` ya es el valor real, nunca uno que
+    tenga que inferir en el render (code_conventions.md §7.14, decisión
+    2026-09-11).
+    """
+    overrides = get_meal_type_schedule(connection, user_id)
+    return resolve_meal_type_for_time(local_now().time(), overrides)
 
 
 def _to_float(value: str):
@@ -1647,7 +1666,11 @@ def setup_food_routes(rt):
                     else:
                         event_id = create_intake_event(
                             connection,
-                            IntakeEventCreate(user_id=int(user_id), state=IntakeEventState.PLANNED),
+                            IntakeEventCreate(
+                                user_id=int(user_id),
+                                state=IntakeEventState.PLANNED,
+                                meal_type=_default_meal_type_now(connection, int(user_id)),
+                            ),
                             commit=False,
                         )
                     event_data = get_intake_event(connection, int(user_id), event_id)
@@ -1895,7 +1918,11 @@ def setup_food_routes(rt):
                     else:
                         event_id = create_intake_event(
                             connection,
-                            IntakeEventCreate(user_id=int(user_id), state=IntakeEventState.PLANNED),
+                            IntakeEventCreate(
+                                user_id=int(user_id),
+                                state=IntakeEventState.PLANNED,
+                                meal_type=_default_meal_type_now(connection, int(user_id)),
+                            ),
                             commit=False,
                         )
                     event_data = get_intake_event(connection, int(user_id), event_id)
@@ -1950,7 +1977,11 @@ def setup_food_routes(rt):
                     else:
                         event_id = create_intake_event(
                             connection,
-                            IntakeEventCreate(user_id=int(user_id), state=IntakeEventState.PLANNED),
+                            IntakeEventCreate(
+                                user_id=int(user_id),
+                                state=IntakeEventState.PLANNED,
+                                meal_type=_default_meal_type_now(connection, int(user_id)),
+                            ),
                             commit=False,
                         )
                     portion_amount = float(intake_item.get("amount_g") or 100.0)
@@ -2007,6 +2038,11 @@ def setup_food_routes(rt):
                             recipe_meal_type = MealType(recipe["meal_type"]) if recipe.get("meal_type") else None
                         except ValueError:
                             recipe_meal_type = None
+                        # La receta manda si trae su propio meal_type; si no,
+                        # cae al mismo default por franja horaria que el resto
+                        # de altas automáticas (§7.14, decisión 2026-09-11).
+                        if recipe_meal_type is None:
+                            recipe_meal_type = _default_meal_type_now(connection, int(user_id))
                         event_id = create_intake_event(
                             connection,
                             IntakeEventCreate(
@@ -2905,6 +2941,7 @@ def setup_food_routes(rt):
                     user_id=int(user_id),
                     state=IntakeEventState.PLANNED,
                     name=clean_name or None,
+                    meal_type=_default_meal_type_now(connection, int(user_id)),
                 ),
             )
 

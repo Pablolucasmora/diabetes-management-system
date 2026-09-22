@@ -1,5 +1,5 @@
 from fasthtml.common import *
-from DayBetes_food.database.queries import get_all_tags
+from DayBetes_food.database.queries import get_all_tags, get_meal_type_schedule
 from DayBetes_food.components.injection_zone import (
     BASE_INJECTION_ZONE_IMAGE,
     INJECTION_ZONE_IMAGE_BY_ZONE,
@@ -9,6 +9,10 @@ from DayBetes_food.components.injection_zone import (
     asset_busted,
 )
 from DayBetes_food.domain.constants import InjectionZone, InsulinType
+from DayBetes_food.domain.meal_type_schedule import (
+    AUTO_ASSIGNABLE_MEAL_TYPES,
+    resolve_meal_type_window,
+)
 from DayBetes_food.time_utils import to_local
 from DayBetes_food.config import CSRF_COOKIE_NAME
 import re
@@ -51,6 +55,15 @@ def settings_main(connection, current_user=None):
                 type="button",
                 cls="web_button food_entry flex items-center justify-between cursor-pointer text-left",
                 hx_get="/settings/injections",
+                hx_target="#main_content",
+                hx_swap="innerHTML",
+                hx_push_url="true",
+            ),
+            Button(
+                "Meal type schedule",
+                type="button",
+                cls="web_button food_entry flex items-center justify-between cursor-pointer text-left",
+                hx_get="/settings/meal_type_schedule",
                 hx_target="#main_content",
                 hx_swap="innerHTML",
                 hx_push_url="true",
@@ -247,6 +260,123 @@ def tags_settings_page(connection):
             })();
             """
         ),
+        cls="flex flex-col items-center gap-4 md:mt-7 lg:mt-7 mt-2 md:w-md lg:w-md w-xs w-full mx-auto md:mb-28 lg:mb-28 mb-24",
+        data_hide_cart="true",
+    )
+
+
+_MEAL_TYPE_SCHEDULE_LABELS = {
+    m: m.value.replace("_", " ").capitalize() for m in AUTO_ASSIGNABLE_MEAL_TYPES
+}
+
+
+def meal_type_schedule_row(meal_type, start_time, end_time, is_default: bool):
+    """
+    Una fila editable del horario de asignación automática de meal_type.
+
+    start_time/end_time siempre se envían juntos (`hx_include="closest
+    form"`): las dos columnas de una misma franja se escriben en la misma
+    petición, nunca por separado, para no dejar la franja a medio guardar con
+    el significado ambiguo de "campo ausente" (§7.4/§7.9 de
+    code_conventions.md).
+    """
+    row_id = f"meal_type_schedule_row_{meal_type.value}"
+    label = _MEAL_TYPE_SCHEDULE_LABELS[meal_type]
+    common_input_cls = (
+        "web_input border border-white rounded-lg px-1 py-1 md:px-2 lg:px-2 text-sm "
+        "w-full min-w-0 overflow-hidden"
+    )
+    return Form(
+        Input(type="hidden", name="meal_type", value=meal_type.value),
+        Div(
+            Div(
+                P(label, cls="text-sm font-semibold"),
+                P("Custom" if not is_default else "Default", cls="text-[10px] text-gray-500"),
+                cls="flex flex-col px-2",
+            ),
+            Button(
+                "Reset",
+                type="button",
+                cls=f"web_button px-2 py-1 text-xs {'invisible' if is_default else ''}",
+                hx_post="/settings/meal_type_schedule/reset",
+                hx_vals=f'{{"meal_type":"{meal_type.value}"}}',
+                hx_target=f"#{row_id}",
+                hx_swap="outerHTML",
+            ),
+            cls="flex items-center justify-between gap-2",
+        ),
+        Div(
+            Div(
+                Label("Start", cls="text-xs text-gray-600", **{"for": f"{row_id}_start"}),
+                Input(
+                    type="time",
+                    id=f"{row_id}_start",
+                    name="start_time",
+                    value=start_time.strftime("%H:%M"),
+                    aria_label=f"{label} start time",
+                    cls=common_input_cls,
+                    hx_post="/settings/meal_type_schedule/update",
+                    hx_trigger="change",
+                    hx_include="closest form",
+                    hx_target=f"#{row_id}",
+                    hx_swap="outerHTML",
+                ),
+                cls="flex flex-col gap-1 min-w-0 px-2",
+            ),
+            Div(
+                Label("End", cls="text-xs text-gray-600", **{"for": f"{row_id}_end"}),
+                Input(
+                    type="time",
+                    id=f"{row_id}_end",
+                    name="end_time",
+                    value=end_time.strftime("%H:%M"),
+                    aria_label=f"{label} end time",
+                    cls=common_input_cls,
+                    hx_post="/settings/meal_type_schedule/update",
+                    hx_trigger="change",
+                    hx_include="closest form",
+                    hx_target=f"#{row_id}",
+                    hx_swap="outerHTML",
+                ),
+                cls="flex flex-col gap-1 min-w-0 px-3",
+            ),
+            cls="grid grid-cols-2 gap-1 md:gap-2 lg:gap-2 items-end",
+        ),
+        id=row_id,
+        cls="web_container food_entry flex flex-col gap-2 px-2 py-3 md:px-4 lg:px-4",
+    )
+
+
+def meal_type_schedule_settings_page(connection, user_id: int):
+    overrides = get_meal_type_schedule(connection, user_id)
+    rows = [
+        meal_type_schedule_row(
+            meal_type,
+            *resolve_meal_type_window(meal_type, overrides),
+            is_default=meal_type not in overrides,
+        )
+        for meal_type in AUTO_ASSIGNABLE_MEAL_TYPES
+    ]
+    return Div(
+        Div(
+            Button(
+                "Back",
+                type="button",
+                cls="web_button self-start px-3 py-1.5 text-sm",
+                hx_get="/settings",
+                hx_target="#main_content",
+                hx_swap="innerHTML",
+                hx_push_url="true",
+            ),
+            cls="w-full flex justify-start",
+        ),
+        H1("Meal type schedule", cls="text-xl font-bold"),
+        P(
+            "Time windows used to auto-fill meal type when a food is added "
+            "outside the cart. Snack and rescue are always chosen manually.",
+            cls="text-sm text-gray-600 text-center",
+        ),
+        Div(*rows, cls="flex flex-col gap-2 w-full"),
         cls="flex flex-col items-center gap-4 md:mt-7 lg:mt-7 mt-2 md:w-md lg:w-md w-xs w-full mx-auto md:mb-28 lg:mb-28 mb-24",
         data_hide_cart="true",
     )

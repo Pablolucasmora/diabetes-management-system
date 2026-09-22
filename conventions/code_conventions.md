@@ -65,7 +65,7 @@ Un CRUD:
 
 #### 1.3.1 Organización de archivos en `database/queries/`
 
-`database/queries/` no es un único archivo: un módulo por tabla física, nombrado como la tabla (`users.py`, `catalog.py`, `manual_intake.py`, `recipe.py`, `tags.py`, `linked_tags.py`, `user_favorites.py`, `food_brands.py`, `intake_event.py`, `insulin_injections.py`, `portion_detail.py`, `auth_sessions.py`, `auth_rate_limits.py`, ...).
+`database/queries/` no es un único archivo: un módulo por tabla física, nombrado como la tabla (`users.py`, `catalog.py`, `manual_intake.py`, `recipe.py`, `tags.py`, `linked_tags.py`, `user_favorites.py`, `food_brands.py`, `intake_event.py`, `insulin_injections.py`, `portion_detail.py`, `meal_type_schedule.py`, `auth_sessions.py`, `auth_rate_limits.py`, ...).
 
 - **`crud.py`** contiene únicamente helpers genéricos compartidos por varios módulos de tabla: ejecución de queries (`_execute_query`, `_execute_query_many`), el constructor seguro de `UPDATE` dinámico (`_build_update_query` y su whitelist), búsqueda difusa (`_build_fuzzy_search`, `_add_fuzzy_name_condition`) y los filtros de ownership/favorito reutilizados por varias tablas (`_add_entity_filters`, `_favorite_filter_sql`). No contiene CRUD de ninguna tabla. Un helper usado por más de un módulo de tabla vive en `crud.py`, aunque físicamente resida hoy dentro del bloque de una tabla concreta; no se decide por dónde está escrito hoy sino por quién lo usa.
 - Una función va en el archivo de la tabla sobre la que ejecuta su SQL. Si su `FROM`/`UPDATE`/`INSERT` principal toca la tabla puente de una relación N:M (`linked_tags`, `user_favorites`), va en el archivo de esa tabla puente, no en el de las tablas que relaciona.
@@ -745,6 +745,14 @@ La validación de formato no sustituye la autorización. El usuario de seguridad
 ### 7.13 Frontend
 
 Los atributos `required`, `min`, `max`, `step`, `pattern` y la validación JavaScript son ayudas de UX. Desactivar JavaScript o enviar una petición manual no debe permitir datos inválidos.
+
+### 7.14 Defaults mostrados en la interfaz
+
+Todo valor que la interfaz muestre como ya elegido (una opción preseleccionada de un `<select>`, un checkbox marcado, un campo numérico ya relleno) tiene que corresponder a un valor **ya persistido** en la base de datos en el momento en que se renderiza. Ningún campo se "adivina" solo visualmente: un `<select>` de un enum sin ningún `<option selected>` explícito lo resuelve el navegador marcando la primera opción de la lista, que el usuario lee como una elección real aunque la base siga en `NULL`; si el guardado es autosave-on-change (§9.5, decisión "refresco local del carrito"), ese valor nunca llega a escribirse porque el usuario no dispara ningún `change`.
+
+Si un campo tiene un valor por defecto razonable, ese default se calcula y se escribe en el mismo momento en que se decide (alta de la entidad, alta de la fila relacionada), no se deja implícito para que lo infiera la interfaz. Cuando de verdad no hay un default fiable, el control debe mostrar un estado "sin elegir" explícito (una opción placeholder sin valor, marcada `selected` cuando el campo es `None`) en vez de aterrizar en la primera opción del enum por accidente del render.
+
+Corolario para defaults "inteligentes" (inferidos de contexto — hora del día, origen del alimento, receta...): la lógica de inferencia vive donde se crea la fila, no en el componente de presentación; el componente sigue leyendo el campo ya resuelto como cualquier otro dato persistido. Un default inteligente que se calcule solo en el momento de renderizar reproduce el mismo defecto que un `<select>` sin `selected`. Ver domain/meal_type_schedule.py y audit/deuda_pendiente.md (sección `intake_event`, H13) para el primer caso real (decisión 2026-09-11).
 
 ## 8. Configuración, logging y servicios externos
 

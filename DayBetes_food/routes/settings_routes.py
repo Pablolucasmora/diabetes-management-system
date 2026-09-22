@@ -7,6 +7,8 @@ from DayBetes_food.components.settings.settings_main import (
     tag_settings_row,
     injections_settings_page,
     injections_settings_chunk,
+    meal_type_schedule_settings_page,
+    meal_type_schedule_row,
 )
 from DayBetes_food.components.ui import render_page, render_fragment
 from DayBetes_food.database.connection import get_connection
@@ -17,9 +19,16 @@ from DayBetes_food.database.queries import (
     get_injection_shot_time_at_offset,
     update_insulin_injection,
     delete_insulin_injection,
+    get_meal_type_schedule,
+    upsert_meal_type_window,
+    delete_meal_type_window,
 )
-from DayBetes_food.domain.constants import InsulinType, InjectionZone
+from DayBetes_food.domain.constants import InsulinType, InjectionZone, MealType
 from DayBetes_food.domain.insulin import InsulinInjectionUpdate
+from DayBetes_food.domain.meal_type_schedule import (
+    AUTO_ASSIGNABLE_MEAL_TYPES,
+    resolve_meal_type_window,
+)
 from DayBetes_food.errors import ValidationError, NotFoundError
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.time_utils import local_naive_to_utc_aware, APP_TIMEZONE
@@ -68,6 +77,86 @@ def setup_settings_routes(rt):
         if not tags:
             return HTMLResponse("")
         return render_fragment(tag_settings_row(tags[0]))
+
+    @rt("/settings/meal_type_schedule")
+    def get(req):
+        user_id = get_current_user_id()
+        if not user_id:
+            return HTMLResponse(status_code=401)
+        return render_page(
+            req,
+            lambda connection: meal_type_schedule_settings_page(connection, int(user_id)),
+            show_cart=False,
+        )
+
+    @rt("/settings/meal_type_schedule/update")
+    def post(req: Request, meal_type: str = "", start_time: str = "", end_time: str = ""):
+        """
+        Autosave de una franja horaria (start_time y end_time siempre juntos,
+        ver docstring de meal_type_schedule_row). meal_type restringido a
+        AUTO_ASSIGNABLE_MEAL_TYPES: snack/rescue nunca tienen franja aquí
+        (decisión 2026-09-11).
+        """
+        if req.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return HTMLResponse(status_code=401)
+        try:
+            parsed_meal_type = MealType(meal_type)
+        except ValueError:
+            return HTMLResponse(status_code=422)
+        if parsed_meal_type not in AUTO_ASSIGNABLE_MEAL_TYPES:
+            return HTMLResponse(status_code=422)
+        try:
+            parsed_start = datetime.strptime((start_time or "").strip(), "%H:%M").time()
+            parsed_end = datetime.strptime((end_time or "").strip(), "%H:%M").time()
+        except ValueError:
+            return HTMLResponse(status_code=422)
+        with get_connection() as connection:
+            try:
+                upsert_meal_type_window(
+                    connection,
+                    user_id=int(user_id),
+                    meal_type=parsed_meal_type,
+                    start_time=parsed_start,
+                    end_time=parsed_end,
+                )
+            except ValidationError:
+                return HTMLResponse(status_code=422)
+            overrides = get_meal_type_schedule(connection, int(user_id))
+        return render_fragment(
+            meal_type_schedule_row(
+                parsed_meal_type,
+                *resolve_meal_type_window(parsed_meal_type, overrides),
+                is_default=parsed_meal_type not in overrides,
+            )
+        )
+
+    @rt("/settings/meal_type_schedule/reset")
+    def post(req: Request, meal_type: str = ""):
+        """Borra la franja personalizada: la fila vuelve a mostrar (y a usar) el default de código."""
+        if req.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return HTMLResponse(status_code=401)
+        try:
+            parsed_meal_type = MealType(meal_type)
+        except ValueError:
+            return HTMLResponse(status_code=422)
+        if parsed_meal_type not in AUTO_ASSIGNABLE_MEAL_TYPES:
+            return HTMLResponse(status_code=422)
+        with get_connection() as connection:
+            delete_meal_type_window(connection, user_id=int(user_id), meal_type=parsed_meal_type)
+            overrides = get_meal_type_schedule(connection, int(user_id))
+        return render_fragment(
+            meal_type_schedule_row(
+                parsed_meal_type,
+                *resolve_meal_type_window(parsed_meal_type, overrides),
+                is_default=True,
+            )
+        )
 
     @rt("/settings/injections")
     def get(req):
