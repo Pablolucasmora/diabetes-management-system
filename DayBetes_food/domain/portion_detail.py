@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from DayBetes_food.domain.constants import (
+    AmountInputUnit,
     CONSERVATION_OPTIONS,
     COOKING_OPTIONS,
     INITIAL_STATE_OPTIONS,
@@ -58,6 +59,25 @@ def parse_amount_grams(value) -> float:
     if value > PORTION_DETAIL_AMOUNT_MAX_G:
         raise ValidationError("amount_above_max")
     return float(value)
+
+
+def amount_to_grams(value: float, unit: AmountInputUnit, serving_grams: float) -> float:
+    """Convert an amount typed in `unit` to grams (measurement_conventions.md 4.2, 11).
+
+    The single server-side conversion of every amount boundary (decision
+    2026-09-22): `lb`/`oz` use the exact factor of the central enum, `portion`
+    uses `serving_grams` —the food's serving, which the caller resolves from
+    the database, never from a hidden form field (code_conventions.md 7.13)—
+    and `g` is identity. `%` is not a mass and is rejected here: it is always
+    relative to a total the caller owns. The result is not validated; the
+    caller applies `parse_amount_grams` to it.
+    """
+    unit = AmountInputUnit(unit)
+    if unit is AmountInputUnit.PORTION:
+        return value * float(serving_grams)
+    if unit.grams_factor is None:
+        raise ValidationError("amount_unit_not_admitted")
+    return value * unit.grams_factor
 
 
 def validate_preparation_choice(field: str, value):

@@ -23,7 +23,7 @@ from DayBetes_food.components.injection_zone import (
     injection_zone_label,
     asset_busted,
 )
-from DayBetes_food.domain.constants import AmountInputUnit, InjectionZone, MealType
+from DayBetes_food.domain.constants import AmountInputUnit, InjectionZone, MealType, PortionOrigin
 from DayBetes_food.domain.intake_event import (
     INTAKE_EVENT_NAME_MAX_LENGTH,
     INTAKE_EVENT_NOTES_MAX_LENGTH,
@@ -86,7 +86,48 @@ def _checkbox(
     )
 
 
-def _TriStateFlag(name: str, value, hx_post: str, aria_label: str = "", hx_target: str = "", hx_swap: str = ""):
+# Visible label of each tri-state flag (the interface is in English, 7.12).
+_TRI_STATE_FLAG_LABELS = {
+    "strictly_weighed": "Strictly weighted",
+    "macros_quality": "Macros quality",
+}
+
+
+def tri_state_flag_id(name: str, portion_id: int) -> str:
+    """Stable id of a tri-state control, target of its own OOB repaint (9.5)."""
+    return f"portion_flag_{name}_{portion_id}"
+
+
+def PortionTriStateFlag(event_id: int, portion, name: str, ingredient_name: str, oob: bool = False):
+    """Tri-state control of one portion flag (`strictly_weighed`/`macros_quality`).
+
+    Single builder for the row and for the route response: the route repaints
+    this control out of band next to `MacrosSummary`, so the next state it
+    sends is always the one computed from the row just saved (9.5 cart HTMX
+    contract, frontend_conventions.md 6).
+    """
+    return _TriStateFlag(
+        name=name,
+        value=getattr(portion, name),
+        hx_post=f"/cart/portion/{portion.id}/{name}",
+        aria_label=f"{_TRI_STATE_FLAG_LABELS[name]} for {ingredient_name}",
+        hx_target=f"#macros_summary_event_{event_id}",
+        hx_swap="outerHTML",
+        element_id=tri_state_flag_id(name, portion.id),
+        oob=oob,
+    )
+
+
+def _TriStateFlag(
+    name: str,
+    value,
+    hx_post: str,
+    aria_label: str = "",
+    hx_target: str = "",
+    hx_swap: str = "",
+    element_id: str = "",
+    oob: bool = False,
+):
     """Tri-state flag: NULL -> True -> False -> NULL (decision 2026-09-18).
 
     A two-state checkbox cannot represent "no data": `NULL` must be visible and
@@ -118,6 +159,8 @@ def _TriStateFlag(name: str, value, hx_post: str, aria_label: str = "", hx_targe
         ),
         Span("–", cls="text-xs text-gray-500") if value is None else None,
         cls="flex items-center gap-1",
+        **({"id": element_id} if element_id else {}),
+        **({"hx_swap_oob": "true"} if oob else {}),
     )
 
 
@@ -836,28 +879,16 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
         else None,
         Div(
             Label("Strictly weighted", cls="text-xs text-gray-600"),
-            _TriStateFlag(
-                name="strictly_weighed",
-                value=sample.strictly_weighed,
-                hx_post=f"/cart/portion/{portion_id}/strictly_weighed",
-                aria_label=f"Strictly weighted for {ingredient_name}",
-                hx_target=f"#macros_summary_event_{event.id}",
-                hx_swap="outerHTML",
-            ),
+            PortionTriStateFlag(event.id, sample, "strictly_weighed", ingredient_name),
             cls="flex items-center gap-2"
         ),
         Div(
             Label("Macros quality", cls="text-xs text-gray-600"),
-            _TriStateFlag(
-                name="macros_quality",
-                value=sample.macros_quality,
-                hx_post=f"/cart/portion/{portion_id}/macros_quality",
-                aria_label=f"Macros quality for {ingredient_name}",
-                hx_target=f"#macros_summary_event_{event.id}",
-                hx_swap="outerHTML",
-            ),
+            PortionTriStateFlag(event.id, sample, "macros_quality", ingredient_name),
             cls="flex items-center gap-2"
         ),
+        # Only catalog origins: manual_intake has no cooking_factor, so the
+        # flag would not change anything (decision 2026-09-18, finding 12).
         Div(
             Label("Cooked weight", cls="text-xs text-gray-600"),
             _checkbox(
@@ -869,7 +900,7 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
                 hx_target=f"#macros_summary_event_{event.id}",
             ),
             cls="flex items-center gap-2"
-        ),
+        ) if sample.origin is PortionOrigin.CATALOG else None,
         cls="web_container p-4 rounded-2xl flex flex-col gap-3 "
     )
 

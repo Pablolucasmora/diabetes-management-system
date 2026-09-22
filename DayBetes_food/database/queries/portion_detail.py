@@ -112,10 +112,10 @@ _PORTION_OWNED_BY_USER = """
     )
 """
 
-# Visibility of a recipe portion for reading it in the copy flow (5.4): a
-# public recipe (is_private = FALSE) is readable by anyone, but only its owner
-# may mutate it. This fragment is used by list_recipe_portions_for_copy and
-# never by a mutation.
+# Visibility of a recipe portion for reading it (5.4): a public recipe
+# (is_private = FALSE) is readable by anyone, but only its owner may mutate it.
+# This fragment is used by list_viewable_recipe_portions and never by a
+# mutation.
 _PORTION_VISIBLE_RECIPE = """
     AND EXISTS (
         SELECT 1 FROM recipe r
@@ -127,6 +127,23 @@ _PORTION_VISIBLE_RECIPE = """
 
 def _rows_to_reads(rows) -> list[PortionDetailRead]:
     return [portion_detail_read_from_row(row) for row in (rows or [])]
+
+
+def _execute_write(connection, query, params: dict, commit: bool):
+    """Run one write and propagate any SQL failure (error_conventions.md 11).
+
+    The generic helper, in owner mode (`commit=True`), rolls back and returns
+    `None`; the callers here read `None` as "no row matched" and would turn an
+    infrastructure failure into a `NotFoundError` (a 404 for a server fault,
+    finding 5). Here the owner rolls back and the exception propagates; in
+    caller-owned mode (`commit=False`) it propagates without rollback (2.4).
+    """
+    try:
+        return _execute_query(connection, query, params, commit=commit, rollback_on_error=False)
+    except Exception:
+        if commit:
+            connection.rollback()
+        raise
 
 
 def _ensure_destination_owned(connection, user_id: int, destination: PortionDestination, destination_id: int) -> None:
@@ -227,7 +244,7 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
             updated_at = NOW()
         RETURNING id;
     """
-    result = _execute_query(connection, query, data, commit=commit)
+    result = _execute_write(connection, query, data, commit)
     if not result:
         raise NotFoundError("portion_not_found")
     return int(result["id"])
@@ -320,13 +337,14 @@ def list_recipe_portions_by_origin(
     return _rows_to_reads(rows)
 
 
-def list_recipe_portions_for_copy(connection, user_id: int, recipe_id: int) -> list[PortionDetailRead]:
-    """Recipe portions readable for copying a recipe the user may only view.
+def list_viewable_recipe_portions(connection, user_id: int, recipe_id: int) -> list[PortionDetailRead]:
+    """Portions of a recipe the user may view, owned or public (5.4).
 
-    `/food/copy` copies a recipe that can be public (`is_private = FALSE`) and
-    therefore not owned by the user: reading it requires viewability, not
-    ownership. The write side still goes through `create_portion_detail` on a
-    destination owned by the user, so this read cannot mutate anything.
+    A recipe can be public (`is_private = FALSE`) and therefore not owned by
+    the user: showing it, computing its macros, logging it or copying it
+    requires viewability, not ownership. `list_portions_by_recipe` stays for
+    the owner-only flows (editing the recipe). Every write still goes through
+    a function that checks ownership, so this read cannot mutate anything.
     """
     query = f"""
         SELECT {_PORTION_COLUMNS}
@@ -350,11 +368,11 @@ def update_portion_amount(connection, user_id: int, portion_id: int, amount: flo
         {_PORTION_OWNED_BY_USER}
         RETURNING pd.id;
     """
-    result = _execute_query(
+    result = _execute_write(
         connection,
         query,
         {"amount": grams, "portion_id": portion_id, "user_id": user_id},
-        commit=commit,
+        commit,
     )
     if not result:
         raise NotFoundError("portion_not_found")
@@ -372,11 +390,11 @@ def update_portion_offset(connection, user_id: int, portion_id: int, offset_minu
         {_PORTION_OWNED_BY_USER}
         RETURNING pd.id;
     """
-    result = _execute_query(
+    result = _execute_write(
         connection,
         query,
         {"offset_minutes": offset_minutes, "portion_id": portion_id, "user_id": user_id},
-        commit=commit,
+        commit,
     )
     if not result:
         raise NotFoundError("portion_not_found")
@@ -392,11 +410,11 @@ def update_portion_flag(connection, user_id: int, portion_id: int, field: str, v
         {_PORTION_OWNED_BY_USER}
         RETURNING pd.id;
     """
-    result = _execute_query(
+    result = _execute_write(
         connection,
         query,
         {"value": value, "portion_id": portion_id, "user_id": user_id},
-        commit=commit,
+        commit,
     )
     if not result:
         raise NotFoundError("portion_not_found")
@@ -432,23 +450,44 @@ def _find_preparation_sibling(
     return int(row["id"]) if row else None
 
 
-def _merge_into_sibling(connection, user_id: int, portion_id: int, sibling_id: int) -> None:
-    """Sum `amount` into the sibling and delete the edited row (decision 2026-09-20)."""
-    with connection.cursor() as cursor:
-        cursor.execute(
-            """
-            UPDATE portion_detail s
-            SET amount = s.amount + a.amount,
-                updated_at = NOW()
-            FROM portion_detail a
-            WHERE s.id = %(sibling_id)s AND a.id = %(portion_id)s;
-            """,
-            {"sibling_id": sibling_id, "portion_id": portion_id},
-        )
-        cursor.execute(
-            "DELETE FROM portion_detail WHERE id = %(portion_id)s;",
-            {"portion_id": portion_id},
-        )
+def _merge_into_sibling(connection, user_id: int, portion_id: int, sibling_id: int, commit: bool) -> None:
+    """Sum `amount` into the sibling and delete the edited row (decision 2026-09-20).
+
+    Both statements are one operation (2.3): in owner mode they are committed
+    together or rolled back together. Ownership is in the SQL of both (5.3),
+    although the caller already resolved the two rows through it.
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"""
+                UPDATE portion_detail pd
+                SET amount = pd.amount + a.amount,
+                    updated_at = NOW()
+                FROM portion_detail a
+                WHERE pd.id = %(sibling_id)s AND a.id = %(portion_id)s
+                {_PORTION_OWNED_BY_USER};
+                """,
+                {"sibling_id": sibling_id, "portion_id": portion_id, "user_id": user_id},
+            )
+            if cursor.rowcount != 1:
+                raise NotFoundError("portion_not_found")
+            cursor.execute(
+                f"""
+                DELETE FROM portion_detail pd
+                WHERE pd.id = %(portion_id)s
+                {_PORTION_OWNED_BY_USER};
+                """,
+                {"portion_id": portion_id, "user_id": user_id},
+            )
+            if cursor.rowcount != 1:
+                raise NotFoundError("portion_not_found")
+        if commit:
+            connection.commit()
+    except Exception:
+        if commit:
+            connection.rollback()
+        raise
 
 
 def update_portion_detail_fields(
@@ -489,7 +528,7 @@ def update_portion_detail_fields(
             resolved.get("final_state", current.final_state),
         )
         if sibling_id is not None:
-            _merge_into_sibling(connection, user_id, portion_id, sibling_id)
+            _merge_into_sibling(connection, user_id, portion_id, sibling_id, commit)
             return True
 
     query = _build_update_query(
@@ -502,7 +541,7 @@ def update_portion_detail_fields(
     if query is None:
         return False
     params["user_id"] = user_id
-    result = _execute_query(connection, query, params, commit=commit)
+    result = _execute_write(connection, query, params, commit)
     if not result:
         raise NotFoundError("portion_not_found")
     return True
@@ -534,7 +573,7 @@ def move_portion_to_plate(connection, user_id: int, portion_id: int, target_plat
         current.final_state,
     )
     if sibling_id is not None:
-        _merge_into_sibling(connection, user_id, portion_id, sibling_id)
+        _merge_into_sibling(connection, user_id, portion_id, sibling_id, commit)
         return
 
     query = f"""
@@ -544,11 +583,11 @@ def move_portion_to_plate(connection, user_id: int, portion_id: int, target_plat
         {_PORTION_OWNED_BY_USER}
         RETURNING pd.id;
     """
-    result = _execute_query(
+    result = _execute_write(
         connection,
         query,
         {"target_plate_id": target_plate_id, "portion_id": portion_id, "user_id": user_id},
-        commit=commit,
+        commit,
     )
     if not result:
         raise NotFoundError("portion_not_found")
@@ -561,8 +600,8 @@ def delete_portion_detail(connection, user_id: int, portion_id: int, commit: boo
         {_PORTION_OWNED_BY_USER}
         RETURNING pd.id;
     """
-    result = _execute_query(
-        connection, query, {"portion_id": portion_id, "user_id": user_id}, commit=commit
+    result = _execute_write(
+        connection, query, {"portion_id": portion_id, "user_id": user_id}, commit
     )
     if not result:
         raise NotFoundError("portion_not_found")
@@ -587,9 +626,14 @@ def scale_event_portion_amounts(connection, user_id: int, event_id: int, fractio
               WHERE ie.id = pd.intake_event_id AND ie.users_id = %(user_id)s
           );
     """
-    with connection.cursor() as cursor:
-        cursor.execute(query, {"fraction": fraction, "event_id": event_id, "user_id": user_id})
-        updated = cursor.rowcount
-    if commit:
-        connection.commit()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(query, {"fraction": fraction, "event_id": event_id, "user_id": user_id})
+            updated = cursor.rowcount
+        if commit:
+            connection.commit()
+    except Exception:
+        if commit:
+            connection.rollback()
+        raise
     return updated > 0

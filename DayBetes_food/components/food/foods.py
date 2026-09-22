@@ -2740,8 +2740,9 @@ def _detail_unit_options(base_amount: float, base_unit: str):
     """Unit selector options of the ingredient page.
 
     Factors come from the central enum (measurement §11); `data_factor` is
-    presentation only (the JS computes grams for the hidden field, which the
-    detail page still sends as grams). `portion` uses the food's base amount.
+    presentation only: the form sends `amount_value` + `amount_unit` and the
+    server converts them (decision 2026-09-22). `portion` uses the food's
+    serving, which the server resolves again from the database.
     """
     one_label = base_unit
     return [
@@ -2876,6 +2877,7 @@ def RecipeIngredientRow(recipe_id: int, portion):
                             Input(
                                 type="text",
                                 id=display_id,
+                                name="amount_value",
                                 inputmode="decimal",
                                 value=f"{display_value:.2f}".replace(".", ","),
                                 cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 w-16 text-base",
@@ -2889,6 +2891,7 @@ def RecipeIngredientRow(recipe_id: int, portion):
                         Select(
                             *_detail_unit_options(base_amount, base_unit),
                             id=select_id,
+                            name="amount_unit",
                             data_display_id=display_id,
                             data_grams_id=grams_id,
                             data_side_unit_id=side_unit_id,
@@ -2896,7 +2899,10 @@ def RecipeIngredientRow(recipe_id: int, portion):
                             cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-xs w-full md:w-auto",
                             onchange=f"dbRecalcGrams('{display_id}','{select_id}','{grams_id}', true)",
                         ),
-                        Input(type="hidden", id=grams_id, name="amount_g", value=f"{grams_value:.6f}"),
+                        # Presentation-only: no `name`, it only fires the form's
+                        # `change` trigger; the server converts `amount_value` +
+                        # `amount_unit` itself (code_conventions.md 7.13).
+                        Input(type="hidden", id=grams_id, value=f"{grams_value:.6f}"),
                         cls="flex flex-col items-end gap-2 md:flex-row md:items-center md:justify-end",
                     ),
                     Div(id=msg_id, cls="min-h-4 text-[10px] text-right text-gray-600"),
@@ -3198,6 +3204,7 @@ def FoodDetailPage(
                     Input(
                         type="text",
                         id=display_id,
+                        name="amount_value",
                         inputmode="decimal",
                         value=amount_display,
                         aria_label="Food amount",
@@ -3214,6 +3221,7 @@ def FoodDetailPage(
                     Select(
                         *_detail_unit_options(default_amount, base_unit),
                         id=select_id,
+                        name="amount_unit",
                         data_display_id=display_id,
                         data_grams_id=grams_id,
                         data_side_unit_id=side_unit_id,
@@ -3222,7 +3230,10 @@ def FoodDetailPage(
                         cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-xs md:text-sm justify-self-end",
                         onchange=f"dbFoodDetailOnUnitChange('{root_id}')",
                     ),
-                    Input(type="hidden", name="total_amount_g", id=grams_id, value=f"{default_amount:.6f}"),
+                    # Presentation-only helpers for food_detail.js: they have no
+                    # `name`, so they are not submitted; the server converts the
+                    # typed values itself (code_conventions.md 7.13).
+                    Input(type="hidden", id=grams_id, value=f"{default_amount:.6f}"),
                     cls="flex items-center gap-2",
                 ),
                 Div(
@@ -3235,6 +3246,7 @@ def FoodDetailPage(
                     Input(
                         type="text",
                         id=plate_value_id,
+                        name="plate_value",
                         inputmode="decimal",
                         value="100",
                         aria_label="Amount to plate",
@@ -3254,8 +3266,8 @@ def FoodDetailPage(
                             border border-gray-300 bg-white/85
                         """,
                     ),
-                    Input(type="hidden", id=plate_unit_id, value="%"),
-                    Input(type="hidden", name="amount_g", id=plate_grams_id, value=f"{default_amount:.6f}"),
+                    Input(type="hidden", id=plate_unit_id, name="plate_unit", value=AmountInputUnit.PERCENT.value),
+                    Input(type="hidden", id=plate_grams_id, value=f"{default_amount:.6f}"),
                     cls="flex items-center gap-2",
                 ),
                 P(

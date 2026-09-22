@@ -1,7 +1,11 @@
 from fasthtml.common import *
 from DayBetes_food.components.cart.cart_main import cart_main, cart_events_list
-from DayBetes_food.components.cart.cart_components import CartCard, MacrosSummary
-from DayBetes_food.components.cart.cart_shared import calculate_macro_summary_metrics, portion_intake_amount
+from DayBetes_food.components.cart.cart_components import CartCard, MacrosSummary, PortionTriStateFlag
+from DayBetes_food.components.cart.cart_shared import (
+    calculate_macro_summary_metrics,
+    portion_intake_amount,
+    portion_name,
+)
 from DayBetes_food.components.ui import render_fragment, render_page
 from datetime import datetime
 import math
@@ -59,6 +63,7 @@ from DayBetes_food.domain.intake_plate import (
     IntakePlateCreate,
     IntakePlateUpdate,
 )
+from DayBetes_food.domain.portion_detail import amount_to_grams
 from DayBetes_food.http_errors import app_error_response
 from DayBetes_food.errors import (
     AuthenticationError,
@@ -306,24 +311,6 @@ def _parse_amount_unit(raw_value: str) -> AmountInputUnit:
     if unit is AmountInputUnit.PERCENT:
         raise ValidationError("amount_unit_not_admitted")
     return unit
-
-
-def _to_grams(value: float, unit: AmountInputUnit, portion) -> float:
-    """Convert an amount in `unit` to grams (§4.2, §11).
-
-    The factor for `LB`/`OZ` comes from the central enum; `PORTION` resolves the
-    food's `unit_g` read from the database (not a hidden form field, §7.13);
-    `GRAMS` is identity. The result is validated by `update_portion_amount`.
-    """
-    if unit is AmountInputUnit.GRAMS:
-        return value
-    if unit is AmountInputUnit.LB:
-        return value * AmountInputUnit.LB.grams_factor
-    if unit is AmountInputUnit.OZ:
-        return value * AmountInputUnit.OZ.grams_factor
-    if unit is AmountInputUnit.PORTION:
-        return value * float(portion.source.unit_g or 100.0)
-    raise ValidationError("amount_unit_not_recognized")
 
 
 def _resync_consumed_event_metrics(connection, user_id: int, event_id: int, portions) -> None:
@@ -696,7 +683,7 @@ def setup_cart_routes(rt):
             try:
                 portion = get_portion_detail(connection, int(user_id), portion_id)
                 event_id = _portion_event_id(connection, int(user_id), portion)
-                grams = _to_grams(value, unit, portion)
+                grams = amount_to_grams(value, unit, portion.source.unit_g)
                 with connection.transaction():
                     # update_portion_amount valida finitud, > 0 y cota superior
                     # (T2.7): una cantidad 0 o inválida es 422 y no borra nada
@@ -859,7 +846,19 @@ def setup_cart_routes(rt):
                 event = get_intake_event(connection, int(user_id), event_id)
                 if not event:
                     return _error(request, NotFoundError, _EVENT_GONE)
-            return render_fragment(Div(MacrosSummary(event, portions), id=f"macros_summary_event_{event_id}"))
+            summary = Div(MacrosSummary(event, portions), id=f"macros_summary_event_{event_id}")
+            if not tristate:
+                # A native checkbox already shows its own new state.
+                return render_fragment(summary)
+            # The tri-state control carries the next state in `hx_vals`, so it
+            # must be repainted from the saved row, out of band next to the
+            # summary (9.5 cart HTMX contract); otherwise it keeps sending the
+            # same value and shows a state the row no longer has
+            # (frontend_conventions.md 6).
+            saved = next(p for p in portions if p.id == portion_id)
+            return render_fragment(
+                (summary, PortionTriStateFlag(event_id, saved, field_name, portion_name(saved), oob=True))
+            )
 
     @rt("/cart/portion/{portion_id}/strictly_weighed")
     def post(request: Request, portion_id: int, value: str = ""):
@@ -1007,7 +1006,7 @@ def setup_cart_routes(rt):
           (suma en vivo de amount, calculada en este mismo request).
         No hay más unidades: cualquier otro valor es 422, nunca gramos por
         defecto (hallazgo 47).
-        fracción debe quedar en [0, 1]; fuera de rango es 422.
+        fracción debe quedar en (0, 1] (decisión 2026-09-22); fuera de rango es 422.
         Ver measurement_conventions.md §4.4/§6.9.1 (decisión 2026-09-10).
         """
         if request.headers.get("HX-Request") != "true":
@@ -1078,7 +1077,9 @@ def setup_cart_routes(rt):
                             # No hay nada que consumir: gramos > 0 no es interpretable.
                             raise ValidationError("total_amount_not_positive")
                         fraction = value / total_amount
-                    if not (0.0 <= fraction <= 1.0):
+                    # (0, 1] since decision 2026-09-22: eating nothing is not a
+                    # confirm; an event nobody ate is deleted, not confirmed.
+                    if not (0.0 < fraction <= 1.0):
                         raise ValidationError("fraction_out_of_range")
 
                     # amount_confidence/quality_confidence/*_uncertainty son proporciones:

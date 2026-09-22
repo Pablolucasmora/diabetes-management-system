@@ -24,7 +24,7 @@ from DayBetes_food.database.queries import (
     get_recipe,
     get_portion_detail,
     list_recipe_portions_by_origin,
-    list_recipe_portions_for_copy,
+    list_viewable_recipe_portions,
     list_portions_by_recipe,
     update_catalog_item,
     toggle_user_favorite,
@@ -64,13 +64,19 @@ from DayBetes_food.database.queries import (
 from DayBetes_food.components.food.foods import GLYCEMIC_INDEX_OPTIONS
 from DayBetes_food.domain.constants import (
     CLEAR,
+    AmountInputUnit,
     CONSERVATION_OPTIONS,
     COOKING_OPTIONS,
     INITIAL_STATE_OPTIONS,
     PortionDestination,
     PortionOrigin,
 )
-from DayBetes_food.domain.portion_detail import PortionDetailCreate, PortionDetailUpdate
+from DayBetes_food.domain.portion_detail import (
+    PortionDetailCreate,
+    PortionDetailUpdate,
+    amount_to_grams,
+    parse_amount_grams,
+)
 from DayBetes_food.components.food.foods import FoodSectionsContent, FoodCard, FavoriteButton, on_after
 from DayBetes_food.components.food.foods import (
     CreateCatalogPage,
@@ -91,7 +97,7 @@ from DayBetes_food.domain.intake_event import INTAKE_EVENT_NAME_MAX_LENGTH, Inta
 from DayBetes_food.domain.intake_plate import IntakePlateCreate
 from DayBetes_food.domain.meal_type_schedule import resolve_meal_type_for_time
 from DayBetes_food.time_utils import local_naive_to_utc_aware, local_now, local_today, utc_now
-from DayBetes_food.errors import NotFoundError, ConflictError
+from DayBetes_food.errors import AuthenticationError, ConflictError, NotFoundError, ValidationError
 
 
 def _default_meal_type_now(connection, user_id: int) -> MealType | None:
@@ -152,6 +158,12 @@ def _resolve_event_plate(connection, user_id: int, event_id: int, plate_id: str,
     return ensure_default_plate(
         connection, int(event_id), offset_minutes=offset_minutes, commit=False
     )
+
+
+# Half of the last decimal the food page shows for the plated grams
+# (food_detail.js formats it with one decimal): the widest gap between the
+# typed value and the real total that is only display rounding.
+_PLATE_DISPLAY_TOLERANCE_G = 0.05
 
 
 def _to_float(value: str):
@@ -1098,14 +1110,23 @@ def setup_food_routes(rt):
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
-        origin_type = (entry_type or "").strip()
         origin_id = _to_int(entry_id)
-        grams = _to_float(consumed_g)
         meal_t = _parse_hhmm(meal_hour)
-        if origin_type not in ("catalog", "manual_intake") or not origin_id:
+        try:
+            origin = PortionOrigin((entry_type or "").strip())
+        except ValueError:
+            origin = None
+        if origin is None or not origin_id:
             return render_fragment(P("Choose a rescue item.", cls="text-xs text-red-700"))
-        if grams is None or grams <= 0:
-            return render_fragment(P("Consumed amount must be greater than 0g.", cls="text-xs text-red-700"))
+        origin_type = origin.value
+        try:
+            # Finite, > 0 and <= 100000 g (decision 2026-09-22), validated here
+            # so the form gets its own message instead of a CHECK violation.
+            grams = parse_amount_grams(_to_float(consumed_g))
+        except ValidationError:
+            return render_fragment(
+                P("Consumed amount must be greater than 0 g and at most 100000 g.", cls="text-xs text-red-700")
+            )
         if not meal_t:
             return render_fragment(P("Choose a valid time.", cls="text-xs text-red-700"))
 
@@ -1114,14 +1135,14 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             user_id = get_current_user_id()
             if not user_id:
-                return render_fragment(P("No user.", cls="text-xs text-red-700"))
-            if origin_type == "catalog":
-                origin = get_catalog_item(connection, int(origin_id))
+                return app_error_response(request, AuthenticationError, "Your session has expired.")
+            if origin is PortionOrigin.CATALOG:
+                item = get_catalog_item(connection, int(origin_id))
             else:
-                origin = get_manual_intake(connection, int(origin_id))
-            if not origin or not _can_view_entry(origin_type, origin, user_id):
+                item = get_manual_intake(connection, int(origin_id))
+            if not item or not _can_view_entry(origin_type, item, user_id):
                 return app_error_response(request, NotFoundError, "Rescue item not found.")
-            if origin_type == "catalog" and origin.get("deleted_at") is not None:
+            if origin is PortionOrigin.CATALOG and item.get("deleted_at") is not None:
                 return render_fragment(P("This food is archived and must be copied first.", cls="text-xs text-red-700"))
             try:
                 with connection.transaction():
@@ -1146,11 +1167,11 @@ def setup_food_routes(rt):
                         connection,
                         int(user_id),
                         PortionDetailCreate(
-                            origin=PortionOrigin(origin_type),
+                            origin=origin,
                             origin_id=int(origin_id),
                             destination=PortionDestination.INTAKE_EVENT,
                             destination_id=int(event_id),
-                            amount=float(grams),
+                            amount=grams,
                             offset_minutes=0,
                             plate_id=plate_id,
                         ),
@@ -1159,9 +1180,7 @@ def setup_food_routes(rt):
             except NotFoundError:
                 return app_error_response(request, NotFoundError, "Meal event not found.")
             except ConflictError:
-                return render_fragment(P("That meal has already been confirmed.", cls="text-red-700"))
-            except ValueError as error:
-                return render_fragment(P(str(error), cls="text-xs text-red-700"))
+                return app_error_response(request, ConflictError, "That meal has already been confirmed.")
         return render_fragment(P("Rescue registered.", cls="text-xs text-green-700"))
 
     @rt("/food/item/{entry_type}/{entry_id}")
@@ -1176,7 +1195,7 @@ def setup_food_routes(rt):
                 entry = get_manual_intake(connection, entry_id, viewer_user_id=user_id)
             elif entry_type == "recipe":
                 entry = get_recipe(connection, entry_id, viewer_user_id=user_id)
-                recipe_portions = list_portions_by_recipe(connection, int(user_id), entry_id) if entry else []
+                recipe_portions = list_viewable_recipe_portions(connection, int(user_id), entry_id) if entry else []
             if not entry or not _can_view_entry(entry_type, entry, user_id):
                 return HTMLResponse(status_code=404)
             summary = _build_detail_summary(entry_type, entry, recipe_portions=recipe_portions)
@@ -1235,71 +1254,84 @@ def setup_food_routes(rt):
     def post(request: Request, recipe_id: int, entry_type: str, entry_id: int):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
-        if entry_type not in ("catalog", "manual_intake"):
-            return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=400)
+        try:
+            origin = PortionOrigin(entry_type)
+        except ValueError:
+            # Value outside the closed set of the URL: validation_error (7.7).
+            return app_error_response(request, ValidationError, "Unknown ingredient type.")
 
         with get_connection() as connection:
             user_id = get_current_user_id()
             recipe = get_recipe(connection, recipe_id)
             if not recipe or not _can_edit_entry("recipe", recipe, user_id):
-                return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
+                return app_error_response(request, NotFoundError, "Recipe not found.")
 
-            amount_g = 100.0
-            if entry_type == "catalog":
+            if origin is PortionOrigin.CATALOG:
                 item = get_catalog_item(connection, entry_id)
                 if (
                     not item
                     or item.get("deleted_at") is not None
                     or not _can_view_entry("catalog", item, user_id)
                 ):
-                    return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
+                    return app_error_response(request, NotFoundError, "Food not found.")
                 amount_g = max(1.0, float(item.get("default_portion") or 100.0))
             else:
                 item = get_manual_intake(connection, entry_id)
                 if not item or not _can_view_entry("manual_intake", item, user_id):
-                    return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
+                    return app_error_response(request, NotFoundError, "Food not found.")
                 amount_g = max(1.0, float(item.get("amount_g") or 100.0))
 
             existing = list_recipe_portions_by_origin(
-                connection, int(user_id), recipe_id, PortionOrigin(entry_type), entry_id
+                connection, int(user_id), recipe_id, origin, entry_id
             )
-            if existing:
-                keep = existing[0]
-                total_amount = sum(float(row.amount or 0.0) for row in existing) + amount_g
-                try:
-                    with connection.transaction():
+            try:
+                with connection.transaction():
+                    if existing:
+                        # Recipe portions have plate_id NULL and stay outside the
+                        # unique index of 4.6.4, so the same food is merged here.
+                        keep = existing[0]
+                        total_amount = sum(float(row.amount or 0.0) for row in existing) + amount_g
                         update_portion_amount(connection, int(user_id), int(keep.id), total_amount, commit=False)
                         for duplicate in existing[1:]:
                             delete_portion_detail(connection, int(user_id), int(duplicate.id), commit=False)
-                    ok = True
-                except (ValidationError, NotFoundError, ConflictError):
-                    ok = False
-            else:
-                try:
-                    create_portion_detail(
-                        connection,
-                        int(user_id),
-                        PortionDetailCreate(
-                            origin=PortionOrigin(entry_type),
-                            origin_id=entry_id,
-                            destination=PortionDestination.RECIPE,
-                            destination_id=recipe_id,
-                            amount=amount_g,
-                        ),
-                    )
-                    ok = True
-                except (ValidationError, NotFoundError, ConflictError):
-                    ok = False
+                    else:
+                        create_portion_detail(
+                            connection,
+                            int(user_id),
+                            PortionDetailCreate(
+                                origin=origin,
+                                origin_id=entry_id,
+                                destination=PortionDestination.RECIPE,
+                                destination_id=recipe_id,
+                                amount=amount_g,
+                            ),
+                            commit=False,
+                        )
+            except NotFoundError:
+                return app_error_response(request, NotFoundError, "Recipe not found.")
+            except ValidationError:
+                return app_error_response(
+                    request, ValidationError, "The ingredient amount would exceed 100000 g."
+                )
 
-        return HTMLResponse("", headers={"HX-Trigger": "addSuccess" if ok else "addError"})
+        return HTMLResponse("", headers={"HX-Trigger": "addSuccess"})
 
     @rt("/food/recipe/{recipe_id}/ingredient/{portion_id}/amount")
-    def post(request: Request, recipe_id: int, portion_id: int, amount_g: str = ""):
+    def post(
+        request: Request,
+        recipe_id: int,
+        portion_id: int,
+        amount_value: str = "",
+        amount_unit: str = AmountInputUnit.PORTION.value,
+    ):
+        """Set the amount of a recipe ingredient from value + unit (11, decision 2026-09-22)."""
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
-        parsed_amount = _to_float(amount_g)
-        if parsed_amount is None or parsed_amount <= 0:
-            return app_error_response(request, ValidationError, "Invalid amount.")
+        try:
+            unit = AmountInputUnit((amount_unit or "").strip())
+        except ValueError:
+            return app_error_response(request, ValidationError, "Unknown amount unit.")
+        typed_amount = _to_float(amount_value)
 
         with get_connection() as connection:
             user_id = get_current_user_id()
@@ -1312,6 +1344,18 @@ def setup_food_routes(rt):
                 return app_error_response(request, NotFoundError, "Ingredient not found.")
             if portion.destination is not PortionDestination.RECIPE or int(portion.destination_id) != recipe_id:
                 return app_error_response(request, NotFoundError, "Ingredient not found.")
+            try:
+                # Serving read from the food in the database (7.13), same
+                # floor as the row shows it (_recipe_portion_base_amount).
+                parsed_amount = parse_amount_grams(
+                    amount_to_grams(typed_amount, unit, max(1.0, portion.source.unit_g))
+                    if typed_amount is not None
+                    else None
+                )
+            except ValidationError:
+                return app_error_response(
+                    request, ValidationError, "The amount must be greater than 0 g and at most 100000 g."
+                )
             update_portion_amount(connection, int(user_id), portion_id, parsed_amount)
             recipe_portions = list_portions_by_recipe(connection, int(user_id), recipe_id)
             recipe_total_amount = sum(float(row.amount or 0.0) for row in recipe_portions)
@@ -1336,7 +1380,7 @@ def setup_food_routes(rt):
             recipe = get_recipe(connection, recipe_id)
             if not recipe or not _can_view_entry("recipe", recipe, user_id):
                 return HTMLResponse(status_code=404)
-            portions = list_portions_by_recipe(connection, int(user_id), recipe_id)
+            portions = list_viewable_recipe_portions(connection, int(user_id), recipe_id)
             summary = _build_detail_summary("recipe", recipe, recipe_portions=portions)
             per100 = summary.get("per100") or {}
             total_amount = max(1.0, _to_float(str(summary.get("default_amount_g") or 0.0)) or 1.0)
@@ -1538,7 +1582,7 @@ def setup_food_routes(rt):
                         )
                         if not created_id:
                             raise ValueError("Could not create editable copy.")
-                        source_portions = list_recipe_portions_for_copy(connection, int(user_id), int(source["id"]))
+                        source_portions = list_viewable_recipe_portions(connection, int(user_id), int(source["id"]))
                         for portion in source_portions:
                             amount_g = float(portion.amount or 0.0)
                             if portion.origin_id <= 0 or amount_g <= 0:
@@ -1686,8 +1730,10 @@ def setup_food_routes(rt):
         request: Request,
         entry_type: str,
         entry_id: int,
-        amount_g: str = "",
-        total_amount_g: str = "",
+        amount_value: str = "",
+        amount_unit: str = AmountInputUnit.PORTION.value,
+        plate_value: str = "",
+        plate_unit: str = AmountInputUnit.PERCENT.value,
         intake_event_id: str = "",
         plate_id: str = "",
         cooking: str = "",
@@ -1695,19 +1741,36 @@ def setup_food_routes(rt):
         conservation: str = "",
         is_cooked_weight: str = "",
     ):
+        """Add a food or a recipe from its page to a planned event.
+
+        The form sends what the user typed, value + unit, and the server
+        converts it (measurement_conventions.md 11, decision 2026-09-22):
+        `amount_value`/`amount_unit` is the cooked total (`portion`, `g`, `lb`,
+        `oz`) and `plate_value`/`plate_unit` the part of it that is plated
+        (`%` of the total or `g`). Only the plated amount is persisted; the
+        cooked total is used to bound it and is not stored (decision
+        2026-09-18). The JavaScript only repaints the numbers.
+        """
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
+        if entry_type not in ("catalog", "manual_intake", "recipe"):
+            return app_error_response(request, ValidationError, "Unknown food type.")
 
         try:
             cooked_weight = _parse_strict_bool(is_cooked_weight)
         except ValidationError:
             return app_error_response(request, ValidationError, "No se ha entendido la casilla 'Cooked weight'.")
-        parsed_amount = _to_float(amount_g)
-        parsed_total = _to_float(total_amount_g)
-        if parsed_amount is None or parsed_amount <= 0:
-            return render_fragment(P("Amount must be greater than 0.", cls="text-red-700"))
-        if parsed_total is not None and parsed_total > 0:
-            parsed_amount = min(parsed_amount, parsed_total)
+        try:
+            unit = AmountInputUnit((amount_unit or "").strip())
+            plated_unit = AmountInputUnit((plate_unit or "").strip())
+        except ValueError:
+            return render_fragment(P("Choose a valid unit.", cls="text-red-700"))
+        if unit is AmountInputUnit.PERCENT or plated_unit not in (AmountInputUnit.PERCENT, AmountInputUnit.GRAMS):
+            return render_fragment(P("Choose a valid unit.", cls="text-red-700"))
+        typed_amount = _to_float(amount_value)
+        typed_plate = _to_float(plate_value)
+        if typed_amount is None or typed_plate is None:
+            return render_fragment(P("Amount must be a number.", cls="text-red-700"))
         clean_cooking, cooking_error = _coerce_choice(
             cooking,
             options=COOKING_OPTIONS,
@@ -1742,21 +1805,51 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             user_id = get_current_user_id()
             if not user_id:
-                # Sin sesión: 401 (error_conventions.md §3.3), no fragmento con
-                # 200. Inalcanzable en producción porque el middleware ya cubre
-                # estas rutas; es defensa en profundidad (hallazgo 26).
-                return HTMLResponse(status_code=401)
+                # Defence in depth: the middleware already covers these routes
+                # (finding 26 of audit_intake_event).
+                return app_error_response(request, AuthenticationError, "Your session has expired.")
             origin_item = None
             if entry_type == "catalog":
                 origin_item = get_catalog_item(connection, entry_id)
             elif entry_type == "manual_intake":
                 origin_item = get_manual_intake(connection, entry_id)
-            elif entry_type == "recipe":
+            else:
                 origin_item = get_recipe(connection, entry_id)
             if not origin_item or not _can_view_entry(entry_type, origin_item, user_id):
                 return app_error_response(request, NotFoundError, "Item not found.")
             if entry_type == "catalog" and origin_item.get("deleted_at") is not None:
                 return render_fragment(P("This food is archived and must be copied first.", cls="text-red-700"))
+
+            recipe_rows = (
+                list_viewable_recipe_portions(connection, int(user_id), entry_id) if entry_type == "recipe" else []
+            )
+            # The serving is resolved from the database, never from the form
+            # (code_conventions.md 7.13). Same value FoodDetailPage shows as
+            # "serving": the summary default amount, floored at 1 g.
+            summary = _build_detail_summary(entry_type, origin_item, recipe_portions=recipe_rows)
+            serving_grams = max(1.0, float(summary.get("default_amount_g") or 100.0))
+            try:
+                total_grams = parse_amount_grams(amount_to_grams(typed_amount, unit, serving_grams))
+                if plated_unit is AmountInputUnit.PERCENT:
+                    if not (0.0 < typed_plate <= 100.0):
+                        raise ValidationError("plate_percent_out_of_range")
+                    plated_grams = total_grams * typed_plate / 100.0
+                else:
+                    # The page shows the plated grams with one decimal, so
+                    # "all of it" can exceed the total by that rounding.
+                    if not (0.0 < typed_plate <= total_grams + _PLATE_DISPLAY_TOLERANCE_G):
+                        raise ValidationError("plate_grams_out_of_range")
+                    plated_grams = min(typed_plate, total_grams)
+                plated_grams = parse_amount_grams(plated_grams)
+            except ValidationError:
+                # Form validation: 200 + fragment inside the form (9.5).
+                return render_fragment(
+                    P(
+                        "The amount must be greater than 0 g and at most 100000 g, and the "
+                        "amount to plate must be between 0 and the total.",
+                        cls="text-red-700",
+                    )
+                )
 
             try:
                 with connection.transaction():
@@ -1775,36 +1868,32 @@ def setup_food_routes(rt):
                     event_data = get_intake_event(connection, int(user_id), event_id)
                     offset_minutes = _event_auto_offset_minutes(event_data)
 
-                    created = []
-                    if entry_type in ("catalog", "manual_intake"):
+                    if entry_type != "recipe":
                         target_plate_id = _resolve_event_plate(
                             connection, int(user_id), event_id, plate_id, offset_minutes
                         )
-                        created.append(
-                            create_portion_detail(
-                                connection,
-                                int(user_id),
-                                PortionDetailCreate(
-                                    origin=PortionOrigin(entry_type),
-                                    origin_id=entry_id,
-                                    destination=PortionDestination.INTAKE_EVENT,
-                                    destination_id=event_id,
-                                    plate_id=target_plate_id,
-                                    amount=parsed_amount,
-                                    cooking=clean_cooking,
-                                    final_state=clean_final_state,
-                                    conservation=clean_conservation,
-                                    is_cooked_weight=(cooked_weight if entry_type == "catalog" else False),
-                                ),
-                                commit=False,
-                            )
+                        create_portion_detail(
+                            connection,
+                            int(user_id),
+                            PortionDetailCreate(
+                                origin=PortionOrigin(entry_type),
+                                origin_id=entry_id,
+                                destination=PortionDestination.INTAKE_EVENT,
+                                destination_id=event_id,
+                                plate_id=target_plate_id,
+                                amount=plated_grams,
+                                cooking=clean_cooking,
+                                final_state=clean_final_state,
+                                conservation=clean_conservation,
+                                is_cooked_weight=(cooked_weight if entry_type == "catalog" else False),
+                            ),
+                            commit=False,
                         )
-                    elif entry_type == "recipe":
-                        recipe_rows = list_portions_by_recipe(connection, int(user_id), entry_id)
+                    else:
                         total_recipe_amount = sum(float(row.amount or 0.0) for row in recipe_rows)
                         if total_recipe_amount <= 0:
-                            raise ValueError("Recipe has no ingredients to log.")
-                        factor = parsed_amount / total_recipe_amount
+                            raise ValidationError("recipe_without_ingredients")
+                        factor = plated_grams / total_recipe_amount
                         # Una receta importada entra como tanda propia, con el
                         # nombre de la receta (§4.6.5): es un plato completo,
                         # no ingredientes sueltos que se mezclen con los demás.
@@ -1817,45 +1906,42 @@ def setup_food_routes(rt):
                             ),
                             commit=False,
                         )
+                        created = 0
                         for row in recipe_rows:
                             row_amount = float(row.amount or 0.0) * factor
-                            if row_amount <= 0:
+                            if row_amount <= 0 or row.origin_id <= 0:
                                 continue
-                            if row.origin_id <= 0:
-                                continue
-                            created.append(
-                                create_portion_detail(
-                                    connection,
-                                    int(user_id),
-                                    PortionDetailCreate(
-                                        origin=row.origin,
-                                        origin_id=row.origin_id,
-                                        destination=PortionDestination.INTAKE_EVENT,
-                                        destination_id=event_id,
-                                        plate_id=recipe_plate_id,
-                                        amount=row_amount,
-                                        cooking=row.cooking,
-                                        conservation=row.conservation,
-                                        final_state=row.final_state,
-                                        is_cooked_weight=bool(row.is_cooked_weight),
-                                    ),
-                                    commit=False,
-                                )
+                            create_portion_detail(
+                                connection,
+                                int(user_id),
+                                PortionDetailCreate(
+                                    origin=row.origin,
+                                    origin_id=row.origin_id,
+                                    destination=PortionDestination.INTAKE_EVENT,
+                                    destination_id=event_id,
+                                    plate_id=recipe_plate_id,
+                                    amount=row_amount,
+                                    cooking=row.cooking,
+                                    conservation=row.conservation,
+                                    final_state=row.final_state,
+                                    is_cooked_weight=bool(row.is_cooked_weight),
+                                ),
+                                commit=False,
                             )
-                    else:
-                        raise ValueError("Unsupported entry type.")
-
-                    if not created or not all(created):
-                        raise ValueError("Could not log food.")
+                            created += 1
+                        if not created:
+                            raise ValidationError("recipe_without_ingredients")
             except NotFoundError:
                 # intake_event_id ajeno o archivado: recurso inexistente (§5.4),
                 # no un fallo de servidor (hallazgo 23).
-                return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
+                return app_error_response(request, NotFoundError, "That meal no longer exists.")
             except ConflictError:
                 # El evento ya no está 'planned'.
-                return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=409)
-            except ValueError as error:
-                return render_fragment(P(str(error), cls="text-red-700"))
+                return app_error_response(request, ConflictError, "That meal has already been confirmed.")
+            except ValidationError as error:
+                if str(error) == "recipe_without_ingredients":
+                    return render_fragment(P("Recipe has no ingredients to log.", cls="text-red-700"))
+                return render_fragment(P("Could not log this food: check the amounts.", cls="text-red-700"))
             return HTMLResponse("", headers={"HX-Redirect": "/food"})
 
     @rt("/food/list")
@@ -2181,7 +2267,7 @@ def setup_food_routes(rt):
                         commit=False,
                     )
 
-                    recipe_portions = list_portions_by_recipe(connection, int(user_id), recipe_id)
+                    recipe_portions = list_viewable_recipe_portions(connection, int(user_id), recipe_id)
                     created_ids = []
                     for row in recipe_portions:
                         if row.origin_id <= 0:

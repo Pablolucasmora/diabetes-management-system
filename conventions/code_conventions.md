@@ -1051,10 +1051,17 @@ petición y el swap `outerHTML` lo destruye.
 | `meal_hour` (hora y fecha) | `#cart_events_list` | `outerHTML` | `cart_events_list(...)` — es la única acción que reordena la lista (`meal_time`) |
 | `name`, `notes`, `meal_type`, `eating_out`, `insulin_dose`, `injection_zone` | `#cart_card_event_{id}` | `outerHTML` | `CartCard(event, portions, plates)` |
 | `POST /cart/portion/{portion_id}/amount` (payload `amount_value` + `amount_unit`), `…/offset`, `…/move`, `…/delete` | `#cart_card_event_{id}` | `outerHTML` | `CartCard(event, portions, plates)` |
-| `POST /cart/portion/{portion_id}/strictly_weighed`, `…/macros_quality`, `…/is_cooked_weight` | `#macros_summary_event_{id}` | `outerHTML` | `Div(MacrosSummary(...), id="macros_summary_event_{id}")` |
+| `POST /cart/portion/{portion_id}/strictly_weighed`, `…/macros_quality` | `#macros_summary_event_{id}` | `outerHTML` | `Div(MacrosSummary(...), id="macros_summary_event_{id}")` + swap OOB del propio control, `#portion_flag_{campo}_{portion_id}` (`PortionTriStateFlag`) |
+| `POST /cart/portion/{portion_id}/is_cooked_weight` | `#macros_summary_event_{id}` | `outerHTML` | `Div(MacrosSummary(...), id="macros_summary_event_{id}")` |
 | `POST /cart/event/{id}/plate`, `POST /cart/plate/{plate_id}/name`, `…/offset`, `…/apply_offset`, `…/delete` | `#cart_card_event_{id}` | `outerHTML` | `CartCard(event, portions, plates)` |
 | `delete`, `confirm` | `#cart_card_event_{id}` | `outerHTML` | cuerpo vacío (la tarjeta desaparece) y, si no queda ningún evento planificado, swap OOB de `#cart_body` con el carrito vacío |
 | `archive`, `restore` | página completa del carrito | `outerHTML` | `cart_main(...)`; no están enlazadas desde ninguna tarjeta todavía |
+
+Los dos flags de tres estados se repintan **fuera de banda** junto al resumen: el control lleva
+en `hx-vals` el estado siguiente, calculado en el servidor, así que si no se repinta desde la fila
+recién guardada sigue enviando el mismo valor y muestra un estado que la fila ya no tiene
+(`frontend_conventions.md` §6). El checkbox de `is_cooked_weight` no lo necesita: el navegador ya
+pinta su propio estado.
 
 El borrado de un ingrediente tiene **ruta propia** (`…/delete`) y no se expresa como cantidad `0`
 (decisión 2026-09-22): `…/amount` responde `422` a `<= 0`. Un mismo endpoint no puede tener dos

@@ -10,6 +10,7 @@ from datetime import datetime
 from DayBetes_food.domain.constants import (
     AmountInputUnit,
     InjectionZone,
+    MASS_SANITY_MAX_G,
     IntakeEventState,
     MealType,
 )
@@ -34,8 +35,9 @@ INTAKE_EVENT_NOTES_MAX_LENGTH = 500
 # límite clínico ni nutricional, solo evita guardar un valor corrupto o
 # manipulado como si fuera plausible. Igual al CHECK
 # ck_intake_event_ingested_amount de database/schema.py (measurement_conventions.md
-# §6.9.2, decisión 2026-09-10).
-INTAKE_EVENT_INGESTED_AMOUNT_MAX_G = 100000
+# §6.9.2, decisión 2026-09-10). Es la cota de masa compartida con
+# portion_detail, declarada una sola vez en domain/constants.py (§4.7).
+INTAKE_EVENT_INGESTED_AMOUNT_MAX_G = MASS_SANITY_MAX_G
 
 # Unidades admitidas para la cantidad ingerida que se envía al confirmar un
 # evento: gramos absolutos del plato servido o porcentaje de ese plato. Son
