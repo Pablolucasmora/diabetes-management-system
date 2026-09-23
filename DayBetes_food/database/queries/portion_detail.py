@@ -173,8 +173,9 @@ def _plate_row(connection, plate_id: int):
 def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate, commit: bool = True) -> int:
     """Insert one portion, merging into an existing row when the key matches (4.6.4).
 
-    The existing row wins: its preparation quality flags and offset are kept,
-    only `amount` is summed (decision 2026-09-19).
+    The key includes `is_cooked_weight` (decision 2026-09-23). The existing
+    row wins: its data quality flags and offset are kept, only `amount` is
+    summed (decision 2026-09-19).
     """
     amount = parse_amount_grams(payload.amount)
     cooking = validate_preparation_choice("cooking", payload.cooking)
@@ -237,7 +238,7 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
             %(strictly_weighed)s, %(macros_quality)s,
             %(is_cooked_weight)s, %(offset_minutes)s
         )
-        ON CONFLICT (plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state)
+        ON CONFLICT (plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state, is_cooked_weight)
         WHERE plate_id IS NOT NULL
         DO UPDATE SET
             amount = portion_detail.amount + EXCLUDED.amount,
@@ -401,8 +402,30 @@ def update_portion_offset(connection, user_id: int, portion_id: int, offset_minu
 
 
 def update_portion_flag(connection, user_id: int, portion_id: int, field: str, value, commit: bool = True) -> None:
+    """Write one data quality flag of a portion.
+
+    `is_cooked_weight` is part of the uniqueness key (4.6.4, decision
+    2026-09-23): if the new value makes the row equal to another one of the
+    same plate, the amounts are summed there instead of writing the flag.
+    """
     if field not in _FLAG_FIELDS:
         raise ValidationError("invalid_portion_flag")
+    if field == "is_cooked_weight":
+        current = get_portion_detail(connection, user_id, portion_id)
+        if current.plate_id is not None:
+            sibling_id = _find_preparation_sibling(
+                connection,
+                user_id,
+                current,
+                current.plate_id,
+                current.cooking,
+                current.conservation,
+                current.final_state,
+                bool(value),
+            )
+            if sibling_id is not None:
+                _merge_into_sibling(connection, user_id, portion_id, sibling_id, commit)
+                return
     query = f"""
         UPDATE portion_detail pd
         SET {field} = %(value)s, updated_at = NOW()
@@ -421,7 +444,14 @@ def update_portion_flag(connection, user_id: int, portion_id: int, field: str, v
 
 
 def _find_preparation_sibling(
-    connection, user_id: int, portion: PortionDetailRead, plate_id: int, cooking, conservation, final_state
+    connection,
+    user_id: int,
+    portion: PortionDetailRead,
+    plate_id: int,
+    cooking,
+    conservation,
+    final_state,
+    is_cooked_weight: bool,
 ):
     query = f"""
         SELECT pd.id
@@ -433,6 +463,7 @@ def _find_preparation_sibling(
           AND pd.cooking IS NOT DISTINCT FROM %(cooking)s
           AND pd.conservation IS NOT DISTINCT FROM %(conservation)s
           AND pd.final_state IS NOT DISTINCT FROM %(final_state)s
+          AND pd.is_cooked_weight IS NOT DISTINCT FROM %(is_cooked_weight)s
         {_PORTION_OWNED_BY_USER}
         LIMIT 1;
     """
@@ -444,6 +475,7 @@ def _find_preparation_sibling(
         "cooking": cooking,
         "conservation": conservation,
         "final_state": final_state,
+        "is_cooked_weight": bool(is_cooked_weight),
         "user_id": user_id,
     }
     row = _execute_query(connection, query, params, commit=False)
@@ -526,6 +558,7 @@ def update_portion_detail_fields(
             resolved.get("cooking", current.cooking),
             resolved.get("conservation", current.conservation),
             resolved.get("final_state", current.final_state),
+            current.is_cooked_weight,
         )
         if sibling_id is not None:
             _merge_into_sibling(connection, user_id, portion_id, sibling_id, commit)
@@ -571,6 +604,7 @@ def move_portion_to_plate(connection, user_id: int, portion_id: int, target_plat
         current.cooking,
         current.conservation,
         current.final_state,
+        current.is_cooked_weight,
     )
     if sibling_id is not None:
         _merge_into_sibling(connection, user_id, portion_id, sibling_id, commit)

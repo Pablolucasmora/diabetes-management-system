@@ -82,12 +82,24 @@
   }
   window.dbFoodDetailSyncCart = syncCartVisibility;
 
+  // Catalog macros are per 100 g of RAW food, so a weight taken already cooked
+  // is converted back with cooking_factor = cooked/raw, same as
+  // portion_macro_amount on the server (measurement_conventions.md 5.2). Only
+  // the macros use it: the form still sends the weighed amount.
+  function macroGrams(root, grams) {
+    var checkbox = root.querySelector("input[name='is_cooked_weight']");
+    if (!checkbox || !checkbox.checked) return grams;
+    var factor = toNumber(root.getAttribute("data-detail-cooking-factor"));
+    return factor > 0 ? grams / factor : grams;
+  }
+
   function updateMacros(root, grams) {
     var nodes = root.querySelectorAll("[data-detail-macro-key]");
+    var rawGrams = macroGrams(root, grams);
     for (var i = 0; i < nodes.length; i += 1) {
       var node = nodes[i];
       var per100 = toNumber(node.getAttribute("data-per100"));
-      var value = (grams * per100) / 100;
+      var value = (rawGrams * per100) / 100;
       var unit = node.getAttribute("data-unit") || "g";
       var decimals = unit === "kcal" ? 0 : 1;
       node.textContent = formatValue(value, decimals) + " " + unit;

@@ -103,15 +103,15 @@ def _base_html_shell(content_html: str) -> str:
     <script src="https://cdn.jsdelivr.net/gh/answerdotai/fasthtml-js@1.0.12/fasthtml.js" defer></script>
     <script src="https://cdn.jsdelivr.net/gh/answerdotai/surreal@main/surreal.js" defer></script>
     <script src="https://cdn.jsdelivr.net/gh/gnat/css-scope-inline@main/script.js" defer></script>
-    <script src="/js/csrf.js" defer></script>
-    <script src="/js/page_loading.js" defer></script>
-    <script src="/js/app_toast.js" defer></script>
-    <script src="/js/island_indicator.js" defer></script>
-    <script src="/js/browser_tweaks.js" defer></script>
-    <script src="/js/food_quick_create.js?v=18" defer></script>
-    <script src="/js/rescue_power_panel.js?v=1" defer></script>
-    <script src="/js/cart_units.js" defer></script>
-    <script src="/js/food_detail.js" defer></script>
+    <script src="{asset_busted("/js/csrf.js")}" defer></script>
+    <script src="{asset_busted("/js/page_loading.js")}" defer></script>
+    <script src="{asset_busted("/js/app_toast.js")}" defer></script>
+    <script src="{asset_busted("/js/island_indicator.js")}" defer></script>
+    <script src="{asset_busted("/js/browser_tweaks.js")}" defer></script>
+    <script src="{asset_busted("/js/food_quick_create.js")}" defer></script>
+    <script src="{asset_busted("/js/rescue_power_panel.js")}" defer></script>
+    <script src="{asset_busted("/js/cart_units.js")}" defer></script>
+    <script src="{asset_busted("/js/food_detail.js")}" defer></script>
     <script src="{asset_busted("/js/scanner.js")}" defer></script>
     <style>
       body, html {{

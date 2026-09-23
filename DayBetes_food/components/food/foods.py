@@ -3295,6 +3295,7 @@ def FoodDetailPage(
                             id=f"is_cooked_weight_{root_id}",
                             value="true",
                             cls=CHECKBOX_CLS,
+                            onchange=f"dbFoodDetailPlateRefresh('{root_id}')",
                         ),
                         cls="flex items-center gap-2",
                     )
@@ -3470,6 +3471,10 @@ def FoodDetailPage(
         data_detail_plate_equivalent_id=plate_equivalent_id,
         data_detail_leftovers_id=leftovers_id,
         data_detail_base_unit=base_unit,
+        # Same fallback as portion_macro_amount: a missing factor is neutral.
+        data_detail_cooking_factor=(
+            str(_float_or_zero(entry.get("cooking_factor")) or 1.0) if entry_type == "catalog" else None
+        ),
         data_detail_persist_key=persist_key,
         data_hide_cart="true",
         id=root_id,

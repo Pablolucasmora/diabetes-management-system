@@ -222,6 +222,15 @@ WHERE plate_id IS NOT NULL
 
 `plate_id` sustituye a `intake_event_id` porque la tanda ya determina el evento. Sin este cambio, el mismo pan en el primer plato y en el segundo se fusionaría en una sola fila. El resto de la regla se mantiene: añadir un alimento que ya está **en esa tanda** con los tres atributos de preparación iguales suma las cantidades en la fila existente; si alguno difiere, se crea una fila aparte.
 
+**`is_cooked_weight` forma parte de la clave** (2026-09-23; modifica la regla de fusión de la decisión 2026-09-19). El índice queda así:
+
+```text
+UNIQUE NULLS NOT DISTINCT (plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state, is_cooked_weight)
+WHERE plate_id IS NOT NULL
+```
+
+`amount` guarda lo que el usuario pesó (§5.2), y 100 g pesados en crudo y 100 g pesados en cocido son cantidades de alimento distintas: sumarlas en una fila con un único valor de la casilla convertiría mal una de las dos. Por eso la misma comida pesada en crudo y en cocido son dos filas aparte, y solo se suman cuando la casilla coincide.
+
 **Es un índice único parcial, no un constraint de tabla, y el `WHERE` no es opcional.** `plate_id` es nulo en las porciones con destino `recipe` y `fridge`, y con `NULLS NOT DISTINCT` esos nulos se consideran iguales entre sí: sin el filtro, el mismo alimento con la misma preparación en **dos recetas distintas** chocaría como si fuera un duplicado. La unicidad es dentro de la tanda y solo aplica a las porciones que tienen tanda.
 
 **La fusión es real en la base, no solo visual** (decisión 2026-09-19). Antes de esta regla, añadir dos veces el mismo alimento insertaba dos filas y `group_portions` las sumaba solo al pintar; la fusión física ocurría únicamente si el usuario editaba la cantidad desde el carrito. A partir de aquí, la inserción fusiona en la propia tabla, para que el análisis no tenga que deduplicar.
@@ -229,7 +238,7 @@ WHERE plate_id IS NOT NULL
 **Qué ocurre con los campos que no están en la clave al fusionar** (decisión 2026-09-19, cierra el punto que el 2026-09-18 dejaba abierto):
 
 - `amount` **se suma**: es el sentido mismo de la fusión.
-- `strictly_weighed`, `macros_quality` e `is_cooked_weight` **conservan el valor de la fila existente**. Gana lo que ya estaba: la fila lleva ahí desde la primera adición y su calidad de dato ya está afirmada; una adición posterior no sabe más sobre ella.
+- `strictly_weighed` y `macros_quality` **conservan el valor de la fila existente**. Gana lo que ya estaba: la fila lleva ahí desde la primera adición y su calidad de dato ya está afirmada; una adición posterior no sabe más sobre ella. `is_cooked_weight` ya no entra en esta regla: desde el 2026-09-23 es parte de la clave, así que dos filas que se fusionan lo tienen igual.
 - `offset_minutes` no necesita regla: dentro de una misma tanda el offset heredado ya coincide.
 
 La misma regla se aplicó retroactivamente al histórico en la migración (§4.6.6).
@@ -238,7 +247,9 @@ La misma regla se aplicó retroactivamente al histórico en la migración (§4.6
 `conservation` y `final_state` forman parte de la clave, así que cambiarlos o vaciarlos puede
 hacer que la fila coincida con otra hermana de la misma tanda. En ese caso **se suma `amount` en
 la fila existente y se elimina la editada**, en la misma transacción: mismo criterio que al añadir
-y que al mover entre tandas, y nunca un error de integridad devuelto como `500`.
+y que al mover entre tandas, y nunca un error de integridad devuelto como `500`. Lo mismo vale para
+`is_cooked_weight` (2026-09-23): marcar o desmarcar la casilla en el carrito puede igualar la fila
+con otra de la misma tanda, y entonces se fusionan con esta misma regla.
 
 #### 4.6.5 Ciclo de vida
 

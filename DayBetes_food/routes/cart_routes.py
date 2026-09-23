@@ -840,6 +840,11 @@ def setup_cart_routes(rt):
                         _resync_consumed_event_metrics(connection, int(user_id), event_id, portions)
             except NotFoundError:
                 return _error(request, NotFoundError, _INGREDIENT_GONE)
+            if field_name == "is_cooked_weight":
+                # Part of the uniqueness key (4.6.4, decision 2026-09-23):
+                # toggling it can merge the row into another one or change the
+                # difference labels, so the whole card is repainted.
+                return _card_response(request, connection, int(user_id), event_id)
             if is_consumed:
                 # El fragmento debe mostrar el snapshot recién guardado, no el
                 # que se leyó antes de recalcularlo.

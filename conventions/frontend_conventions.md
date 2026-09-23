@@ -147,12 +147,16 @@ En la pantalla de añadir alimento, **junto al selector de comida (meal selector
 ### 7.8 Agrupación de filas iguales
 
 La agrupación visual de porciones del mismo alimento (`group_portions`) se hace **dentro de cada
-tanda** y **por forma de preparación**, con la misma clave que la unicidad de §4.6.4
-(`cooking`, `conservation`, `final_state`): agrupar ignorándola colapsaría en una fila los 100 g
-de arroz hervido y los 50 g de arroz frito, y editar la cantidad los consolidaría en uno solo.
+tanda** y **por forma de preparación y de pesada**, con la misma clave que la unicidad de §4.6.4
+de `measurement_conventions.md` (`cooking`, `conservation`, `final_state`, `is_cooked_weight`):
+agrupar ignorándola colapsaría en una fila los 100 g de arroz hervido y los 50 g de arroz frito,
+y editar la cantidad los consolidaría en uno solo.
 Cuando una tanda tiene **dos o más filas del mismo alimento**, cada una marca en pequeño, junto a
-su nombre, **los valores que difieren** de la otra (solo esos, no los tres siempre), para que se
-entienda por qué están separadas.
+su nombre, **los valores que difieren** de la otra (solo esos, no todos siempre), para que se
+entienda por qué están separadas. La diferencia de pesada se marca como `Weighed: raw` /
+`Weighed: cooked`. Como la casilla `Cooked weight` es parte de la clave, al pulsarla en el
+carrito se repinta la tarjeta entera, no solo el resumen de macros: puede fusionar dos filas o
+cambiar las marcas de diferencia.
 
 ### 7.9 Ancho en móvil
 

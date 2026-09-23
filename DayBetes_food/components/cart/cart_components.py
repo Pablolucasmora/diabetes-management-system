@@ -714,6 +714,8 @@ def PlateBlock(event, plate, plate_portions, show_header: bool, plates, plate_la
         for field, label in (("cooking", "Cooking"), ("conservation", "Conservation"), ("final_state", "Final state")):
             if len({getattr(other["sample"], field) for other in siblings}) > 1:
                 result.append((label, getattr(sample, field)))
+        if len({bool(other["sample"].is_cooked_weight) for other in siblings}) > 1:
+            result.append(("Weighed", "cooked" if sample.is_cooked_weight else "raw"))
         return result
 
     return Div(
@@ -897,7 +899,9 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
                 hx_post=f"/cart/portion/{portion_id}/is_cooked_weight",
                 aria_label=f"Cooked weight for {ingredient_name}",
                 hx_swap="outerHTML",
-                hx_target=f"#macros_summary_event_{event.id}",
+                # Whole card, not only the summary: the flag is part of the
+                # uniqueness key (4.6.4), so toggling it can merge two rows.
+                hx_target=card_target,
             ),
             cls="flex items-center gap-2"
         ) if sample.origin is PortionOrigin.CATALOG else None,

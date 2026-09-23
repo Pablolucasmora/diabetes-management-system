@@ -1135,7 +1135,7 @@ def _ensure_portion_detail_schema(cursor):
                 sum(amount) AS total_amount
             FROM portion_detail
             WHERE plate_id IS NOT NULL
-            GROUP BY plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state
+            GROUP BY plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state, is_cooked_weight
             HAVING count(*) > 1
         )
     """
@@ -1161,11 +1161,15 @@ def _ensure_portion_detail_schema(cursor):
     # and fridge portions, and with NULLS NOT DISTINCT those nulls would be
     # considered equal to each other, so the same food with the same preparation
     # in two different recipes would clash as a false duplicate. Uniqueness is
-    # inside the plate (§4.6.4).
+    # inside the plate (§4.6.4). is_cooked_weight is part of the key since
+    # 2026-09-23: the same grams weighed raw and weighed cooked are different
+    # amounts of food, so they are separate rows. The old index without it is
+    # dropped, otherwise it would keep rejecting that pair.
+    cursor.execute("DROP INDEX IF EXISTS uq_portion_detail_plate_origin_preparation;")
     cursor.execute(
         """
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_portion_detail_plate_origin_preparation
-        ON portion_detail (plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state)
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_portion_detail_plate_origin_preparation_cooked
+        ON portion_detail (plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state, is_cooked_weight)
         NULLS NOT DISTINCT
         WHERE plate_id IS NOT NULL;
         """
@@ -1247,7 +1251,7 @@ def _ensure_portion_detail_schema(cursor):
                 sql.Identifier(f"idx_portion_detail_{column}"), sql.Identifier(column)
             )
         )
-    # Redundant with uq_portion_detail_plate_origin_preparation, whose first
+    # Redundant with uq_portion_detail_plate_origin_preparation_cooked, whose first
     # column is plate_id: same prefix, same use (§11.7). The index is created
     # earlier in this same hook and dropped here.
     cursor.execute("DROP INDEX IF EXISTS idx_portion_detail_plate_id;")

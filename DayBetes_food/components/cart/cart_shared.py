@@ -137,6 +137,7 @@ def group_portions(portions):
             portion.cooking,
             portion.conservation,
             portion.final_state,
+            portion.is_cooked_weight,
         )
         if key not in grouped:
             grouped[key] = {
