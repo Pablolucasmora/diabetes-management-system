@@ -96,7 +96,7 @@ def get_catalog_item_by_barcode(connection, barcode: str, viewer_user_id: int = 
     params = {"barcode": clean, "viewer_user_id": viewer_user_id}
     visibility_clause = ""
     if viewer_user_id is not None:
-        visibility_clause = "AND (is_private = FALSE OR created_by = %(viewer_user_id)s)"
+        visibility_clause = "AND (entity.is_private = FALSE OR entity.created_by = %(viewer_user_id)s)"
     query = f"""
         SELECT entity.*, fb.label AS brand,
                EXISTS (

@@ -73,6 +73,14 @@ Un CRUD:
 - **`__init__.py`** re-exporta toda la API pública de todos los módulos de tabla y de `entries.py` (no los helpers privados de `crud.py`). El resto de la aplicación (`routes/`, `services/`, `components/`) importa siempre `from DayBetes_food.database.queries import <nombre>`, nunca del módulo de tabla concreto — así ningún punto de import fuera de `database/queries/` depende de en qué archivo vive cada query.
 - Añadir una tabla nueva implica: crear su módulo, añadir sus funciones públicas al re-export de `__init__.py`, y mover a `crud.py` cualquier helper que termine siendo compartido con otra tabla.
 
+#### 1.3.2 Columnas cualificadas en SQL
+
+Toda referencia a una columna en una query SQL indica la tabla de la que proviene, mediante su alias o el nombre de la tabla (`entity.created_by`, `fb.label`, `c.is_private`). La regla se aplica también a las queries de una sola tabla y a los fragmentos SQL construidos por separado (cláusulas de visibilidad, filtros dinámicos, helpers de `crud.py`) que después se concatenan en una query mayor.
+
+Motivo: una columna sin cualificar solo funciona mientras ninguna otra tabla del `FROM` tenga una columna con el mismo nombre. Añadir un `JOIN` o una columna nueva a otra tabla (por ejemplo, `created_by` en `food_brands`) convierte en `AmbiguousColumn` una query que antes funcionaba, y el fallo aparece en ejecución, no al escribir el cambio.
+
+Excepciones, solo donde PostgreSQL no admite cualificador: la lista de columnas de un `INSERT`, las columnas destino de `SET` en un `UPDATE` y la lista de columnas de `ON CONFLICT (...)`. En un `UPDATE`, las expresiones del lado derecho del `SET`, el `WHERE` y el `RETURNING` sí se cualifican.
+
 ### 1.4 Componentes y frontend
 
 Las funciones de `components/` reciben datos ya consultados y renderizan HTML o configuran HTMX.
