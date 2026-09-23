@@ -1,6 +1,6 @@
 # Plan de auditoría y estabilización — DayBetes
 
-Última actualización: 2026-09-11
+Última actualización: 2026-09-23
 
 ## Objetivo y marco de tiempo
 
@@ -163,6 +163,17 @@ Ya cerradas (sesión previa a este plan):
       (`meal_type` ya implementado), H15 `render_page()` transversal, H21
       caducidad de `planned`, H27 interfaz de archivado, listeners
       `addSuccess`/`addError`— en `audit/deuda_pendiente.md`)
+- [x] `portion_detail` — 2026-09-23 (audit → feedback → plan → review →
+      build → review de cierre, 27 hallazgos: resueltos, diferidos por
+      decisión explícita o dejados como limitación declarada; plan
+      `audit/plan.md` T0-T6 implementado, hallazgos del review de cierre
+      corregidos en `29beae9`, merge en `main` con `abfde09`; ajuste
+      posterior del mismo día: `is_cooked_weight` entra en la clave única de
+      la tanda y la vista previa de la página del ingrediente aplica el
+      `cooking_factor` (`3403a15`); deuda restante —H1 versionado de
+      alimentos, H4 borrado de usuario, H11 actor, H27 rutas que exigen
+      `planned`, `ml` en líquidos, y la parte transversal del fallo SQL →
+      `None` en `crud.py`— en `audit/deuda_pendiente.md`)
 
 Fuera de alcance por ahora (decisión tuya, no técnica):
 - `fridge` — funcionalidad todavía no implementada, no se audita hasta que exista.
@@ -177,23 +188,55 @@ prevista el 2026-09-08, pero en la práctica se auditó `intake_event` (Grupo 4)
 antes que `recipe`/`catalog`/`manual_intake`/`user_favorites` (Grupos 2-3), por
 decisión del usuario en el momento. Se deja constancia aquí en vez de
 reescribir la secuencia con efecto retroactivo. `portion_detail` (también
-Grupo 4) es la tabla en curso ahora mismo por continuidad directa con
+Grupo 4) se auditó justo después por continuidad directa con
 `intake_event` (hallazgo 28 trasladado, dependencia de
-`measurement_conventions.md` §6.9.3).
+`measurement_conventions.md` §6.9.3) y quedó cerrada el 2026-09-23. Con ella
+el Grupo 4 está completo; se retoma el orden previsto por el Grupo 2,
+empezando por `catalog` (decisión del usuario, 2026-09-23): es la raíz de
+la que dependen `recipe` y `manual_intake`, y es la tabla donde se documenta
+la decisión de catálogos abiertos del §4.5.
 
-Pendientes (6), agrupadas por tamaño/dependencia — dentro de cada
+Pendientes (4), agrupadas por tamaño/dependencia — dentro de cada
 grupo el orden es libre, pero conviene mantener el orden entre grupos:
 
 ### En curso
-- [ ] `portion_detail` — auditoría en marcha (`audit/audit_portion_detail.md`)
+- [ ] `catalog` — siguiente tabla (Grupo 2), a partir del 2026-09-23. Aún
+      no existe `audit/audit_catalog.md`: el primer paso es la auditoría
+      contra §13. Puntos de partida ya conocidos, que no hay que
+      redescubrir:
+      - la decisión de catálogos abiertos del §4.5 (sección dedicada
+        arriba), incluido el `CHECK`/validación de servidor de
+        `portion_detail.cooking/conservation/final_state` que el hallazgo
+        19 de `portion_detail` difirió aquí, y `manual_intake.origin`;
+      - los tres "Defectos de `catalog`" que dejó el cierre de
+        `food_brands` en `audit/deuda_pendiente.md` (timestamps sin zona,
+        índice único no parcial, constraints sin nombre);
+      - `cooking_factor`: "sin factor" y "factor 1.0" son hoy
+        indistinguibles (comportamiento interino de la decisión
+        2026-09-18, pendiente de la tabla de equivalencias);
+      - la convención nueva `code_conventions.md` §1.3.2 (columnas
+        cualificadas en SQL), que nació de un `AmbiguousColumn` en
+        `queries/catalog.py`.
 
 ### Grupo 2 — Entidades principales de comida
-- [ ] `recipe`
-- [ ] `catalog` *(aquí se documenta la decisión de catálogos abiertos del §4.5)*
+- [ ] `recipe` — sus porciones viven en `portion_detail` (destino
+      `recipe`, ya cerrada); la lectura de recetas públicas pasa por
+      `list_viewable_recipe_portions`; deuda relacionada: "Add recipe to
+      plate functionality" (2026-09-20) en `audit/deuda_pendiente.md`.
 - [ ] `manual_intake`
 
 ### Grupo 3 — Relaciones dependientes
 - [ ] `user_favorites`
+
+### Opcionales, fuera del audit global actual
+Tablas creadas después de este plan, ya siguiendo `conventions/`. Por
+decisión del usuario (2026-09-23) no entran en el audit global actual ni
+cuentan para el cierre del plazo: se pueden auditar después, si se ve
+necesario.
+- `intake_plate` — tandas de un evento (decisión 2026-09-19), nacida
+  durante la auditoría de `portion_detail`.
+- `meal_type_schedule` — franjas horarias por defecto de cada tipo de
+  comida (`feat/meal-type-schedule`).
 
 ## Estimación orientativa (revisar tras las 2-3 primeras tablas)
 
