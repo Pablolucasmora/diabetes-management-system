@@ -99,6 +99,17 @@
 
     stopScanner();
 
+    // htmx 2 parses responses with DOMParser and adopts the nodes into the
+    // page. Safari does not paint an adopted <video> (it still decodes frames,
+    // so barcodes are detected, but it stays blank until a reload). A copy
+    // created in the live document is painted; muted/playsInline are set as
+    // properties because cloneNode does not initialise them from attributes.
+    var freshVideo = video.cloneNode(false);
+    video.replaceWith(freshVideo);
+    video = freshVideo;
+    video.muted = true;
+    video.playsInline = true;
+
     var output = byId("scanner_detected_code");
     var overlay = byId("scanner_border_overlay");
     var manualInput = byId("scanner_manual_input");
