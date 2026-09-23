@@ -426,13 +426,18 @@ def update_portion_flag(connection, user_id: int, portion_id: int, field: str, v
             if sibling_id is not None:
                 _merge_into_sibling(connection, user_id, portion_id, sibling_id, commit)
                 return
-    query = f"""
+    query = sql.SQL(
+        """
         UPDATE portion_detail pd
         SET {field} = %(value)s, updated_at = NOW()
         WHERE pd.id = %(portion_id)s
-        {_PORTION_OWNED_BY_USER}
+        {owned}
         RETURNING pd.id;
-    """
+        """
+    ).format(
+        field=sql.Identifier(field),
+        owned=sql.SQL(_PORTION_OWNED_BY_USER),
+    )
     result = _execute_write(
         connection,
         query,

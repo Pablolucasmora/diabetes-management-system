@@ -1237,6 +1237,20 @@ La clasificación no se deduce del verbo de una función. Debe documentarse por 
 
 Excepcionalmente, una tabla puede tener clasificación híbrida condicionada por una columna de estado, cuando esa columna distingue de forma inequívoca un valor sin vida propia (ej. un borrador) de un valor con valor histórico o clínico. Esto debe documentarse explícitamente por tabla, incluyendo qué valores de la columna caen en cada clasificación; no se asume implícitamente. Ejemplo: `intake_event.state = 'planned'` es no archivable, `state = 'consumed'` es archivable (`conventions/decisions.md`, 2026-09-08).
 
+#### 11.2.1 Registro de clasificación por tabla
+
+La clasificación de cada tabla se declara en este registro, que es el sitio único donde "debe documentarse por tabla" (2026-09-23). Al cerrar la auditoría de una tabla se añade o actualiza su fila. Una clasificación que no está decidida se escribe como **pendiente** con su referencia; no se deduce del código ni de la naturaleza de la tabla.
+
+| Tabla | Clasificación | Borrado | Fuente |
+|---|---|---|---|
+| `users` | **Pendiente**: ciclo de vida sin definir (sin `deleted_at` y sin ninguna ruta que ponga `is_active = FALSE`). | Ninguno hoy. | `AUDIT_PLAN.md`, "Deuda técnica ya conocida". |
+| `auth_sessions` | **Dependent** de `users` (operativa, ni clínica ni histórica). | Físico: `ON DELETE CASCADE` desde `users` y purga a los 14 días. | `audit/audit_auth_sessions.md`; decisión 2026-09-02/03. |
+| `auth_rate_limits` | **Pendiente**: no hay clasificación documentada. | Físico en la práctica (contador operativo). | Sin auditoría propia; extraída de `auth/service.py`. |
+| `food_brands` | **Pendiente**: por naturaleza no archivable (catálogo auxiliar), pero `is_active` actúa como soft-delete de facto y no encaja en §11.2/§11.3. | Sin función de borrado. | `audit/audit_food_brands.md`; `audit/deuda_pendiente.md`, H4 y H11. |
+| `insulin_injections` | **Historical**. Pendiente decidir si es archivable (`deleted_at`) o no archivable con borrado físico documentado. | Físico (statu quo). | `audit/audit_insulin_injections.md`; `audit/deuda_pendiente.md`, "Clasificación archivable / no archivable". |
+| `intake_event` | **Híbrida por `state`**: `planned` no archivable, `consumed` archivable. | Físico en `planned`; `deleted_at` en `consumed`. | Decisión 2026-09-08. |
+| `portion_detail` | **Dependent** de su destino (`intake_event`, `recipe` o `fridge`); hereda su propietario y su ciclo de vida. | `CASCADE` desde el destino. El borrado físico es apropiado en recetas y en eventos `planned`; en un evento `consumed` es histórico clínico y hoy lo impide la ruta, no la query (limitación declarada). | `audit/audit_portion_detail.md`; `measurement_conventions.md` §6.9.3; `audit/deuda_pendiente.md`, `portion_detail` H27. |
+
 ### 11.3 Soft-delete
 
 Una entidad archivable utiliza un campo nullable `deleted_at`.
