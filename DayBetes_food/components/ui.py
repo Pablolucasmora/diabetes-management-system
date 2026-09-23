@@ -112,7 +112,7 @@ def _base_html_shell(content_html: str) -> str:
     <script src="/js/rescue_power_panel.js?v=1" defer></script>
     <script src="/js/cart_units.js" defer></script>
     <script src="/js/food_detail.js" defer></script>
-    <script src="/js/scanner.js" defer></script>
+    <script src="{asset_busted("/js/scanner.js")}" defer></script>
     <style>
       body, html {{
         background-color: #f6f2eb;
