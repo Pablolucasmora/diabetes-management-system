@@ -103,6 +103,22 @@ nunca.
 
 ## Decisión diferida: catálogos abiertos del §4.5
 
+> **Actualización 2026-09-24 (auditoría de `catalog`, hallazgo 12).** Los
+> estados físicos (`catalog.initial_state`, `portion_detail.final_state`),
+> la cocción (`portion_detail.cooking`) y la conservación
+> (`portion_detail.conservation`) **dejan de ser listas abiertas**: pasan a
+> ser enums cerrados con `CHECK` con nombre en las cuatro columnas, porque
+> solo se amplían editando el código (`code_conventions.md` §4.1, y §4.5 con
+> la definición de "ampliar"). La asimetría de `initial_state` se resuelve
+> añadiendo el `CHECK` a las otras tres, no quitándoselo. La categoría ya se
+> había decidido cerrada (hallazgo 1). En §4.5 quedan tres conceptos
+> abiertos, ahora listados en la propia convención: marcas (ya
+> implementado), subtipos (`catalog.subtype`, `manual_intake.subtype`) y
+> origen de comida manual (`manual_intake.origin`), estos dos últimos
+> todavía sin catálogo. Detalle en `audit/feedbacks/feedback_catalog.md`,
+> punto 12. No registrado en `decisions.md`, por decisión del usuario. El
+> texto de abajo se conserva como estaba el 2026-09-08.
+
 `code_conventions.md` §4.5 nombra seis conceptos que deberían vivir en
 tablas de catálogo (id, código, etiqueta, `is_active`): subtipos de
 comida, marcas de comida, origen de comida manual, estados físicos
@@ -205,7 +221,8 @@ grupo el orden es libre, pero conviene mantener el orden entre grupos:
       contra §13. Puntos de partida ya conocidos, que no hay que
       redescubrir:
       - la decisión de catálogos abiertos del §4.5 (sección dedicada
-        arriba), incluido el `CHECK`/validación de servidor de
+        arriba; **resuelta el 2026-09-24**: estados, cocción y
+        conservación pasan a enums cerrados, hallazgo 12), incluido el `CHECK`/validación de servidor de
         `portion_detail.cooking/conservation/final_state` que el hallazgo
         19 de `portion_detail` difirió aquí, y `manual_intake.origin`;
       - los tres "Defectos de `catalog`" que dejó el cierre de
@@ -270,4 +287,5 @@ medida real de cuánto tarda el ciclo nuevo por tabla.
 - `get_auth_rate_limit()` usa `SELECT ... FOR UPDATE` sin
   `connection.transaction()` explícita (funciona por el modo
   implícito de psycopg, pero no es literal a la letra de §6.8).
-- Catálogos abiertos del §4.5 sin migrar (ver sección dedicada arriba).
+- Catálogos abiertos del §4.5 sin migrar: tras el 2026-09-24 solo quedan
+  subtipos y origen de comida manual (ver sección dedicada arriba).
