@@ -298,7 +298,7 @@ nutriente_total = nutriente_100g * cantidad_g / 100
 
 En un `intake_event`, `cantidad_g` es `portion_detail.amount` (§4.4), que es la única columna de cantidad de la tabla.
 
-**Peso pesado en cocido** (decisión 2026-09-18): si la porción tiene `is_cooked_weight = TRUE`, la cantidad se convierte a peso en crudo **solo dentro de este cálculo**, aplicando el `cooking_factor` del alimento de `catalog`; `amount` sigue guardando lo que el usuario pesó y nunca se sobrescribe con el resultado de la conversión. La conversión se aplica **solo a ingredientes de `catalog`** (en `manual_intake` este campo no se usa ni se muestra) y se aplica siempre: `cooking_factor` tiene `DEFAULT 1.0`, con el que la operación es neutra. Los macros de `catalog` están expresados en crudo, salvo en productos precocinados que ya traen sus valores cocinados.
+**Peso pesado en cocido** (decisión 2026-09-18): si la porción tiene `is_cooked_weight = TRUE`, la cantidad se convierte a peso en crudo **solo dentro de este cálculo**, aplicando el `cooking_factor` del alimento de `catalog`; `amount` sigue guardando lo que el usuario pesó y nunca se sobrescribe con el resultado de la conversión. La conversión se aplica **solo a ingredientes de `catalog`** (en `manual_intake` este campo no se usa ni se muestra) y **solo a alimentos con `cooking_factor`** (decisión 2026-09-24, que modifica la de 2026-09-18): si el factor es `NULL`, no se ofrece pesar en cocido y el servidor rechaza `is_cooked_weight = TRUE` con `422`. Una porción heredada con `TRUE` cuyo alimento se ha quedado sin factor se calcula con factor neutro (`1`) y conserva el control para poder desmarcarlo. Los macros de `catalog` están expresados en crudo, salvo en productos precocinados que ya traen sus valores cocinados.
 
 El cálculo debe utilizar el valor almacenado sin redondear previamente.
 
@@ -592,6 +592,7 @@ masa_cruda = masa_cocinada / cooking_factor
 Reglas:
 
 - `cooking_factor` debe ser mayor que cero.
+- `NULL` significa "sin factor conocido" y es la única representación de ese estado. `1.0` no se usa como valor por defecto ni se fuerza al guardar (decisión 2026-09-24).
 - No puede interpretarse como porcentaje.
 - No puede cambiar de significado entre catálogo, porción y receta.
 - La unidad de las masas relacionadas sigue siendo gramos.

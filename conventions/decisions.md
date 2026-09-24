@@ -620,3 +620,19 @@ En los datos reales, `manual_intake` tiene 4 de 5 filas privadas. Los motivos re
 - Los datos existentes conservan su valor, así que lo que hoy es público queda publicado. Solo cambia el valor por defecto de lo nuevo.
 - La receta pública 6, con el ingrediente personal 14, necesita una corrección de datos que se decide en el plan (§12.7): publicar el 14 o dejar la receta como personal.
 **Convención actualizada**: `conventions/code_conventions.md` sección 11.4.1 (nueva: alimentos personales y publicados) y sección 11.2.2 (visibilidad de `catalog`)
+
+## 2026-09-24 — `cooking_factor` admite `NULL` ("sin factor") y sin factor no se ofrece pesar en cocido
+
+**Origen**: hallazgo 23 de `audit/audit_catalog.md` (el alta fuerza `1.0` y la edición guarda `NULL`); feedback 3 y 23 del usuario.
+**Contexto**: la decisión **2026-09-18** ("La conversión de peso cocinado a crudo no se persiste nunca") conservó `DEFAULT 1.0` y aceptó, como algo interino, que un factor ausente se comporte como `1.0` sin avisar. En los datos reales conviven las dos representaciones de "no sé": 48 `NULL` y 11 filas con exactamente `1.0`. Estas 11 vienen del forzado del alta (por ejemplo, "Macarrones integrales" con `1.0`), y solo hay 2 factores reales (ids 50 y 11). Las únicas 2 porciones con `is_cooked_weight = TRUE` usan el id 50 (`2.6`). Un factor exactamente `1.0` casi nunca es real, y ofrecer "pesado en cocido" para un alimento sin factor da un resultado neutro que el usuario no puede distinguir de una conversión real.
+**Alternativas consideradas**:
+- (a) `NULL` = "sin factor": se quitan el `DEFAULT` y el forzado del alta.
+- (b) `NOT NULL DEFAULT 1.0`, rellenando los `NULL`.
+- Mantener lo interino de 2026-09-18 y dejarlo para la tabla de equivalencias ("Add cooking factor table").
+**Decisión**: (a).
+- `catalog.cooking_factor` admite `NULL`, que significa "sin factor conocido". Se quita `DEFAULT 1.0` de la columna y el alta deja de forzar `1.0`. Si hay valor, cumple `0 < x ≤ 10`.
+- Las 11 filas que hoy valen exactamente `1.0` pasan a `NULL`. Es una corrección de datos aprobada explícitamente (§12.7): ninguna tiene porciones pesadas en cocido.
+- **Si el alimento no tiene factor, no se muestra el control `Cooked weight`**, ni en la página del ingrediente ni en el carrito, y el servidor rechaza con `422` poner `is_cooked_weight = TRUE` en una porción de un alimento sin factor. Excepción: si una porción ya tiene `TRUE` y el factor desaparece después, el control se sigue mostrando en esa porción para poder desmarcarlo.
+- En el cálculo, un factor `NULL` con `is_cooked_weight = TRUE` (solo posible en ese caso heredado) se trata como neutro (`1`). Es una defensa del cálculo, no un valor por defecto.
+- Modifica la decisión **2026-09-18** en lo relativo a `DEFAULT 1.0` y a "la operación se aplica siempre". Se mantiene lo demás: `amount` guarda lo pesado, la conversión solo ocurre en el cálculo y solo para ingredientes de `catalog`.
+**Convención actualizada**: `conventions/measurement_conventions.md` sección 5.2 (peso pesado en cocido) y sección 7 (factor de cocinado)
