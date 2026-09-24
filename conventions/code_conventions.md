@@ -293,7 +293,7 @@ components/<algo>.py  -> dataclass/enum -> etiqueta o imagen (presentación)
 
 ### 4.1 Fuente única de verdad
 
-Un valor se modela como enumeración cuando pertenece a un conjunto cerrado y conocido de opciones. Ejemplos: tipos de comida, zonas de inyección, tipos de insulina, estados de eventos, Nutriscore y modos internos de navegación. Los estados físicos del alimento, los métodos de cocción y los métodos de conservación son actualmente ampliables y se tratan como catálogos, no como enums.
+Un valor se modela como enumeración cuando pertenece a un conjunto cerrado y conocido de opciones. Ejemplos: tipos de comida, zonas de inyección, tipos de insulina, estados de eventos, Nutriscore y modos internos de navegación. También son conjuntos cerrados la categoría de un alimento (`catalog.category`), los estados físicos del alimento (`catalog.initial_state` y `portion_detail.final_state`, que comparten un único enum), los métodos de cocción (`portion_detail.cooking`) y los métodos de conservación (`portion_detail.conservation`): que se prevea añadirles valores no los convierte en abiertos, porque solo se amplían de forma deliberada cambiando el enum en el código, con la revisión conjunta de §4.4. El criterio que separa un conjunto cerrado de uno abierto está en §4.5.
 
 Los enums de dominio se declaran en un módulo central, `DayBetes_food/domain/constants.py` (§3.6). Ese módulo no debe importar rutas, componentes ni la base de datos. Las dataclasses que usan estos enums viven en el módulo de su entidad dentro de `domain/`, por ejemplo `InsulinType` e `InjectionZone` se declaran en `domain/constants.py` y se consumen desde `domain/insulin.py`.
 
@@ -324,6 +324,7 @@ Reglas de implementación:
 - Los miembros usan MAYÚSCULAS con guion bajo: `AFTERNOON_SNACK`.
 - Los valores (`.value`) son los códigos estables que se almacenan o transmiten: minúsculas, ASCII y `snake_case` cuando corresponda.
 - Los valores persistidos no se renombran por motivos cosméticos. Cambiar un valor requiere migración de datos.
+- Si un conjunto que ya tiene datos guardados pasa a ser enum y sus códigos no siguen el formato anterior (por ejemplo, `mashed/creamy`, `boiled-al-dente` o `freshly-made`), el enum conserva los códigos existentes tal cual: prevalece la regla de no renombrar. Los valores que se añadan después sí siguen el formato.
 - `@unique` es obligatorio para impedir aliases accidentales.
 - Las etiquetas visibles al usuario no forman parte del valor persistido. Se mantienen en un mapper o diccionario de presentación separado.
 - Los enums no contienen lógica de rutas, SQL, HTML ni traducciones dependientes de un componente.
@@ -371,6 +372,8 @@ Añadir, eliminar o cambiar un valor requiere revisar conjuntamente:
 
 Un valor que el usuario, un administrador o una fuente externa pueda ampliar no se modela como `Enum` de Python ni como `CHECK` cerrado.
 
+"Ampliar" significa añadir un valor como cambio de datos, sin tocar el código: desde la interfaz (por ejemplo, un selector con "Add"), desde una herramienta de administración o al importar de una fuente externa. Un conjunto al que solo se añaden valores editando el código es cerrado (§4.1), aunque se espere que crezca.
+
 Debe almacenarse en una tabla de catálogo con, como mínimo:
 
 - identificador;
@@ -381,7 +384,15 @@ Debe almacenarse en una tabla de catálogo con, como mínimo:
 
 Los valores iniciales pueden cargarse mediante bootstrap o migración, pero añadir uno nuevo debe ser un cambio de datos, no un cambio obligatorio de código.
 
-En esta categoría entran actualmente 5. Las listas Python existentes solo pueden actuar como datos iniciales mientras se completa el catálogo.
+En esta categoría entran actualmente tres conceptos:
+
+| Concepto | Columnas | Estado |
+|---|---|---|
+| Marcas de comida | `catalog.brand_id` → `food_brands` | Catálogo implementado (`code`, `label`, `is_active`) |
+| Subtipos de comida | `catalog.subtype`, `manual_intake.subtype` | Texto libre; catálogo pendiente |
+| Origen de comida manual | `manual_intake.origin` | Texto libre; catálogo pendiente |
+
+Un concepto entra o sale de esta tabla solo por decisión explícita, y se actualiza aquí en el mismo cambio. Las listas Python existentes de los conceptos pendientes solo pueden actuar como datos iniciales mientras se completa el catálogo.
 
 ### 4.6 Enumeraciones técnicas
 
