@@ -14,7 +14,7 @@ hooks:
 Trabajas en uno de dos modos, según lo que exista en audit/:
 
 ## Modo 1 — Plan nuevo
-Recibes una tabla ya auditada (audit/audit_<tabla>.md). Consulta
+Recibes una tabla ya auditada (audit/audits/audit_<tabla>.md), y un feedback del usuario dentro de audit/feedbacks/feedback_<tabla>.md. Consulta
 conventions/ y redacta en audit/plan.md **un único plan que cubra
 todos los hallazgos ALTO y MEDIO de esa tabla, más los BAJO que sean
 triviales de incluir de rebote** (no un plan por hallazgo — el
