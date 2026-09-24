@@ -535,3 +535,62 @@ Quedan **explícitamente en deuda** (anotado en `audit/deuda_pendiente.md`, secc
 - Que archivar solo lo oculte al propietario y los demás lo sigan viendo como si no estuviera archivado.
 **Decisión**: archivar un alimento de `catalog` lo hace solo su propietario y es irreversible (decisión 2026-09-23). El alimento archivado **sale de las búsquedas y listados para todos**, incluido su propietario. **Sigue visible** para quien lo tenga en favoritos o en una receta propia, con la etiqueta "Archivado", y **se puede seguir usando tal cual** por todos los caminos que crean porciones (registrar, ingrediente de receta, añadir comida, importar receta a un evento, rescate), sin copiarlo antes. Nadie lo edita ni lo versiona. Se puede copiar. Se puede quitar de favoritos, pero no añadirlo. **Al archivarlo, se quita de los favoritos de su propietario** en la misma transacción. El histórico de comidas no se toca. El modal describe lo que ocurre de verdad (se retira del catálogo, y quien ya lo usa puede seguir usándolo) y no lo llama "borrar". Corregir valores incorrectos no se hace archivando, sino editando (con el versionado, creando una versión nueva). Una copia es una fila nueva e independiente, con `created_by` = quien copia y `origin_root_id` = la raíz de la familia.
 **Convención actualizada**: `conventions/code_conventions.md` sección 11.2.1 (fila de `catalog`) y sección 11.2.2 (contrato de ciclo de vida de `catalog`)
+
+## 2026-09-24 — Diseño del versionado de alimentos: valores del dueño, línea de tiempo de cada usuario
+
+**Origen**: hallazgo 27 de `audit/audit_catalog.md` y H1 de `portion_detail` en `audit/deuda_pendiente.md` (precisiones abiertas: `cooking_factor` y multiusuario). Surge al fijar la semántica del archivado y de las copias de `catalog` (decisión 2026-09-24 sobre el archivado).
+**Contexto**: la decisión 2026-09-18 fijó el principio (corregir el histórico nutricional versionando el alimento, con un `version_id` fijo en cada porción y una reasignación explícita por rango) y la difirió. Quedaban por resolver varias cosas:
+- si `cooking_factor` se versiona;
+- cómo funciona el versionado con varios usuarios, cuando las porciones de unos apuntan a alimentos de otros;
+- qué significa copiar un alimento con muchas porciones registradas y cómo se pasa a los valores de la copia, también en copias de copias;
+- cómo se relaciona todo con el archivado irreversible.
+
+La biblioteca general (`created_by IS NULL`) no se puede versionar, así que corregirla exige copiarla y reasignar las porciones. Por eso parte del mecanismo entre alimentos hace falta ya en monousuario, para el estudio.
+**Alternativas consideradas**:
+- Versiones por usuario dentro del mismo alimento: la copia sería "mi versión N" del alimento ajeno. Se descarta porque el alimento tendría versiones de varios dueños, con permisos por versión y un "por defecto" distinto para cada usuario, y porque editar la versión original afectaría a todos.
+- Versiones del alimento, de su dueño, con periodos de vigencia también del dueño. Quien no es el dueño solo podría reasignar sus porciones de forma puntual, y para tener sus propias fechas tendría que copiar. Se descarta porque obliga a copiar solo para cambiar fechas, y porque las porciones registradas a posteriori seguirían las fechas del dueño.
+- Versiones del alimento, de su dueño, con **periodos de vigencia de cada usuario**.
+- Una tabla de versiones para cada tipo de alimento, frente a una tabla única.
+- Que la línea de tiempo de un usuario siga la del dueño hasta que la modifique, frente a copiarla en su primera porción.
+**Decisión**: **los valores son del dueño del alimento y la línea de tiempo es de cada usuario.**
+
+*Modelo de datos*
+- **`food_version`**: tabla única para `catalog` y `manual_intake`, con `CHECK` de que va exactamente una de las dos columnas, como en `portion_detail`. Guarda solo los valores que intervienen en el cálculo: calorías, los seis macros, `caffeine`, `alcohol` y **`cooking_factor`** (solo `catalog`). **`nutriscore`, `nova` y `yuka` salen del versionado** y se editan en sitio en `catalog`.
+- **`food_version_period`**: las fechas. Cada fila es un periodo de la línea de tiempo de **un usuario** (`user_id`) sobre **un alimento**. Una versión puede tener varios periodos, así que se puede partir en dos. Los periodos no se solapan dentro de la línea de tiempo de un mismo usuario y alimento. La vigencia deja de ser una fecha de inicio informativa y pasa a ser un periodo real.
+- **`portion_detail.food_version_id`**: la versión fija, con FK compuestas que impiden apuntar a la versión de otro alimento. Es `NULL` en recetas y nevera, que cogen la vigente hoy al pasar a un evento.
+- **`origin_version_id`** en las copias, y un **registro de reasignaciones** que guarda de qué versión venía cada porción, para verlo y deshacerlo.
+
+*Reglas*
+- Solo el dueño crea versiones, las actualiza en sitio o elimina las que están inactivas en su propia línea de tiempo. **Eliminar es archivar** y no se restaura (decisión 2026-09-23).
+- Cualquier usuario gestiona **sus** periodos sobre cualquier alimento visible, y cambiarlos reasigna **solo sus** porciones.
+- La línea de tiempo de un usuario **nace copiando la del dueño en su primera porción** con ese alimento y desde ahí es independiente: los cambios de fechas del dueño no la tocan.
+- La versión por defecto de una porción nueva es la que cubre la fecha de su comida en la línea de tiempo de quien la registra.
+- En los conflictos de vigencia **gana la nueva**: se recorta, se parte o se deja inactiva la antigua.
+- No hay fechas futuras.
+- Un alimento tiene siempre al menos una versión.
+- Solo se reasigna entre alimentos de la misma **familia** (`COALESCE(origin_root_id, id)`), y se comprueba en SQL.
+- **Copiar solo hace falta para tener valores distintos.**
+- La biblioteca general tiene una sola v1 y no se versiona.
+- Un alimento archivado no admite versiones nuevas.
+
+*Interfaz*
+- Al editar un alimento propio, solo si cambian campos versionados, un popup ofrece "actualizar la versión actual" o "crear una versión nueva". La nueva es vigente por defecto desde el momento del cambio, con la opción de "todo el histórico" y una segunda confirmación.
+- Hay una página de historial de versiones con los periodos de quien la mira. Cada acción pide confirmación.
+- La procedencia es una sola línea, sin vista de la cadena completa.
+
+*Multiusuario (diseñado, sin construir)*
+- Congelar la versión que usa otro usuario o desde la que alguien ha copiado.
+- Aviso de versión nueva solo del alimento propio en uso o del padre directo. Una versión nueva no entra sola en la línea de tiempo de nadie.
+- Las copias nacen privadas.
+
+*Cuándo se implementa*
+- No se implementa en la auditoría de `catalog`: se construye como iniciativa propia después de cerrar `catalog` y `manual_intake`.
+
+Modifica la decisión **2026-09-18** ("El histórico nutricional se corrige por versionado del alimento…") en cuatro puntos:
+- tabla única en vez de una por tipo;
+- campos versionados sin `nutriscore`, `nova` y `yuka`, y con `cooking_factor`;
+- vigencia por periodos en vez de solo fecha de inicio;
+- periodos por usuario.
+
+Se mantienen su principio, el `version_id` fijo y la reasignación explícita. El diseño detallado está en `audit/deuda_pendiente.md`, `portion_detail` H1.
+**Convención actualizada**: ninguna para el versionado, que queda en deuda hasta que se implemente. `conventions/code_conventions.md` sección 11.2.2 (el apartado de copias de `catalog` remite a este diseño)
