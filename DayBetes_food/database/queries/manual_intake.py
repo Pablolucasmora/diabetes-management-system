@@ -15,16 +15,29 @@ from DayBetes_food.database.queries.crud import (
 )
 
 
-def get_manual_origin_suggestions(connection, search: str = "", limit: int = 50) -> list[str]:
+def get_manual_origin_suggestions(
+    connection, *, user_id: int, search: str = "", limit: int = 50
+) -> list[str]:
+    """Distinct origins of the manual intakes the user can see (11.4).
+
+    Only active rows that are public or owned by `user_id`: an origin is often a
+    personal place ("grandma's"), so another user's private rows must not leak
+    through the autocomplete.
+    """
     search_condition, search_params, search_order = _build_fuzzy_search(connection, "name", search)
-    params = {**search_params, "limit": max(1, min(int(limit or 50), 500))}
+    params = {
+        **search_params,
+        "user_id": user_id,
+        "limit": max(1, min(int(limit or 50), 500)),
+    }
     query = """
         WITH source AS (
-            SELECT DISTINCT trim(origin) AS name
-            FROM manual_intake
-            WHERE deleted_at IS NULL
-              AND origin IS NOT NULL
-              AND trim(origin) <> ''
+            SELECT DISTINCT trim(entity.origin) AS name
+            FROM manual_intake entity
+            WHERE entity.deleted_at IS NULL
+              AND (entity.is_private = FALSE OR entity.created_by = %(user_id)s)
+              AND entity.origin IS NOT NULL
+              AND trim(entity.origin) <> ''
         )
         SELECT name
         FROM source

@@ -1042,9 +1042,10 @@ def setup_food_routes(rt):
 
     @rt("/food/create/manual/form")
     def get(request: Request):
+        user_id = get_current_user_id()
         with get_connection() as connection:
             subtypes = get_subtype_suggestions(connection, search="", limit=500)
-            origins = get_manual_origin_suggestions(connection, search="", limit=500)
+            origins = get_manual_origin_suggestions(connection, user_id=user_id, search="", limit=500)
             tags = get_tag_suggestions(connection, search="", limit=500)
         return render_page(
             request,
@@ -1649,7 +1650,7 @@ def setup_food_routes(rt):
                 if not _can_edit_entry("manual_intake", entry, user_id):
                     return HTMLResponse(status_code=403)
                 subtypes = get_subtype_suggestions(connection, search="", limit=500)
-                origins = get_manual_origin_suggestions(connection, search="", limit=500)
+                origins = get_manual_origin_suggestions(connection, user_id=user_id, search="", limit=500)
                 tags = get_tag_suggestions(connection, search="", limit=500)
                 selected_tags = [str(row.get("name") or "") for row in get_entry_tags(connection, "manual_intake", entry_id)]
                 return render_page(
@@ -2558,7 +2559,7 @@ def setup_food_routes(rt):
             if not _can_edit_entry("manual_intake", current, user_id):
                 return _error_msg("Only the owner can edit this item. Create a copy to edit it.")
             subtype_options = get_subtype_suggestions(connection, search="", limit=500)
-            origin_options = get_manual_origin_suggestions(connection, search="", limit=500)
+            origin_options = get_manual_origin_suggestions(connection, user_id=user_id, search="", limit=500)
 
             clean_subtype, subtype_error = _coerce_choice(
                 subtype,
@@ -2934,7 +2935,7 @@ def setup_food_routes(rt):
             if not user_id:
                 return _error_msg("No users found.")
             subtype_options = get_subtype_suggestions(connection, search="", limit=500)
-            origin_options = get_manual_origin_suggestions(connection, search="", limit=500)
+            origin_options = get_manual_origin_suggestions(connection, user_id=user_id, search="", limit=500)
 
             clean_subtype, subtype_error = _coerce_choice(
                 subtype,
