@@ -75,7 +75,7 @@ Un CRUD:
 
 #### 1.3.2 Columnas cualificadas en SQL
 
-Toda referencia a una columna en una query SQL indica la tabla de la que proviene, mediante su alias o el nombre de la tabla (`entity.created_by`, `fb.label`, `c.is_private`). La regla se aplica también a las queries de una sola tabla y a los fragmentos SQL construidos por separado (cláusulas de visibilidad, filtros dinámicos, helpers de `crud.py`) que después se concatenan en una query mayor.
+Toda referencia a una columna en una query SQL indica la tabla de la que proviene, mediante su alias o el nombre de la tabla (`entity.created_by`, `fb.label`, `c.is_published`). La regla se aplica también a las queries de una sola tabla y a los fragmentos SQL construidos por separado (cláusulas de visibilidad, filtros dinámicos, helpers de `crud.py`) que después se concatenan en una query mayor.
 
 Motivo: una columna sin cualificar solo funciona mientras ninguna otra tabla del `FROM` tenga una columna con el mismo nombre. Añadir un `JOIN` o una columna nueva a otra tabla (por ejemplo, `created_by` en `food_brands`) convierte en `AmbiguousColumn` una query que antes funcionaba, y el fallo aparece en ejecución, no al escribir el cambio.
 
@@ -219,7 +219,7 @@ class RecipeUpdate:
     name: str | None = None
     meal_type: str | None = None
     notes: str | None = None
-    is_private: bool | None = None
+    is_published: bool | None = None
 ```
 
 ### 3.2 Acceso a filas SQL
@@ -1316,7 +1316,7 @@ WHERE entity.id = %(entity_id)s
   AND entity.deleted_at IS NULL
   AND (
       entity.owner_column = %(user_id)s
-      OR entity.is_private = FALSE
+      OR entity.is_published
   )
 ```
 
@@ -1338,6 +1338,7 @@ Aplica por igual a `catalog`, `manual_intake` y `recipe` (decisión 2026-09-24, 
 - **Publicado**: entra en la búsqueda y en los listados de todos.
 - El diario del usuario (eventos, porciones, dosis) es siempre privado y no se rige por esta regla.
 - Físicamente es la columna **`is_published`**: `TRUE` = publicado y `FALSE` = personal. Sustituye a `is_private` en las tres tablas, con el valor invertido. El renombrado se hace a la vez en las tres, dentro de la auditoría de `catalog`, para que nunca convivan dos nombres con significados opuestos.
+- **Por qué `is_published`** y no `is_private` ni `is_personal`: nombra la acción que existe de verdad en la interfaz ("Publish"/"Unpublish"). Con `FALSE` como valor por defecto, un `INSERT` que olvide la columna deja el alimento personal, que es el lado seguro. Y "personal" se confundiría con "es mío", porque un alimento publicado también puede ser mío. En la interfaz se habla siempre de "personal" y "publicado", nunca de "privado" y "público".
 
 **Por defecto, todo nace personal.** Crear un alimento, copiarlo o crear una receta produce un alimento personal (`is_published DEFAULT FALSE`). Publicar es una acción explícita del propietario. La biblioteca general (`created_by IS NULL`, §11.2.2) siempre está publicada: `CHECK (created_by IS NOT NULL OR is_published)`.
 
