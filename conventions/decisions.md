@@ -594,3 +594,28 @@ Modifica la decisión **2026-09-18** ("El histórico nutricional se corrige por 
 
 Se mantienen su principio, el `version_id` fijo y la reasignación explícita. El diseño detallado está en `audit/deuda_pendiente.md`, `portion_detail` H1.
 **Convención actualizada**: ninguna para el versionado, que queda en deuda hasta que se implemente. `conventions/code_conventions.md` sección 11.2.2 (el apartado de copias de `catalog` remite a este diseño)
+
+## 2026-09-24 — Privacidad de los alimentos: personales por defecto y publicación explícita
+
+**Origen**: hallazgos 7 (receta pública que expone un ingrediente privado) y 8 (unicidad global con ítems privados, cuyo mensaje revela un ítem privado ajeno) de `audit/audit_catalog.md`; feedback 7 del usuario (para qué sirve un alimento privado).
+**Contexto**: hoy todo alimento nace público (`is_private = FALSE`) y ocultarlo es opcional. De ahí salen varios problemas:
+- la búsqueda de todos acumula lo que crea cualquiera;
+- la unicidad es global, así que un alimento privado ajeno impide crear uno igual y el `409` confirma que existe;
+- una receta pública muestra nombre y macros de sus ingredientes privados (un caso real: la receta 6 con el alimento 14);
+- no está definido qué pasa al volver privado algo que otros ya usan.
+
+En los datos reales, `manual_intake` tiene 4 de 5 filas privadas. Los motivos reales para no compartir un alimento son la relevancia (platos caseros o de un restaurante concreto), la calidad (macros estimados) y, a veces, datos personales en el nombre. Casi nunca es un secreto. Lo sensible de verdad es el diario del usuario, que es privado siempre.
+**Alternativas consideradas**:
+- Eliminar la privacidad: todo público. Máxima basura en la búsqueda, expone datos personales y es irreversible.
+- Mantener privado/público con la regla actual (nace público) y arreglar cada colisión por separado.
+- Personal por defecto y publicación explícita, donde "personal" significa "no publicado", no "secreto".
+- Variante más radical: lo único compartido es la biblioteca general, revisada, y los alimentos de usuarios solo se comparten dentro de recetas. Se descarta por ahora porque choca con reutilizar alimentos de otros usuarios (diseño del versionado, 2026-09-24). Queda como posible evolución si el multiusuario crece.
+**Decisión**: se adopta **personal por defecto y publicación explícita**, como regla común a `catalog`, `manual_intake` y `recipe`.
+- **Todo nace personal**: crear, copiar o crear una receta. La columna física sigue siendo `is_private`, con `DEFAULT TRUE`. La biblioteca general (`created_by IS NULL`) está siempre publicada.
+- **Unicidad**: por propietario para lo personal y entre todos para lo publicado (dos índices únicos parciales). **Publicar** algo que choca con un alimento ya publicado da `409`, con un mensaje que no revela datos privados. El usuario puede cambiar el nombre y volver a publicar.
+- **Despublicar** tiene para los demás **la misma semántica que archivar** (decisión 2026-09-24 sobre el archivado): sale de su búsqueda, y quien lo tiene en favoritos o en una receta suya lo sigue viendo y usando. A diferencia de archivar, se puede volver a publicar.
+- **Publicar una receta** con ingredientes personales del propietario muestra un popup que los enumera y avisa de que se publicarán también. Receta e ingredientes se publican en una sola transacción; si uno da `409`, no se publica nada y se indica cuál choca. Quien ve una receta publicada ve sus ingredientes.
+- Sustituye, para las copias, el "nacen privadas" que el diseño del versionado (2026-09-24) dejaba solo para multiusuario: ahora es la regla general.
+- Los datos existentes conservan su valor, así que lo que hoy es público queda publicado. Solo cambia el valor por defecto de lo nuevo.
+- La receta pública 6, con el ingrediente personal 14, necesita una corrección de datos que se decide en el plan (§12.7): publicar el 14 o dejar la receta como personal.
+**Convención actualizada**: `conventions/code_conventions.md` sección 11.4.1 (nueva: alimentos personales y publicados) y sección 11.2.2 (visibilidad de `catalog`)

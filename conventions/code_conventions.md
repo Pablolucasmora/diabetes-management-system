@@ -1320,6 +1320,40 @@ WHERE entity.id = %(entity_id)s
 
 El owner column real debe aplicarse dentro de SQL y estar documentado por tabla. La lógica detallada de ownership y agregados sigue la sección 5 y la sección 6.9.
 
+#### 11.4.1 Alimentos personales y publicados
+
+Aplica por igual a `catalog`, `manual_intake` y `recipe` (decisión 2026-09-24, privacidad). Cada tabla la implementa en su propia auditoría.
+
+**Significado.** Un alimento es **personal** o **publicado**.
+- **Personal**: solo lo ve su propietario. Significa "no publicado", **no "secreto"**: si antes estuvo publicado, lo que otros ya tengan de él no desaparece (ver *Despublicar*).
+- **Publicado**: entra en la búsqueda y en los listados de todos.
+- El diario del usuario (eventos, porciones, dosis) es siempre privado y no se rige por esta regla.
+- Físicamente es la columna **`is_published`**: `TRUE` = publicado y `FALSE` = personal. Sustituye a `is_private` en las tres tablas, con el valor invertido. El renombrado se hace a la vez en las tres, dentro de la auditoría de `catalog`, para que nunca convivan dos nombres con significados opuestos.
+
+**Por defecto, todo nace personal.** Crear un alimento, copiarlo o crear una receta produce un alimento personal (`is_published DEFAULT FALSE`). Publicar es una acción explícita del propietario. La biblioteca general (`created_by IS NULL`, §11.2.2) siempre está publicada: `CHECK (created_by IS NOT NULL OR is_published)`.
+
+**Qué ve cada usuario** (la condición va en SQL, §11.4):
+- en la búsqueda y los listados: los alimentos publicados y activos, más los suyos (personales o publicados) activos;
+- además, los que dejaron de estar visibles para él (despublicados o archivados) pero tiene en favoritos o en una receta suya. Esos siguen la regla de visibilidad del archivado de §11.2.2.
+
+**Unicidad** (§6.1, §6.2, §11.5). Hay dos índices únicos parciales, los dos con `deleted_at IS NULL` y con la normalización única del nombre:
+- **Personales**: únicos **por propietario**, es decir `(created_by, nombre normalizado, marca) WHERE NOT is_published`. Que otra persona tenga un alimento personal igual no impide crear el tuyo, y el sistema no revela que existe.
+- **Publicados**: únicos **entre todos los publicados**, incluida la biblioteca general: `(nombre normalizado, marca) WHERE is_published`.
+- **Publicar** un alimento cuando ya hay uno publicado equivalente da **`409`**. El mensaje dice que ya existe un alimento publicado con ese nombre y esa marca, sin nada de datos privados. El usuario puede cambiar el nombre y volver a publicar. Tener un alimento personal igual que uno publicado de otra persona está permitido.
+
+**Despublicar** (el propietario pasa a personal un alimento publicado) tiene, **para los demás, exactamente la misma semántica que archivar** (§11.2.2):
+- sale de su búsqueda y sus listados;
+- quien lo tiene en favoritos o en una receta suya lo sigue viendo y usando tal cual;
+- se puede quitar de favoritos, pero no añadirlo.
+
+A diferencia de archivar, **se puede volver a publicar**, con la misma comprobación de `409`, y el propietario lo sigue viendo y editando con normalidad. Los datos del alimento siguen siendo visibles dentro de las recetas publicadas que lo contienen.
+
+**Publicar una receta** exige que sus ingredientes estén publicados.
+- Si la receta contiene alimentos personales del propietario, un popup los enumera y avisa de que **se publicarán también** ("Esta receta usa 2 alimentos personales: A, B. Al publicarla se publicarán también").
+- Al confirmar, se publican la receta y esos alimentos **en una sola transacción**.
+- Si alguno da `409`, no se publica nada y se indica cuál choca, para que el usuario lo renombre o lo sustituya por el publicado.
+- Quien ve una receta publicada ve sus ingredientes.
+
 ### 11.5 Unicidad y soft-delete
 
 Toda restricción `UNIQUE` sobre una entidad archivable debe implementarse como índice único parcial:
