@@ -1267,6 +1267,8 @@ Una entidad archivable utiliza un campo nullable `deleted_at`.
 
 Las operaciones se llaman `archive_<entity>` y `restore_<entity>`. Las entidades no archivables utilizan `delete_<entity>` y documentan por qué el borrado físico es correcto.
 
+**Excepción documentada (decisión 2026-09-23)**: la restauración **no se construye por defecto**. Una entidad archivable sin `restore_` queda irreversible; no se le añade salvo que el usuario lo indique expresamente para esa tabla. `catalog` es el primer caso (archivar un ítem no tiene vuelta atrás). Las rutas de restauración ya existentes (p. ej. `intake_event`) se conservan. El caso normal de equivocación se cubre con el **undo** de la última acción destructiva, con una ventana de 15 segundos (`audit/deuda_pendiente.md`, "Undo de la última acción destructiva", 2026-09-23). Consecuencia sobre la unicidad: al no existir `restore_`, el índice único parcial de §11.5 nunca tiene que resolver el conflicto de "restaurar una fila equivalente a otra ya activa".
+
 ### 11.4 Lecturas y escrituras con visibilidad
 
 Una query debe declarar su intención de visibilidad: solo activos, solo archivados, todos o visibles para un usuario.
