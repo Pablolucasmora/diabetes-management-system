@@ -1246,10 +1246,37 @@ La clasificación de cada tabla se declara en este registro, que es el sitio ún
 | `users` | **Pendiente**: ciclo de vida sin definir (sin `deleted_at` y sin ninguna ruta que ponga `is_active = FALSE`). | Ninguno hoy. | `AUDIT_PLAN.md`, "Deuda técnica ya conocida". |
 | `auth_sessions` | **Dependent** de `users` (operativa, ni clínica ni histórica). | Físico: `ON DELETE CASCADE` desde `users` y purga a los 14 días. | `audit/audit_auth_sessions.md`; decisión 2026-09-02/03. |
 | `auth_rate_limits` | **Pendiente**: no hay clasificación documentada. | Físico en la práctica (contador operativo). | Sin auditoría propia; extraída de `auth/service.py`. |
+| `catalog` | **Archivable**, irreversible (sin `restore_`). Contrato completo en §11.2.2. | Solo `deleted_at`; nunca físico (otras personas tienen porciones, recetas y favoritos que apuntan al alimento). | `audit/audit_catalog.md`, hallazgos 5 y 6; decisiones 2026-09-23 y 2026-09-24. |
 | `food_brands` | **Pendiente**: por naturaleza no archivable (catálogo auxiliar), pero `is_active` actúa como soft-delete de facto y no encaja en §11.2/§11.3. | Sin función de borrado. | `audit/audit_food_brands.md`; `audit/deuda_pendiente.md`, H4 y H11. |
 | `insulin_injections` | **Historical**. Pendiente decidir si es archivable (`deleted_at`) o no archivable con borrado físico documentado. | Físico (statu quo). | `audit/audit_insulin_injections.md`; `audit/deuda_pendiente.md`, "Clasificación archivable / no archivable". |
 | `intake_event` | **Híbrida por `state`**: `planned` no archivable, `consumed` archivable. | Físico en `planned`; `deleted_at` en `consumed`. | Decisión 2026-09-08. |
 | `portion_detail` | **Dependent** de su destino (`intake_event`, `recipe` o `fridge`); hereda su propietario y su ciclo de vida. | `CASCADE` desde el destino. El borrado físico es apropiado en recetas y en eventos `planned`; en un evento `consumed` es histórico clínico y hoy lo impide la ruta, no la query (limitación declarada). | `audit/audit_portion_detail.md`; `measurement_conventions.md` §6.9.3; `audit/deuda_pendiente.md`, `portion_detail` H27. |
+
+#### 11.2.2 Contrato de ciclo de vida de `catalog`
+
+Decisión 2026-09-24 (`conventions/decisions.md`). Cuando un contrato no cabe en una fila del registro de §11.2.1, se desarrolla en una subsección propia como esta.
+
+- **Propietario**: `created_by`. En `catalog`, creador y propietario son la misma persona y no hay transferencias (§11.1).
+- **Biblioteca general**: las filas con `created_by IS NULL` son la biblioteca general de la web (alimentos cargados por scraping y, en el futuro, los de usuarios eliminados). Nadie las edita, archiva ni versiona. Para cambiarlas, se copian.
+- **Visibilidad**: personal o publicado, con la regla común de §11.4.1. Todo nace personal y publicar es explícito. Despublicar tiene para los demás la misma semántica que archivar. La regla se aplica en SQL (§11.4).
+- **Archivar**:
+  - Solo lo hace el propietario. Es **irreversible** (§11.3, excepción 2026-09-23), salvo el undo de 15 s.
+  - Un alimento archivado **sale de las búsquedas y listados para todos**, incluido su propietario.
+  - **Sigue visible** para quien lo tenga en favoritos o en una receta propia, con la etiqueta "Archivado". **Se puede seguir usando tal cual** por todos los caminos que crean porciones (registrar, ingrediente de receta, añadir comida, importar receta a un evento, rescate). No hay que copiarlo antes.
+  - Nadie lo edita ni lo versiona. Se puede copiar.
+  - Se puede quitar de favoritos, pero no añadirlo.
+  - El histórico de comidas no se toca.
+  - La lectura que incluye archivados visibles lo declara con un parámetro explícito (§11.3).
+  - El texto del modal describe lo que ocurre de verdad: se retira del catálogo, y quien ya lo usa puede seguir usándolo. No se llama "borrar".
+  - Al archivarlo, se quita de los favoritos de su propietario en la misma transacción (decisión 2026-09-24).
+- **Corregir no es archivar**: si los valores de un alimento son incorrectos, se corrigen editándolos (con el versionado, creando una versión nueva). Archivar queda para "ya no lo mantengo" o "está duplicado".
+- **Copiar**:
+  - Crea una **fila nueva** con su propio `id`, `created_by` = quien copia y `origin_root_id` = el alimento raíz de la familia. Una copia de una copia también apunta a la raíz.
+  - Duplica los datos y es independiente del original: archivar o cambiar uno no afecta al otro.
+  - Con el versionado, además guarda `origin_version_id` y crea su propia v1. **Copiar solo hace falta para tener valores distintos**: las fechas de vigencia son de cada usuario y se gestionan sobre cualquier alimento visible, sin copiarlo (decisión 2026-09-24, versionado).
+  - Los alimentos con el mismo `COALESCE(origin_root_id, id)` forman una **familia**.
+- **Versionado**: los valores son del dueño del alimento y la línea de tiempo de vigencias es de cada usuario (decisión 2026-09-24). El diseño está pendiente de implementar y se detalla en `audit/deuda_pendiente.md`, `portion_detail` H1. Mientras no exista, el alimento se comporta como si tuviera una única versión.
+- **Multiusuario** (diseñado, no se construye todavía): se aplican las reglas de congelación de versiones y de aviso de H1. Que las copias nazcan personales ya no es algo solo de multiusuario: lo cubre la regla general de §11.4.1.
 
 ### 11.3 Soft-delete
 
