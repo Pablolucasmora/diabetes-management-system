@@ -78,7 +78,6 @@ def upsert_meal_type_window(
             "end_time": end_time,
         },
         commit=commit,
-        rollback_on_error=commit,
     )
     return row is not None
 
@@ -95,6 +94,5 @@ def delete_meal_type_window(connection, user_id: int, meal_type: MealType, commi
         query,
         {"user_id": user_id, "meal_type": meal_type.value},
         commit=commit,
-        rollback_on_error=commit,
     )
     return row is not None

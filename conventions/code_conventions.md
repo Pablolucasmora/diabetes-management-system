@@ -120,7 +120,7 @@ Reglas:
 
 Toda función CRUD de escritura acepta `commit: bool = True`.
 
-- `commit=True`: el CRUD es propietario de una operación simple y debe confirmar su operación cuando termina correctamente. Si falla, puede revertir su propia operación y propagar o traducir el error según su contrato.
+- `commit=True`: el CRUD es propietario de una operación simple y debe confirmar su operación cuando termina correctamente. Si falla, revierte su propia operación y propaga la excepción, o la traduce a un error de aplicación tipado conservando la causa (§2.5). Nunca la convierte en un valor de retorno.
 - `commit=False`: el CRUD participa en una transacción propiedad del llamador y no confirma ni revierte la transacción bajo ningún concepto.
 - Las funciones de solo lectura siempre llaman a los helpers de query con `commit=False`.
 - El valor de `commit` se propaga hasta el helper que ejecuta el cursor.
@@ -140,9 +140,11 @@ try:
     with connection.transaction():
         first_write(connection, ..., commit=False)
         second_write(connection, ..., commit=False)
-except Exception:
-    return error_response()
+except (ValidationError, NotFoundError, ConflictError) as error:
+    return error_response(error)
 ```
+
+El coordinador solo captura los errores de aplicación que sabe traducir a una respuesta. Una excepción SQL o de infraestructura no se captura: al salir del bloque, `connection.transaction()` ya ha revertido la operación y la excepción sigue hasta el boundary global (`error_conventions.md` §8.3 y §11).
 
 Todas las escrituras de la operación compuesta deben confirmar o revertir juntas. Cada resultado esperado debe comprobarse inmediatamente. Si una operación devuelve `False` o `None` cuando el caso de uso requiere éxito, se lanza una excepción para provocar rollback.
 
@@ -160,19 +162,14 @@ No se considera válido llamar a un CRUD con `commit=True` desde una operación 
 
 ### 2.5 Errores dentro de una transacción propia
 
-Los helpers genéricos deben distinguir los dos modos:
+Un fallo SQL o de infraestructura **siempre se propaga como excepción**, en los dos modos. Lo único que cambia entre ellos es quién revierte:
 
-- En modo propietario (`commit=True`), pueden hacer rollback y devolver el resultado de error definido por el contrato.
-- En modo caller-owned (`commit=False`), deben propagar la excepción SQL y no hacer rollback.
+- En modo propietario (`commit=True`), el helper o el CRUD hace `rollback()` de su propia operación y **relanza** la excepción. Antes puede traducirla a un error de aplicación tipado cuando su contrato lo define (por ejemplo, `UniqueViolation` → `ConflictError`, §6.2), conservando la causa con `raise ... from exc`.
+- En modo caller-owned (`commit=False`), propaga la excepción sin hacer `rollback()`. Revierte quien posee la transacción (§2.3, §2.4).
 
-El modo se deriva del contrato, no de un argumento que cada call site deba recordar: el parámetro
-`rollback_on_error` de los helpers genéricos vale `commit` cuando no se indica otra cosa
-(decisión 2026-09-22). Un default "siempre rollback" convierte todas las lecturas —que llaman con
-`commit=False`— en infractoras de la regla anterior, y dentro de un `connection.transaction()`
-produce `ProgrammingError: Explicit rollback() forbidden within a Transaction context`, que
-enmascara el error real.
+Ningún helper ni CRUD convierte un fallo en un valor de retorno. `None`, `False` y `[]` solo significan lo que define el contrato de la función: "no hay fila", "la operación no es aplicable" o "no hay resultados" (§3.3, §3.4). Nunca significan "ha fallado". Tampoco se registra la excepción al relanzarla. El log se escribe una sola vez, en el boundary que la convierte en respuesta (`error_conventions.md` §10.3).
 
-Un error de infraestructura nunca se convierte silenciosamente en un resultado exitoso.
+El rollback de los helpers genéricos (`_execute_query`, `_execute_query_many`) se deriva únicamente de `commit`. No existe un parámetro por call site que lo cambie, para que nadie pueda configurarlo mal. Un argumento así ya causó el defecto que corrigió la decisión 2026-09-22. Un default "siempre rollback" convertía todas las lecturas, que llaman con `commit=False`, en infractoras de §2.4. Además, dentro de un `connection.transaction()` producía `ProgrammingError: Explicit rollback() forbidden within a Transaction context`, que enmascaraba el error real. Una función que necesite un tratamiento propio (traducir una violación de unicidad, por ejemplo) captura la excepción que le llega del helper. No reimplementa el helper.
 
 Los errores de aplicación se clasifican así:
 
@@ -249,7 +246,8 @@ No introducir `add_`, `fetch_`, `find_`, `remove_` o `save_` para operaciones eq
 
 ### 3.4 Contrato de escrituras y “no encontrado”
 
-- `create_*` devuelve el identificador u objeto creado. Un fallo de infraestructura lanza excepción.
+- `create_*` devuelve el identificador u objeto creado.
+- En todos los verbos, y sea cual sea `commit`, un fallo SQL o de infraestructura lanza excepción (§2.5). Nunca se representa con `None`, `False` o `[]`.
 - `update_*`, `delete_*`, `archive_*` y `restore_*` devuelven `True` cuando modifican la fila.
 - Devuelven `False` únicamente cuando la fila visible y autorizada existe, pero la operación no es aplicable por una regla de negocio idempotente, por ejemplo archivar una fila ya archivada.
 - Si el identificador no existe, la operación lanza `NotFoundError` cuando el contrato necesita distinguir ese caso.

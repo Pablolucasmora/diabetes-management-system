@@ -1,6 +1,6 @@
 """Queries para la tabla puente `user_favorites` (catalog/manual_intake/recipe)."""
 
-from DayBetes_food.database.queries.crud import _execute_query, logger
+from DayBetes_food.database.queries.crud import _execute_query
 
 
 _FAVORITE_ENTRY_COLUMNS = {
@@ -42,7 +42,6 @@ def toggle_user_favorite(
         query,
         {"user_id": user_id, "entry_id": entry_id},
         commit=commit,
-        rollback_on_error=commit,
     )
     return bool(row["favorite"]) if row else None
 
@@ -81,9 +80,7 @@ def set_user_favorite(
         if commit:
             connection.commit()
         return True
-    except Exception as e:
+    except Exception:
         if commit:
             connection.rollback()
-            logger.error("Error in query: %s", e, exc_info=True)
-            return False
         raise

@@ -9,7 +9,6 @@ from DayBetes_food.database.queries.crud import (
     _execute_query_many,
     _normalize_tag_name,
     _tag_color_from_name,
-    logger,
 )
 
 
@@ -78,9 +77,7 @@ def set_entry_tags(
         if commit:
             connection.commit()
         return True
-    except Exception as e:
+    except Exception:
         if commit:
             connection.rollback()
-            logger.error("Error in query: %s", e, exc_info=True)
-            return False
         raise

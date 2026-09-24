@@ -63,7 +63,7 @@ def add_catalog_item(connection, data: dict, commit: bool = True) -> Optional[in
     payload.setdefault("brand_id", None)
     if payload.get("cooking_factor") is None:
         payload["cooking_factor"] = 1.0
-    result = _execute_query(connection, query, payload, commit=commit, rollback_on_error=commit)
+    result = _execute_query(connection, query, payload, commit=commit)
     return result["id"] if result else None
 
 
@@ -222,7 +222,7 @@ def update_catalog_item(connection, catalog_id: int, data: dict, commit: bool = 
     if not query:
         return False
 
-    result = _execute_query(connection, query, params, commit=commit, rollback_on_error=commit)
+    result = _execute_query(connection, query, params, commit=commit)
     return result is not None
 
 
@@ -237,6 +237,6 @@ def delete_catalog_item(connection, catalog_id: int, commit: bool = True) -> boo
         RETURNING id;
     """
     result = _execute_query(
-        connection, query, {"id": catalog_id}, commit=commit, rollback_on_error=commit
+        connection, query, {"id": catalog_id}, commit=commit
     )
     return result is not None

@@ -23,14 +23,11 @@ table with no single owning table. All of them are re-exported from
 `database/queries/__init__.py`.
 """
 
-import logging
 import re
 from enum import Enum
 from typing import Optional, Any
 
 from psycopg import sql
-
-logger = logging.getLogger(__name__)
 
 TRGM_SIMILARITY_THRESHOLD = 0.25
 _HAS_PG_TRGM = None
@@ -67,27 +64,25 @@ def _execute_query(
     query: str,
     params: dict = None,
     commit: bool = True,
-    rollback_on_error: Optional[bool] = None,
 ) -> Optional[Any]:
-    """Generic helper to execute queries.
+    """Generic helper to execute a query that returns at most one row.
 
-    `rollback_on_error` defaults to `commit` (decision 2026-09-22): in
-    caller-owned mode (`commit=False`) the exception propagates and no
-    rollback is issued, as 2.4/2.5 require.
+    A SQL failure always propagates (code_conventions.md 2.5): in owner mode
+    (`commit=True`) the helper rolls back its own operation first; in
+    caller-owned mode (`commit=False`) it never rolls back. `None` therefore
+    only ever means "no row", never "failed".
+    Logging is left to the boundary that turns the exception into a response
+    (error_conventions.md 10.3).
     """
-    if rollback_on_error is None:
-        rollback_on_error = commit
     try:
         with connection.cursor() as cursor:
             cursor.execute(query, params or {})
             if commit:
                 connection.commit()
             return cursor.fetchone()
-    except Exception as e:
-        if rollback_on_error:
+    except Exception:
+        if commit:
             connection.rollback()
-            logger.error("Error in query: %s", e, exc_info=True)
-            return None
         raise
 
 
@@ -96,25 +91,20 @@ def _execute_query_many(
     query: str,
     params: dict = None,
     commit: bool = True,
-    rollback_on_error: Optional[bool] = None,
 ) -> list:
-    """Generic helper to execute queries that return multiple rows.
+    """Generic helper to execute a query that returns several rows.
 
-    `rollback_on_error` defaults to `commit`, same contract as `_execute_query`.
+    Same error contract as `_execute_query`: `[]` only ever means "no rows".
     """
-    if rollback_on_error is None:
-        rollback_on_error = commit
     try:
         with connection.cursor() as cursor:
             cursor.execute(query, params or {})
             if commit:
                 connection.commit()
             return cursor.fetchall()
-    except Exception as e:
-        if rollback_on_error:
+    except Exception:
+        if commit:
             connection.rollback()
-            logger.error("Error in query: %s", e, exc_info=True)
-            return []
         raise
 
 

@@ -14,7 +14,6 @@ from DayBetes_food.database.queries.crud import (
     _build_update_query,
     _execute_query,
     _execute_query_many,
-    logger,
 )
 from DayBetes_food.domain.intake_plate import IntakePlateCreate, IntakePlateRead, IntakePlateUpdate
 from DayBetes_food.errors import ConflictError, InfrastructureError, NotFoundError
@@ -53,7 +52,6 @@ def create_intake_plate(connection, payload: IntakePlateCreate, *, commit: bool 
             "offset_minutes": payload.offset_minutes,
         },
         commit=commit,
-        rollback_on_error=commit,
     )
     if row is None:
         raise InfrastructureError("Intake plate INSERT returned no row")
@@ -237,11 +235,9 @@ def apply_plate_offset_to_portions(
         if commit:
             connection.commit()
         return True
-    except Exception as e:
+    except Exception:
         if commit:
             connection.rollback()
-            logger.error("Error in query: %s", e, exc_info=True)
-            return False
         raise
 
 

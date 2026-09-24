@@ -129,23 +129,6 @@ def _rows_to_reads(rows) -> list[PortionDetailRead]:
     return [portion_detail_read_from_row(row) for row in (rows or [])]
 
 
-def _execute_write(connection, query, params: dict, commit: bool):
-    """Run one write and propagate any SQL failure (error_conventions.md 11).
-
-    The generic helper, in owner mode (`commit=True`), rolls back and returns
-    `None`; the callers here read `None` as "no row matched" and would turn an
-    infrastructure failure into a `NotFoundError` (a 404 for a server fault,
-    finding 5). Here the owner rolls back and the exception propagates; in
-    caller-owned mode (`commit=False`) it propagates without rollback (2.4).
-    """
-    try:
-        return _execute_query(connection, query, params, commit=commit, rollback_on_error=False)
-    except Exception:
-        if commit:
-            connection.rollback()
-        raise
-
-
 def _ensure_destination_owned(connection, user_id: int, destination: PortionDestination, destination_id: int) -> None:
     table = _DESTINATION_TABLE.get(destination)
     if table is None:
@@ -245,7 +228,7 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
             updated_at = NOW()
         RETURNING id;
     """
-    result = _execute_write(connection, query, data, commit)
+    result = _execute_query(connection, query, data, commit=commit)
     if not result:
         raise NotFoundError("portion_not_found")
     return int(result["id"])
@@ -369,11 +352,11 @@ def update_portion_amount(connection, user_id: int, portion_id: int, amount: flo
         {_PORTION_OWNED_BY_USER}
         RETURNING pd.id;
     """
-    result = _execute_write(
+    result = _execute_query(
         connection,
         query,
         {"amount": grams, "portion_id": portion_id, "user_id": user_id},
-        commit,
+        commit=commit,
     )
     if not result:
         raise NotFoundError("portion_not_found")
@@ -391,11 +374,11 @@ def update_portion_offset(connection, user_id: int, portion_id: int, offset_minu
         {_PORTION_OWNED_BY_USER}
         RETURNING pd.id;
     """
-    result = _execute_write(
+    result = _execute_query(
         connection,
         query,
         {"offset_minutes": offset_minutes, "portion_id": portion_id, "user_id": user_id},
-        commit,
+        commit=commit,
     )
     if not result:
         raise NotFoundError("portion_not_found")
@@ -438,11 +421,11 @@ def update_portion_flag(connection, user_id: int, portion_id: int, field: str, v
         field=sql.Identifier(field),
         owned=sql.SQL(_PORTION_OWNED_BY_USER),
     )
-    result = _execute_write(
+    result = _execute_query(
         connection,
         query,
         {"value": value, "portion_id": portion_id, "user_id": user_id},
-        commit,
+        commit=commit,
     )
     if not result:
         raise NotFoundError("portion_not_found")
@@ -579,7 +562,7 @@ def update_portion_detail_fields(
     if query is None:
         return False
     params["user_id"] = user_id
-    result = _execute_write(connection, query, params, commit)
+    result = _execute_query(connection, query, params, commit=commit)
     if not result:
         raise NotFoundError("portion_not_found")
     return True
@@ -622,11 +605,11 @@ def move_portion_to_plate(connection, user_id: int, portion_id: int, target_plat
         {_PORTION_OWNED_BY_USER}
         RETURNING pd.id;
     """
-    result = _execute_write(
+    result = _execute_query(
         connection,
         query,
         {"target_plate_id": target_plate_id, "portion_id": portion_id, "user_id": user_id},
-        commit,
+        commit=commit,
     )
     if not result:
         raise NotFoundError("portion_not_found")
@@ -639,8 +622,8 @@ def delete_portion_detail(connection, user_id: int, portion_id: int, commit: boo
         {_PORTION_OWNED_BY_USER}
         RETURNING pd.id;
     """
-    result = _execute_write(
-        connection, query, {"portion_id": portion_id, "user_id": user_id}, commit
+    result = _execute_query(
+        connection, query, {"portion_id": portion_id, "user_id": user_id}, commit=commit
     )
     if not result:
         raise NotFoundError("portion_not_found")

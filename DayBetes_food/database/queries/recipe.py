@@ -35,7 +35,7 @@ def add_recipe(
         "name": name,
         "notes": notes,
         "is_private": is_private,
-    }, commit=commit, rollback_on_error=commit)
+    }, commit=commit)
     return result["id"] if result else None
 
 
@@ -119,7 +119,7 @@ def update_recipe(
     if not query:
         return False
         
-    result = _execute_query(connection, query, params, commit=commit, rollback_on_error=commit)
+    result = _execute_query(connection, query, params, commit=commit)
     return result is not None
 
 
@@ -127,6 +127,6 @@ def delete_recipe(connection, recipe_id: int, commit: bool = True) -> bool:
     """Deletes a recipe by ID."""
     query = "DELETE FROM recipe WHERE id = %(id)s RETURNING id;"
     result = _execute_query(
-        connection, query, {"id": recipe_id}, commit=commit, rollback_on_error=commit
+        connection, query, {"id": recipe_id}, commit=commit
     )
     return result is not None

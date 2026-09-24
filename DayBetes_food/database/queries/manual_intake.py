@@ -60,7 +60,6 @@ def add_manual_intake(connection, data: dict, commit: bool = True) -> Optional[i
         query,
         payload,
         commit=commit,
-        rollback_on_error=commit,
     )
     return result["id"] if result else None
 
@@ -185,7 +184,6 @@ def update_manual_intake(connection, intake_id: int, data: dict, commit: bool = 
         query,
         params,
         commit=commit,
-        rollback_on_error=commit,
     )
     return result is not None
 
@@ -205,6 +203,5 @@ def delete_manual_intake(connection, intake_id: int, commit: bool = True) -> boo
         query,
         {"id": intake_id},
         commit=commit,
-        rollback_on_error=commit,
     )
     return result is not None

@@ -2,6 +2,8 @@
 
 from typing import Optional
 
+from psycopg.errors import UniqueViolation
+
 from DayBetes_food.database.queries.crud import (
     _build_fuzzy_search,
     _execute_query,
@@ -9,6 +11,7 @@ from DayBetes_food.database.queries.crud import (
     _normalize_tag_name,
     _tag_color_from_name,
 )
+from DayBetes_food.errors import ConflictError
 
 
 def get_tag_suggestions(connection, search: str = "", limit: int = 100) -> list[str]:
@@ -48,7 +51,6 @@ def ensure_tag(connection, tag_name: str, commit: bool = True) -> Optional[int]:
         query,
         {"name": clean, "color": _tag_color_from_name(clean)},
         commit=commit,
-        rollback_on_error=commit,
     )
     return int(row["id"]) if row and row.get("id") is not None else None
 
@@ -82,11 +84,15 @@ def update_tag(connection, tag_id: int, name: str, color: str, commit: bool = Tr
         WHERE id = %(id)s
         RETURNING id;
     """
-    row = _execute_query(
-        connection,
-        query,
-        {"id": tag_id, "name": clean_name, "color": clean_color},
-        commit=commit,
-        rollback_on_error=commit,
-    )
+    try:
+        row = _execute_query(
+            connection,
+            query,
+            {"id": tag_id, "name": clean_name, "color": clean_color},
+            commit=commit,
+        )
+    except UniqueViolation as exc:
+        # Renaming to a name another tag already uses (`tags.name UNIQUE`) is
+        # a user conflict, not a server failure (6.2).
+        raise ConflictError(f"Tag name {clean_name!r} already exists") from exc
     return row is not None

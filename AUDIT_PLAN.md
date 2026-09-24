@@ -189,7 +189,8 @@ Ya cerradas (sesión previa a este plan):
       `cooking_factor` (`3403a15`); deuda restante —H1 versionado de
       alimentos, H4 borrado de usuario, H11 actor, H27 rutas que exigen
       `planned`, `ml` en líquidos, y la parte transversal del fallo SQL →
-      `None` en `crud.py`— en `audit/deuda_pendiente.md`)
+      `None` en `crud.py`, esta última resuelta con un cambio global el
+      2026-09-24 durante la auditoría de `catalog`— en `audit/deuda_pendiente.md`)
 
 Fuera de alcance por ahora (decisión tuya, no técnica):
 - `fridge` — funcionalidad todavía no implementada, no se audita hasta que exista.
