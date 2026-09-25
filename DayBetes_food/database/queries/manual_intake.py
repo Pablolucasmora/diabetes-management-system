@@ -35,7 +35,7 @@ def get_manual_origin_suggestions(
             SELECT DISTINCT trim(entity.origin) AS name
             FROM manual_intake entity
             WHERE entity.deleted_at IS NULL
-              AND (entity.is_private = FALSE OR entity.created_by = %(user_id)s)
+              AND (entity.is_published OR entity.created_by = %(user_id)s)
               AND entity.origin IS NOT NULL
               AND trim(entity.origin) <> ''
         )
@@ -56,13 +56,13 @@ def add_manual_intake(connection, data: dict, commit: bool = True) -> Optional[i
             created_by, origin_root_id, name, description, subtype, origin,
             amount_g, calories_100g, carbs_100g, sugars_100g,
             fats_100g, saturated_100g, proteins_100g, fiber_100g,
-            caffeine, alcohol, glycemic_index, ig_confidence, is_private
+            caffeine, alcohol, glycemic_index, ig_confidence
         )
         VALUES (
             %(created_by)s, %(origin_root_id)s, %(name)s, %(description)s, %(subtype)s, %(origin)s,
             %(amount_g)s, %(calories_100g)s, %(carbs_100g)s, %(sugars_100g)s,
             %(fats_100g)s, %(saturated_100g)s, %(proteins_100g)s, %(fiber_100g)s,
-            %(caffeine)s, %(alcohol)s, %(glycemic_index)s, %(ig_confidence)s, %(is_private)s
+            %(caffeine)s, %(alcohol)s, %(glycemic_index)s, %(ig_confidence)s
         )
         RETURNING id;
     """

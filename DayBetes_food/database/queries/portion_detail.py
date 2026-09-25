@@ -112,15 +112,15 @@ _PORTION_OWNED_BY_USER = """
     )
 """
 
-# Visibility of a recipe portion for reading it (5.4): a public recipe
-# (is_private = FALSE) is readable by anyone, but only its owner may mutate it.
+# Visibility of a recipe portion for reading it (5.4): a published recipe
+# (is_published) is readable by anyone, but only its owner may mutate it.
 # This fragment is used by list_viewable_recipe_portions and never by a
 # mutation.
 _PORTION_VISIBLE_RECIPE = """
     AND EXISTS (
         SELECT 1 FROM recipe r
         WHERE r.id = pd.recipe_id
-          AND (r.users_id = %(user_id)s OR r.is_private = FALSE)
+          AND (r.users_id = %(user_id)s OR r.is_published)
     )
 """
 
@@ -194,9 +194,9 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
         "recipe_id": payload.destination_id if destination is PortionDestination.RECIPE else None,
         "fridge_id": payload.destination_id if destination is PortionDestination.FRIDGE else None,
         "plate_id": payload.plate_id,
-        "cooking": cooking,
-        "conservation": conservation,
-        "final_state": final_state,
+        "cooking": cooking.value if cooking is not None else None,
+        "conservation": conservation.value if conservation is not None else None,
+        "final_state": final_state.value if final_state is not None else None,
         "strictly_weighed": payload.strictly_weighed,
         "macros_quality": payload.macros_quality,
         "is_cooked_weight": bool(payload.is_cooked_weight),
@@ -324,7 +324,7 @@ def list_recipe_portions_by_origin(
 def list_viewable_recipe_portions(connection, user_id: int, recipe_id: int) -> list[PortionDetailRead]:
     """Portions of a recipe the user may view, owned or public (5.4).
 
-    A recipe can be public (`is_private = FALSE`) and therefore not owned by
+    A recipe can be published (`is_published`) and therefore not owned by
     the user: showing it, computing its macros, logging it or copying it
     requires viewability, not ownership. `list_portions_by_recipe` stays for
     the owner-only flows (editing the recipe). Every write still goes through
@@ -460,9 +460,9 @@ def _find_preparation_sibling(
         "portion_id": portion.id,
         "catalog_id": portion.origin_id if portion.origin is PortionOrigin.CATALOG else None,
         "manual_intake_id": portion.origin_id if portion.origin is PortionOrigin.MANUAL_INTAKE else None,
-        "cooking": cooking,
-        "conservation": conservation,
-        "final_state": final_state,
+        "cooking": (cooking.value if hasattr(cooking, "value") else cooking),
+        "conservation": (conservation.value if hasattr(conservation, "value") else conservation),
+        "final_state": (final_state.value if hasattr(final_state, "value") else final_state),
         "is_cooked_weight": bool(is_cooked_weight),
         "user_id": user_id,
     }
@@ -531,8 +531,9 @@ def update_portion_detail_fields(
             null_fields.add(field)
             resolved[field] = None
         else:
-            params[field] = validate_preparation_choice(field, value)
-            resolved[field] = params[field]
+            validated = validate_preparation_choice(field, value)
+            params[field] = validated.value
+            resolved[field] = validated.value
     if len(params) == 1:
         return False
 

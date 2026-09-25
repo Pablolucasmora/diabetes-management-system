@@ -96,13 +96,37 @@
   function updateMacros(root, grams) {
     var nodes = root.querySelectorAll("[data-detail-macro-key]");
     var rawGrams = macroGrams(root, grams);
+    var anyUnknown = false;
     for (var i = 0; i < nodes.length; i += 1) {
       var node = nodes[i];
-      var per100 = toNumber(node.getAttribute("data-per100"));
+      var rawPer100 = node.getAttribute("data-per100");
+      if (rawPer100 === null || rawPer100 === "") {
+        // Unknown is not 0 (measurement §2): keep the em dash.
+        node.textContent = "—";
+        anyUnknown = true;
+        continue;
+      }
+      var per100 = toNumber(rawPer100);
       var value = (rawGrams * per100) / 100;
       var unit = node.getAttribute("data-unit") || "g";
       var decimals = unit === "kcal" ? 0 : 1;
       node.textContent = formatValue(value, decimals) + " " + unit;
+    }
+    var grid = nodes.length ? nodes[0].closest("[id$='_macros']") : null;
+    var noteId = (root.id || "food_detail") + "_macros_unknown";
+    var note = document.getElementById(noteId);
+    if (anyUnknown) {
+      if (!note && grid && grid.parentNode) {
+        note = document.createElement("p");
+        note.id = noteId;
+        note.className = "text-xs text-gray-500";
+        note.textContent = "Some nutrients are unknown.";
+        grid.parentNode.insertBefore(note, grid.nextSibling);
+      } else if (note) {
+        note.textContent = "Some nutrients are unknown.";
+      }
+    } else if (note) {
+      note.remove();
     }
   }
 
@@ -133,36 +157,63 @@
 
   function persist(root, refs) {
     var key = root.getAttribute("data-detail-persist-key");
-    if (!key || !window.localStorage || !refs.gramsInput || !refs.select) return;
+    if (!key || !refs.gramsInput || !refs.select) return;
     var payload = {
       grams: String(refs.gramsInput.value || "0"),
       unit: String(refs.select.value || "portion"),
       plateValue: refs.plateValueInput ? String(refs.plateValueInput.value || "100") : "100",
       plateUnit: refs.plateUnitInput ? String(refs.plateUnitInput.value || "%") : "%",
     };
-    window.localStorage.setItem(key, JSON.stringify(payload));
+    try {
+      if (window.localStorage) {
+        window.localStorage.setItem(key, JSON.stringify(payload));
+      }
+    } catch (_) {
+      // localStorage blocked (private window, disabled data): ignore it.
+    }
+  }
+
+  function hasOption(selectEl, value) {
+    if (!selectEl || !selectEl.options) return false;
+    for (var i = 0; i < selectEl.options.length; i += 1) {
+      if (selectEl.options[i].value === value) return true;
+    }
+    return false;
   }
 
   function restore(root, refs) {
     var key = root.getAttribute("data-detail-persist-key");
-    if (!key || !window.localStorage || !refs.gramsInput || !refs.select) return;
-    var raw = window.localStorage.getItem(key);
-    if (!raw) return;
+    if (!key || !refs.gramsInput || !refs.select) return;
+    var raw = null;
     try {
-      var payload = JSON.parse(raw);
-      if (payload && typeof payload.unit === "string") {
-        refs.select.value = payload.unit;
-      }
-      if (payload && payload.grams != null) {
-        refs.gramsInput.value = String(payload.grams);
-      }
-      if (refs.plateValueInput && payload && payload.plateValue != null) {
-        refs.plateValueInput.value = String(payload.plateValue);
-      }
-      if (refs.plateUnitInput && payload && typeof payload.plateUnit === "string") {
-        refs.plateUnitInput.value = payload.plateUnit === "g" ? "g" : "%";
-      }
-    } catch (_) {}
+      raw = window.localStorage ? window.localStorage.getItem(key) : null;
+    } catch (_) {
+      return;
+    }
+    if (!raw) return;
+    var payload = null;
+    try {
+      payload = JSON.parse(raw);
+    } catch (_) {
+      return;
+    }
+    if (!payload) return;
+
+    var unitAccepted = typeof payload.unit === "string" && hasOption(refs.select, payload.unit);
+    var grams = Number(String(payload.grams != null ? payload.grams : "").replace(",", "."));
+    if (unitAccepted && Number.isFinite(grams) && grams > 0) {
+      refs.select.value = payload.unit;
+      refs.gramsInput.value = String(grams);
+    } else {
+      // The saved unit no longer exists (e.g. "portion" on a food that lost its
+      // serving): ignore the unit and the grams and keep what the server painted.
+    }
+    if (refs.plateValueInput && payload.plateValue != null) {
+      refs.plateValueInput.value = String(payload.plateValue);
+    }
+    if (refs.plateUnitInput && typeof payload.plateUnit === "string") {
+      refs.plateUnitInput.value = payload.plateUnit === "g" ? "g" : "%";
+    }
   }
 
   function updatePlateUnitButton(refs) {

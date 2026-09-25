@@ -1,6 +1,7 @@
 from fasthtml.common import *
 import json
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import quote_plus
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.menu.main_menu import main_menu
@@ -9,8 +10,10 @@ from DayBetes_food.components.ui import render_fragment, render_page
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.database.queries import get_catalog_item_by_barcode, create_insulin_injection
 from DayBetes_food.domain.constants import InsulinType, InjectionZone
+from DayBetes_food.domain.catalog import parse_barcode
 from DayBetes_food.domain.insulin import InsulinInjectionCreate
-from DayBetes_food.errors import ValidationError
+from DayBetes_food.errors import AuthenticationError, ValidationError
+from DayBetes_food.http_errors import app_error_response
 from DayBetes_food.time_utils import local_naive_to_utc_aware, APP_TIMEZONE
 
 
@@ -89,20 +92,38 @@ def setup_main_routes(rt):
     def get(req):
         return render_page(req, lambda _: scanner_main())
 
+    @rt("/data/smart_macros_cases.json")
+    def get():
+        # Read-only route: the static handler does not serve this .json, and
+        # dbSmartMacrosSelfCheck() needs it (plan F5.3). It is only the shared
+        # parse cases, no user data.
+        path = Path(__file__).resolve().parent.parent / "static" / "data" / "smart_macros_cases.json"
+        if not path.is_file():
+            return HTMLResponse(status_code=404)
+        return JSONResponse(json.loads(path.read_text(encoding="utf-8")))
+
     @rt("/scanner/resolve")
     def post(request: Request, barcode: str = ""):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
-        clean = (barcode or "").strip()
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        try:
+            clean = parse_barcode(barcode)
+        except ValidationError:
+            return app_error_response(
+                request, ValidationError, "Invalid barcode: it must contain only digits (8 to 48)."
+            )
         if not clean:
-            return HTMLResponse("", status_code=400)
+            return app_error_response(
+                request, ValidationError, "Invalid barcode: it must contain only digits (8 to 48)."
+            )
         existing_id = None
         with get_connection() as connection:
-            user_id = get_current_user_id()
-            viewer_id = user_id if user_id else -1
-            existing = get_catalog_item_by_barcode(connection, clean, viewer_user_id=viewer_id)
+            existing = get_catalog_item_by_barcode(connection, int(user_id), clean)
             if existing:
-                existing_id = int(existing["id"])
+                existing_id = existing.id
         encoded = quote_plus(clean)
         existing_suffix = f"&existing_id={existing_id}" if existing_id else ""
         location = {

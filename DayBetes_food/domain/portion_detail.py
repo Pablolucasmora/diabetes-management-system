@@ -15,9 +15,9 @@ from datetime import datetime
 
 from DayBetes_food.domain.constants import (
     AmountInputUnit,
-    CONSERVATION_OPTIONS,
-    COOKING_OPTIONS,
-    INITIAL_STATE_OPTIONS,
+    ConservationMethod,
+    CookingMethod,
+    FoodPhysicalState,
     MASS_SANITY_MAX_G,
     Clear,
     PortionDestination,
@@ -36,12 +36,12 @@ PORTION_DETAIL_AMOUNT_MAX_G = MASS_SANITY_MAX_G
 PORTION_DETAIL_OFFSET_MIN_MINUTES = -300
 PORTION_DETAIL_OFFSET_MAX_MINUTES = 300
 
-# Whitelist per preparation field (T2.2). `final_state` reuses the initial
-# state options: both describe the same closed set (4.6).
-_PREPARATION_OPTIONS = {
-    "cooking": COOKING_OPTIONS,
-    "conservation": CONSERVATION_OPTIONS,
-    "final_state": INITIAL_STATE_OPTIONS,
+# Closed set per preparation field (decision 2026-09-25, §4.1). The text-to-enum
+# conversion already happened at the boundary with parse_enum.
+_PREPARATION_ENUMS = {
+    "cooking": CookingMethod,
+    "conservation": ConservationMethod,
+    "final_state": FoodPhysicalState,
 }
 
 
@@ -61,7 +61,7 @@ def parse_amount_grams(value) -> float:
     return float(value)
 
 
-def amount_to_grams(value: float, unit: AmountInputUnit, serving_grams: float) -> float:
+def amount_to_grams(value: float, unit: AmountInputUnit, serving_grams: float | None) -> float:
     """Convert an amount typed in `unit` to grams (measurement_conventions.md 4.2, 11).
 
     The single server-side conversion of every amount boundary (decision
@@ -69,11 +69,14 @@ def amount_to_grams(value: float, unit: AmountInputUnit, serving_grams: float) -
     uses `serving_grams` —the food's serving, which the caller resolves from
     the database, never from a hidden form field (code_conventions.md 7.13)—
     and `g` is identity. `%` is not a mass and is rejected here: it is always
-    relative to a total the caller owns. The result is not validated; the
-    caller applies `parse_amount_grams` to it.
+    relative to a total the caller owns. A `portion` unit with no serving
+    (`serving_grams is None`) is rejected (H15, decision 2026-09-25). The
+    result is not validated; the caller applies `parse_amount_grams` to it.
     """
     unit = AmountInputUnit(unit)
     if unit is AmountInputUnit.PORTION:
+        if serving_grams is None:
+            raise ValidationError("amount_unit_not_admitted")
         return value * float(serving_grams)
     if unit.grams_factor is None:
         raise ValidationError("amount_unit_not_admitted")
@@ -81,7 +84,7 @@ def amount_to_grams(value: float, unit: AmountInputUnit, serving_grams: float) -
 
 
 def validate_preparation_choice(field: str, value):
-    """Validate `cooking`/`conservation`/`final_state` against its whitelist (T2.2).
+    """Validate `cooking`/`conservation`/`final_state` against its enum (T2.2).
 
     Defence in depth (7.10): persistence cannot accept any string just because
     the live list is used in presentation. `None` is "no value" and passes;
@@ -89,8 +92,8 @@ def validate_preparation_choice(field: str, value):
     """
     if value is None:
         return None
-    options = _PREPARATION_OPTIONS[field]
-    if value not in options:
+    enum_cls = _PREPARATION_ENUMS[field]
+    if not isinstance(value, enum_cls):
         raise ValidationError(f"invalid_{field}")
     return value
 
@@ -104,7 +107,7 @@ class PortionSourceRead:
     single nutritional value (finding 1, still open).
     """
     name: str | None
-    unit_g: float                 # catalog.default_portion | manual_intake.amount_g
+    unit_g: float | None           # catalog.default_portion | manual_intake.amount_g; None = no serving
     category: str | None
     subtype: str | None
     cooking_factor: float | None  # catalog only; None for manual_intake
@@ -126,9 +129,9 @@ class PortionDetailRead:
     destination_id: int
     plate_id: int | None
     amount: float
-    cooking: str | None
-    conservation: str | None
-    final_state: str | None
+    cooking: CookingMethod | None
+    conservation: ConservationMethod | None
+    final_state: FoodPhysicalState | None
     strictly_weighed: bool | None   # None = no data (decision 2026-09-18)
     macros_quality: bool | None
     is_cooked_weight: bool
@@ -146,9 +149,9 @@ class PortionDetailCreate:
     destination_id: int
     amount: float
     plate_id: int | None = None
-    cooking: str | None = None
-    conservation: str | None = None
-    final_state: str | None = None
+    cooking: CookingMethod | None = None
+    conservation: ConservationMethod | None = None
+    final_state: FoodPhysicalState | None = None
     strictly_weighed: bool | None = None
     macros_quality: bool | None = None
     is_cooked_weight: bool = False
@@ -158,6 +161,6 @@ class PortionDetailCreate:
 @dataclass(frozen=True)
 class PortionDetailUpdate:
     """Partial update. None = leave as is; CLEAR = write NULL (7.4)."""
-    cooking: str | None | Clear = None
-    conservation: str | None | Clear = None
-    final_state: str | None | Clear = None
+    cooking: CookingMethod | None | Clear = None
+    conservation: ConservationMethod | None | Clear = None
+    final_state: FoodPhysicalState | None | Clear = None

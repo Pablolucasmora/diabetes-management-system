@@ -1,0 +1,206 @@
+[
+  {
+    "text": "120kcal 30hc 12az 20prot 10grasas 3sat 5fibra",
+    "expected": {
+      "calories_100g": 120,
+      "carbs_100g": 30,
+      "sugars_100g": 12,
+      "proteins_100g": 20,
+      "fats_100g": 10,
+      "saturated_100g": 3,
+      "fiber_100g": 5
+    }
+  },
+  {
+    "text": "30g carbs 20g proteins",
+    "expected": {
+      "calories_100g": null,
+      "carbs_100g": 30,
+      "sugars_100g": null,
+      "proteins_100g": 20,
+      "fats_100g": null,
+      "saturated_100g": null,
+      "fiber_100g": null
+    }
+  },
+  {
+    "text": "12 proteínas 23 grasas",
+    "expected": {
+      "calories_100g": null,
+      "carbs_100g": null,
+      "sugars_100g": null,
+      "proteins_100g": 12,
+      "fats_100g": 23,
+      "saturated_100g": null,
+      "fiber_100g": null
+    }
+  },
+  {
+    "text": "12,5hc 3,2grasas",
+    "expected": {
+      "calories_100g": null,
+      "carbs_100g": 12.5,
+      "sugars_100g": null,
+      "proteins_100g": null,
+      "fats_100g": 3.2,
+      "saturated_100g": null,
+      "fiber_100g": null
+    }
+  },
+  {
+    "text": "447kcal 67hc",
+    "expected": {
+      "calories_100g": 447,
+      "carbs_100g": 67,
+      "sugars_100g": null,
+      "proteins_100g": null,
+      "fats_100g": null,
+      "saturated_100g": null,
+      "fiber_100g": null
+    }
+  },
+  {
+    "text": "30 g hc 20 gr prot 5 gramos fibra",
+    "expected": {
+      "calories_100g": null,
+      "carbs_100g": 30,
+      "sugars_100g": null,
+      "proteins_100g": 20,
+      "fats_100g": null,
+      "saturated_100g": null,
+      "fiber_100g": 5
+    }
+  },
+  {
+    "text": "10 grasas, 3 grasas saturadas; 50 hidratos de carbono + 5 azúcar",
+    "expected": {
+      "calories_100g": null,
+      "carbs_100g": 50,
+      "sugars_100g": 5,
+      "proteins_100g": null,
+      "fats_100g": 10,
+      "saturated_100g": 3,
+      "fiber_100g": null
+    }
+  },
+  {
+    "text": "120 KCAL 0.5 Fibra",
+    "expected": {
+      "calories_100g": 120,
+      "carbs_100g": null,
+      "sugars_100g": null,
+      "proteins_100g": null,
+      "fats_100g": null,
+      "saturated_100g": null,
+      "fiber_100g": 0.5
+    }
+  },
+  {
+    "text": "0 kcal",
+    "expected": {
+      "calories_100g": 0,
+      "carbs_100g": null,
+      "sugars_100g": null,
+      "proteins_100g": null,
+      "fats_100g": null,
+      "saturated_100g": null,
+      "fiber_100g": null
+    }
+  },
+  {
+    "text": "30hc",
+    "expected": {
+      "calories_100g": null,
+      "carbs_100g": 30,
+      "sugars_100g": null,
+      "proteins_100g": null,
+      "fats_100g": null,
+      "saturated_100g": null,
+      "fiber_100g": null
+    }
+  },
+  {
+    "text": "30gr",
+    "expected": {
+      "calories_100g": null,
+      "carbs_100g": null,
+      "sugars_100g": null,
+      "proteins_100g": null,
+      "fats_100g": 30,
+      "saturated_100g": null,
+      "fiber_100g": null
+    }
+  },
+  {
+    "text": "",
+    "expected": {
+      "calories_100g": null,
+      "carbs_100g": null,
+      "sugars_100g": null,
+      "proteins_100g": null,
+      "fats_100g": null,
+      "saturated_100g": null,
+      "fiber_100g": null
+    }
+  },
+  {
+    "text": "  ,  ",
+    "expected": {
+      "calories_100g": null,
+      "carbs_100g": null,
+      "sugars_100g": null,
+      "proteins_100g": null,
+      "fats_100g": null,
+      "saturated_100g": null,
+      "fiber_100g": null
+    }
+  },
+  {
+    "text": "carbs 30 proteins 20",
+    "error": "Write each value as a number followed by its macro, e.g. '30 carbs 20 proteins'."
+  },
+  {
+    "text": "kcal 120 hc 30",
+    "error": "Write each value as a number followed by its macro, e.g. '30 carbs 20 proteins'."
+  },
+  {
+    "text": "hc: 30 protein=20",
+    "error": "Write each value as a number followed by its macro, e.g. '30 carbs 20 proteins'."
+  },
+  {
+    "text": "hola",
+    "error": "Write each value as a number followed by its macro, e.g. '30 carbs 20 proteins'."
+  },
+  {
+    "text": "-5 hc",
+    "error": "Write each value as a number followed by its macro, e.g. '30 carbs 20 proteins'."
+  },
+  {
+    "text": "30",
+    "error": "Add the macro name after 30."
+  },
+  {
+    "text": "30 hc 20",
+    "error": "Add the macro name after 20."
+  },
+  {
+    "text": "30 hc 20 prot 5 gramos",
+    "error": "Unknown macro 'gramos'."
+  },
+  {
+    "text": "30 g",
+    "error": "Unknown macro 'g'."
+  },
+  {
+    "text": "30 carbohid",
+    "error": "Unknown macro 'carbohid'."
+  },
+  {
+    "text": "30 hc 20 hidratos",
+    "error": "Macro 'hidratos' is written more than once."
+  },
+  {
+    "text": "30 hc = 20 prot",
+    "error": "Write each value as a number followed by its macro, e.g. '30 carbs 20 proteins'."
+  }
+]

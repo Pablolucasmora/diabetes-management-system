@@ -7,6 +7,8 @@ routes/, components/, crud.py o schema.py.
 
 from enum import Enum, unique
 
+from DayBetes_food.errors import ValidationError
+
 
 @unique
 class InsulinType(str, Enum):
@@ -101,24 +103,82 @@ class PortionDestination(str, Enum):
 MASS_SANITY_MAX_G = 100000
 
 
-# Technical whitelists (4.6) for the food-state fields that still have no
-# catalog table (4.5). They are provisional: once those tables exist their
-# rows replace these lists. They live in `domain/` because the persistence
-# layer has to validate against them, and a presentation module cannot be the
-# source of a persistence rule (decision 2026-09-22).
-INITIAL_STATE_OPTIONS = ["solid", "mashed/creamy", "liquid", "gel"]
-COOKING_OPTIONS = [
-    "steam",
-    "boiled-al-dente",
-    "boiled-soft",
-    "fried",
-    "raw",
-    "oven",
-    "airfryer",
-    "toaster",
-    "griddle",
-]
-CONSERVATION_OPTIONS = ["freshly-made", "fridge", "freezer", "pre-cooked"]
+@unique
+class FoodCategory(str, Enum):
+    MEAT = "meat"
+    FISH = "fish"
+    DAIRY = "dairy"
+    EGGS = "eggs"
+    PROCESSED_MEAT = "processed_meat"
+    LEGUMES = "legumes"
+    TUBERS = "tubers"
+    NUTS = "nuts"
+    VEGETABLES = "vegetables"
+    FRUITS = "fruits"
+    CEREALS = "cereals"
+    OILS_AND_FATS = "oils_and_fats"
+    SWEETS = "sweets"
+    BEVERAGES = "beverages"
+    SAUCES = "sauces"
+    CONDIMENTS = "condiments"
+    SUPPLEMENTS = "supplements"
+
+
+@unique
+class Nutriscore(str, Enum):
+    # Stored codes are upper-case (4.2: keep existing codes).
+    A = "A"
+    B = "B"
+    C = "C"
+    D = "D"
+    E = "E"
+
+
+@unique
+class FoodPhysicalState(str, Enum):
+    # catalog.initial_state AND portion_detail.final_state.
+    SOLID = "solid"
+    MASHED_CREAMY = "mashed/creamy"
+    LIQUID = "liquid"
+    GEL = "gel"
+
+
+@unique
+class CookingMethod(str, Enum):
+    STEAM = "steam"
+    BOILED_AL_DENTE = "boiled-al-dente"
+    BOILED_SOFT = "boiled-soft"
+    FRIED = "fried"
+    RAW = "raw"
+    OVEN = "oven"
+    AIRFRYER = "airfryer"
+    TOASTER = "toaster"
+    GRIDDLE = "griddle"
+
+
+@unique
+class ConservationMethod(str, Enum):
+    FRESHLY_MADE = "freshly-made"
+    FRIDGE = "fridge"
+    FREEZER = "freezer"
+    PRE_COOKED = "pre-cooked"
+
+
+NOVA_MIN, NOVA_MAX = 1, 4
+YUKA_MIN, YUKA_MAX = 0, 100
+
+
+def parse_enum(enum_cls, raw, *, field: str, normalize=None):
+    """Boundary conversion of a closed value (4.3, 7.7). '' -> None; unknown -> ValidationError."""
+    text = (raw or "").strip()
+    if normalize:
+        text = normalize(text)
+    if not text:
+        return None
+    try:
+        return enum_cls(text)
+    except ValueError as exc:
+        raise ValidationError(f"Invalid {field.replace('_', ' ')}.", fields={field: "invalid"}) from exc
 
 
 class Clear:

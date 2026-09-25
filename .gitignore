@@ -9,7 +9,6 @@ venv/
 *.dump
 
 # Archivos de datos brutos
-data/
 *.csv
 *.xlsx
 

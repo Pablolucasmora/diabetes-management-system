@@ -40,11 +40,11 @@
     if (!unit || !amountInput || !percentInput || !servingHidden || !availableHidden || !consumedHidden) return;
 
     var amount = Math.max(0, num(amountInput.value, 0));
-    var serving = Math.max(0.001, num(servingHidden.value, 100));
+    var serving = num(servingHidden.value, 0);
     var available = Math.max(0, num(availableHidden.value, 0));
     var percent = clamp(num(percentInput.value, 100), 0, 100);
 
-    var baseG = unit.value === "servings" ? amount * serving : amount;
+    var baseG = unit.value === "servings" && serving > 0 ? amount * serving : amount;
     var consumed = clamp(baseG * (percent / 100.0), 0, available > 0 ? available : baseG);
     var leftover = Math.max(0, (available > 0 ? available : baseG) - consumed);
 
@@ -65,7 +65,9 @@
     var entryType = button.getAttribute("data-entry_type") || "";
     var entryId = button.getAttribute("data-entry_id") || "";
     var entryName = button.getAttribute("data-entry_name") || "";
-    var servingG = num(button.getAttribute("data-serving_g"), 100);
+    var servingAttr = button.getAttribute("data-serving_g");
+    var hasServing = servingAttr !== null && String(servingAttr).trim() !== "";
+    var servingG = hasServing ? num(servingAttr, 0) : 0;
     var availableGAttr = button.getAttribute("data-available_g");
     var availableG = availableGAttr ? num(availableGAttr, 0) : 0;
 
@@ -78,15 +80,21 @@
 
     if (hiddenType) hiddenType.value = entryType;
     if (hiddenId) hiddenId.value = entryId;
-    if (hiddenServing) hiddenServing.value = String(servingG);
+    if (hiddenServing) hiddenServing.value = hasServing ? String(servingG) : "";
 
     var state = readState() || {};
     var sameAsLast = state.entry_type === entryType && String(state.entry_id || "") === String(entryId || "");
     var available = sameAsLast ? Math.max(0, num(state.leftover_g, availableG)) : Math.max(0, availableG || servingG);
     if (hiddenAvailable) hiddenAvailable.value = String(available);
 
-    if (selectedLabel) selectedLabel.textContent = entryName + " · available " + available.toFixed(1) + " g";
-    if (amountInput) amountInput.value = String(available.toFixed(1));
+    if (!hasServing && !availableG) {
+      // No serving and no available stock: leave the amount empty, never NaN.
+      if (selectedLabel) selectedLabel.textContent = entryName;
+      if (amountInput) amountInput.value = "";
+    } else {
+      if (selectedLabel) selectedLabel.textContent = entryName + " · available " + available.toFixed(1) + " g";
+      if (amountInput) amountInput.value = String(available.toFixed(1));
+    }
 
     state.entry_type = entryType;
     state.entry_id = entryId;

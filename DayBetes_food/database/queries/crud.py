@@ -206,13 +206,14 @@ def _build_update_query(
         for field, expression in raw_fields.items()
     )
     extra_where_sql = sql.SQL(" AND ") + extra_where if extra_where else sql.SQL("")
+    qualified_key = sql.SQL("{}.{}").format(sql.Identifier(table), sql.Identifier(where_field))
     return sql.SQL("UPDATE {} SET {} WHERE {} = {}{} RETURNING {};").format(
         sql.Identifier(table),
         sql.SQL(", ").join(set_parts),
-        sql.Identifier(where_field),
+        qualified_key,
         sql.Placeholder(where_field),
         extra_where_sql,
-        sql.Identifier(where_field),
+        qualified_key,
     )
 
 
@@ -319,7 +320,7 @@ def _add_entity_filters(
     if favorite_condition:
         conditions.append(favorite_condition)
     if viewer_user_id is not None:
-        conditions.append(f"(entity.is_private = FALSE OR entity.{owner_column} = %(viewer_user_id)s)")
+        conditions.append(f"(entity.is_published OR entity.{owner_column} = %(viewer_user_id)s)")
         params["viewer_user_id"] = viewer_user_id
 
 
@@ -332,6 +333,31 @@ def _favorite_filter_sql(target_column: str, favorite: bool, params: dict, viewe
         f"WHERE uf.user_id = %(favorite_filter_user_id)s AND uf.{target_column} = entity.id"
         ")"
     )
+
+
+def _catalog_visibility_sql(alias: str, *, include_retained: bool) -> str:
+    """SQL visibility rule of `catalog` (§11.2.2, §11.4.1).
+
+    Shared by catalog.py and entries.py, so it lives here (§1.3.1). `alias` is
+    validated because it is interpolated; the user id always travels as the
+    `%(visibility_user_id)s` SQL parameter. It returns:
+    - listable: active AND (published OR owned by the viewer);
+    - retained (optional): unpublished or archived, but kept in the viewer's
+      favorites or in one of their recipes.
+    """
+    if not _IDENTIFIER_RE.fullmatch(alias or ""):
+        raise ValueError(f"Invalid catalog visibility alias: {alias!r}")
+    a = alias
+    listable = (
+        f"({a}.deleted_at IS NULL AND ({a}.is_published OR {a}.created_by = %(visibility_user_id)s))"
+    )
+    retained = (
+        f"(EXISTS (SELECT 1 FROM user_favorites vf "
+        f"WHERE vf.user_id = %(visibility_user_id)s AND vf.catalog_id = {a}.id)"
+        f" OR EXISTS (SELECT 1 FROM portion_detail vpd JOIN recipe vr ON vr.id = vpd.recipe_id "
+        f"WHERE vpd.catalog_id = {a}.id AND vr.users_id = %(visibility_user_id)s))"
+    )
+    return f"({listable} OR {retained})" if include_retained else listable
 
 
 # ============================================

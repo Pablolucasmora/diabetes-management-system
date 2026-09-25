@@ -457,42 +457,52 @@ def MacrosSummary(event, portions, compact: bool = False):
     )
 
 
-def _unit_options(default_portion_base: float, base_unit: str):
+def _unit_options(default_portion_base: float | None, base_unit: str):
     """Options of the amount unit selector.
 
     The conversion factors come from the central enum (measurement §11): the
     emitted value is the enum code and `data_factor` (presentation only) is
     generated from `grams_factor`. `portion` has no constant factor: its factor
-    is the food's `unit_g`, resolved on the server from the database.
+    is the food's `unit_g`, resolved on the server from the database. With no
+    serving (`default_portion_base is None`) the `serving` option is not offered
+    and grams is selected (H15).
     """
     one_label = base_unit
-    return [
-        Option(
-            f"serving ({default_portion_base:.0f}{base_unit})",
-            value=AmountInputUnit.PORTION.value,
-            selected=True,
-            data_factor=f"{default_portion_base:.6f}",
-            data_unit_label="serving",
-        ),
-        Option(
-            f"{one_label} (1{base_unit})",
-            value=AmountInputUnit.GRAMS.value,
-            data_factor=f"{AmountInputUnit.GRAMS.grams_factor:.6f}",
-            data_unit_label=one_label,
-        ),
-        Option(
-            f"lb ({AmountInputUnit.LB.grams_factor:.2f}{base_unit})",
-            value=AmountInputUnit.LB.value,
-            data_factor=f"{AmountInputUnit.LB.grams_factor:.6f}",
-            data_unit_label="lb",
-        ),
-        Option(
-            f"oz ({AmountInputUnit.OZ.grams_factor:.2f}{base_unit})",
-            value=AmountInputUnit.OZ.value,
-            data_factor=f"{AmountInputUnit.OZ.grams_factor:.6f}",
-            data_unit_label="oz",
-        ),
-    ]
+    options = []
+    if default_portion_base is not None:
+        options.append(
+            Option(
+                f"serving ({default_portion_base:.0f}{base_unit})",
+                value=AmountInputUnit.PORTION.value,
+                selected=True,
+                data_factor=f"{default_portion_base:.6f}",
+                data_unit_label="serving",
+            )
+        )
+    options.extend(
+        [
+            Option(
+                f"{one_label} (1{base_unit})",
+                value=AmountInputUnit.GRAMS.value,
+                selected=default_portion_base is None,
+                data_factor=f"{AmountInputUnit.GRAMS.grams_factor:.6f}",
+                data_unit_label=one_label,
+            ),
+            Option(
+                f"lb ({AmountInputUnit.LB.grams_factor:.2f}{base_unit})",
+                value=AmountInputUnit.LB.value,
+                data_factor=f"{AmountInputUnit.LB.grams_factor:.6f}",
+                data_unit_label="lb",
+            ),
+            Option(
+                f"oz ({AmountInputUnit.OZ.grams_factor:.2f}{base_unit})",
+                value=AmountInputUnit.OZ.value,
+                data_factor=f"{AmountInputUnit.OZ.grams_factor:.6f}",
+                data_unit_label="oz",
+            ),
+        ]
+    )
+    return options
 
 
 def _portions_by_plate(portions):
@@ -713,7 +723,8 @@ def PlateBlock(event, plate, plate_portions, show_header: bool, plates, plate_la
         result = []
         for field, label in (("cooking", "Cooking"), ("conservation", "Conservation"), ("final_state", "Final state")):
             if len({getattr(other["sample"], field) for other in siblings}) > 1:
-                result.append((label, getattr(sample, field)))
+                value = getattr(sample, field)
+                result.append((label, value.value if value is not None else None))
         if len({bool(other["sample"].is_cooked_weight) for other in siblings}) > 1:
             result.append(("Weighed", "cooked" if sample.is_cooked_weight else "raw"))
         return result
@@ -753,10 +764,16 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
     portion_id = int(sample.id)
     unit_g = unit_amount(sample)
     unit_label = display_unit(sample)
-    amount = float(grouped_item["total_amount_g"] or unit_g)
+    amount = float(grouped_item["total_amount_g"] or 0.0)
     offset = sample.offset_minutes
     offset_value = int(offset) if offset is not None else 0
-    units_count = amount / unit_g if unit_g > 0 else 0.0
+    if unit_g is not None:
+        units_count = amount / unit_g if unit_g > 0 else 0.0
+        side_label = "serving"
+    else:
+        # No serving: the selector offers grams and the amount is shown in grams.
+        units_count = amount
+        side_label = unit_label
     # La clave lleva la tanda y la porción: cada fila necesita ids propios.
     item_key = f"{plate.id}_{portion_id}"
     display_input_id = f"display_input_{item_key}"
@@ -832,7 +849,7 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
                     oninput=f"dbRecalcGrams('{display_input_id}','{unit_select_id}','{grams_input_id}')",
                     onclick="this.select()",
                 ),
-                Span("serving", id=side_unit_id, cls="text-xs text-gray-600"),
+                Span(side_label, id=side_unit_id, cls="text-xs text-gray-600"),
                 # Presentation-only helper: it is not submitted (no name); the
                 # server converts `amount_value` + `amount_unit` itself (§7.13).
                 Input(type="hidden", id=grams_input_id, value=f"{amount:.6f}"),
@@ -889,8 +906,9 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
             PortionTriStateFlag(event.id, sample, "macros_quality", ingredient_name),
             cls="flex items-center gap-2"
         ),
-        # Only catalog origins: manual_intake has no cooking_factor, so the
-        # flag would not change anything (decision 2026-09-18, finding 12).
+        # Catalog origins with a known factor, plus an inherited TRUE portion whose
+        # food has lost its factor: it is shown so it can be unmarked (decisions
+        # 2026-09-24 / 2026-09-25).
         Div(
             Label("Cooked weight", cls="text-xs text-gray-600"),
             _checkbox(
@@ -904,7 +922,10 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
                 hx_target=card_target,
             ),
             cls="flex items-center gap-2"
-        ) if sample.origin is PortionOrigin.CATALOG else None,
+        ) if (
+            sample.origin is PortionOrigin.CATALOG
+            and (sample.source.cooking_factor is not None or sample.is_cooked_weight)
+        ) else None,
         cls="web_container p-4 rounded-2xl flex flex-col gap-3 "
     )
 

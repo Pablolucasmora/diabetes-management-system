@@ -4,8 +4,79 @@ Uses domain constants (InsulinType, InjectionZone) to generate CHECKs
 dynamically where applicable, ensuring a single source of truth.
 """
 
-from DayBetes_food.domain.constants import IntakeEventState, InsulinType, InjectionZone, MealType, sql_in_list
+from DayBetes_food.domain.catalog import (
+    CATALOG_BARCODE_MAX_LENGTH,
+    CATALOG_BARCODE_MIN_LENGTH,
+    CATALOG_COOKING_FACTOR_RANGE,
+    CATALOG_DEFAULT_PORTION_RANGE,
+)
+from DayBetes_food.domain.constants import (
+    NOVA_MAX,
+    NOVA_MIN,
+    YUKA_MAX,
+    YUKA_MIN,
+    ConservationMethod,
+    CookingMethod,
+    FoodCategory,
+    FoodPhysicalState,
+    IntakeEventState,
+    InsulinType,
+    InjectionZone,
+    MealType,
+    Nutriscore,
+    sql_in_list,
+)
 from DayBetes_food.domain.meal_type_schedule import AUTO_ASSIGNABLE_MEAL_TYPES
+from DayBetes_food.domain.nutrition import NUTRIENT_LIMITS, NumericRange
+
+_PORTION_PREPARATION_LISTS = {
+    "cooking": sql_in_list(CookingMethod),
+    "conservation": sql_in_list(ConservationMethod),
+    "final_state": sql_in_list(FoodPhysicalState),
+}
+
+
+def _sql_number(value) -> str:
+    """100000 -> '100000', 0.5 -> '0.5' (never '1e+05')."""
+    return str(int(value)) if float(value).is_integer() else repr(float(value))
+
+
+def _range_check(column: str, limits: NumericRange) -> str:
+    low = (
+        f"{column} > {_sql_number(limits.minimum)}"
+        if limits.minimum_exclusive
+        else f"{column} >= {_sql_number(limits.minimum)}"
+    )
+    return f"{column} IS NULL OR ({low} AND {column} <= {_sql_number(limits.maximum)})"
+
+
+def catalog_check_constraints() -> dict[str, str]:
+    """CHECK name -> expression of `catalog`, generated from the enums and the
+    limits (§4.4, §12.1). The same list feeds the CREATE TABLE and
+    db_init._ensure_catalog_schema, so it lives in one place only."""
+    checks = {
+        "ck_catalog_category": f"category IN ({sql_in_list(FoodCategory)})",
+        "ck_catalog_initial_state": (
+            f"initial_state IS NULL OR initial_state IN ({sql_in_list(FoodPhysicalState)})"
+        ),
+        "ck_catalog_nutriscore": (
+            f"nutriscore IS NULL OR nutriscore IN ({sql_in_list(Nutriscore)})"
+        ),
+        "ck_catalog_nova_range": f"nova IS NULL OR (nova >= {NOVA_MIN} AND nova <= {NOVA_MAX})",
+        "ck_catalog_yuka_range": f"yuka IS NULL OR (yuka >= {YUKA_MIN} AND yuka <= {YUKA_MAX})",
+        "ck_catalog_default_portion_range": _range_check("default_portion", CATALOG_DEFAULT_PORTION_RANGE),
+        "ck_catalog_cooking_factor_range": _range_check("cooking_factor", CATALOG_COOKING_FACTOR_RANGE),
+        "ck_catalog_sugars_le_carbs": "sugars_100g IS NULL OR carbs_100g IS NULL OR sugars_100g <= carbs_100g",
+        "ck_catalog_saturated_le_fats": "saturated_100g IS NULL OR fats_100g IS NULL OR saturated_100g <= fats_100g",
+        "ck_catalog_barcode_format": (
+            f"barcode IS NULL OR barcode ~ '^[0-9]{{{CATALOG_BARCODE_MIN_LENGTH},{CATALOG_BARCODE_MAX_LENGTH}}}$'"
+        ),
+        "ck_catalog_name_normalized": r"name <> '' AND name = regexp_replace(btrim(name), '\s+', ' ', 'g')",
+        "ck_catalog_library_published": "created_by IS NOT NULL OR is_published",
+    }
+    for field, limits in NUTRIENT_LIMITS.items():
+        checks[f"ck_catalog_{field}_range"] = _range_check(field, limits)
+    return checks
 
 
 class DBSchema:
@@ -173,25 +244,39 @@ class DBSchema:
     """
 
 
-    catalog = """
+    @classmethod
+    def catalog(cls):
+        """Generate the catalog table SQL with enums and limits as source of truth."""
+        check_lines = ",\n".join(
+            f"        CONSTRAINT {name} CHECK ({expression})"
+            for name, expression in catalog_check_constraints().items()
+        )
+        return f"""
+    -- Owner: created_by. In catalog, creator = owner and there are no transfers
+    -- (code_conventions.md §11.2.2). created_by IS NULL = general library: always
+    -- published (ck_catalog_library_published), nobody edits, archives or versions it.
+    -- Visibility: personal / published (§11.4.1), enforced in SQL.
+    -- Lifecycle: archivable, irreversible (no restore_, decision 2026-09-23).
+    -- Deleting a user: SET NULL -> their foods join the general library (blocked today, portion_detail H4).
+    -- Concurrency: last write wins on edit (§6.7, monousuario; decision in feedback 24).
+    -- Uniqueness: partial unique indexes uq_catalog_* live in db_init._ensure_catalog_schema.
     CREATE TABLE IF NOT EXISTS catalog (
-        id SERIAL PRIMARY KEY,
-        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-        origin_root_id INTEGER REFERENCES catalog(id) ON DELETE SET NULL,
-        name VARCHAR(255) NOT NULL, -- Product name
-        brand_id INTEGER, -- FK a food_brands; NULL = sin marca
+        id SERIAL CONSTRAINT pk_catalog PRIMARY KEY,
+        created_by INTEGER
+            CONSTRAINT fk_catalog_created_by_users
+            REFERENCES users(id) ON DELETE SET NULL,
+        origin_root_id INTEGER
+            CONSTRAINT fk_catalog_origin_root_id_catalog
+            REFERENCES catalog(id) ON DELETE SET NULL,
+        name VARCHAR(255) NOT NULL,
+        brand_id INTEGER,
         category VARCHAR(100) NOT NULL,
-        subtype VARCHAR(100) NOT NULL, -- More specific food category (e.g. yogurt, milk, biscuit, turkey, sweet potato, avocado...). This variable will also be used in the future to estimate macros based on meals of the same subtype for which we have nutritional info.
-        initial_state VARCHAR(50) CHECK (
-            initial_state IN ('solid', 'mashed/creamy', 'liquid', 'gel')
-        ), 
-        
-        nutriscore VARCHAR(1) CHECK (nutriscore IN ('A', 'B', 'C', 'D', 'E')),
-        NOVA INTEGER CHECK (NOVA BETWEEN 1 AND 4),
-        yuka INTEGER CHECK (yuka BETWEEN 0 AND 100),
-        
-        default_portion REAL DEFAULT 100, -- Default portion size for the food, which will be used as the default amount added to the cart when no other quantity is specified
-        
+        subtype VARCHAR(100) NOT NULL,
+        initial_state VARCHAR(50),
+        nutriscore VARCHAR(1),
+        nova INTEGER,
+        yuka INTEGER,
+        default_portion REAL,
         calories_100g REAL,
         carbs_100g REAL,
         sugars_100g REAL,
@@ -199,19 +284,17 @@ class DBSchema:
         saturated_100g REAL,
         proteins_100g REAL,
         fiber_100g REAL,
-        
         caffeine REAL,
         alcohol REAL,
-        
-        barcode VARCHAR,
-        cooking_factor REAL DEFAULT 1.0, -- Cooking factor, in case it is needed at some point to calculate the real raw weight
-
-        is_private BOOLEAN NOT NULL DEFAULT FALSE, -- True: only creator can view it
-        deleted_at TIMESTAMP NULL, -- Logical deletion timestamp
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        barcode VARCHAR(48),
+        cooking_factor REAL,
+        is_published BOOLEAN NOT NULL DEFAULT FALSE,
+        deleted_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT fk_catalog_brand_id_food_brands
-            FOREIGN KEY (brand_id) REFERENCES food_brands(id) ON DELETE SET NULL
+            FOREIGN KEY (brand_id) REFERENCES food_brands(id) ON DELETE SET NULL,
+{check_lines}
     );
     """
 
@@ -241,7 +324,7 @@ class DBSchema:
             glycemic_index IN ('high', 'medium', 'low')
         ), -- Estimated glycemic index of the meal
         ig_confidence INTEGER CHECK (ig_confidence BETWEEN 1 AND 5), -- Confidence level with which the glycemic index value above was established
-        is_private BOOLEAN NOT NULL DEFAULT FALSE, -- True: only creator can view it
+        is_published BOOLEAN NOT NULL DEFAULT FALSE, -- True: visible to everyone; FALSE: only creator can view it
         deleted_at TIMESTAMP NULL,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -281,7 +364,7 @@ class DBSchema:
         ), -- Used to set this as the default value in intake_event, making it easier to reuse
         name VARCHAR(255) NOT NULL,
         notes TEXT,
-        is_private BOOLEAN NOT NULL DEFAULT FALSE -- True: only owner can view it
+        is_published BOOLEAN NOT NULL DEFAULT FALSE -- True: visible to everyone; FALSE: only owner can view it
     );
     """
 
@@ -400,7 +483,7 @@ class DBSchema:
     );
     """
 
-    portion_detail = """
+    portion_detail = f"""
     CREATE TABLE IF NOT EXISTS portion_detail (
         id SERIAL CONSTRAINT pk_portion_detail PRIMARY KEY,
 
@@ -440,9 +523,15 @@ class DBSchema:
         amount REAL NOT NULL
             CONSTRAINT ck_portion_detail_amount_range
             CHECK (amount > 0 AND amount <= 100000), -- The only amount column of the table (decision 2026-09-18): the quantity of this food in its destination, in grams. While the event is 'planned' it is the served amount; at confirm it is overwritten once with what was actually eaten (measurement_conventions.md 4.4). The cooked amount is NOT stored: it only exists as a form field when plating. 100000 g is the same sanity ceiling as intake_event.ingested_amount (6.9.2); the lower bound is > 0 (decision 2026-09-22): an unconsumed ingredient is deleted, not set to zero. NaN/Infinity are rejected by this same CHECK.
-        cooking VARCHAR(50), -- Cooking method, used to evaluate its effect on blood sugar levels (options: steam, boiled-al-dente, boiled-soft, fried, raw, oven, airfryer, toaster, griddle). Default: griddle
-        conservation VARCHAR(50), -- Storage method: freezer, fridge, freshly-made, pre-cooked
-        final_state VARCHAR(50), -- Final state among: 'solid', 'mashed/creamy', 'liquid', 'gel' — in case the state changed from the initial one
+        cooking VARCHAR(50)
+            CONSTRAINT ck_portion_detail_cooking
+            CHECK (cooking IS NULL OR cooking IN ({_PORTION_PREPARATION_LISTS['cooking']})), -- Cooking method, used to evaluate its effect on blood sugar levels. Default: griddle
+        conservation VARCHAR(50)
+            CONSTRAINT ck_portion_detail_conservation
+            CHECK (conservation IS NULL OR conservation IN ({_PORTION_PREPARATION_LISTS['conservation']})), -- Storage method
+        final_state VARCHAR(50)
+            CONSTRAINT ck_portion_detail_final_state
+            CHECK (final_state IS NULL OR final_state IN ({_PORTION_PREPARATION_LISTS['final_state']})), -- Final state, in case the state changed from the initial one
         strictly_weighed BOOLEAN, -- Whether or not the food was weighed before consumption. NULL means "no data" and is a state of its own, not FALSE (decision 2026-09-18)
         macros_quality BOOLEAN, -- Whether the macros were estimated or read from the product label. NULL means "no data" and is a state of its own, not FALSE (decision 2026-09-18)
         

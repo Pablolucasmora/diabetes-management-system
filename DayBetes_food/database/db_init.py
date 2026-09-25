@@ -1,13 +1,26 @@
 import logging
 import os
+import re
 from psycopg import sql
 
 from DayBetes_food.auth.models import USER_EMAIL_MAX_LENGTH, USER_USERNAME_MAX_LENGTH
 from DayBetes_food.auth.security import hash_password, normalize_identifier, sanitize_text
 from DayBetes_food.config import DB_RUNTIME_ROLE
 from DayBetes_food.database.connection import get_migrations_connection
-from DayBetes_food.database.schema import DBSchema
-from DayBetes_food.domain.constants import IntakeEventState, InsulinType, InjectionZone, MealType, sql_in_list
+from DayBetes_food.database.schema import DBSchema, catalog_check_constraints
+from DayBetes_food.domain.catalog import CATALOG_BARCODE_MAX_LENGTH, CATALOG_BARCODE_MIN_LENGTH
+from DayBetes_food.domain.constants import (
+    IntakeEventState,
+    InsulinType,
+    InjectionZone,
+    MealType,
+    ConservationMethod,
+    CookingMethod,
+    FoodCategory,
+    FoodPhysicalState,
+    sql_in_list,
+)
+from DayBetes_food.domain.nutrition import NUTRIENT_LIMITS
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +53,20 @@ def _column_data_type(cursor, table: str, column: str):
     )
     row = cursor.fetchone()
     return row["data_type"] if row else None
+
+
+def _column_default(cursor, table: str, column: str):
+    cursor.execute(
+        """
+        SELECT column_default
+        FROM information_schema.columns
+        WHERE table_name = %(table)s AND column_name = %(column)s
+        LIMIT 1;
+        """,
+        {"table": table, "column": column},
+    )
+    row = cursor.fetchone()
+    return row["column_default"] if row else None
 
 
 def _ensure_users_schema(cursor):
@@ -245,42 +272,287 @@ def _remove_legacy_user_columns(cursor):
     cursor.execute("ALTER TABLE users DROP COLUMN IF EXISTS registration_date;")
 
 
+_CATALOG_CONSTRAINT_RENAMES = {
+    "catalog_pkey": "pk_catalog",
+    "catalog_created_by_fkey": "fk_catalog_created_by_users",
+    "catalog_origin_root_id_fkey": "fk_catalog_origin_root_id_catalog",
+}
+
+_CATALOG_LEGACY_CHECKS = (
+    "catalog_category_check",
+    "catalog_initial_state_check",
+    "catalog_nova_check",
+    "catalog_nutriscore_check",
+    "catalog_yuka_check",
+)
+
+
 def _ensure_catalog_schema(cursor):
+    """catalog: canonical schema rebuilt from the enums and the limits (§12.1).
+
+    Idempotent (§12.2). Closes findings 1, 2, 3, 12, 13, 18, 19, 23 and 26 of
+    audit/audits/audit_catalog.md.
+    """
+    # ---- 1. Temporal columns (H18, §10.5) ----
     if not _has_column(cursor, "catalog", "created_at"):
-        cursor.execute("ALTER TABLE catalog ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;")
+        cursor.execute("ALTER TABLE catalog ADD COLUMN created_at TIMESTAMPTZ;")
     if not _has_column(cursor, "catalog", "updated_at"):
-        cursor.execute("ALTER TABLE catalog ADD COLUMN updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;")
+        cursor.execute("ALTER TABLE catalog ADD COLUMN updated_at TIMESTAMPTZ;")
     if not _has_column(cursor, "catalog", "deleted_at"):
-        cursor.execute("ALTER TABLE catalog ADD COLUMN deleted_at TIMESTAMP NULL;")
+        cursor.execute("ALTER TABLE catalog ADD COLUMN deleted_at TIMESTAMPTZ;")
     cursor.execute("UPDATE catalog SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP);")
     cursor.execute("UPDATE catalog SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP);")
+    for column in ("created_at", "updated_at", "deleted_at"):
+        data_type = (_column_data_type(cursor, "catalog", column) or "").lower()
+        if data_type == "timestamp without time zone":
+            if column in ("created_at", "updated_at"):
+                cursor.execute(
+                    sql.SQL("ALTER TABLE catalog ALTER COLUMN {} DROP DEFAULT;").format(
+                        sql.Identifier(column)
+                    )
+                )
+            cursor.execute(
+                sql.SQL(
+                    "ALTER TABLE catalog ALTER COLUMN {} TYPE TIMESTAMPTZ "
+                    "USING {} AT TIME ZONE 'UTC';"
+                ).format(sql.Identifier(column), sql.Identifier(column))
+            )
+        elif data_type != "timestamp with time zone":
+            raise RuntimeError(f"Unexpected catalog.{column} type: {data_type!r}")
     cursor.execute("ALTER TABLE catalog ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;")
     cursor.execute("ALTER TABLE catalog ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;")
     cursor.execute("ALTER TABLE catalog ALTER COLUMN created_at SET NOT NULL;")
     cursor.execute("ALTER TABLE catalog ALTER COLUMN updated_at SET NOT NULL;")
-    if not _has_column(cursor, "catalog", "default_portion"):
-        return
-    dtype = (_column_data_type(cursor, "catalog", "default_portion") or "").lower()
-    if dtype in {"smallint", "integer", "bigint"}:
-        cursor.execute(
-            "ALTER TABLE catalog ALTER COLUMN default_portion TYPE DOUBLE PRECISION USING default_portion::double precision;"
+
+    # ---- 2. slug (H19, decision 2026-09-25) ----
+    cursor.execute("DROP INDEX IF EXISTS idx_catalog_slug;")
+    if _has_column(cursor, "catalog", "slug"):
+        cursor.execute("ALTER TABLE catalog DROP COLUMN slug;")
+
+    # ---- 3. default_portion (H19, H15) ----
+    if _has_column(cursor, "catalog", "default_portion"):
+        dtype = (_column_data_type(cursor, "catalog", "default_portion") or "").lower()
+        if dtype != "real":
+            cursor.execute(
+                "ALTER TABLE catalog ALTER COLUMN default_portion TYPE REAL "
+                "USING default_portion::real;"
+            )
+        cursor.execute("ALTER TABLE catalog ALTER COLUMN default_portion DROP DEFAULT;")
+
+    # ---- 4. cooking_factor (H23, decision 2026-09-24), once ----
+    if _has_column(cursor, "catalog", "cooking_factor"):
+        if _column_default(cursor, "catalog", "cooking_factor") is not None:
+            cursor.execute(
+                """
+                SELECT count(*) AS weighed
+                FROM portion_detail pd
+                JOIN catalog c ON c.id = pd.catalog_id
+                WHERE pd.is_cooked_weight AND c.cooking_factor = 1.0;
+                """
+            )
+            weighed = cursor.fetchone()["weighed"]
+            if weighed:
+                raise RuntimeError(
+                    f"{weighed} portion_detail rows are cooked-weighed against a "
+                    "catalog.cooking_factor of exactly 1.0; they cannot become NULL "
+                    "(decision 2026-09-24, code_conventions.md 12.7)."
+                )
+            cursor.execute("UPDATE catalog SET cooking_factor = NULL WHERE cooking_factor = 1.0;")
+            logger.info("catalog.cooking_factor: %s rows set to NULL", cursor.rowcount)
+            cursor.execute("ALTER TABLE catalog ALTER COLUMN cooking_factor DROP DEFAULT;")
+
+    # ---- 5. barcode (H13) ----
+    barcode_re = (
+        f"^[0-9]{{{CATALOG_BARCODE_MIN_LENGTH},{CATALOG_BARCODE_MAX_LENGTH}}}$"
+    )
+    cursor.execute(
+        "SELECT count(*) AS bad FROM catalog WHERE barcode IS NOT NULL AND barcode !~ %(re)s;",
+        {"re": barcode_re},
+    )
+    if cursor.fetchone()["bad"]:
+        raise RuntimeError(
+            "catalog.barcode has values outside the digits-8-to-48 format; "
+            "ck_catalog_barcode_format cannot be created (code_conventions.md 12.7)."
         )
+    cursor.execute(
+        """
+        SELECT character_maximum_length AS length
+        FROM information_schema.columns
+        WHERE table_name = 'catalog' AND column_name = 'barcode';
+        """
+    )
+    barcode_row = cursor.fetchone()
+    barcode_length = barcode_row["length"] if barcode_row else None
+    if barcode_length != CATALOG_BARCODE_MAX_LENGTH:
+        cursor.execute(
+            f"ALTER TABLE catalog ALTER COLUMN barcode TYPE VARCHAR({CATALOG_BARCODE_MAX_LENGTH});"
+        )
+
+    # ---- 6. CHECKs (H1, H3, H6, H12, H13, H26) ----
+    # 6a. Category safeguard before dropping: fail on divergence, never correct.
+    cursor.execute(
+        """
+        SELECT pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint
+        WHERE conrelid = 'catalog'::regclass AND conname = 'catalog_category_check';
+        """
+    )
+    legacy_category = cursor.fetchone()
+    if legacy_category:
+        definition = legacy_category.get("definition") or ""
+        literals = set(re.findall(r"'([^']+)'", definition))
+        expected = {member.value for member in FoodCategory}
+        if literals != expected:
+            raise RuntimeError(
+                "catalog_category_check does not match FoodCategory: "
+                f"{sorted(literals)} != {sorted(expected)}"
+            )
+    # 6b. Drop inherited CHECKs by their exact name.
+    for legacy_name in _CATALOG_LEGACY_CHECKS:
+        cursor.execute(
+            sql.SQL("ALTER TABLE catalog DROP CONSTRAINT IF EXISTS {};").format(
+                sql.Identifier(legacy_name)
+            )
+        )
+    # 6c. Add the canonical CHECKs, generated from the enums and the limits.
+    for name, expression in catalog_check_constraints().items():
+        cursor.execute(
+            sql.SQL("ALTER TABLE catalog DROP CONSTRAINT IF EXISTS {};").format(sql.Identifier(name))
+        )
+        cursor.execute(
+            sql.SQL("ALTER TABLE catalog ADD CONSTRAINT {} CHECK ({});").format(
+                sql.Identifier(name), sql.SQL(expression)
+            )
+        )
+
+    # ---- 7. Canonical names (§11.6, H19) ----
+    for old_name, new_name in _CATALOG_CONSTRAINT_RENAMES.items():
+        if _constraint_exists(cursor, "catalog", old_name) and not _constraint_exists(
+            cursor, "catalog", new_name
+        ):
+            cursor.execute(
+                sql.SQL("ALTER TABLE catalog RENAME CONSTRAINT {} TO {};").format(
+                    sql.Identifier(old_name), sql.Identifier(new_name)
+                )
+            )
+
+    cursor.execute(
+        """
+        SELECT con.conname
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+        WHERE rel.relname = 'catalog'
+          AND con.contype = 'u'
+          AND pg_get_constraintdef(con.oid) ILIKE 'UNIQUE (name)%';
+        """
+    )
+    for row in cursor.fetchall() or []:
+        name = row.get("conname")
+        if name:
+            cursor.execute(
+                sql.SQL("ALTER TABLE catalog DROP CONSTRAINT IF EXISTS {};").format(
+                    sql.Identifier(name)
+                )
+            )
+
+    # Final safeguard (§12.2, H1): any constraint outside the canonical set fails
+    # the bootstrap instead of lingering as an unknown rule.
+    canonical = {
+        "pk_catalog",
+        "fk_catalog_created_by_users",
+        "fk_catalog_origin_root_id_catalog",
+        "fk_catalog_brand_id_food_brands",
+    } | set(catalog_check_constraints())
+    cursor.execute(
+        """
+        SELECT conname
+        FROM pg_constraint
+        WHERE conrelid = 'catalog'::regclass
+          AND contype IN ('p', 'f', 'c', 'u');
+        """
+    )
+    unexpected = sorted(
+        row["conname"] for row in cursor.fetchall() or [] if row["conname"] not in canonical
+    )
+    if unexpected:
+        raise RuntimeError(
+            f"catalog has constraints outside the canonical set: {unexpected}. "
+            "Add them to catalog_check_constraints() or remove them explicitly (§12.1)."
+        )
+
+    # ---- 8. Partial unique indexes (H2, H8, H26, §6.1) ----
+    cursor.execute("DROP INDEX IF EXISTS uq_catalog_name_brand_id_norm;")
+    unique_indexes = (
+        "CREATE UNIQUE INDEX uq_catalog_personal_name_brand "
+        "ON catalog (created_by, lower(name), COALESCE(brand_id, 0)) "
+        "WHERE deleted_at IS NULL AND NOT is_published;",
+        "CREATE UNIQUE INDEX uq_catalog_published_name_brand "
+        "ON catalog (lower(name), COALESCE(brand_id, 0)) "
+        "WHERE deleted_at IS NULL AND is_published;",
+        "CREATE UNIQUE INDEX uq_catalog_personal_barcode "
+        "ON catalog (created_by, barcode) "
+        "WHERE deleted_at IS NULL AND NOT is_published AND barcode IS NOT NULL AND origin_root_id IS NULL;",
+        "CREATE UNIQUE INDEX uq_catalog_published_barcode "
+        "ON catalog (barcode) "
+        "WHERE deleted_at IS NULL AND is_published AND barcode IS NOT NULL;",
+    )
+    for index_name in (
+        "uq_catalog_personal_name_brand",
+        "uq_catalog_published_name_brand",
+        "uq_catalog_personal_barcode",
+        "uq_catalog_published_barcode",
+    ):
+        cursor.execute(
+            sql.SQL("DROP INDEX IF EXISTS {};").format(sql.Identifier(index_name))
+        )
+    for statement in unique_indexes:
+        cursor.execute(statement)
+
+
+def _manual_numeric_check(column: str, maximum) -> str:
+    maximum_text = str(int(maximum)) if float(maximum).is_integer() else repr(float(maximum))
+    return (
+        f"CHECK ((({column} IS NULL) OR (({column} >= (0)::double precision) "
+        f"AND ({column} <= ({maximum_text})::double precision) "
+        f"AND ({column} <> 'NaN'::real) AND ({column} <> 'Infinity'::real) "
+        f"AND ({column} <> '-Infinity'::real)))) NOT VALID"
+    )
 
 
 def _ensure_manual_numeric_constraints(cursor):
     constraints = {
         "chk_manual_amount_g_valid": "CHECK (((amount_g > (0)::double precision) AND (amount_g <= (5000)::double precision) AND (amount_g <> 'NaN'::real) AND (amount_g <> 'Infinity'::real) AND (amount_g <> '-Infinity'::real))) NOT VALID",
-        "chk_manual_calories_100g_valid": "CHECK (((calories_100g IS NULL) OR ((calories_100g >= (0)::double precision) AND (calories_100g <= (900)::double precision) AND (calories_100g <> 'NaN'::real) AND (calories_100g <> 'Infinity'::real) AND (calories_100g <> '-Infinity'::real)))) NOT VALID",
-        "chk_manual_carbs_100g_valid": "CHECK (((carbs_100g IS NULL) OR ((carbs_100g >= (0)::double precision) AND (carbs_100g <= (100)::double precision) AND (carbs_100g <> 'NaN'::real) AND (carbs_100g <> 'Infinity'::real) AND (carbs_100g <> '-Infinity'::real)))) NOT VALID",
-        "chk_manual_sugars_100g_valid": "CHECK (((sugars_100g IS NULL) OR ((sugars_100g >= (0)::double precision) AND (sugars_100g <= (100)::double precision) AND (sugars_100g <> 'NaN'::real) AND (sugars_100g <> 'Infinity'::real) AND (sugars_100g <> '-Infinity'::real)))) NOT VALID",
-        "chk_manual_fats_100g_valid": "CHECK (((fats_100g IS NULL) OR ((fats_100g >= (0)::double precision) AND (fats_100g <= (100)::double precision) AND (fats_100g <> 'NaN'::real) AND (fats_100g <> 'Infinity'::real) AND (fats_100g <> '-Infinity'::real)))) NOT VALID",
-        "chk_manual_saturated_100g_valid": "CHECK (((saturated_100g IS NULL) OR ((saturated_100g >= (0)::double precision) AND (saturated_100g <= (100)::double precision) AND (saturated_100g <> 'NaN'::real) AND (saturated_100g <> 'Infinity'::real) AND (saturated_100g <> '-Infinity'::real)))) NOT VALID",
-        "chk_manual_proteins_100g_valid": "CHECK (((proteins_100g IS NULL) OR ((proteins_100g >= (0)::double precision) AND (proteins_100g <= (100)::double precision) AND (proteins_100g <> 'NaN'::real) AND (proteins_100g <> 'Infinity'::real) AND (proteins_100g <> '-Infinity'::real)))) NOT VALID",
-        "chk_manual_fiber_100g_valid": "CHECK (((fiber_100g IS NULL) OR ((fiber_100g >= (0)::double precision) AND (fiber_100g <= (100)::double precision) AND (fiber_100g <> 'NaN'::real) AND (fiber_100g <> 'Infinity'::real) AND (fiber_100g <> '-Infinity'::real)))) NOT VALID",
-        "chk_manual_caffeine_valid": "CHECK (((caffeine IS NULL) OR ((caffeine >= (0)::double precision) AND (caffeine <= (10000)::double precision) AND (caffeine <> 'NaN'::real) AND (caffeine <> 'Infinity'::real) AND (caffeine <> '-Infinity'::real)))) NOT VALID",
-        "chk_manual_alcohol_valid": "CHECK (((alcohol IS NULL) OR ((alcohol >= (0)::double precision) AND (alcohol <= (10000)::double precision) AND (alcohol <> 'NaN'::real) AND (alcohol <> 'Infinity'::real) AND (alcohol <> '-Infinity'::real)))) NOT VALID",
+        "chk_manual_calories_100g_valid": _manual_numeric_check("calories_100g", NUTRIENT_LIMITS["calories_100g"].maximum),
+        "chk_manual_carbs_100g_valid": _manual_numeric_check("carbs_100g", NUTRIENT_LIMITS["carbs_100g"].maximum),
+        "chk_manual_sugars_100g_valid": _manual_numeric_check("sugars_100g", NUTRIENT_LIMITS["sugars_100g"].maximum),
+        "chk_manual_fats_100g_valid": _manual_numeric_check("fats_100g", NUTRIENT_LIMITS["fats_100g"].maximum),
+        "chk_manual_saturated_100g_valid": _manual_numeric_check("saturated_100g", NUTRIENT_LIMITS["saturated_100g"].maximum),
+        "chk_manual_proteins_100g_valid": _manual_numeric_check("proteins_100g", NUTRIENT_LIMITS["proteins_100g"].maximum),
+        "chk_manual_fiber_100g_valid": _manual_numeric_check("fiber_100g", NUTRIENT_LIMITS["fiber_100g"].maximum),
+        "chk_manual_caffeine_valid": _manual_numeric_check("caffeine", NUTRIENT_LIMITS["caffeine"].maximum),
+        "chk_manual_alcohol_valid": _manual_numeric_check("alcohol", NUTRIENT_LIMITS["alcohol"].maximum),
         "chk_manual_saturated_le_fats": "CHECK (((saturated_100g IS NULL) OR (fats_100g IS NULL) OR (saturated_100g <= fats_100g))) NOT VALID",
+        # New canonical name: it is a new rule added by the catalog audit (§11.6).
+        "ck_manual_intake_sugars_le_carbs": "CHECK (((sugars_100g IS NULL) OR (carbs_100g IS NULL) OR (sugars_100g <= carbs_100g))) NOT VALID",
     }
+
+    # Blocking pre-checks: a row that violates the new ceiling or relation is a
+    # data decision, not something the migration may rewrite (§12.7).
+    cursor.execute("SELECT count(*) AS bad FROM manual_intake WHERE alcohol > 100;")
+    if cursor.fetchone()["bad"]:
+        raise RuntimeError(
+            "manual_intake.alcohol has rows above 100; chk_manual_alcohol_valid "
+            "cannot be created (code_conventions.md 12.7)."
+        )
+    cursor.execute(
+        "SELECT count(*) AS bad FROM manual_intake WHERE sugars_100g > carbs_100g;"
+    )
+    if cursor.fetchone()["bad"]:
+        raise RuntimeError(
+            "manual_intake has rows with sugars_100g > carbs_100g; "
+            "ck_manual_intake_sugars_le_carbs cannot be created (code_conventions.md 12.7)."
+        )
+
     cursor.execute(
         """
         SELECT conname, pg_get_constraintdef(oid) AS definition
@@ -291,6 +563,25 @@ def _ensure_manual_numeric_constraints(cursor):
         {"names": list(constraints)},
     )
     existing = {row["conname"]: (row.get("definition") or "").strip() for row in cursor.fetchall() or []}
+
+    # The old caffeine/alcohol ceiling was 10000. Drop exactly those definitions
+    # so the loop recreates them with the shared ceiling; any other different
+    # definition still raises below.
+    old_caffeine = _manual_numeric_check("caffeine", 10000)
+    old_alcohol = _manual_numeric_check("alcohol", 10000)
+    for name, old_definition in (
+        ("chk_manual_caffeine_valid", old_caffeine),
+        ("chk_manual_alcohol_valid", old_alcohol),
+    ):
+        actual = existing.get(name)
+        if actual and actual in (old_definition, old_definition.removesuffix(" NOT VALID")):
+            cursor.execute(
+                sql.SQL("ALTER TABLE manual_intake DROP CONSTRAINT {};").format(
+                    sql.Identifier(name)
+                )
+            )
+            existing.pop(name, None)
+
     for name, expected in constraints.items():
         actual = existing.get(name)
         if actual:
@@ -458,45 +749,122 @@ def _ensure_user_favorites_schema(cursor):
     cursor.execute("ALTER TABLE manual_intake DROP COLUMN IF EXISTS favorite;")
     cursor.execute("ALTER TABLE recipe DROP COLUMN IF EXISTS favorite;")
 
-def _drop_legacy_category_check(cursor):
+_PUBLICATION_TABLES = (("catalog", "created_by"), ("manual_intake", "created_by"), ("recipe", "users_id"))
+
+
+def _ensure_food_publication_schema(cursor):
+    """is_private -> is_published (inverted) in the three food tables at once
+    (decisions 2026-09-24 privacy and 2026-09-25 R1). Idempotent: the data step
+    only runs while is_private still exists."""
+    renamed_now = False
+    for table, _owner in _PUBLICATION_TABLES:
+        has_old = _has_column(cursor, table, "is_private")
+        has_new = _has_column(cursor, table, "is_published")
+        if has_old and has_new:
+            raise RuntimeError(
+                f"{table} has both is_private and is_published: half-applied migration"
+            )
+        if has_old:
+            cursor.execute(
+                sql.SQL("SELECT count(*) AS private_count FROM {} WHERE is_private;").format(
+                    sql.Identifier(table)
+                )
+            )
+            private_count = cursor.fetchone()["private_count"]
+            cursor.execute(
+                sql.SQL("ALTER TABLE {} ADD COLUMN is_published BOOLEAN;").format(
+                    sql.Identifier(table)
+                )
+            )
+            cursor.execute(
+                sql.SQL("UPDATE {} SET is_published = NOT is_private;").format(
+                    sql.Identifier(table)
+                )
+            )
+            cursor.execute(
+                sql.SQL(
+                    "SELECT count(*) AS mismatched FROM {} WHERE is_published = is_private;"
+                ).format(sql.Identifier(table))
+            )
+            if cursor.fetchone()["mismatched"]:
+                raise RuntimeError(f"{table}: is_published is not the inverse of is_private")
+            cursor.execute(
+                sql.SQL("SELECT count(*) AS not_published FROM {} WHERE NOT is_published;").format(
+                    sql.Identifier(table)
+                )
+            )
+            if cursor.fetchone()["not_published"] != private_count:
+                raise RuntimeError(f"{table}: private row count changed during the rename")
+            cursor.execute(
+                sql.SQL("ALTER TABLE {} DROP COLUMN is_private;").format(sql.Identifier(table))
+            )
+            renamed_now = True
+        elif not has_new:
+            cursor.execute(
+                sql.SQL("ALTER TABLE {} ADD COLUMN is_published BOOLEAN;").format(
+                    sql.Identifier(table)
+                )
+            )
+            cursor.execute(
+                sql.SQL("UPDATE {} SET is_published = FALSE WHERE is_published IS NULL;").format(
+                    sql.Identifier(table)
+                )
+            )
+        cursor.execute(
+            sql.SQL("ALTER TABLE {} ALTER COLUMN is_published SET DEFAULT FALSE;").format(
+                sql.Identifier(table)
+            )
+        )
+        cursor.execute(
+            sql.SQL("ALTER TABLE {} ALTER COLUMN is_published SET NOT NULL;").format(
+                sql.Identifier(table)
+            )
+        )
+    if renamed_now:
+        _publish_personal_ingredients_of_published_recipes(cursor)
+
+
+def _publish_personal_ingredients_of_published_recipes(cursor):
+    """Data correction (decision 2026-09-25, R2, §12.7): a personal catalog
+    ingredient of a published recipe owned by the same user becomes published,
+    exactly as the publish-recipe popup would. An ingredient owned by someone
+    else stops the migration: publishing someone else's food needs another
+    decision."""
     cursor.execute(
         """
-        SELECT con.conname
-        FROM pg_constraint con
-        JOIN pg_class rel ON rel.oid = con.conrelid
-        WHERE rel.relname = 'catalog'
-          AND con.contype = 'c'
-          AND pg_get_constraintdef(con.oid) ILIKE '%category%'
-          AND pg_get_constraintdef(con.oid) ILIKE '%IN (%';
+        SELECT DISTINCT c.id AS catalog_id, c.created_by, r.id AS recipe_id, r.users_id
+        FROM recipe r
+        JOIN portion_detail pd ON pd.recipe_id = r.id
+        JOIN catalog c ON c.id = pd.catalog_id
+        WHERE r.is_published AND NOT c.is_published;
         """
     )
     rows = cursor.fetchall() or []
-    for row in rows:
-        name = row.get("conname")
-        if not name:
-            continue
-        cursor.execute(f'ALTER TABLE catalog DROP CONSTRAINT IF EXISTS "{name}";')
-
-
-def _ensure_privacy_schema(cursor):
-    if not _has_column(cursor, "catalog", "is_private"):
-        cursor.execute("ALTER TABLE catalog ADD COLUMN is_private BOOLEAN DEFAULT FALSE;")
-    if not _has_column(cursor, "manual_intake", "is_private"):
-        cursor.execute("ALTER TABLE manual_intake ADD COLUMN is_private BOOLEAN DEFAULT FALSE;")
-    if not _has_column(cursor, "recipe", "is_private"):
-        cursor.execute("ALTER TABLE recipe ADD COLUMN is_private BOOLEAN DEFAULT FALSE;")
-
-    cursor.execute("UPDATE catalog SET is_private = FALSE WHERE is_private IS NULL;")
-    cursor.execute("UPDATE manual_intake SET is_private = FALSE WHERE is_private IS NULL;")
-    cursor.execute("UPDATE recipe SET is_private = FALSE WHERE is_private IS NULL;")
-
-    cursor.execute("ALTER TABLE catalog ALTER COLUMN is_private SET DEFAULT FALSE;")
-    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN is_private SET DEFAULT FALSE;")
-    cursor.execute("ALTER TABLE recipe ALTER COLUMN is_private SET DEFAULT FALSE;")
-
-    cursor.execute("ALTER TABLE catalog ALTER COLUMN is_private SET NOT NULL;")
-    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN is_private SET NOT NULL;")
-    cursor.execute("ALTER TABLE recipe ALTER COLUMN is_private SET NOT NULL;")
+    if not rows:
+        return
+    foreign = [
+        row for row in rows if row["created_by"] != row["users_id"]
+    ]
+    if foreign:
+        detail = ", ".join(
+            f"catalog {row['catalog_id']} (owner {row['created_by']}) in recipe "
+            f"{row['recipe_id']} (owner {row['users_id']})"
+            for row in foreign
+        )
+        raise RuntimeError(
+            "Published recipes contain personal catalog ingredients owned by "
+            f"another user; publishing them needs another decision: {detail}"
+        )
+    ids = sorted({row["catalog_id"] for row in rows})
+    cursor.execute(
+        "UPDATE catalog SET is_published = TRUE, updated_at = NOW() WHERE id = ANY(%(ids)s);",
+        {"ids": ids},
+    )
+    logger.info(
+        "Published %s personal catalog ingredients of published recipes: %s",
+        len(ids),
+        ids,
+    )
 
 
 def _ensure_copy_origin_schema(cursor):
@@ -506,11 +874,27 @@ def _ensure_copy_origin_schema(cursor):
         cursor.execute("ALTER TABLE manual_intake ADD COLUMN origin_root_id INTEGER REFERENCES manual_intake(id) ON DELETE SET NULL;")
     if not _has_column(cursor, "recipe", "origin_root_id"):
         cursor.execute("ALTER TABLE recipe ADD COLUMN origin_root_id INTEGER REFERENCES recipe(id) ON DELETE SET NULL;")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_origin_root ON catalog (origin_root_id);")
+    # Canonical index name (§11.7): rename the older name once, before creating.
+    if (
+        _index_exists(cursor, "idx_catalog_origin_root")
+        and not _index_exists(cursor, "idx_catalog_origin_root_id")
+    ):
+        cursor.execute("ALTER INDEX idx_catalog_origin_root RENAME TO idx_catalog_origin_root_id;")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_origin_root_id ON catalog (origin_root_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_origin_root ON manual_intake (origin_root_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_origin_root ON recipe (origin_root_id);")
+
+
+def _index_exists(cursor, name: str) -> bool:
+    cursor.execute(
+        "SELECT 1 AS ok FROM pg_indexes WHERE schemaname = 'public' AND indexname = %(name)s;",
+        {"name": name},
+    )
+    return cursor.fetchone() is not None
 def _ensure_trgm_search(cursor):
-    # Best-effort: if extension/index creation is not permitted, keep app running.
+    # Tolerated on purpose: `_build_fuzzy_search` falls back to ILIKE + regexp
+    # when `pg_trgm` is missing (`_pg_trgm_enabled`), so search keeps working
+    # and no uniqueness depends on these indexes (§12.5, feedback 19).
     cursor.execute("SAVEPOINT trgm_setup;")
     try:
         cursor.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
@@ -543,12 +927,14 @@ def _ensure_trgm_search(cursor):
 
 def _ensure_food_filter_indexes(cursor):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_created_by ON catalog (created_by);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_visibility ON catalog (is_private, created_by);")
+    # idx_catalog_visibility is dropped and not recreated: no real query uses it
+    # (0 scans) and the partial unique indexes cover the visibility filter.
+    cursor.execute("DROP INDEX IF EXISTS idx_catalog_visibility;")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_deleted_at ON catalog (deleted_at);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_created_by ON manual_intake (created_by);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_visibility ON manual_intake (is_private, created_by);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_visibility ON manual_intake (is_published, created_by);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_users_id ON recipe (users_id);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_visibility ON recipe (is_private, users_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_visibility ON recipe (is_published, users_id);")
 
 
 def _ensure_tags_color_schema(cursor):
@@ -568,22 +954,9 @@ def _ensure_tags_color_schema(cursor):
 
 
 def _ensure_food_name_origin_uniqueness(cursor):
-    # Drop legacy unique constraints that only considered `name`.
-    cursor.execute(
-        """
-        SELECT con.conname
-        FROM pg_constraint con
-        JOIN pg_class rel ON rel.oid = con.conrelid
-        WHERE rel.relname = 'catalog'
-          AND con.contype = 'u'
-          AND pg_get_constraintdef(con.oid) ILIKE 'UNIQUE (name)%';
-        """
-    )
-    for row in cursor.fetchall() or []:
-        name = row.get("conname")
-        if name:
-            cursor.execute(f'ALTER TABLE catalog DROP CONSTRAINT IF EXISTS "{name}";')
-
+    # manual_intake only now: its audit keeps this helper (and the tolerated
+    # savepoint, §12.5) until it is rewritten. catalog's uniqueness lives in
+    # _ensure_catalog_schema with partial indexes (feedback 2, H2).
     cursor.execute(
         """
         SELECT con.conname
@@ -602,12 +975,6 @@ def _ensure_food_name_origin_uniqueness(cursor):
     # Enforce normalized uniqueness (case-insensitive and space-trimmed).
     cursor.execute("SAVEPOINT food_name_origin_uniqueness;")
     try:
-        cursor.execute(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS uq_catalog_name_brand_id_norm
-            ON catalog (lower(btrim(name)), COALESCE(brand_id, 0));
-            """
-        )
         cursor.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS uq_manual_created_name_origin_norm
@@ -799,15 +1166,13 @@ def _ensure_food_brands_schema(cursor):
     
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_brand_id ON catalog (brand_id);")
 
-    # Replace the old uniqueness constraint
+    # Replace the old uniqueness constraint. uq_catalog_name_brand_id_norm is NOT
+    # created here anymore: it is dropped and replaced by the partial indexes of
+    # _ensure_catalog_schema (H2). A global non-partial index would fail as soon
+    # as two personal foods of different owners share a name, and would abort
+    # startup.
     cursor.execute("DROP INDEX IF EXISTS uq_catalog_name_brand_norm;")
     cursor.execute("DROP INDEX IF EXISTS idx_catalog_brand_trgm;")
-    cursor.execute(
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_catalog_name_brand_id_norm
-        ON catalog (lower(btrim(name)), COALESCE(brand_id, 0));
-        """
-    )
     
     # (H) Destruction of the column, at last
     cursor.execute("ALTER TABLE catalog DROP COLUMN IF EXISTS brand;")
@@ -1256,6 +1621,39 @@ def _ensure_portion_detail_schema(cursor):
     # earlier in this same hook and dropped here.
     cursor.execute("DROP INDEX IF EXISTS idx_portion_detail_plate_id;")
 
+    # ---- Preparation fields as closed sets (H12, decision 2026-09-25) ----
+    # Blocking pre-check (feedback 12: fail, never correct). The values come from
+    # the code enums, not from a request (sql_in_list, §11.9).
+    for column, enum_cls in (
+        ("cooking", CookingMethod),
+        ("conservation", ConservationMethod),
+        ("final_state", FoodPhysicalState),
+    ):
+        name = f"ck_portion_detail_{column}"
+        values = sql_in_list(enum_cls)
+        cursor.execute(
+            sql.SQL(
+                "SELECT count(*) AS bad FROM portion_detail "
+                "WHERE {column} IS NOT NULL AND {column} NOT IN (" + values + ");"
+            ).format(column=sql.Identifier(column))
+        )
+        if cursor.fetchone()["bad"]:
+            raise RuntimeError(
+                f"portion_detail.{column} has values outside {enum_cls.__name__}; "
+                f"{name} cannot be created (code_conventions.md 12.7)."
+            )
+        cursor.execute(
+            sql.SQL("ALTER TABLE portion_detail DROP CONSTRAINT IF EXISTS {};").format(
+                sql.Identifier(name)
+            )
+        )
+        cursor.execute(
+            sql.SQL(
+                "ALTER TABLE portion_detail ADD CONSTRAINT {} "
+                "CHECK ({column} IS NULL OR {column} IN (" + values + "));"
+            ).format(sql.Identifier(name), column=sql.Identifier(column))
+        )
+
 
 def _ensure_insulin_injections_schema(cursor):
     cursor.execute(
@@ -1699,7 +2097,7 @@ def init_db():
             DBSchema.auth_sessions,
             DBSchema.auth_rate_limits,
             DBSchema.food_brands,
-            DBSchema.catalog,
+            DBSchema.catalog(),
             DBSchema.manual_intake,
             DBSchema.fridge,
             DBSchema.tags,
@@ -1721,12 +2119,11 @@ def init_db():
         _ensure_tags_color_schema(cur)
         _ensure_manual_intake_schema(cur)
         _ensure_food_name_origin_uniqueness(cur)
-        _drop_legacy_category_check(cur)
-        _ensure_catalog_schema(cur)
         _ensure_user_favorites_schema(cur)
-        _ensure_food_filter_indexes(cur)
-        _ensure_privacy_schema(cur)
         _ensure_copy_origin_schema(cur)
+        _ensure_food_publication_schema(cur)
+        _ensure_food_filter_indexes(cur)
+        _ensure_catalog_schema(cur)
         _ensure_users_schema(cur)
         _ensure_auth_sessions_schema(cur)
         _ensure_auth_rate_limits_schema(cur)

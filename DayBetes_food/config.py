@@ -101,3 +101,14 @@ AUTH_RATE_LIMIT_BLOCK_SECONDS = _as_int("AUTH_RATE_LIMIT_BLOCK_SECONDS", 60 * 15
 
 AUTH_TOKEN_PEPPER = _require("AUTH_TOKEN_PEPPER")
 PASSWORD_PEPPER = _require("PASSWORD_PEPPER")
+
+# Open Food Facts adapter (H17, §8.1). It is only a prefill of the create form,
+# so the timeout stays short and there are no retries.
+OPEN_FOOD_FACTS_BASE_URL = (
+    os.getenv("OPEN_FOOD_FACTS_BASE_URL") or "https://world.openfoodfacts.org"
+).strip().rstrip("/")
+if not OPEN_FOOD_FACTS_BASE_URL.startswith("https://"):
+    raise RuntimeError("OPEN_FOOD_FACTS_BASE_URL must be an https:// URL")
+OPEN_FOOD_FACTS_TIMEOUT_SECONDS = _as_int("OPEN_FOOD_FACTS_TIMEOUT_SECONDS", 6)
+if not 1 <= OPEN_FOOD_FACTS_TIMEOUT_SECONDS <= 30:
+    raise RuntimeError("OPEN_FOOD_FACTS_TIMEOUT_SECONDS must be between 1 and 30")

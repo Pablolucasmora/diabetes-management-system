@@ -9,27 +9,32 @@ por eso no viven en el archivo de ninguna tabla individual
 (code_conventions.md §1.3.1).
 """
 
-from DayBetes_food.database.queries.crud import _build_fuzzy_search, _execute_query_many
+from DayBetes_food.database.queries.crud import (
+    _build_fuzzy_search,
+    _catalog_visibility_sql,
+    _execute_query,
+    _execute_query_many,
+)
 from DayBetes_food.domain.constants import IntakeEventState
 from DayBetes_food.time_utils import APP_TIMEZONE
 
 
 def get_subtype_suggestions(connection, search: str = "", limit: int = 50) -> list[str]:
-    search_condition, search_params, search_order = _build_fuzzy_search(connection, "name", search)
+    search_condition, search_params, search_order = _build_fuzzy_search(connection, "source.name", search)
     params = {**search_params, "limit": max(1, min(int(limit or 50), 500))}
     query = """
         WITH source AS (
-            SELECT DISTINCT trim(subtype) AS name
-            FROM catalog
-            WHERE deleted_at IS NULL
-              AND subtype IS NOT NULL AND trim(subtype) <> ''
+            SELECT DISTINCT trim(c.subtype) AS name
+            FROM catalog c
+            WHERE c.deleted_at IS NULL
+              AND c.subtype IS NOT NULL AND trim(c.subtype) <> ''
             UNION
-            SELECT DISTINCT trim(subtype) AS name
-            FROM manual_intake
-            WHERE deleted_at IS NULL
-              AND subtype IS NOT NULL AND trim(subtype) <> ''
+            SELECT DISTINCT trim(m.subtype) AS name
+            FROM manual_intake m
+            WHERE m.deleted_at IS NULL
+              AND m.subtype IS NOT NULL AND trim(m.subtype) <> ''
         )
-        SELECT name
+        SELECT source.name AS name
         FROM source
         WHERE {search_condition}
         ORDER BY {search_order}
@@ -39,40 +44,31 @@ def get_subtype_suggestions(connection, search: str = "", limit: int = 50) -> li
     return [str(row["name"]) for row in rows if row and row.get("name")]
 
 
-def get_category_suggestions(connection, search: str = "", limit: int = 50) -> list[str]:
-    search_condition, search_params, search_order = _build_fuzzy_search(connection, "name", search)
-    params = {**search_params, "limit": max(1, min(int(limit or 50), 500))}
+def get_subtype_label(connection, subtype: str) -> str | None:
+    """Return the stored subtype that matches `subtype` case-insensitively, or None.
+
+    Validation by existence in SQL, without the 500-row cap of the autocomplete (H25).
+    """
     query = """
-        WITH defaults AS (
-            SELECT unnest(ARRAY[
-                'meat', 'fish', 'dairy', 'eggs', 'processed_meat',
-                'legumes', 'tubers', 'nuts', 'vegetables', 'fruits',
-                'cereals', 'oils_and_fats', 'sweets', 'beverages',
-                'sauces', 'condiments', 'supplements'
-            ]) AS name
-        ),
-        source AS (
-            SELECT DISTINCT trim(category) AS name
-            FROM catalog
-            WHERE deleted_at IS NULL
-              AND category IS NOT NULL AND trim(category) <> ''
+        SELECT s.label
+        FROM (
+            SELECT trim(c.subtype) AS label FROM catalog c WHERE c.deleted_at IS NULL
             UNION
-            SELECT name FROM defaults
-        )
-        SELECT name
-        FROM source
-        WHERE {search_condition}
-        ORDER BY {search_order}
-        LIMIT %(limit)s;
-    """.format(search_condition=search_condition or "TRUE", search_order=search_order)
-    rows = _execute_query_many(connection, query, params, commit=False)
-    return [str(row["name"]) for row in rows if row and row.get("name")]
+            SELECT trim(m.subtype) FROM manual_intake m WHERE m.deleted_at IS NULL
+        ) s
+        WHERE lower(s.label) = lower(%(subtype)s)
+        ORDER BY s.label
+        LIMIT 1;
+    """
+    row = _execute_query(connection, query, {"subtype": subtype}, commit=False)
+    return str(row["label"]) if row and row.get("label") is not None else None
 
 
 def get_rescue_entries_suggestions(connection, users_id: int, search: str = "", limit: int = 50) -> list[dict]:
     normalized = (search or "").strip()
     params = {
         "users_id": users_id,
+        "visibility_user_id": users_id,
         "q": normalized,
         "q_like": f"%{normalized}%",
         "limit": max(1, min(int(limit or 50), 200)),
@@ -90,14 +86,13 @@ def get_rescue_entries_suggestions(connection, users_id: int, search: str = "", 
                 c.id AS entry_id,
                 c.name AS name,
                 COALESCE(fb.label, '') AS subtitle,
-                COALESCE(c.default_portion, 100.0) AS serving_g,
+                c.default_portion AS serving_g,
                 NULL::double precision AS available_g
             FROM linked_tags lt
             INNER JOIN rescue_tag rt ON rt.id = lt.tag_id
             INNER JOIN catalog c ON c.id = lt.catalog_id
             LEFT JOIN food_brands fb ON fb.id = c.brand_id
-            WHERE c.deleted_at IS NULL
-              AND (c.is_private = FALSE OR c.created_by = %(users_id)s)
+            WHERE {catalog_visibility}
               AND (%(q)s = '' OR c.name ILIKE %(q_like)s OR COALESCE(fb.label, '') ILIKE %(q_like)s)
         ),
         manual_rows AS (
@@ -112,7 +107,7 @@ def get_rescue_entries_suggestions(connection, users_id: int, search: str = "", 
             INNER JOIN rescue_tag rt ON rt.id = lt.tag_id
             INNER JOIN manual_intake m ON m.id = lt.manual_intake_id
             WHERE m.deleted_at IS NULL
-              AND (m.is_private = FALSE OR m.created_by = %(users_id)s)
+              AND (m.is_published OR m.created_by = %(users_id)s)
               AND (%(q)s = '' OR m.name ILIKE %(q_like)s OR COALESCE(m.origin, '') ILIKE %(q_like)s)
         )
         SELECT *
@@ -123,19 +118,20 @@ def get_rescue_entries_suggestions(connection, users_id: int, search: str = "", 
         ) src
         ORDER BY name ASC, entry_type ASC, entry_id ASC
         LIMIT %(limit)s;
-    """
+    """.format(catalog_visibility=_catalog_visibility_sql("c", include_retained=True))
     rows = _execute_query_many(connection, query, params, commit=False)
     out = []
     for row in rows:
         if not row:
             continue
+        serving_g = row.get("serving_g")
         out.append(
             {
                 "entry_type": str(row.get("entry_type") or ""),
                 "entry_id": int(row.get("entry_id") or 0),
                 "name": str(row.get("name") or "").strip(),
                 "subtitle": str(row.get("subtitle") or "").strip(),
-                "serving_g": float(row.get("serving_g") or 100.0),
+                "serving_g": (float(serving_g) if serving_g is not None else None),
                 "available_g": (float(row.get("available_g")) if row.get("available_g") is not None else None),
             }
         )

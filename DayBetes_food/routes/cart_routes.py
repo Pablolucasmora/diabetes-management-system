@@ -48,6 +48,7 @@ from DayBetes_food.domain.constants import (
     IntakeEventState,
     MealType,
     PortionDestination,
+    PortionOrigin,
 )
 from DayBetes_food.domain.intake_event import (
     INTAKE_EVENT_INGESTED_AMOUNT_MAX_G,
@@ -826,6 +827,21 @@ def setup_cart_routes(rt):
             event = get_intake_event(connection, int(user_id), event_id)
             if not event:
                 return _error(request, NotFoundError, _EVENT_GONE)
+            # Decision 2026-09-24 / R4: ticking the box on a catalog food with no
+            # factor is rejected; unchecking is always allowed, and a portion that
+            # already had it TRUE keeps the control to be unmarked.
+            if (
+                field_name == "is_cooked_weight"
+                and value is True
+                and portion.origin is PortionOrigin.CATALOG
+                and portion.source.cooking_factor is None
+                and not portion.is_cooked_weight
+            ):
+                return _error(
+                    request,
+                    ValidationError,
+                    "This food has no cooking factor, so it cannot be weighed cooked.",
+                )
             is_consumed = event.state == IntakeEventState.CONSUMED
             try:
                 # Escribir el flag y reescribir el snapshot son una sola

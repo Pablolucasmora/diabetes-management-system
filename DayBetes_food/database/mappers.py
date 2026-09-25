@@ -6,11 +6,17 @@ DayBetes_food/domain/ no se construyen desde una fila SQL en ningún otro
 punto del código.
 """
 
+from DayBetes_food.domain.catalog import CatalogItemRead
 from DayBetes_food.domain.constants import (
+    ConservationMethod,
+    CookingMethod,
+    FoodCategory,
+    FoodPhysicalState,
     InjectionZone,
     IntakeEventState,
     InsulinType,
     MealType,
+    Nutriscore,
     PortionDestination,
     PortionOrigin,
 )
@@ -19,6 +25,65 @@ from DayBetes_food.domain.intake_event import IntakeEventRead
 from DayBetes_food.domain.intake_plate import IntakePlateRead
 from DayBetes_food.domain.portion_detail import PortionDetailRead, PortionSourceRead
 from DayBetes_food.errors import InfrastructureError
+
+
+def _enum_from_row(row: dict, key: str, enum_cls):
+    raw = row.get(key)
+    if raw is None:
+        return None
+    try:
+        return enum_cls(raw)
+    except ValueError as exc:
+        raise InfrastructureError(
+            f"Invalid {key} '{raw}' in database row"
+        ) from exc
+
+
+def catalog_item_read_from_row(row: dict) -> CatalogItemRead:
+    """Convert a SQL row from _CATALOG_COLUMNS to CatalogItemRead.
+
+    Required columns: id, created_by, name, category, subtype, is_published,
+    created_at, updated_at. Nullables are read with `row.get` (§3.2); the
+    computed flags (is_favorite, can_edit, is_listable) come from the query.
+    """
+    try:
+        return CatalogItemRead(
+            id=int(row["id"]),
+            created_by=row.get("created_by"),
+            origin_root_id=row.get("origin_root_id"),
+            name=row["name"],
+            brand_id=row.get("brand_id"),
+            brand=row.get("brand"),
+            category=FoodCategory(row["category"]),
+            subtype=row["subtype"],
+            initial_state=_enum_from_row(row, "initial_state", FoodPhysicalState),
+            nutriscore=_enum_from_row(row, "nutriscore", Nutriscore),
+            nova=row.get("nova"),
+            yuka=row.get("yuka"),
+            default_portion=row.get("default_portion"),
+            calories_100g=row.get("calories_100g"),
+            carbs_100g=row.get("carbs_100g"),
+            sugars_100g=row.get("sugars_100g"),
+            fats_100g=row.get("fats_100g"),
+            saturated_100g=row.get("saturated_100g"),
+            proteins_100g=row.get("proteins_100g"),
+            fiber_100g=row.get("fiber_100g"),
+            caffeine=row.get("caffeine"),
+            alcohol=row.get("alcohol"),
+            barcode=row.get("barcode"),
+            cooking_factor=row.get("cooking_factor"),
+            is_published=bool(row["is_published"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            deleted_at=row.get("deleted_at"),
+            is_favorite=bool(row.get("is_favorite")),
+            can_edit=bool(row.get("can_edit")),
+            is_listable=bool(row.get("is_listable")),
+        )
+    except ValueError as exc:
+        raise InfrastructureError(f"Invalid catalog category in database row: {exc}") from exc
+    except KeyError as exc:
+        raise InfrastructureError(f"Missing required field {exc} in catalog row") from exc
 
 
 def insulin_injection_read_from_row(row: dict) -> InsulinInjectionRead:
@@ -171,9 +236,10 @@ def portion_detail_read_from_row(row: dict) -> PortionDetailRead:
         )
         origin = PortionOrigin.CATALOG if origin_column == "catalog_id" else PortionOrigin.MANUAL_INTAKE
         destination = PortionDestination(destination_column.removesuffix("_id"))
+        source_unit_g = row.get("source_unit_g")
         source = PortionSourceRead(
             name=row.get("source_name"),
-            unit_g=float(row.get("source_unit_g") or 100.0),
+            unit_g=(float(source_unit_g) if source_unit_g is not None else None),
             category=row.get("source_category"),
             subtype=row.get("source_subtype"),
             cooking_factor=row.get("source_cooking_factor"),
@@ -193,9 +259,9 @@ def portion_detail_read_from_row(row: dict) -> PortionDetailRead:
             destination_id=int(row[destination_column]),
             plate_id=row.get("plate_id"),
             amount=float(row["amount"]),
-            cooking=row.get("cooking"),
-            conservation=row.get("conservation"),
-            final_state=row.get("final_state"),
+            cooking=_enum_from_row(row, "cooking", CookingMethod),
+            conservation=_enum_from_row(row, "conservation", ConservationMethod),
+            final_state=_enum_from_row(row, "final_state", FoodPhysicalState),
             strictly_weighed=row.get("strictly_weighed"),
             macros_quality=row.get("macros_quality"),
             is_cooked_weight=bool(row.get("is_cooked_weight")),

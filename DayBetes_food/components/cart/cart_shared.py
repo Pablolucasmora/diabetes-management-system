@@ -84,7 +84,11 @@ def portion_macro_amount(portion) -> float:
     amount = float(portion.amount)
     if not portion.is_cooked_weight or portion.origin is not PortionOrigin.CATALOG:
         return amount
-    factor = portion.source.cooking_factor or 1.0
+    factor = portion.source.cooking_factor
+    if factor is None:
+        # Defence of the calculation for inherited portions (decisions
+        # 2026-09-24 / 2026-09-25), not a default value.
+        return amount
     return amount / factor if factor > 0 else amount
 
 
@@ -120,8 +124,10 @@ def portion_name(portion):
     return portion.source.name or f"Ingredient #{portion.id}"
 
 
-def unit_amount(portion) -> float:
-    return float(portion.source.unit_g or 100.0)
+def unit_amount(portion) -> float | None:
+    """The food's serving in grams, or None when it has no serving (H15)."""
+    unit_g = portion.source.unit_g
+    return float(unit_g) if unit_g is not None else None
 
 
 def group_portions(portions):

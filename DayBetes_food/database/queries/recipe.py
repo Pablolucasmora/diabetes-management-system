@@ -18,14 +18,13 @@ def add_recipe(
     name: str,
     meal_type: str = None,
     notes: str = None,
-    is_private: bool = False,
     origin_root_id: int = None,
     commit: bool = True,
 ) -> Optional[int]:
-    """Creates a new recipe."""
+    """Creates a new recipe. Personal by default (no is_published, R5)."""
     query = """
-        INSERT INTO recipe (users_id, origin_root_id, meal_type, name, notes, is_private)
-        VALUES (%(users_id)s, %(origin_root_id)s, %(meal_type)s, %(name)s, %(notes)s, %(is_private)s)
+        INSERT INTO recipe (users_id, origin_root_id, meal_type, name, notes)
+        VALUES (%(users_id)s, %(origin_root_id)s, %(meal_type)s, %(name)s, %(notes)s)
         RETURNING id;
     """
     result = _execute_query(connection, query, {
@@ -34,7 +33,6 @@ def add_recipe(
         "meal_type": meal_type,
         "name": name,
         "notes": notes,
-        "is_private": is_private,
     }, commit=commit)
     return result["id"] if result else None
 
@@ -102,7 +100,7 @@ def update_recipe(
     meal_type: str = None,
     notes: str = None,
     favorite: bool = None,
-    is_private: bool = None,
+    is_published: bool = None,
     commit: bool = True,
 ) -> bool:
     """Updates a recipe."""
@@ -111,7 +109,7 @@ def update_recipe(
         "name": name, 
         "meal_type": meal_type, 
         "notes": notes, 
-        "is_private": is_private,
+        "is_published": is_published,
     }
     
     query = _build_update_query("recipe", params)

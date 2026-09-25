@@ -7,22 +7,25 @@
   }
   window.__dbSmartMacrosBootstrapped = true;
 
-  function normalizeToken(token) {
-    return String(token || "")
+  // Same grammar as parse_smart_macros in domain/nutrition.py: a sequence of
+  // "<number> [unit] <macro name>" pairs; the number always goes first. Any
+  // other text is an error, never a guess. The server is the authority; this
+  // is only the preview.
+  function normalizeText(text) {
+    return String(text || "")
       .toLowerCase()
       .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z]/g, "");
+      .replace(/[\u0300-\u036f]/g, "");
   }
 
   var macroFamilies = [
     {
       field: "calories_100g",
-      aliases: ["kcal", "kca", "caloria", "calorias", "calorie", "calories", "cal", "energia", "ener", "ene"]
+      aliases: ["kcal", "kcals", "kca", "caloria", "calorias", "calorie", "calories", "cal", "cals", "energia", "ener", "ene"]
     },
     {
       field: "carbs_100g",
-      aliases: ["hc", "ch", "hidrato", "hidratos", "carbo", "carbos", "carbohidrato", "carbohidratos", "carb", "carbs"]
+      aliases: ["hc", "ch", "hidrato", "hidratos", "hidrato de carbono", "hidratos de carbono", "carbo", "carbos", "carbohidrato", "carbohidratos", "carbohydrate", "carbohydrates", "carb", "carbs"]
     },
     {
       field: "sugars_100g",
@@ -34,36 +37,35 @@
     },
     {
       field: "fats_100g",
-      aliases: ["gr", "gra", "gras", "grasa", "grasas", "fat", "fats", "lipido", "lipidos"]
+      aliases: ["gr", "gra", "gras", "grasa", "grasas", "fat", "fats", "lipido", "lipidos", "lipid", "lipids"]
     },
     {
       field: "saturated_100g",
-      aliases: ["sat", "satu", "satur", "satura", "saturada", "saturadas", "st", "gs"]
+      aliases: ["sat", "satu", "satur", "satura", "saturada", "saturadas", "grasa saturada", "grasas saturadas", "saturated", "saturated fat", "saturated fats", "st", "gs"]
     },
     {
       field: "fiber_100g",
-      aliases: ["fb", "fib", "fibr", "fibra", "fiber"]
+      aliases: ["fb", "fib", "fibr", "fibra", "fibras", "fiber", "fibers", "fibre", "fibres"]
     }
   ];
 
-  var defaultValues = {
-    calories_100g: null,
-    carbs_100g: null,
-    sugars_100g: null,
-    proteins_100g: null,
-    fats_100g: null,
-    saturated_100g: null,
-    fiber_100g: null
-  };
+  var macroAliases = {};
+  for (var familyIndex = 0; familyIndex < macroFamilies.length; familyIndex += 1) {
+    var familyAliases = macroFamilies[familyIndex].aliases;
+    for (var aliasIndex = 0; aliasIndex < familyAliases.length; aliasIndex += 1) {
+      macroAliases[familyAliases[aliasIndex]] = macroFamilies[familyIndex].field;
+    }
+  }
+  var smartUnits = ["g", "gr", "gramos", "ml"];
 
   var prettyName = {
     calories_100g: "Kcal",
-    carbs_100g: "HC",
-    sugars_100g: "Azucar",
-    proteins_100g: "Proteinas",
-    fats_100g: "Grasas",
+    carbs_100g: "Carbs",
+    sugars_100g: "Sugars",
+    proteins_100g: "Proteins",
+    fats_100g: "Fats",
     saturated_100g: "Sat.",
-    fiber_100g: "Fibra"
+    fiber_100g: "Fiber"
   };
 
   var pillColor = {
@@ -75,28 +77,20 @@
     saturated_100g: "#ef4444",
     fiber_100g: "#6b7280"
   };
-  var defaultKeys = Object.keys(defaultValues);
-  var regexNumberFirst =
-    /(\d+(?:[.,]\d+)?)\s*(?:(?:g|gr|gramos|ml)(?![a-z\u00e1\u00e9\u00ed\u00f3\u00fa\u00f1])\s*)?([a-z\u00e1\u00e9\u00ed\u00f3\u00fa\u00f1]+)/g;
-  var regexWordFirst = /([a-z\u00e1\u00e9\u00ed\u00f3\u00fa\u00f1]+)\s*[:=-]?\s*(\d+(?:[.,]\d+)?)\s*(?:g|gr|gramos|ml)?/g;
+  // [0-9] and explicit whitespace, not \d/\s: they differ from Python.
+  var regexSeparators = /[ \t\r\n,;+]*/y;
+  var regexNumber = /[0-9]+(?:[.,][0-9]+)?/y;
+  var regexName = /[ \t\r\n]*([a-z]+(?:[ \t\r\n]+[a-z]+)*)/y;
 
-  function resolveField(rawToken) {
-    var token = normalizeToken(rawToken);
-    if (!token) return null;
-    for (var i = 0; i < macroFamilies.length; i += 1) {
-      var family = macroFamilies[i];
-      for (var j = 0; j < family.aliases.length; j += 1) {
-        var alias = family.aliases[j];
-        if (alias.indexOf(token) === 0 || token.indexOf(alias) === 0) {
-          return family.field;
-        }
-      }
-    }
-    return null;
+  function stickyMatch(regex, text, position) {
+    regex.lastIndex = position;
+    return regex.exec(text);
   }
 
+  // Returns {values, error}. `error` is null or the same message the server
+  // answers with a 422.
   function parseSmartMacros(text) {
-    var result = {
+    var values = {
       calories_100g: null,
       carbs_100g: null,
       sugars_100g: null,
@@ -105,73 +99,73 @@
       saturated_100g: null,
       fiber_100g: null
     };
-
-    if (!text) return result;
-
-    var raw = String(text).toLowerCase();
-    regexNumberFirst.lastIndex = 0;
-    regexWordFirst.lastIndex = 0;
-
-    function applyMatch(amountRaw, macroRaw) {
-      var field = resolveField(macroRaw);
-      if (!field) return;
-      var amount = Number(String(amountRaw).replace(",", "."));
-      if (Number.isNaN(amount)) return;
-      result[field] = amount;
-    }
-
-    var match;
-    while ((match = regexNumberFirst.exec(raw)) !== null) {
-      applyMatch(match[1], match[2]);
-    }
-
-    // Prevent overlap: remove already-consumed "number+macro" pairs so
-    // "447kcal 67hc" is not re-read as "kcal 67".
-    regexNumberFirst.lastIndex = 0;
-    var rawWordOnly = raw.replace(regexNumberFirst, " ");
-    regexWordFirst.lastIndex = 0;
-    while ((match = regexWordFirst.exec(rawWordOnly)) !== null) {
-      applyMatch(match[2], match[1]);
-    }
-
-    return result;
-  }
-
-  function fillHidden(prefix, values) {
-    for (var i = 0; i < defaultKeys.length; i += 1) {
-      var key = defaultKeys[i];
-      var hidden = document.getElementById(prefix + "_" + key);
-      if (!hidden) continue;
-      var value = values[key];
-      hidden.value = value == null ? "" : String(value);
+    var raw = normalizeText(text);
+    var position = 0;
+    while (true) {
+      position += stickyMatch(regexSeparators, raw, position)[0].length;
+      if (position >= raw.length) {
+        return { values: values, error: null };
+      }
+      var number = stickyMatch(regexNumber, raw, position);
+      if (!number) {
+        return {
+          values: values,
+          error: "Write each value as a number followed by its macro, e.g. '30 carbs 20 proteins'."
+        };
+      }
+      position += number[0].length;
+      var name = stickyMatch(regexName, raw, position);
+      if (!name) {
+        return { values: values, error: "Add the macro name after " + number[0] + "." };
+      }
+      var words = name[1].split(/[ \t\r\n]+/);
+      if (words.length > 1 && smartUnits.indexOf(words[0]) !== -1) {
+        words = words.slice(1);
+      }
+      var label = words.join(" ");
+      var field = Object.prototype.hasOwnProperty.call(macroAliases, label) ? macroAliases[label] : null;
+      if (!field) {
+        return { values: values, error: "Unknown macro '" + label + "'." };
+      }
+      if (values[field] !== null) {
+        return { values: values, error: "Macro '" + label + "' is written more than once." };
+      }
+      values[field] = Number(number[0].replace(",", "."));
+      position += name[0].length;
     }
   }
+  window.dbSmartMacrosParse = parseSmartMacros;
 
-  function renderPreview(outputEl, values) {
+  function renderPreview(outputEl, parsed) {
     if (!outputEl) return;
+    if (parsed.error) {
+      outputEl.textContent = parsed.error;
+      return;
+    }
+    var values = parsed.values;
     var chips = [];
     var keys = Object.keys(values);
     for (var i = 0; i < keys.length; i += 1) {
       var key = keys[i];
-      var val = Number(values[key] || 0);
-      if (val > 0) {
+      // value !== null paints an explicit 0 as well (measurement §2).
+      if (values[key] !== null && values[key] !== undefined) {
         chips.push(
           '<span style="display:inline-block;padding:2px 8px;border-radius:999px;color:#fff;font-size:11px;margin:2px 4px 2px 0;background:' +
             pillColor[key] +
             ';">' +
             prettyName[key] +
             ": " +
-            val +
-            "g</span>"
+            values[key] +
+            "</span>"
         );
       }
     }
 
     if (!chips.length) {
-      outputEl.textContent = "Formato no reconocido aun.";
+      outputEl.textContent = "Type macros to preview what is detected.";
       return;
     }
-    outputEl.innerHTML = '<span style="font-size:11px;color:#4b5563;">Detectado: </span>' + chips.join("");
+    outputEl.innerHTML = '<span style="font-size:11px;color:#4b5563;">Detected: </span>' + chips.join("");
   }
 
   function syncInput(input) {
@@ -191,7 +185,6 @@
     }
 
     var parsed = parseSmartMacros(input.value || "");
-    if (prefix) fillHidden(prefix, parsed);
     renderPreview(outputEl, parsed);
   }
 
@@ -223,6 +216,41 @@
       input = document.getElementById(inputOrId);
     }
     syncInput(input);
+  };
+
+  window.dbSmartMacrosSelfCheck = async function () {
+    var response = await fetch("/data/smart_macros_cases.json", { cache: "no-store" });
+    var cases = await response.json();
+    var mismatches = [];
+    for (var i = 0; i < cases.length; i += 1) {
+      var parsed = parseSmartMacros(cases[i].text || "");
+      var expectedError = cases[i].error || null;
+      if (expectedError !== parsed.error) {
+        mismatches.push({ case: i, text: cases[i].text, field: "error", expected: expectedError, got: parsed.error });
+      }
+      if (expectedError) continue;
+      var expected = cases[i].expected || {};
+      var keys = Object.keys(parsed.values);
+      for (var j = 0; j < keys.length; j += 1) {
+        var key = keys[j];
+        var expectedValue = key in expected ? expected[key] : null;
+        if (expectedValue !== parsed.values[key]) {
+          mismatches.push({
+            case: i,
+            text: cases[i].text,
+            field: key,
+            expected: expectedValue,
+            got: parsed.values[key]
+          });
+        }
+      }
+    }
+    if (mismatches.length) {
+      console.table(mismatches);
+    } else {
+      console.log("smart macros OK", cases.length);
+    }
+    return mismatches;
   };
 
   function attachSwapListener() {

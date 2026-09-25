@@ -26,13 +26,15 @@ from DayBetes_food.database.queries.food_brands import (
     get_food_brand_suggestions,
 )
 from DayBetes_food.database.queries.catalog import (
-    add_catalog_item,
+    create_catalog_item,
     get_catalog_item,
     get_catalog_item_by_barcode,
-    get_all_catalog,
-    catalog_name_brand_exists,
+    list_catalog_items,
     update_catalog_item,
-    delete_catalog_item,
+    archive_catalog_item,
+    publish_catalog_item,
+    unpublish_catalog_item,
+    next_catalog_copy_name,
 )
 from DayBetes_food.database.queries.manual_intake import (
     get_manual_origin_suggestions,
@@ -66,7 +68,7 @@ from DayBetes_food.database.queries.user_favorites import (
 )
 from DayBetes_food.database.queries.entries import (
     get_subtype_suggestions,
-    get_category_suggestions,
+    get_subtype_label,
     get_rescue_entries_suggestions,
     get_consumed_food_usage_rankings,
 )
@@ -149,13 +151,15 @@ __all__ = [
     "create_food_brand",
     "get_food_brand_id_by_label",
     "get_food_brand_suggestions",
-    "add_catalog_item",
+    "create_catalog_item",
     "get_catalog_item",
     "get_catalog_item_by_barcode",
-    "get_all_catalog",
-    "catalog_name_brand_exists",
+    "list_catalog_items",
     "update_catalog_item",
-    "delete_catalog_item",
+    "archive_catalog_item",
+    "publish_catalog_item",
+    "unpublish_catalog_item",
+    "next_catalog_copy_name",
     "get_manual_origin_suggestions",
     "add_manual_intake",
     "get_manual_intake",
@@ -177,7 +181,7 @@ __all__ = [
     "toggle_user_favorite",
     "set_user_favorite",
     "get_subtype_suggestions",
-    "get_category_suggestions",
+    "get_subtype_label",
     "get_rescue_entries_suggestions",
     "get_consumed_food_usage_rankings",
     "create_intake_event",
