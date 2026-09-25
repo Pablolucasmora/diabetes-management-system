@@ -636,3 +636,132 @@ En los datos reales, `manual_intake` tiene 4 de 5 filas privadas. Los motivos re
 - En el cálculo, un factor `NULL` con `is_cooked_weight = TRUE` (solo posible en ese caso heredado) se trata como neutro (`1`). Es una defensa del cálculo, no un valor por defecto.
 - Modifica la decisión **2026-09-18** en lo relativo a `DEFAULT 1.0` y a "la operación se aplica siempre". Se mantiene lo demás: `amount` guarda lo pesado, la conversión solo ocurre en el cálculo y solo para ingredientes de `catalog`.
 **Convención actualizada**: `conventions/measurement_conventions.md` sección 5.2 (peso pesado en cocido) y sección 7 (factor de cocinado)
+
+## 2026-09-25 — La categoría de un alimento de `catalog` es un conjunto cerrado
+
+**Origen**: hallazgo 1 (ALTO) de `audit/audits/audit_catalog.md`; feedback 1
+**Contexto**: la interfaz y las rutas trataban `category` como lista abierta ("Add", `category__added`), mientras la base la cerraba con `catalog_category_check` (17 valores). `_drop_legacy_category_check` buscaba `IN (` y PostgreSQL devuelve `= ANY (ARRAY[...])`, así que nunca borró nada, y añadir una categoría daba `500`. El concepto tenía cuatro fuentes de verdad: `CATEGORY_OPTIONS`, el `ARRAY` de `entries.py`, `_off_pick_category` y el CHECK.
+**Alternativas consideradas**:
+- Conjunto cerrado: enum, CHECK generado desde el enum y sin "Add".
+- Catálogo abierto de §4.5: tabla propia y sin CHECK.
+**Decisión**: conjunto cerrado. `FoodCategory` en `domain/constants.py` con los 17 códigos del CHECK existente. `ck_catalog_category` se genera con `sql_in_list`, y `catalog_category_check` se borra por su nombre, no por un patrón de su definición. Una categoría nueva la añade el usuario en el código, de forma deliberada; la interfaz no la inventa. El bootstrap falla si encuentra en `catalog` un CHECK que no espera.
+**Convención actualizada**: ninguna (`code_conventions.md` §4.1 ya incluye `catalog.category` entre los conjuntos cerrados desde el 2026-09-24)
+
+## 2026-09-25 — Límites numéricos únicos de los alimentos (`catalog` y `manual_intake`)
+
+**Origen**: hallazgo 3 (ALTO) de `audit/audits/audit_catalog.md`; feedback 3
+**Contexto**: `catalog` no validaba ningún campo numérico: guardaba `NaN`, `Infinity` y negativos, y un texto no numérico se convertía en `NULL` sin avisar. `manual_intake` tenía límites propios en la ruta (`MANUAL_NUMERIC_LIMITS`), con 10000 para `caffeine` y `alcohol`. `measurement_conventions.md` §5.3 pedía límites por campo, pero no fijaba ninguno.
+**Alternativas consideradas**:
+- Reutilizar los límites de `manual_intake` tal cual.
+- Límites físicos: lo que cabe en 100 g del nutriente puro.
+- Límites de negocio o clínicos.
+**Decisión**: límites físicos, declarados una sola vez en `DayBetes_food/domain/nutrition.py` y compartidos por `catalog` y `manual_intake`: `calories_100g` 0–900; `carbs/sugars/fats/saturated/proteins/fiber_100g` 0–100; `caffeine` 0–100000 mg/100 g; `alcohol` 0–100 g/100 g. Relaciones cruzadas: `sugars_100g ≤ carbs_100g` y `saturated_100g ≤ fats_100g`. Solo en `catalog`, en `domain/catalog.py`: `default_portion` en `(0, 3000]` y `cooking_factor` en `(0, 10]`. Son techos de cordura, no límites clínicos. Todos los campos admiten `NULL`. Solo se aceptan números finitos: texto, `NaN` e `Infinity` se rechazan con `validation_error`, nunca se convierten en `NULL`. Se refuerzan con CHECK con nombre (§11.6) generados desde las mismas constantes. `manual_intake` pasa a `caffeine ≤ 100000` y `alcohol ≤ 100`, y gana la relación `sugars ≤ carbs`.
+**Convención actualizada**: `conventions/measurement_conventions.md` sección 5.3 (tabla de límites); `conventions/code_conventions.md` sección 3.6 (módulo compartido `domain/nutrition.py`)
+
+## 2026-09-25 — Código de barras de `catalog`: formato y unicidad
+
+**Origen**: hallazgos 13 y 26 de `audit/audits/audit_catalog.md`; feedback 13 y 26
+**Contexto**: `barcode` era un `VARCHAR` sin longitud ni formato. Podía repetirse, se buscaba con `trim()` sobre la columna (sin índice) y el escáner resolvía siempre al `id` más bajo visible. Hay una etiqueta GS1 de peso variable de 24 dígitos (id 74) y un duplicado legítimo (id 9 personal de user 2, id 82 publicado de user 7).
+**Alternativas consideradas**:
+- Limitar a EAN-8/13/UPC.
+- Solo dígitos, de 8 a 48.
+- Código repetible sin unicidad.
+- Único con la misma regla que el nombre.
+**Decisión**: se recortan los espacios de los extremos y solo se admiten dígitos, de 8 a 48 (`CATALOG_BARCODE_MIN_LENGTH`/`MAX_LENGTH` en `domain/catalog.py`). La columna pasa a `VARCHAR(48)` con `ck_catalog_barcode_format` (`barcode ~ '^[0-9]{8,48}$'`). Unicidad con el mismo alcance que el nombre, solo sobre filas activas con código: personal, único por propietario entre sus alimentos que no son copias (`origin_root_id IS NULL`), porque una copia conserva el código del original; y publicado, único entre todos los publicados, incluida la biblioteca general. Publicar un alimento cuyo código choca da `409`, sin revelar nada de alimentos personales ajenos. El escáner resuelve primero lo propio activo (el original antes que las copias; entre copias, la más reciente) y después lo publicado; nunca lo personal ajeno. Cómo resolver el choque al publicar (versión nueva del existente) queda en deuda, porque depende del versionado.
+**Convención actualizada**: ninguna
+
+## 2026-09-25 — `default_portion NULL` significa "sin ración"; 100 g como cantidad inicial en los añadidos de un clic
+
+**Origen**: hallazgo 15 de `audit/audits/audit_catalog.md`; feedback 15; respuesta del usuario a `propose` (2026-09-25, R3)
+**Contexto**: seis puntos del código convertían una ración `NULL` en 100 g, y la interfaz ofrecía "serving (100g)" para alimentos sin ración. Al quitar esos fallbacks, las dos acciones de un clic que añaden "una ración" sin preguntar la cantidad (el `+` de la tarjeta, que va a `/add_food`, y "Add food" del selector de ingredientes de receta) se quedaban sin cantidad que usar.
+**Alternativas consideradas**:
+- `NOT NULL DEFAULT 100`, rellenando las filas `NULL`.
+- `NULL` = sin ración, ocultando los botones de un clic para esos alimentos.
+- `NULL` = sin ración, pidiendo los gramos en esas acciones.
+- `NULL` = sin ración, con 100 g como cantidad inicial editable solo en esas acciones.
+**Decisión**: `default_portion NULL` significa que el alimento no tiene ración. Se quita el `DEFAULT 100` de la columna, el formulario de alta nace vacío, la unidad `serving`/`portion` no se ofrece para ese alimento, y si aun así llega al servidor se rechaza con `validation_error`. Las filas `NULL` existentes no se tocan. **Por ahora**, el `+` de la tarjeta y "añadir a receta" usan **100 g** (`INITIAL_AMOUNT_WITHOUT_SERVING_G` en `domain/catalog.py`) cuando el alimento no tiene ración. No es una ración ni una equivalencia de §4.3 de `measurement_conventions.md`, sino la cantidad inicial de una porción que el usuario puede editar después. La ficha del alimento usa el mismo valor como cantidad inicial en gramos. El resto de fallbacks a 100 desaparece.
+**Convención actualizada**: ninguna
+
+## 2026-09-25 — Smart macros: el servidor parsea el texto; el JavaScript es solo vista previa
+
+**Origen**: hallazgo 16 de `audit/audits/audit_catalog.md`; feedback 16
+**Contexto**: el alta de `catalog` guardaba lo que el JavaScript había puesto en unos campos ocultos. Si el texto no se reconocía, se creaba el alimento sin macros y sin error. `manual_intake` al menos rechazaba el texto no reconocido, pero también confiaba en los campos ocultos (§7.13).
+**Alternativas consideradas**:
+- Solo añadir en `catalog` el mismo rechazo que en `manual_intake`.
+- Un parser de servidor con la misma gramática, y el JS solo como vista previa.
+**Decisión**: el servidor parsea `<prefix>_smart_macros_raw` con la misma gramática que `static/js/smart_macros.js` e ignora los campos ocultos. Si el texto no está vacío y no se reconoce ningún macro, `validation_error`. Los valores obtenidos pasan por los límites de la decisión anterior. El parser (`parse_smart_macros` en `domain/nutrition.py`) es común a `catalog` y `manual_intake`. JS y Python comparten un juego de casos (`static/data/smart_macros_cases.json`), comprobado con `scripts/check_smart_macros.py` y con `dbSmartMacrosSelfCheck()` en el navegador. El texto original no se guarda.
+**Convención actualizada**: ninguna (aplicación de `code_conventions.md` §7.13)
+
+## 2026-09-25 — Open Food Facts: adaptador propio, conversión por unidad declarada y sin columna de procedencia
+
+**Origen**: hallazgo 17 de `audit/audits/audit_catalog.md`; feedback 17
+**Contexto**: `_off_prefill_by_barcode` vivía en la ruta, llamaba a `world.openfoodfacts.net` (el entorno de staging de OFF) con el código de barras sin validar, se tragaba cualquier error sin log y copiaba los valores sin convertir. Así, la cafeína llegaba en g (1000 veces menos que en mg), el alcohol en `% vol` y la ración de las bebidas en ml como si fueran gramos.
+**Alternativas consideradas**:
+- Seguir en la ruta.
+- Adaptador dedicado.
+- Para el alcohol: no precargarlo, o convertir `% vol` con la densidad del etanol.
+- Guardar la procedencia (`source`, `imported_at`, …) o no guardarla.
+**Decisión**: adaptador en `DayBetes_food/integrations/open_food_facts.py`, con URL base (`https://world.openfoodfacts.org`) y timeout en `config.py`. Valida el código de barras (decisión de formato) antes de construir la URL, comprueba el status y el `Content-Type`, lanza `ExternalServiceError`, y la ruta registra el fallo una vez y sigue sin precarga. La conversión depende de la unidad declarada (`*_unit`): cafeína `g → mg` (×1000); alcohol en `% vol` → g/100 g con `× 0,789` (densidad del etanol, suponiendo que la bebida tiene densidad ≈ 1), mostrando junto al campo el valor original ("OFF: 6.6 % vol"); una unidad desconocida o que falta no se precarga; una ración en ml no se precarga como gramos. No hay columna de procedencia: OFF solo precarga, el usuario revisa y corrige antes de guardar, y el valor guardado es suyo.
+**Convención actualizada**: `conventions/measurement_conventions.md` sección 5.1 (unidades de OFF y densidad del etanol) y sección 12.1 (`catalog` no conserva procedencia)
+
+## 2026-09-25 — Se elimina `catalog.slug`
+
+**Origen**: hallazgo 19 de `audit/audits/audit_catalog.md`; feedback 19
+**Contexto**: `slug varchar(255)` con índice único `idx_catalog_slug` solo existía en la base. Era DDL aplicado a mano, no aparecía en `schema.py` ni en el código, y tenía 10 valores reconstruibles desde el nombre.
+**Alternativas consideradas**:
+- Darle un uso (URLs legibles) y declararlo.
+- Borrarlo.
+**Decisión**: se borran la columna y su índice. Es una migración destructiva aprobada expresamente (§12.4): los 10 valores se reconstruyen desde el nombre y no hay ninguna referencia. Las URLs siguen usando el `id`. Las URLs legibles, comunes a `catalog`, `manual_intake` y `recipe`, quedan en deuda con su convención pendiente.
+**Convención actualizada**: ninguna
+
+## 2026-09-25 — `is_published DEFAULT FALSE` también en `manual_intake` y `recipe` desde este ciclo
+
+**Origen**: respuesta del usuario a `propose` (2026-09-25, R1) sobre la contradicción entre la decisión 2026-09-24 ("Privacidad de los alimentos") y `audit/deuda_pendiente.md` ("Pendiente para la auditoría de `manual_intake`/`recipe`: `is_published DEFAULT FALSE`")
+**Contexto**: la decisión 2026-09-24 fija el renombrado de `is_private` a `is_published` en las tres tablas dentro de la auditoría de `catalog` con `DEFAULT FALSE`. La deuda, en cambio, dejaba el valor por defecto de `manual_intake` y `recipe` para sus auditorías, y el feedback decía que para ellas "entra solo el renombrado".
+**Alternativas consideradas**:
+- Solo renombrar, conservando en `manual_intake` y `recipe` el comportamiento de hoy (`DEFAULT TRUE`, copias publicadas).
+- `DEFAULT FALSE` ya en las tres.
+**Decisión**: `DEFAULT FALSE` ya en las tres tablas: todo alimento, receta o copia **nueva** nace personal. Las filas existentes conservan su visibilidad (`is_published = NOT is_private`), y la migración comprueba que ninguna cambia. Siguen pendientes para las auditorías de `manual_intake` y `recipe` los índices únicos personal/publicado, publicar con `409` y el popup de publicar receta. Hasta entonces, en esas dos tablas se publica con la casilla "Published" del formulario de edición. Precisa la decisión 2026-09-24 ("Privacidad de los alimentos: personales por defecto y publicación explícita"), sin cambiar su criterio.
+**Convención actualizada**: ninguna (`code_conventions.md` §11.4.1 ya lo establece)
+
+## 2026-09-25 — Recetas publicadas con ingredientes personales de `catalog`: se publican los ingredientes
+
+**Origen**: hallazgo 7 de `audit/audits/audit_catalog.md`; feedback 7; respuesta del usuario a `propose` (2026-09-25, R2)
+**Contexto**: la receta pública 6 contenía el alimento personal 14 («Leche entera»). El usuario ya publicó el 14 desde su cuenta, pero la migración tiene que dejar los datos cumpliendo §11.4.1 ("una receta publicada nunca enseña algo que no esté publicado") y no puede asumirlo.
+**Alternativas consideradas**:
+- Pasar a personal las recetas afectadas.
+- Publicar los ingredientes personales.
+**Decisión**: corrección de datos aprobada expresamente (§12.7). En la misma migración que renombra la columna, y solo esa vez, cada alimento de `catalog` personal que sea ingrediente de una receta publicada **cuyo propietario sea el mismo que el del alimento** pasa a publicado, igual que haría el popup de publicar receta. Si un ingrediente personal pertenece a otro usuario, la migración se detiene y lo comunica, porque publicar un alimento ajeno necesita otra decisión. Los ingredientes de `manual_intake` quedan para la auditoría de `recipe`.
+**Convención actualizada**: ninguna
+
+## 2026-09-25 — `Cooked weight` heredado al importar o copiar una receta
+
+**Origen**: hallazgo 23 de `audit/audits/audit_catalog.md`; respuesta del usuario a `propose` (2026-09-25, R4)
+**Contexto**: la decisión 2026-09-24 ("`cooking_factor` admite `NULL`…") hace que el servidor rechace con `422` "poner `is_cooked_weight = TRUE`" en una porción de un alimento sin factor, y conserva el control en una porción que ya lo tenía. No decía qué pasa cuando una porción se crea copiando otra: importar una receta a un evento o copiar una receta.
+**Alternativas consideradas**:
+- Rechazar la importación o la copia.
+- Poner `FALSE` en silencio.
+- Heredar el valor como caso ya existente.
+**Decisión**: el `422` solo aplica cuando el usuario **marca** la casilla (ficha del alimento y carrito). Al importar o copiar una receta, la porción nueva hereda el valor que tenía la de origen, como caso heredado: el cálculo usa factor neutro y el control se muestra para poder desmarcarlo. Precisa la decisión 2026-09-24 sobre `cooking_factor`, sin cambiar su criterio.
+**Convención actualizada**: `conventions/measurement_conventions.md` sección 5.2 (frase sobre porciones heredadas)
+
+## 2026-09-25 — El alta de un alimento o una receta no ofrece publicar
+
+**Origen**: respuesta del usuario a `propose` (2026-09-25, R5), derivada de la decisión 2026-09-24 sobre privacidad
+**Contexto**: los formularios de alta de `catalog`, `manual_intake` y `recipe` tenían una casilla "Private". Con "todo nace personal", la duda era si mantener una casilla "Publish" para publicar al crear.
+**Alternativas consideradas**:
+- Casilla "Publish" en el alta, con posible `409`.
+- Sin casilla: se crea siempre personal y se publica después con la acción del propietario.
+**Decisión**: sin casilla en el alta de las tres tablas. Se crea siempre personal. En `catalog` se publica con el botón Publish de la ficha; en `manual_intake` y `recipe`, mientras sus auditorías no creen la acción equivalente, con la casilla "Published" del formulario de **edición**.
+**Convención actualizada**: `conventions/code_conventions.md` sección 11.4.1 (párrafo "Por defecto, todo nace personal")
+
+## 2026-09-25 — Smart macros: solo «número + nombre»; el resto se rechaza
+
+**Origen**: hallazgo 30 (ALTO) de `audit/audits/audit_catalog.md` (segunda pasada): con el formato "palabra primero", cada número iba a la etiqueta siguiente y el servidor lo guardaba
+**Contexto**: la decisión 2026-09-25 ("Smart macros: el servidor parsea el texto; el JavaScript es solo vista previa") mandaba usar la misma gramática que `static/js/smart_macros.js`, que mezclaba dos pasadas ("número primero" y "palabra primero"). En `carbs 30 proteins 20` guardaba carbs 20 y proteins 30, y el juego de casos compartido fijaba ese resultado como esperado. No había convención sobre qué formatos admite el texto libre ni qué hacer con uno ambiguo.
+**Alternativas consideradas**:
+- Corregir la gramática para aceptar los dos órdenes, detectando el orden del texto.
+- Aceptar solo "número primero" y rechazar con `422` todo lo demás.
+- Mantener la gramática y quitar solo de la ayuda el ejemplo que fallaba.
+**Decisión**: se acepta solo "número primero": una secuencia de pares `<número> [unidad] <nombre>` (`12 proteinas 23 grasas`, `120kcal 30hc`), separados por espacios, `,`, `;` o `+`, sin necesidad de comas. Se siguen admitiendo todos los sinónimos de cada macro, comparados exactamente (sin tildes ni mayúsculas), más algunas formas de varias palabras ("grasas saturadas", "hidratos de carbono"). Un nombre delante de su número, un número sin nombre, un nombre desconocido, un macro repetido o cualquier otro carácter se rechazan con `validation_error`. Python y JavaScript aplican la misma gramática con los mismos mensajes, y el juego de casos (`static/data/smart_macros_cases.json`, ahora versionado) se regenera con los valores correctos y casos de error. Modifica la decisión 2026-09-25 "Smart macros: el servidor parsea el texto; el JavaScript es solo vista previa" en la gramática y en el criterio de rechazo; el resto de aquella decisión (el servidor es la autoridad, se ignoran los campos ocultos, el texto no se guarda) se mantiene.
+**Convención actualizada**: `conventions/code_conventions.md` sección 7.15 (Texto libre con varios valores)

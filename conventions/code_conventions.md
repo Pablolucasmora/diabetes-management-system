@@ -275,6 +275,7 @@ Un update parcial debe representar de forma inequívoca tres estados: campo ause
 
 - `domain/constants.py`: enums de dominio (§4.2).
 - Un módulo por entidad con sus dataclasses, por ejemplo `domain/insulin.py` para `insulin_injections`.
+- Un módulo de reglas compartidas por varias entidades, cuando la regla la usan dos o más: `domain/nutrition.py` contiene los límites de nutrientes, el parser numérico y el de smart macros que comparten `catalog` y `manual_intake` (decisión 2026-09-25). Una entidad no importa reglas del módulo de otra entidad.
 
 Los **mappers de fila SQL a dataclass viven en la capa de persistencia** (`DayBetes_food/database/mappers.py`), nunca en `domain/`: conocen nombres físicos de columna (`users_id` → `user_id`, §3.5) que el dominio no debe conocer. `auth/models.py` es anterior a esta convención y mantiene sus mappers junto a las dataclasses porque es un módulo cerrado y específico de autenticación; no es precedente para código nuevo.
 
@@ -780,6 +781,15 @@ Corolario para defaults "inteligentes" (inferidos de contexto — hora del día,
 
 Esta sección cubre los **defaults**. La regla más general —que todo estado visible, tenga default o no, coincida exactamente con lo que se guardaría— está en `conventions/frontend_conventions.md` sección 6 (decisión 2026-09-18), e incluye el caso de los campos de tres estados (`NULL` / `True` / `False`), que no pueden representarse con un checkbox de dos posiciones.
 
+### 7.15 Texto libre con varios valores
+
+Un campo de texto libre que contiene varios valores (hoy, las smart macros de `catalog` y `manual_intake`) se parsea con una **gramática cerrada**, y todo lo que queda fuera de ella se rechaza con `validation_error` (`422`). No se adivina qué quiso decir el usuario: un valor mal asignado es peor que un error visible (§7.2).
+
+- **Smart macros**: una secuencia de pares `<número> [unidad] <nombre>`, con el número siempre delante (`120kcal 30 hc 12,5 g azucar`). Los pares se separan con espacios, `,`, `;` o `+`, y no hace falta separador. La unidad (`g`, `gr`, `gramos`, `ml`) es opcional y solo se descarta si detrás hay un nombre.
+- El nombre se compara **exactamente** (tras minúsculas y sin tildes) con la lista de sinónimos de cada macro, que vive una sola vez en cada lenguaje (`domain/nutrition.py` y `static/js/smart_macros.js`). No se aceptan prefijos parciales.
+- Se rechazan: un nombre delante de su número, un número sin nombre, un nombre desconocido, un macro repetido y cualquier otro carácter.
+- El servidor es la autoridad. El JavaScript aplica la misma gramática y los mismos mensajes solo como vista previa. Los dos se comprueban contra el mismo juego de casos versionado (`static/data/smart_macros_cases.json`) con `scripts/check_smart_macros.py` y `dbSmartMacrosSelfCheck()`. Cambiar la gramática obliga a cambiar los dos parsers y los casos en el mismo commit.
+
 ## 8. Configuración, logging y servicios externos
 
 Esta sección define cómo se configura la aplicación, cómo se registran los eventos operativos y cómo se integran fuentes externas.
@@ -1255,7 +1265,7 @@ La clasificación de cada tabla se declara en este registro, que es el sitio ún
 | `users` | **Pendiente**: ciclo de vida sin definir (sin `deleted_at` y sin ninguna ruta que ponga `is_active = FALSE`). | Ninguno hoy. | `AUDIT_PLAN.md`, "Deuda técnica ya conocida". |
 | `auth_sessions` | **Dependent** de `users` (operativa, ni clínica ni histórica). | Físico: `ON DELETE CASCADE` desde `users` y purga a los 14 días. | `audit/audit_auth_sessions.md`; decisión 2026-09-02/03. |
 | `auth_rate_limits` | **Pendiente**: no hay clasificación documentada. | Físico en la práctica (contador operativo). | Sin auditoría propia; extraída de `auth/service.py`. |
-| `catalog` | **Archivable**, irreversible (sin `restore_`). Contrato completo en §11.2.2. | Solo `deleted_at`; nunca físico (otras personas tienen porciones, recetas y favoritos que apuntan al alimento). | `audit/audit_catalog.md`, hallazgos 5 y 6; decisiones 2026-09-23 y 2026-09-24. |
+| `catalog` | **Archivable**, irreversible (sin `restore_`). Contrato completo en §11.2.2. | Solo `deleted_at`; nunca físico (otras personas tienen porciones, recetas y favoritos que apuntan al alimento). | `audit/audits/audit_catalog.md`, hallazgos 5 y 6; decisiones 2026-09-23 y 2026-09-24. |
 | `food_brands` | **Pendiente**: por naturaleza no archivable (catálogo auxiliar), pero `is_active` actúa como soft-delete de facto y no encaja en §11.2/§11.3. | Sin función de borrado. | `audit/audit_food_brands.md`; `audit/deuda_pendiente.md`, H4 y H11. |
 | `insulin_injections` | **Historical**. Pendiente decidir si es archivable (`deleted_at`) o no archivable con borrado físico documentado. | Físico (statu quo). | `audit/audit_insulin_injections.md`; `audit/deuda_pendiente.md`, "Clasificación archivable / no archivable". |
 | `intake_event` | **Híbrida por `state`**: `planned` no archivable, `consumed` archivable. | Físico en `planned`; `deleted_at` en `consumed`. | Decisión 2026-09-08. |
@@ -1341,6 +1351,8 @@ Aplica por igual a `catalog`, `manual_intake` y `recipe` (decisión 2026-09-24, 
 - **Por qué `is_published`** y no `is_private` ni `is_personal`: nombra la acción que existe de verdad en la interfaz ("Publish"/"Unpublish"). Con `FALSE` como valor por defecto, un `INSERT` que olvide la columna deja el alimento personal, que es el lado seguro. Y "personal" se confundiría con "es mío", porque un alimento publicado también puede ser mío. En la interfaz se habla siempre de "personal" y "publicado", nunca de "privado" y "público".
 
 **Por defecto, todo nace personal.** Crear un alimento, copiarlo o crear una receta produce un alimento personal (`is_published DEFAULT FALSE`). Publicar es una acción explícita del propietario. La biblioteca general (`created_by IS NULL`, §11.2.2) siempre está publicada: `CHECK (created_by IS NOT NULL OR is_published)`.
+
+Los formularios de alta de las tres tablas no ofrecen publicar (decisión 2026-09-25): se crea siempre personal y se publica después con la acción del propietario.
 
 **Qué ve cada usuario** (la condición va en SQL, §11.4):
 - en la búsqueda y los listados: los alimentos publicados y activos, más los suyos (personales o publicados) activos;

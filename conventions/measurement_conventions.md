@@ -288,6 +288,12 @@ Los nutrientes del catálogo y de las comidas manuales se almacenan por **100 g 
 
 Los campos `caffeine` y `alcohol` deben confirmarse con la fuente de datos antes de importar valores. No se debe asumir que un proveedor externo usa la misma unidad solo porque el nombre del campo coincida.
 
+Open Food Facts (decisión 2026-09-25). El adaptador (`integrations/open_food_facts.py`) convierte según la unidad que declara cada campo (`<campo>_unit`) y nunca según el nombre:
+- cafeína en `g` → mg (× 1000);
+- alcohol en `% vol` → g/100 g multiplicando por la densidad del etanol, `ETHANOL_DENSITY_G_PER_ML = 0.789` (`domain/nutrition.py`). Supone que la bebida tiene densidad ≈ 1, así que la interfaz muestra junto al campo el valor original ("OFF: 6.6 % vol") para que el usuario lo corrija;
+- una unidad desconocida o ausente no se precarga;
+- una ración en `ml` no se precarga como gramos.
+
 ### 5.2 Cálculo para una cantidad concreta
 
 Para obtener un nutriente correspondiente a una cantidad de alimento:
@@ -299,6 +305,8 @@ nutriente_total = nutriente_100g * cantidad_g / 100
 En un `intake_event`, `cantidad_g` es `portion_detail.amount` (§4.4), que es la única columna de cantidad de la tabla.
 
 **Peso pesado en cocido** (decisión 2026-09-18): si la porción tiene `is_cooked_weight = TRUE`, la cantidad se convierte a peso en crudo **solo dentro de este cálculo**, aplicando el `cooking_factor` del alimento de `catalog`; `amount` sigue guardando lo que el usuario pesó y nunca se sobrescribe con el resultado de la conversión. La conversión se aplica **solo a ingredientes de `catalog`** (en `manual_intake` este campo no se usa ni se muestra) y **solo a alimentos con `cooking_factor`** (decisión 2026-09-24, que modifica la de 2026-09-18): si el factor es `NULL`, no se ofrece pesar en cocido y el servidor rechaza `is_cooked_weight = TRUE` con `422`. Una porción heredada con `TRUE` cuyo alimento se ha quedado sin factor se calcula con factor neutro (`1`) y conserva el control para poder desmarcarlo. Los macros de `catalog` están expresados en crudo, salvo en productos precocinados que ya traen sus valores cocinados.
+
+El `422` aplica cuando el usuario marca la casilla. Una porción que se crea copiando otra (importar una receta a un evento, copiar una receta) hereda el valor de la de origen como caso heredado, con el mismo tratamiento (decisión 2026-09-25).
 
 El cálculo debe utilizar el valor almacenado sin redondear previamente.
 
@@ -322,6 +330,21 @@ Los valores nutricionales deben validarse contra rangos físicos razonables:
 - cafeína y alcohol: no deben ser negativos.
 
 Los límites deben documentarse junto con el campo y no repetirse de forma diferente en cada endpoint.
+
+**Límites vigentes** (decisión 2026-09-25). Se declaran una sola vez en `DayBetes_food/domain/nutrition.py` (`NUTRIENT_LIMITS`), los comparten `catalog` y `manual_intake`, y los CHECK con nombre de las dos tablas se generan desde ahí:
+
+| Campo | Rango | Motivo del máximo |
+|---|---|---|
+| `calories_100g` | 0–900 | grasa pura, 9 kcal/g |
+| `carbs_100g`, `sugars_100g`, `fats_100g`, `saturated_100g`, `proteins_100g`, `fiber_100g` | 0–100 | g por 100 g |
+| `caffeine` | 0–100000 | mg por 100 g (cafeína pura) |
+| `alcohol` | 0–100 | g por 100 g (etanol puro) |
+
+- Relaciones cruzadas: `sugars_100g ≤ carbs_100g` y `saturated_100g ≤ fats_100g` cuando existen los dos valores.
+- Son techos de cordura, no límites clínicos: existen para que un valor corrupto no se guarde como plausible.
+- Todos admiten `NULL` ("sin dato").
+- Texto no numérico, `NaN` e `Infinity` se rechazan con `validation_error` y nunca se convierten en `NULL`.
+- Campos propios de `catalog` (`domain/catalog.py`): `default_portion` en `(0, 3000]` (es una ración, no un límite físico) y `cooking_factor` en `(0, 10]`.
 
 ## 6. Confianza e incertidumbre
 
@@ -776,6 +799,8 @@ Reglas:
 - La procedencia debe conservarse aunque el dato se transforme o se utilice en un cálculo derivado.
 
 `source`, `measured_at`, `imported_at` y `request_id` pertenecen a la trazabilidad de mediciones, datos clínicos importados o transformaciones relevantes. No son campos obligatorios de las cuentas de usuario ni deben añadirse a `users` por defecto.
+
+**Caso en que el modelo no lo permite: `catalog`** (decisión 2026-09-25). Open Food Facts solo precarga el formulario de alta; el usuario revisa y corrige los valores antes de guardar, así que el valor guardado es suyo y no se marca como `imported`. `catalog` no tiene columnas de procedencia. No es un hallazgo de auditoría mientras la importación siga siendo una precarga revisada y no una escritura directa.
 
 ## 13. Datos originales y derivados
 
