@@ -1,9 +1,9 @@
-"""Queries para la tabla `catalog` (H2, H4, H5, H7, H10, H11, H20, H21, H24, H25, H26).
+"""Queries for the `catalog` table (H2, H4, H5, H7, H10, H11, H20, H21, H24, H25, H26).
 
-Toda la visibilidad y la propiedad viajan dentro del SQL: no hay una
-comprobación previa en Python que pueda divergir de la regla de la base
-(§11.4). La autoridad de la unicidad es el índice parcial (§6.1) y su
-violación se traduce a `ConflictError` sin revelar datos ajenos (§6.2).
+Visibility and ownership always travel inside the SQL: there is no prior
+Python check that could diverge from the database rule (§11.4). The partial
+unique index is the authority on uniqueness (§6.1), and its violation is
+translated to `ConflictError` without revealing other users' data (§6.2).
 """
 
 from psycopg import sql

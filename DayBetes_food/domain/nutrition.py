@@ -66,6 +66,8 @@ _FIELD_LABELS = {
     "caffeine": "Caffeine",
     "alcohol": "Alcohol",
     "default_portion": "Default serving size",
+    "nova": "NOVA",
+    "yuka": "Yuka score",
     "cooking_factor": "Cooking factor",
 }
 
@@ -135,6 +137,8 @@ def parse_number(raw, field: str, limits: NumericRange, *, integer: bool = False
     if not _DECIMAL_TEXT.fullmatch(text):
         raise ValidationError(f"{_label(field)} must be a number.", fields={field: "invalid"})
     parsed = float(text)
+    if parsed == 0:
+        parsed = 0.0  # "-0" is stored as 0, never as -0
     if integer and not float(parsed).is_integer():
         raise ValidationError(f"{_label(field)} must be a whole number.", fields={field: "invalid"})
     return check_number(parsed, field, limits)
@@ -188,6 +192,8 @@ _MACRO_ALIASES = {alias: field for field, aliases in _MACRO_FAMILIES for alias i
 # (values are per 100 g). It is only dropped when a name follows it, so
 # "30gr" alone keeps its fats reading.
 _SMART_UNITS = ("g", "gr", "gramos", "ml")
+# Domain limit of the text field (§7.3); the text itself is never stored.
+SMART_MACROS_MAX_LENGTH = 500
 
 # [0-9] and explicit whitespace, not \d/\s: they differ between Python and
 # JavaScript. The text is normalized first, so names are plain [a-z].
@@ -214,6 +220,10 @@ def parse_smart_macros(text: str) -> dict[str, float | None]:
     with `fields={"smart_macros": code}`.
     """
     result: dict[str, float | None] = {field: None for field in SMART_MACRO_FIELDS}
+    if len(str(text or "")) > SMART_MACROS_MAX_LENGTH:
+        raise _smart_error(
+            f"Smart macros must be at most {SMART_MACROS_MAX_LENGTH} characters.", "too_long"
+        )
     raw = normalize_smart_token(text)
     position = 0
     while True:

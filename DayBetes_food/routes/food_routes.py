@@ -1147,9 +1147,16 @@ def setup_food_routes(rt):
             try:
                 prefill = fetch_product_prefill(valid_barcode)
             except ExternalServiceError as error:
+                # str(error) is the adapter's internal reason (off_network_error,
+                # off_status...), never user data (error_conventions.md §10.3).
                 logger.warning(
                     "Open Food Facts lookup failed",
-                    extra={"error_code": error.code, "request_id": request_id(request)},
+                    exc_info=error,
+                    extra={
+                        "error_code": error.code,
+                        "reason": str(error),
+                        "request_id": request_id(request),
+                    },
                 )
                 off_notice = "Product data could not be loaded. You can fill the form by hand."
         existing_item_id = int(existing_id) if (existing_id or "").isdigit() else None

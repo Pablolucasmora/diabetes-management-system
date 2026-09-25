@@ -7,7 +7,8 @@ exits with code 1 if any case does not match. A case has either `expected`
 (the seven values) or `error` (the exact ValidationError message). In the browser the same cases are
 run by `dbSmartMacrosSelfCheck()`.
 
-Usage: python scripts/check_smart_macros.py
+Usage (inside the app container; the code needs Python 3.10+):
+    docker exec -w /app diabetes_app python scripts/check_smart_macros.py
 """
 
 import json

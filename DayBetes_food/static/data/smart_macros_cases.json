@@ -202,5 +202,21 @@
   {
     "text": "30 hc = 20 prot",
     "error": "Write each value as a number followed by its macro, e.g. '30 carbs 20 proteins'."
+  },
+  {
+    "text": "1 hc xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "error": "Smart macros must be at most 500 characters."
+  },
+  {
+    "text": "30 hc                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               ",
+    "expected": {
+      "calories_100g": null,
+      "carbs_100g": 30,
+      "sugars_100g": null,
+      "proteins_100g": null,
+      "fats_100g": null,
+      "saturated_100g": null,
+      "fiber_100g": null
+    }
   }
 ]

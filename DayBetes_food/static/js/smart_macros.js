@@ -57,6 +57,8 @@
     }
   }
   var smartUnits = ["g", "gr", "gramos", "ml"];
+  // SMART_MACROS_MAX_LENGTH in domain/nutrition.py.
+  var smartMacrosMaxLength = 500;
 
   var prettyName = {
     calories_100g: "Kcal",
@@ -99,6 +101,13 @@
       saturated_100g: null,
       fiber_100g: null
     };
+    // Array.from counts code points, like len() in Python.
+    if (Array.from(String(text || "")).length > smartMacrosMaxLength) {
+      return {
+        values: values,
+        error: "Smart macros must be at most " + smartMacrosMaxLength + " characters."
+      };
+    }
     var raw = normalizeText(text);
     var position = 0;
     while (true) {

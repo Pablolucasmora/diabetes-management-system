@@ -24,7 +24,7 @@ from DayBetes_food.domain.constants import (
     Nutriscore,
     PortionOrigin,
 )
-from DayBetes_food.domain.nutrition import NUTRIENT_LIMITS
+from DayBetes_food.domain.nutrition import NUTRIENT_LIMITS, SMART_MACROS_MAX_LENGTH
 from DayBetes_food.time_utils import to_local
 
 
@@ -1732,7 +1732,7 @@ def _smart_macros_block(prefix: str, prefill: dict | None = None):
             id=input_id,
             name=f"{prefix}_smart_macros_raw",
             placeholder="e.g. 120kcal 30hc 12az 20prot 10 grasas 3 sat 5 fibra",
-            maxlength=500,
+            maxlength=SMART_MACROS_MAX_LENGTH,
             data_smart_macros="true",
             data_smart_macros_output=f"#{output_id}",
             data_smart_macros_prefix=prefix,
@@ -2113,7 +2113,7 @@ def _create_page_shell(title: str, form, result_id: str):
         _form_draft_bootstrap_script(),
         _searchable_autocomplete_bootstrap_script(),
         _tags_multiselect_bootstrap_script() if TAGS_UI_ENABLED else "",
-        Script(src="/js/smart_macros.js?v=4", defer="defer"),
+        Script(src=asset_busted("/js/smart_macros.js"), defer="defer"),
         data_hide_cart="true",
         cls="""
             flex flex-col items-center
