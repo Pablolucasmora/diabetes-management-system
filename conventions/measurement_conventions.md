@@ -660,6 +660,7 @@ Relación entre `insulin_dose` e `insulin_injections` (decisiones del 2026-09-06
 - Si el usuario no ha seleccionado zona, la fila se guarda con `injection_zone = NULL`, que significa "zona no registrada" y no "no hubo inyección". Por eso `injection_zone` es nullable. Una zona presente pero fuera del enum es un error de validación explícito, nunca un `NULL` silencioso.
 - Un `intake_event` puede tener **varias** inyecciones asociadas (comida larga partida en dos, corrección post-comida). No existe unicidad por evento: la confirmación crea una única inyección automática, y su no duplicación se apoya en que la transición `planned -> consumed` es condicional.
 - `intake_event_id` es opcional en la inyección: una inyección sin evento es un registro manual válido, y borrar el evento no elimina la inyección (`ON DELETE SET NULL`).
+- `intake_event.injection_zone` solo tiene significado mientras el evento está en `planned`: guarda la zona elegida en el carrito hasta que exista la inyección. Al confirmar, su valor se copia a la inyección automática y a partir de ahí la única fuente de verdad de la zona es `insulin_injections.injection_zone`. En eventos `consumed` la columna no se limpia, pero ningún código debe leerla ni mostrarla: puede no coincidir con la inyección (si se editó después) y no puede representar varias inyecciones con zonas distintas.
 
 ### 8.3 Fecha de inyección
 
