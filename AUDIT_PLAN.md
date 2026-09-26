@@ -1,6 +1,6 @@
 # Plan de auditoría y estabilización — DayBetes
 
-Última actualización: 2026-09-23
+Última actualización: 2026-09-26
 
 ## Objetivo y marco de tiempo
 
@@ -191,6 +191,15 @@ Ya cerradas (sesión previa a este plan):
       `planned`, `ml` en líquidos, y la parte transversal del fallo SQL →
       `None` en `crud.py`, esta última resuelta con un cambio global el
       2026-09-24 durante la auditoría de `catalog`— en `audit/deuda_pendiente.md`)
+- [x] `catalog` — 2026-09-25 (audit → feedback → plan → review → build, tres
+      pasadas de auditoría, 40 hallazgos: resueltos, diferidos por decisión
+      explícita o en deuda; batería F7.4 verificada contra la app real en
+      `audit/verificacion_catalog_f74.md`; commits `b8ce732`…`62e0d96`, en
+      `main` por fast-forward el 2026-09-26; deuda restante —H27 versionado
+      (`portion_detail` H1), slug, capa `services/`, paginación SQL,
+      conflicto de código de barras al publicar, H33 panel de rescate— en
+      `audit/deuda_pendiente.md`, secciones "`catalog` … lo que el plan deja
+      fuera" y "`/food/rescue/log`")
 
 Fuera de alcance por ahora (decisión tuya, no técnica):
 - `fridge` — funcionalidad todavía no implementada, no se audita hasta que exista.
@@ -212,36 +221,39 @@ el Grupo 4 está completo; se retoma el orden previsto por el Grupo 2,
 empezando por `catalog` (decisión del usuario, 2026-09-23): es la raíz de
 la que dependen `recipe` y `manual_intake`, y es la tabla donde se documenta
 la decisión de catálogos abiertos del §4.5.
+`catalog` quedó cerrada el 2026-09-25 y se sigue con `manual_intake`
+(decisión del usuario, 2026-09-26).
 
-Pendientes (4), agrupadas por tamaño/dependencia — dentro de cada
+Pendientes (2 más la que está en curso), agrupadas por tamaño/dependencia — dentro de cada
 grupo el orden es libre, pero conviene mantener el orden entre grupos:
 
 ### En curso
-- [ ] `catalog` — siguiente tabla (Grupo 2), a partir del 2026-09-23. Aún
-      no existe `audit/audit_catalog.md`: el primer paso es la auditoría
-      contra §13. Puntos de partida ya conocidos, que no hay que
-      redescubrir:
-      - la decisión de catálogos abiertos del §4.5 (sección dedicada
-        arriba; **resuelta el 2026-09-24**: estados, cocción y
-        conservación pasan a enums cerrados, hallazgo 12), incluido el `CHECK`/validación de servidor de
-        `portion_detail.cooking/conservation/final_state` que el hallazgo
-        19 de `portion_detail` difirió aquí, y `manual_intake.origin`;
-      - los tres "Defectos de `catalog`" que dejó el cierre de
-        `food_brands` en `audit/deuda_pendiente.md` (timestamps sin zona,
-        índice único no parcial, constraints sin nombre);
-      - `cooking_factor`: "sin factor" y "factor 1.0" son hoy
-        indistinguibles (comportamiento interino de la decisión
-        2026-09-18, pendiente de la tabla de equivalencias);
-      - la convención nueva `code_conventions.md` §1.3.2 (columnas
-        cualificadas en SQL), que nació de un `AmbiguousColumn` en
-        `queries/catalog.py`.
+- [ ] `manual_intake` — siguiente tabla (Grupo 2), a partir del 2026-09-26.
+      Aún no existe `audit/audits/audit_manual_intake.md`: el primer paso es
+      la auditoría contra §13. Puntos de partida ya conocidos, que no hay
+      que redescubrir:
+      - "Privacidad de alimentos" → "Pendiente para la auditoría de
+        `manual_intake`" en `audit/deuda_pendiente.md`: índices únicos
+        personal/publicado, publicar/despublicar con `409`, visibilidad en
+        SQL, filas sin propietario, naturaleza de `origin` (§4.5 o texto
+        libre) y los restos que dejó a la vista `catalog`;
+      - reutiliza lo que `catalog` ya dejó común: `domain/nutrition.py`
+        (límites, `parse_number`, smart macros §7.15), `app_error_response`
+        en copiar/borrar y `_parse_strict_bool` en `is_published`;
+      - en `catalog` (F0.4 de su plan): el bootstrap de
+        `_ensure_food_name_origin_uniqueness` con savepoint tolerante y
+        `DROP CONSTRAINT` con f-string, los `chk_manual_*` sin nombre
+        canónico (§11.6) y los errores de validación con `422` + fragmento;
+      - `manual_intake.subtype` comparte la sección "Subtipos de comida" de
+        la deuda con `catalog`.
 
 ### Grupo 2 — Entidades principales de comida
 - [ ] `recipe` — sus porciones viven en `portion_detail` (destino
       `recipe`, ya cerrada); la lectura de recetas públicas pasa por
       `list_viewable_recipe_portions`; deuda relacionada: "Add recipe to
-      plate functionality" (2026-09-20) en `audit/deuda_pendiente.md`.
-- [ ] `manual_intake`
+      plate functionality" (2026-09-20) en `audit/deuda_pendiente.md`, y
+      "Pendiente para la auditoría de `recipe`" (publicación con popup e
+      invariante de ingredientes personales).
 
 ### Grupo 3 — Relaciones dependientes
 - [ ] `user_favorites`
