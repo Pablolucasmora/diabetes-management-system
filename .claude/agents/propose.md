@@ -8,7 +8,7 @@ hooks:
     - matcher: "Write"
       hooks:
         - type: command
-          command: "./scripts/restrict-to-audit.sh"
+          command: "./scripts_claude/restrict-to-audit.sh"
 ---
 
 Trabajas en uno de dos modos, según lo que exista en audit/:
