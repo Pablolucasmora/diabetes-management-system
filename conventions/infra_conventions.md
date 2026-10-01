@@ -85,3 +85,15 @@ Este documento complementa `conventions/code_conventions.md` §8 (configuración
 - Cada actualización de dependencias va en su propio commit, junto con las adaptaciones de código que exija y sin mezclarla con otros cambios.
 - Una actualización se prueba arrancando la app en desarrollo con la imagen reconstruida (`docker compose up -d --build web`), no solo instalando el paquete: las dependencias viven en la imagen, no en el código montado.
 - Los avisos de obsolescencia (`DeprecationWarning`) de las dependencias se tratan como deuda: anuncian que la siguiente versión mayor romperá ese código (caso real: `@app.middleware` y `on_event`, eliminados en Starlette 1.0).
+
+## 11. Servidor de producción
+
+- VPS OVH VPS-1 (Gravelines, Francia) con Ubuntu 26.04 LTS, sin imágenes con aplicaciones preinstaladas.
+- **Usuarios**: se trabaja con el usuario `pablo`, del grupo `sudo`, y `sudo` exige contraseña. El usuario `ubuntu` de la imagen y su regla de `sudo` sin contraseña (`/etc/sudoers.d/90-cloud-init-users`) se eliminan.
+- **SSH**: solo con clave (`ed25519`, protegida con frase). La configuración propia vive en `/etc/ssh/sshd_config.d/00-daybetes.conf` (`PasswordAuthentication no`, `KbdInteractiveAuthentication no`, `PermitRootLogin no`, `AllowUsers pablo`). El prefijo `00-` es obligatorio: `sshd` se queda con el primer valor que lee y los archivos de `sshd_config.d/` se leen en orden alfabético, así que un `50-cloud-init.conf` con `PasswordAuthentication yes` ganaría a cualquier archivo posterior. Puerto 22, sin cambiar. Un usuario nuevo con acceso SSH (p. ej. el de despliegue) se añade a `AllowUsers`.
+- Todo cambio en la configuración de SSH se valida con `sudo sshd -t` antes de aplicarlo y se prueba con una conexión nueva manteniendo otra sesión abierta.
+- **Firewall**: `ufw` con entrada denegada por defecto, salida permitida y solo `OpenSSH` (22/tcp) permitido, sin `limit`. La aplicación no necesita puertos de entrada: el túnel es una conexión saliente.
+- **Actualizaciones**: `unattended-upgrades` instala a diario los parches de seguridad de Ubuntu y reinicia automáticamente a las 05:00 solo cuando un parche lo exige. La configuración propia vive en `/etc/apt/apt.conf.d/52unattended-upgrades-daybetes`; en `apt`, al contrario que en `sshd`, gana el último archivo leído. La zona horaria del sistema es `Europe/Madrid`.
+- **Docker**: se instala desde el repositorio oficial de Docker (clave de firma con huella `9DC858229FC7DD38854AE2D88D81803C0EBFCD88`). No entra en `unattended-upgrades`, porque actualizarlo reinicia todos los contenedores: se actualiza a mano con `apt`, tras comprobar las notas de la versión.
+- Docker se usa con `sudo`. `pablo` no pertenece al grupo `docker`: ese grupo equivale a ser root sin contraseña.
+- Los logs de los contenedores se limitan en `/etc/docker/daemon.json` (`json-file`, `max-size` 10m, `max-file` 3), para que no puedan llenar el disco.
