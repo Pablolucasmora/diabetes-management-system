@@ -39,7 +39,7 @@ services:
     depends_on:
       - web
     volumes:
-      - ~/.cloudflared:/home/nonroot/.cloudflared:ro
+      - /etc/cloudflared:/home/nonroot/.cloudflared:ro
       - ./cloudflared/daybetes.yml:/etc/cloudflared/daybetes.yml:ro
 
 volumes:
