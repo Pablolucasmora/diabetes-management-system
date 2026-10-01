@@ -1,3 +1,4 @@
+import ipaddress
 import logging
 
 from fasthtml.common import *
@@ -39,16 +40,35 @@ from DayBetes_food.config import (
     SESSION_COOKIE_NAME,
     SESSION_COOKIE_SAMESITE,
     SESSION_COOKIE_SECURE,
+    TRUST_CF_CONNECTING_IP,
 )
 from DayBetes_food.database.connection import get_connection
 
 
+def _normalize_ip(raw: str) -> str | None:
+    """Valida y normaliza una IP según infra_conventions §9: IPv4 tal cual,
+    IPv6 que encapsula una IPv4 como esa IPv4 y el resto de IPv6 por su /64."""
+    try:
+        ip = ipaddress.ip_address((raw or "").strip())
+    except ValueError:
+        return None
+    if ip.version == 4:
+        return str(ip)
+    # Antes que el /64: ::ffff:a.b.c.d es un cliente IPv4 y agruparlo por /64
+    # metería a todos los clientes IPv4 en la misma clave.
+    if ip.ipv4_mapped:
+        return str(ip.ipv4_mapped)
+    return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+
+
 def _client_ip(request: Request) -> str:
-    fwd = request.headers.get("x-forwarded-for", "")
-    if fwd:
-        return fwd.split(",")[0].strip()
+    # X-Forwarded-For no se usa nunca: es falsificable (infra_conventions §9).
+    if TRUST_CF_CONNECTING_IP:
+        cf_ip = _normalize_ip(request.headers.get("cf-connecting-ip", ""))
+        if cf_ip:
+            return cf_ip
     if request.client:
-        return request.client.host or ""
+        return _normalize_ip(request.client.host) or ""
     return ""
 
 

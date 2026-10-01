@@ -99,7 +99,11 @@ SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "lax")
 # producción (§8.1). Cerrado, sus rutas no se registran y responden 404.
 REGISTRATION_ENABLED = _as_bool("REGISTRATION_ENABLED", APP_ENV == "development")
 
-AUTH_RATE_LIMIT_ATTEMPTS = _as_int("AUTH_RATE_LIMIT_ATTEMPTS", 6)
+# IP del cliente (infra_conventions §9): CF-Connecting-IP solo es fiable cuando
+# la única entrada a la app es Cloudflare Tunnel, es decir, en producción.
+TRUST_CF_CONNECTING_IP = _as_bool("TRUST_CF_CONNECTING_IP", APP_ENV == "production")
+
+AUTH_RATE_LIMIT_ATTEMPTS =_as_int("AUTH_RATE_LIMIT_ATTEMPTS", 6)
 AUTH_RATE_LIMIT_WINDOW_SECONDS = _as_int("AUTH_RATE_LIMIT_WINDOW_SECONDS", 60 * 10)
 AUTH_RATE_LIMIT_BLOCK_SECONDS = _as_int("AUTH_RATE_LIMIT_BLOCK_SECONDS", 60 * 15)
 

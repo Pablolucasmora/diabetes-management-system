@@ -425,7 +425,7 @@ No duplicar validaciones de sesión de forma distinta en cada ruta. Un endpoint 
 - Las excepciones CSRF deben estar en una allowlist central y explícita. Solo pueden incluir endpoints de autenticación que no tengan todavía una sesión válida o que deban funcionar para cerrar una sesión inválida.
 - Añadir una nueva excepción requiere justificarla y documentarla; no se desactiva CSRF dentro de una ruta individual.
 - El rate limiting es obligatorio para login, registro, recuperación de credenciales y cualquier endpoint externo costoso o susceptible de abuso.
-- La clave de rate limiting debe combinar el identificador de operación con una identidad suficientemente estable, normalmente IP normalizada e identificador normalizado cuando exista.
+- La clave de rate limiting debe combinar el identificador de operación con una identidad suficientemente estable, normalmente IP normalizada e identificador normalizado cuando exista. Cómo se obtiene y normaliza la IP se define en `infra_conventions.md` §9.
 - Los límites, ventanas y bloqueos se configuran mediante variables de entorno validadas al arrancar.
 - Un bloqueo por rate limit devuelve `429` cuando el cliente necesita distinguirlo; no se devuelve `500` ni un `200` ambiguo.
 - Los mensajes de autenticación no deben revelar si existe un usuario concreto.

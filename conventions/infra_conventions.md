@@ -68,3 +68,12 @@ Este documento complementa `conventions/code_conventions.md` §8 (configuración
 - Motivo: Compose rellena los `${...}` del YAML con el archivo `.env` salvo que se indique `--env-file`. Sin él, producción arrancaría en silencio con valores de desarrollo (comprobado: `APP_ENV` resolvía a `development`), porque `environment:` gana sobre `env_file:`.
 - `scripts/prod.sh` se sitúa en la raíz del repositorio, se niega a ejecutarse si no existe `.env.prod` y pasa el resto de argumentos a `docker compose --env-file .env.prod -f docker-compose.prod.yml`.
 - El primer `up` sobre un volumen `pgdata_prod` vacío no se hace sin inicializarlo antes según §6.
+
+## 9. IP del cliente
+
+- La IP del cliente (clave del rate limiting y `ip_hash` de la sesión) se obtiene en un único punto del código; ninguna ruta lee cabeceras de IP por su cuenta.
+- `X-Forwarded-For` no se usa nunca: el cliente puede escribir en ella lo que quiera y Cloudflare añade la IP real al final sin borrar lo anterior, de modo que sus primeros valores son falsificables (comprobado: 7 intentos fallidos con 7 valores distintos crearon 7 claves de rate limiting y ninguna se bloqueó).
+- Con `TRUST_CF_CONNECTING_IP` activo (por defecto en `production`) se usa `CF-Connecting-IP`, que Cloudflare sobrescribe siempre. Solo es fiable porque la única entrada a `web` es el túnel (§3): publicar un puerto de `web` exige desactivar este ajuste en el mismo cambio.
+- Con el ajuste inactivo (por defecto en `development` y `test`) se usa la IP de la conexión directa (`request.client.host`).
+- Si la cabecera falta o no es una IP válida, se usa la IP de la conexión directa; nunca se descarta la petición por ello.
+- La IP se normaliza antes de usarla: IPv4 tal cual; IPv6 agrupada por su prefijo `/64` (un cliente IPv6 suele disponer de todo un `/64` y podría cambiar de dirección en cada intento); una IPv6 que encapsula una IPv4 (`::ffff:a.b.c.d`) se trata como esa IPv4.
