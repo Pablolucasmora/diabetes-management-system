@@ -41,3 +41,12 @@ Este documento complementa `conventions/code_conventions.md` §8 (configuración
 | Tailwind `--watch` | Sí | No; `output.css` está versionado en git |
 | Túnel | No (§4) | Sí |
 | `APP_ENV` | `development` | `production` |
+| Datos de Postgres | Volumen con nombre `pgdata_dev` | Volumen con nombre `pgdata_prod` |
+
+## 6. Datos persistentes
+
+- Los datos de Postgres viven en **volúmenes con nombre de Docker**, uno distinto por entorno: `pgdata_dev` en `docker-compose.yml` y `pgdata_prod` en `docker-compose.prod.yml`. Ningún volumen de datos se comparte entre entornos.
+- No se montan carpetas del proyecto (`./pgdata` o similares) como directorio de datos de Postgres.
+- Motivos (incidente del 2026-10-01): dos Postgres arrancados a la vez sobre la misma carpeta de datos la corrompieron, porque el bloqueo de Postgres (`postmaster.pid`) no protege entre contenedores distintos; además, la carpeta del proyecto está en `Documents`, sincronizada con iCloud, y la sincronización de una base de datos en marcha también puede corromperla. Con un volumen por entorno, los dos entornos no pueden compartir datos aunque se arranquen a la vez, y los datos quedan fuera de cualquier carpeta sincronizada.
+- Un volumen vacío **no se inicializa dejando que el contenedor de Postgres lo haga con las variables del `.env`**: `POSTGRES_USER` se convertiría en superusuario del clúster y `DB_USER` es el rol de runtime, lo que rompe la separación de identidades de `code_conventions.md` §12.6. Se inicializa explícitamente con el rol propietario (`plucmor`) como superusuario y después se restauran roles (`pg_dumpall --roles-only`) y datos (`pg_dump`/`pg_restore`).
+- Los datos se sacan y se meten en un volumen solo con `pg_dump`/`pg_restore`, nunca copiando sus archivos.
