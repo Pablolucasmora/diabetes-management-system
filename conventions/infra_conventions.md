@@ -58,6 +58,7 @@ Este documento complementa `conventions/code_conventions.md` §8 (configuración
 - `.env.example` sí se versiona: contiene el nombre de todas las variables y ningún valor real. Se actualiza en el mismo cambio que añade o elimina una variable.
 - `APP_ENV=production` solo cambia los valores **por defecto** de `config.py`; un valor escrito en el archivo de entorno gana siempre. Por eso `.env.prod` no se crea copiando `.env`: los valores de desarrollo (`SESSION_COOKIE_SECURE=false`, `DEFAULT_USER_PASSWORD` con valor...) se revisan uno a uno.
 - En producción `DEFAULT_USER_PASSWORD` queda vacío, para que el bootstrap no cree el usuario por defecto.
+- El registro de usuarios (`REGISTRATION_ENABLED`) está abierto por defecto en desarrollo y cerrado por defecto en producción. Cerrado, sus rutas no se registran y responden `404`, igual que cualquier URL inexistente. Abrirlo en producción es una acción puntual (dar de alta a alguien) que se revierte después.
 - `PASSWORD_PEPPER` no se cambia una vez existen usuarios: forma parte de cada hash de contraseña y cambiarlo impide todos los inicios de sesión.
 - En el VPS, "el mecanismo de secretos del entorno de despliegue" de `code_conventions.md` §8.2 es `.env.prod`: fuera de git y de la imagen, copiado al servidor por un canal seguro (`scp`) y con permisos de lectura solo para su propietario (`chmod 600`).
 
