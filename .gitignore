@@ -24,6 +24,7 @@ Thumbs.db
 # Datos de Docker
 pgdata/
 .env
+.env.prod
 
 # Archivos temporales de Python (ya los tienes, pero asegúrate)
 __pycache__/
@@ -39,3 +40,7 @@ error.txt
 
 .opencode/
 audit/
+
+# Claude Code: los agentes se versionan; lo personal y temporal no
+.claude/settings.local.json
+.claude/*.lock

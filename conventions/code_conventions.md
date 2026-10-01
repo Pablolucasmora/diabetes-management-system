@@ -425,7 +425,7 @@ No duplicar validaciones de sesión de forma distinta en cada ruta. Un endpoint 
 - Las excepciones CSRF deben estar en una allowlist central y explícita. Solo pueden incluir endpoints de autenticación que no tengan todavía una sesión válida o que deban funcionar para cerrar una sesión inválida.
 - Añadir una nueva excepción requiere justificarla y documentarla; no se desactiva CSRF dentro de una ruta individual.
 - El rate limiting es obligatorio para login, registro, recuperación de credenciales y cualquier endpoint externo costoso o susceptible de abuso.
-- La clave de rate limiting debe combinar el identificador de operación con una identidad suficientemente estable, normalmente IP normalizada e identificador normalizado cuando exista.
+- La clave de rate limiting debe combinar el identificador de operación con una identidad suficientemente estable, normalmente IP normalizada e identificador normalizado cuando exista. Cómo se obtiene y normaliza la IP se define en `infra_conventions.md` §9.
 - Los límites, ventanas y bloqueos se configuran mediante variables de entorno validadas al arrancar.
 - Un bloqueo por rate limit devuelve `429` cuando el cliente necesita distinguirlo; no se devuelve `500` ni un `200` ambiguo.
 - Los mensajes de autenticación no deben revelar si existe un usuario concreto.
@@ -1262,7 +1262,7 @@ La clasificación de cada tabla se declara en este registro, que es el sitio ún
 
 | Tabla | Clasificación | Borrado | Fuente |
 |---|---|---|---|
-| `users` | **Pendiente**: ciclo de vida sin definir (sin `deleted_at` y sin ninguna ruta que ponga `is_active = FALSE`). | Ninguno hoy. | `AUDIT_PLAN.md`, "Deuda técnica ya conocida". |
+| `users` | **Pendiente**: ciclo de vida sin definir (sin `deleted_at` y sin ninguna ruta que ponga `is_active = FALSE`). | Ninguno hoy. | `audit/AUDIT_PLAN.md` (documento local, fuera de git), "Deuda técnica ya conocida". |
 | `auth_sessions` | **Dependent** de `users` (operativa, ni clínica ni histórica). | Físico: `ON DELETE CASCADE` desde `users` y purga a los 14 días. | `audit/audit_auth_sessions.md`; decisión 2026-09-02/03. |
 | `auth_rate_limits` | **Pendiente**: no hay clasificación documentada. | Físico en la práctica (contador operativo). | Sin auditoría propia; extraída de `auth/service.py`. |
 | `catalog` | **Archivable**, irreversible (sin `restore_`). Contrato completo en §11.2.2. | Solo `deleted_at`; nunca físico (otras personas tienen porciones, recetas y favoritos que apuntan al alimento). | `audit/audits/audit_catalog.md`, hallazgos 5 y 6; decisiones 2026-09-23 y 2026-09-24. |

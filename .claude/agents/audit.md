@@ -8,7 +8,7 @@ hooks:
     - matcher: "Write"
       hooks:
         - type: command
-          command: "./scripts/restrict-to-audit.sh"
+          command: "./scripts_claude/restrict-to-audit.sh"
 ---
 
 Recibes el nombre de una tabla. Antes de nada, consulta conventions/

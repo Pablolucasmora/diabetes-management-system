@@ -1,3 +1,4 @@
+import ipaddress
 import logging
 
 from fasthtml.common import *
@@ -35,19 +36,39 @@ from DayBetes_food.auth.service import (
 )
 from DayBetes_food.config import (
     CSRF_COOKIE_NAME,
+    REGISTRATION_ENABLED,
     SESSION_COOKIE_NAME,
     SESSION_COOKIE_SAMESITE,
     SESSION_COOKIE_SECURE,
+    TRUST_CF_CONNECTING_IP,
 )
 from DayBetes_food.database.connection import get_connection
 
 
+def _normalize_ip(raw: str) -> str | None:
+    """Valida y normaliza una IP según infra_conventions §9: IPv4 tal cual,
+    IPv6 que encapsula una IPv4 como esa IPv4 y el resto de IPv6 por su /64."""
+    try:
+        ip = ipaddress.ip_address((raw or "").strip())
+    except ValueError:
+        return None
+    if ip.version == 4:
+        return str(ip)
+    # Antes que el /64: ::ffff:a.b.c.d es un cliente IPv4 y agruparlo por /64
+    # metería a todos los clientes IPv4 en la misma clave.
+    if ip.ipv4_mapped:
+        return str(ip.ipv4_mapped)
+    return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+
+
 def _client_ip(request: Request) -> str:
-    fwd = request.headers.get("x-forwarded-for", "")
-    if fwd:
-        return fwd.split(",")[0].strip()
+    # X-Forwarded-For no se usa nunca: es falsificable (infra_conventions §9).
+    if TRUST_CF_CONNECTING_IP:
+        cf_ip = _normalize_ip(request.headers.get("cf-connecting-ip", ""))
+        if cf_ip:
+            return cf_ip
     if request.client:
-        return request.client.host or ""
+        return _normalize_ip(request.client.host) or ""
     return ""
 
 
@@ -64,6 +85,11 @@ def _form_shell(title: str, action: str, csrf_token: str, fields_html: str, subm
         f'<div class="text-sm text-red-700 text-center">{safe_error}</div>'
         if safe_error else
         '<div class="hidden"></div>'
+    )
+    alt_link = (
+        f'<a href="{safe_alt_href}" class="text-sm text-gray-700 underline text-center">{safe_alt_text}</a>'
+        if safe_alt_href else
+        ""
     )
     html = f"""
     <!doctype html>
@@ -87,7 +113,7 @@ def _form_shell(title: str, action: str, csrf_token: str, fields_html: str, subm
             <button type="submit" class="web_button w-full py-2.5 text-sm">{safe_submit}</button>
           </form>
           {error_block}
-          <a href="{safe_alt_href}" class="text-sm text-gray-700 underline text-center">{safe_alt_text}</a>
+          {alt_link}
         </div>
       </body>
     </html>
@@ -160,30 +186,7 @@ def _require_post(request: Request):
     return None
 
 
-def setup_auth_routes(rt):
-    @rt("/auth/login")
-    def get(req: Request):
-        if getattr(req.state, "user", None):
-            return RedirectResponse(url="/menu", status_code=303)
-
-        csrf_token = getattr(req.state, "csrf_token", "")
-        return _form_shell(
-            title="Iniciar sesion",
-            action="/auth/login/submit",
-            csrf_token=csrf_token,
-            fields_html=f"""
-                <input name="identifier" placeholder="Email o usuario" required="required"
-                  maxlength="{USER_EMAIL_MAX_LENGTH}"
-                  class="web_input border border-white rounded-lg px-3 py-2 text-sm">
-                <input type="password" name="password" placeholder="Contrasena" required="required"
-                  class="web_input border border-white rounded-lg px-3 py-2 text-sm">
-            """,
-            submit_text="Entrar",
-            alt_text="No tienes cuenta? Registrate",
-            alt_href="/auth/register",
-            error=req.query_params.get("error", ""),
-        )
-
+def _setup_registration_routes(rt):
     @rt("/auth/register")
     def get(req: Request):
         if getattr(req.state, "user", None):
@@ -245,6 +248,34 @@ def setup_auth_routes(rt):
             url="/auth/login?error=Cuenta+creada.+Inicia+sesion+para+continuar",
             status_code=303,
         )
+
+
+def setup_auth_routes(rt):
+    @rt("/auth/login")
+    def get(req: Request):
+        if getattr(req.state, "user", None):
+            return RedirectResponse(url="/menu", status_code=303)
+
+        csrf_token = getattr(req.state, "csrf_token", "")
+        return _form_shell(
+            title="Iniciar sesion",
+            action="/auth/login/submit",
+            csrf_token=csrf_token,
+            fields_html=f"""
+                <input name="identifier" placeholder="Email o usuario" required="required"
+                  maxlength="{USER_EMAIL_MAX_LENGTH}"
+                  class="web_input border border-white rounded-lg px-3 py-2 text-sm">
+                <input type="password" name="password" placeholder="Contrasena" required="required"
+                  class="web_input border border-white rounded-lg px-3 py-2 text-sm">
+            """,
+            submit_text="Entrar",
+            alt_text="No tienes cuenta? Registrate" if REGISTRATION_ENABLED else "",
+            alt_href="/auth/register" if REGISTRATION_ENABLED else "",
+            error=req.query_params.get("error", ""),
+        )
+
+    if REGISTRATION_ENABLED:
+        _setup_registration_routes(rt)
 
     @rt("/auth/login/submit")
     def post(request: Request, identifier: str = "", password: str = ""):
