@@ -2,6 +2,7 @@ from fasthtml.common import *
 from datetime import datetime, timezone
 from html import escape
 import logging
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import JSONResponse
 
@@ -40,10 +41,21 @@ from DayBetes_food.routes import (
 )
 
 
+async def lifespan(app):
+    # Lo anterior al yield se ejecuta una vez al arrancar, antes de servir
+    # peticiones; lo posterior, al parar. Sustituye a on_event("startup"),
+    # eliminado en Starlette 1.0. FastHTML espera el generador sin
+    # @asynccontextmanager: lo envuelve él mismo.
+    if DB_INIT_ON_STARTUP:
+        init_db()
+    yield
+
+
 app, rt = fast_app(
     title="DayBetes",
     htmlkw={"lang": "en"},
     static_path='DayBetes_food/static',
+    lifespan=lifespan,
 )
 
 logger = logging.getLogger(__name__)
@@ -135,7 +147,6 @@ def _response_sets_cookie(response, cookie_name: str) -> bool:
     return any(key == b"set-cookie" and value.startswith(prefix) for key, value in response.raw_headers)
 
 
-@app.middleware("http")
 async def auth_security_middleware(request: Request, call_next):
     # Los assets estaticos son cacheables (Cache-Control: public, ver
     # add_asset_cache_headers) y pueden servirse desde un CDN/edge. Si esta
@@ -239,7 +250,6 @@ async def auth_security_middleware(request: Request, call_next):
         )
     return response
 
-@app.middleware("http")
 async def add_asset_cache_headers(request, call_next):
     response = await call_next(request)
     path = request.url.path
@@ -247,16 +257,14 @@ async def add_asset_cache_headers(request, call_next):
         response.headers.setdefault("Cache-Control", STATIC_CACHE_CONTROL)
     return response
 
+
+# Starlette 1.0 eliminó el decorador @app.middleware. Cada add_middleware
+# envuelve a los anteriores, así que el orden de estas líneas fija el orden de
+# ejecución: add_asset_cache_headers es la capa externa y GZip la interna.
+app.add_middleware(BaseHTTPMiddleware, dispatch=auth_security_middleware)
+app.add_middleware(BaseHTTPMiddleware, dispatch=add_asset_cache_headers)
+
 # --- COMPONENT INITIALIZATION ---
-
-def _init_db_on_startup():
-    if DB_INIT_ON_STARTUP:
-        init_db()
-
-if hasattr(app, "on_event"):
-    app.on_event("startup")(_init_db_on_startup)
-else:
-    _init_db_on_startup()
 
 setup_main_routes(rt)
 
