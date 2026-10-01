@@ -77,3 +77,11 @@ Este documento complementa `conventions/code_conventions.md` §8 (configuración
 - Con el ajuste inactivo (por defecto en `development` y `test`) se usa la IP de la conexión directa (`request.client.host`).
 - Si la cabecera falta o no es una IP válida, se usa la IP de la conexión directa; nunca se descarta la petición por ello.
 - La IP se normaliza antes de usarla: IPv4 tal cual; IPv6 agrupada por su prefijo `/64` (un cliente IPv6 suele disponer de todo un `/64` y podría cambiar de dirección en cada intento); una IPv6 que encapsula una IPv4 (`::ffff:a.b.c.d`) se trata como esa IPv4.
+
+## 10. Dependencias
+
+- `requirements.txt` fija versiones exactas (`==`) de todas las dependencias directas, para que desarrollo, la imagen de producción y cualquier reconstrucción instalen exactamente lo mismo.
+- Antes de cada despliegue se pasa `pip-audit -r requirements.txt`. Con vulnerabilidades conocidas no se despliega: se actualiza la dependencia afectada o se documenta por qué no aplica al proyecto. En la fase de despliegue automático, este paso lo ejecuta la GitHub Action y bloquea el despliegue si falla.
+- Cada actualización de dependencias va en su propio commit, junto con las adaptaciones de código que exija y sin mezclarla con otros cambios.
+- Una actualización se prueba arrancando la app en desarrollo con la imagen reconstruida (`docker compose up -d --build web`), no solo instalando el paquete: las dependencias viven en la imagen, no en el código montado.
+- Los avisos de obsolescencia (`DeprecationWarning`) de las dependencias se tratan como deuda: anuncian que la siguiente versión mayor romperá ese código (caso real: `@app.middleware` y `on_event`, eliminados en Starlette 1.0).
