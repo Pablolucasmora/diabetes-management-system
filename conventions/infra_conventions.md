@@ -50,3 +50,20 @@ Este documento complementa `conventions/code_conventions.md` §8 (configuración
 - Motivos (incidente del 2026-10-01): dos Postgres arrancados a la vez sobre la misma carpeta de datos la corrompieron, porque el bloqueo de Postgres (`postmaster.pid`) no protege entre contenedores distintos; además, la carpeta del proyecto está en `Documents`, sincronizada con iCloud, y la sincronización de una base de datos en marcha también puede corromperla. Con un volumen por entorno, los dos entornos no pueden compartir datos aunque se arranquen a la vez, y los datos quedan fuera de cualquier carpeta sincronizada.
 - Un volumen vacío **no se inicializa dejando que el contenedor de Postgres lo haga con las variables del `.env`**: `POSTGRES_USER` se convertiría en superusuario del clúster y `DB_USER` es el rol de runtime, lo que rompe la separación de identidades de `code_conventions.md` §12.6. Se inicializa explícitamente con el rol propietario (`plucmor`) como superusuario y después se restauran roles (`pg_dumpall --roles-only`) y datos (`pg_dump`/`pg_restore`).
 - Los datos se sacan y se meten en un volumen solo con `pg_dump`/`pg_restore`, nunca copiando sus archivos.
+
+## 7. Archivos de entorno
+
+- Cada entorno tiene su propio archivo de variables: `.env` para desarrollo y `.env.prod` para producción. `docker-compose.prod.yml` carga `.env.prod` con `env_file:` solo en los servicios que lo necesitan (mínimo privilegio: `db` y `tunnel` no reciben secretos de la app).
+- Ninguno de los dos se sube a git ni entra en la imagen: ambos figuran en `.gitignore` y en `.dockerignore`. Esos patrones excluyen solo el nombre exacto, así que un archivo de entorno nuevo se añade explícitamente a los dos.
+- `.env.example` sí se versiona: contiene el nombre de todas las variables y ningún valor real. Se actualiza en el mismo cambio que añade o elimina una variable.
+- `APP_ENV=production` solo cambia los valores **por defecto** de `config.py`; un valor escrito en el archivo de entorno gana siempre. Por eso `.env.prod` no se crea copiando `.env`: los valores de desarrollo (`SESSION_COOKIE_SECURE=false`, `DEFAULT_USER_PASSWORD` con valor...) se revisan uno a uno.
+- En producción `DEFAULT_USER_PASSWORD` queda vacío, para que el bootstrap no cree el usuario por defecto.
+- `PASSWORD_PEPPER` no se cambia una vez existen usuarios: forma parte de cada hash de contraseña y cambiarlo impide todos los inicios de sesión.
+- En el VPS, "el mecanismo de secretos del entorno de despliegue" de `code_conventions.md` §8.2 es `.env.prod`: fuera de git y de la imagen, copiado al servidor por un canal seguro (`scp`) y con permisos de lectura solo para su propietario (`chmod 600`).
+
+## 8. Comandos de producción
+
+- Todo comando de Compose sobre producción se ejecuta con `./scripts/prod.sh <subcomando>` (p. ej. `./scripts/prod.sh up -d --build`, `./scripts/prod.sh logs web`), nunca con `docker compose -f docker-compose.prod.yml` directamente.
+- Motivo: Compose rellena los `${...}` del YAML con el archivo `.env` salvo que se indique `--env-file`. Sin él, producción arrancaría en silencio con valores de desarrollo (comprobado: `APP_ENV` resolvía a `development`), porque `environment:` gana sobre `env_file:`.
+- `scripts/prod.sh` se sitúa en la raíz del repositorio, se niega a ejecutarse si no existe `.env.prod` y pasa el resto de argumentos a `docker compose --env-file .env.prod -f docker-compose.prod.yml`.
+- El primer `up` sobre un volumen `pgdata_prod` vacío no se hace sin inicializarlo antes según §6.

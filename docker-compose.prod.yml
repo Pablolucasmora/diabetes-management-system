@@ -10,20 +10,20 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
     volumes:
-      - ./pgdata:/var/lib/postgresql/data
+      - pgdata_prod:/var/lib/postgresql/data
 
   web:
     build: 
       context: .
       dockerfile: Dockerfile.fasthtml
     container_name: deploy_web
-    env_file: .env
+    env_file: .env.prod
     # Usamos las mismas variables para construir la URL de conexión
     environment:
       - DATABASE_URL=${DATABASE_URL}
       - MIGRATIONS_DATABASE_URL=${MIGRATIONS_DATABASE_URL}
       - DB_RUNTIME_ROLE=${DB_RUNTIME_ROLE}
-      - APP_ENV=production
+      - APP_ENV=${APP_ENV}
 
     command: uvicorn DayBetes_food.main:app --host 0.0.0.0 --port 8000 
     restart: unless-stopped
@@ -41,4 +41,6 @@ services:
     volumes:
       - ~/.cloudflared:/home/nonroot/.cloudflared:ro
       - ./cloudflared/daybetes.yml:/etc/cloudflared/daybetes.yml:ro
-  
+
+volumes:
+  pgdata_prod:
