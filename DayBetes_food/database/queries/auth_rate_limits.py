@@ -1,14 +1,14 @@
-"""Queries for auth_rate_limits (throttling de intentos de login)."""
+"""Queries for auth_rate_limits (login attempt throttling)."""
 
 from datetime import datetime
 from typing import Optional
 
 
 def get_auth_rate_limit(connection, key_hash: str) -> Optional[dict]:
-    """Lee el contador de intentos de una clave, bloqueando la fila.
+    """Read a key's attempt counter, locking the row.
 
-    Debe ejecutarse en la misma conexión/transacción que la escritura
-    posterior (upsert_auth_rate_limit o delete_auth_rate_limit) según
+    It must run on the same connection/transaction as the later write
+    (upsert_auth_rate_limit or delete_auth_rate_limit), as required by
     code_conventions.md §6.8 (SELECT ... FOR UPDATE).
     """
     with connection.cursor() as cursor:
@@ -53,9 +53,9 @@ def upsert_auth_rate_limit(
         if commit:
             connection.commit()
     except Exception:
-        # Caller-owned (commit=False): se propaga tal cual; traducir a
-        # InfrastructureError es responsabilidad de quien posee la
-        # operación (auth/service.py o el coordinador de la transacción).
+        # Caller-owned (commit=False): propagated as is; translating it to
+        # InfrastructureError is the responsibility of whoever owns the
+        # operation (auth/service.py or the transaction coordinator).
         if commit:
             connection.rollback()
         raise

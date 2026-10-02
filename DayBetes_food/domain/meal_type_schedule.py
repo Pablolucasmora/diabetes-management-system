@@ -1,19 +1,19 @@
-"""Dominio del horario de asignación automática de `meal_type` (conventions/code_conventions.md §3.6).
+"""Domain of the automatic `meal_type` assignment schedule (conventions/code_conventions.md §3.6).
 
-Este módulo no importa psycopg, rutas ni componentes. Es puro: recibe las
-franjas ya leídas de la base (o ninguna) y decide qué `MealType` corresponde
-a una hora local dada.
+This module imports no psycopg, routes or components. It is pure: it
+receives the time slots already read from the database (or none) and decides
+which `MealType` matches a given local time.
 
-Contexto (decisión 2026-09-11): un `intake_event` creado automáticamente
-(añadir un alimento sin carrito abierto) nacía con `meal_type=None`, pero el
-`<select>` del carrito (`components/cart/cart_components.py::EventHeader`)
-pinta la primera opción del enum como elegida en cuanto ningún `<option>`
-lleva `selected` — el usuario ve "breakfast" aunque la base tenga `NULL`, y
-como el guardado es autosave-on-change, si no toca el control nunca se
-persiste. La corrección de fondo no es solo visual: el evento debe nacer ya
-con el `meal_type` que la interfaz va a mostrar, calculado por franja
-horaria, para que "lo que se ve" y "lo que hay en la base" sean siempre el
-mismo valor desde el instante de creación (principio general, ver
+Context (decision 2026-09-11): an `intake_event` created automatically
+(adding a food with no open cart) was born with `meal_type=None`, but the
+cart `<select>` (`components/cart/cart_components.py::EventHeader`) shows
+the enum's first option as selected as soon as no `<option>` carries
+`selected` — the user sees "breakfast" even though the database has `NULL`,
+and since saving is autosave-on-change, if they never touch the control it
+is never persisted. The real fix is not only visual: the event must be born
+with the `meal_type` the interface is going to show, computed from the time
+slot, so that "what is shown" and "what is in the database" are always the
+same value from the moment of creation (general principle, see
 code_conventions.md §7.14).
 """
 
@@ -22,10 +22,10 @@ from datetime import time
 
 from DayBetes_food.domain.constants import MealType
 
-# Meal types que pueden asignarse automáticamente por franja horaria. `snack`
-# y `rescue` quedan fuera a propósito: son elecciones manuales del usuario
-# (`rescue`, además, nace siempre así en food_routes.py, ver
-# audit/deuda_pendiente.md), nunca un default por hora (decisión 2026-09-11).
+# Meal types that can be assigned automatically by time slot. `snack` and
+# `rescue` are left out on purpose: they are manual choices of the user
+# (`rescue`, besides, is always created that way in food_routes.py, see
+# audit/deuda_pendiente.md), never a default by hour (decision 2026-09-11).
 AUTO_ASSIGNABLE_MEAL_TYPES: tuple[MealType, ...] = (
     MealType.BREAKFAST,
     MealType.BRUNCH,
@@ -34,10 +34,10 @@ AUTO_ASSIGNABLE_MEAL_TYPES: tuple[MealType, ...] = (
     MealType.DINNER,
 )
 
-# Franjas por defecto (hora local), usadas para cualquier meal_type que el
-# usuario no haya personalizado todavía en /settings/meal_type_schedule.
-# `DINNER` envuelve medianoche: termina en 00:00 exclusive, no sigue cubriendo
-# la madrugada (decisión 2026-09-11, acordada con el usuario).
+# Default slots (local time), used for any meal_type the user has not
+# customized yet in /settings/meal_type_schedule.
+# `DINNER` wraps midnight: it ends at 00:00 exclusive and does not keep
+# covering the early morning (decision 2026-09-11, agreed with the user).
 DEFAULT_MEAL_TYPE_WINDOWS: dict[MealType, tuple[time, time]] = {
     MealType.BREAKFAST: (time(5, 0), time(11, 0)),
     MealType.BRUNCH: (time(11, 0), time(13, 30)),
@@ -49,7 +49,7 @@ DEFAULT_MEAL_TYPE_WINDOWS: dict[MealType, tuple[time, time]] = {
 
 @dataclass(frozen=True)
 class MealTypeWindow:
-    """Una franja horaria personalizada por el usuario para un meal_type."""
+    """A time slot customized by the user for a meal_type."""
     meal_type: MealType
     start_time: time
     end_time: time
@@ -58,7 +58,7 @@ class MealTypeWindow:
 def resolve_meal_type_window(
     meal_type: MealType, overrides: dict[MealType, tuple[time, time]]
 ) -> tuple[time, time]:
-    """Franja efectiva de un meal_type: la del usuario si existe, si no el default."""
+    """Effective slot of a meal_type: the user's if it exists, otherwise the default."""
     return overrides.get(meal_type) or DEFAULT_MEAL_TYPE_WINDOWS[meal_type]
 
 
@@ -67,13 +67,13 @@ def resolve_meal_type_for_time(
     overrides: dict[MealType, tuple[time, time]] | None = None,
 ) -> MealType | None:
     """
-    Determina el `meal_type` automático para una hora local, mezclando las
-    franjas personalizadas del usuario con los defaults para las que no haya
-    tocado. Si ninguna franja cubre la hora (hueco entre el fin de `dinner` y
-    el inicio de `breakfast`, p. ej. 02:00, o un hueco que el propio usuario
-    haya dejado al personalizar sus franjas), devuelve `None`: no se inventa
-    un `meal_type` fuera de las franjas declaradas, el usuario lo elige a
-    mano (decisión 2026-09-11, mismo criterio que `snack`/`rescue`).
+    Determine the automatic `meal_type` for a local time, merging the user's
+    customized slots with the defaults for the ones they have not touched. If
+    no slot covers the time (the gap between the end of `dinner` and the start
+    of `breakfast`, e.g. 02:00, or a gap the user left when customizing their
+    slots), it returns `None`: no `meal_type` is invented outside the declared
+    slots, the user picks it by hand (decision 2026-09-11, same criterion as
+    `snack`/`rescue`).
     """
     overrides = overrides or {}
     for meal_type in AUTO_ASSIGNABLE_MEAL_TYPES:
@@ -85,11 +85,11 @@ def resolve_meal_type_for_time(
 
 def _time_in_window(value: time, start: time, end: time) -> bool:
     if start == end:
-        # Franja degenerada (no debería persistirse, ver validación de la
-        # ruta de settings): no cubre ninguna hora en vez de cubrirlas todas.
+        # Degenerate slot (it should never be persisted, see the validation in
+        # the settings route): it covers no hour instead of covering all of them.
         return False
     if start < end:
         return start <= value < end
-    # Envuelve medianoche (p. ej. dinner 19:30-00:00): cubre desde start hasta
-    # el final del día y desde el principio del día hasta end, exclusive.
+    # Wraps midnight (e.g. dinner 19:30-00:00): it covers from start to the
+    # end of the day and from the start of the day until end, exclusive.
     return value >= start or value < end

@@ -1,4 +1,4 @@
-"""Queries para la tabla `food_brands`."""
+"""Queries for the `food_brands` table."""
 
 from typing import Optional
 
@@ -6,12 +6,12 @@ from DayBetes_food.database.queries.crud import _execute_query, _execute_query_m
 
 
 def clean_brand_label(brand_name: str) -> str:
-    """Etiqueta visible: solo trim y colapso de espacios (decisión 0.1)."""
+    """Visible label: only trimming and whitespace collapsing (decision 0.1)."""
     return " ".join((brand_name or "").strip().split())
 
 
 def brand_code(brand_name: str) -> str:
-    """Clave estable. Debe coincidir con ck_food_brands_code_normalized."""
+    """Stable key. It must match ck_food_brands_code_normalized."""
     return clean_brand_label(brand_name).lower()
 
 
@@ -35,7 +35,7 @@ def create_food_brand(connection, label: str, created_by: int = None, commit: bo
                 {"code": code, "label": clean_label, "created_by": created_by},
             )
             row = cursor.fetchone()
-            if row is None:  # ya existía: se conserva su label original
+            if row is None:  # it already existed: its original label is kept
                 cursor.execute("SELECT id FROM food_brands WHERE code = %(code)s;", {"code": code})
                 row = cursor.fetchone()
         if commit:

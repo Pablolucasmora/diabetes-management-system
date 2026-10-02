@@ -1,4 +1,4 @@
-"""Queries para la tabla `recipe`."""
+"""Queries for the `recipe` table."""
 
 from typing import Optional
 

@@ -1,9 +1,9 @@
-"""Mappers de fila SQL a dataclass de dominio (conventions/code_conventions.md §3.6).
+"""Mappers from SQL rows to domain dataclasses (conventions/code_conventions.md §3.6).
 
-Estos mappers conocen nombres físicos de columna (`users_id` -> `user_id`,
-ver §3.5) que el dominio no debe conocer. Las dataclasses en
-DayBetes_food/domain/ no se construyen desde una fila SQL en ningún otro
-punto del código.
+These mappers know physical column names (`users_id` -> `user_id`, see
+§3.5) that the domain must not know. The dataclasses in
+DayBetes_food/domain/ are not built from a SQL row anywhere else in the
+code.
 """
 
 from DayBetes_food.domain.catalog import CatalogItemRead
@@ -87,10 +87,10 @@ def catalog_item_read_from_row(row: dict) -> CatalogItemRead:
 
 
 def insulin_injection_read_from_row(row: dict) -> InsulinInjectionRead:
-    """Convierte fila SQL a InsulinInjectionRead.
+    """Convert a SQL row to InsulinInjectionRead.
 
-    Columnas obligatorias: id, users_id, shot_time, insulin_type, created_at, updated_at, timezone_at_event.
-    Columnas nullables: intake_event_id, units, injection_zone, notes, needle_leak, skin_pinch.
+    Required columns: id, users_id, shot_time, insulin_type, created_at, updated_at, timezone_at_event.
+    Nullable columns: intake_event_id, units, injection_zone, notes, needle_leak, skin_pinch.
     """
     try:
         insulin_type = InsulinType(row["insulin_type"])
@@ -129,12 +129,12 @@ def insulin_injection_read_from_row(row: dict) -> InsulinInjectionRead:
 
 
 def intake_event_read_from_row(row: dict) -> IntakeEventRead:
-    """Convierte fila SQL a IntakeEventRead.
+    """Convert a SQL row to IntakeEventRead.
 
-    La fila debe venir de _INTAKE_EVENT_COLUMNS (queries/intake_event.py), que
-    ya expone users_id con el alias user_id (§3.5).
-    Columnas obligatorias: id, user_id, state, timezone_at_event, eating_out,
-    insulin_dose, created_at, updated_at. El resto son nullables.
+    The row must come from _INTAKE_EVENT_COLUMNS (queries/intake_event.py),
+    which already exposes users_id with the alias user_id (§3.5).
+    Required columns: id, user_id, state, timezone_at_event, eating_out,
+    insulin_dose, created_at, updated_at. The rest are nullable.
     """
     try:
         state = IntakeEventState(row["state"])
@@ -193,11 +193,11 @@ def intake_event_read_from_row(row: dict) -> IntakeEventRead:
 
 
 def intake_plate_read_from_row(row: dict) -> IntakePlateRead:
-    """Convierte fila SQL a IntakePlateRead.
+    """Convert a SQL row to IntakePlateRead.
 
-    Columnas obligatorias: id, intake_event_id, created_at, updated_at.
-    Columnas nullables: name (NULL = nombre derivado, measurement §4.6.3) y
-    offset_minutes (NULL = la tanda todavía no tiene plantilla de offset).
+    Required columns: id, intake_event_id, created_at, updated_at.
+    Nullable columns: name (NULL = derived name, measurement §4.6.3) and
+    offset_minutes (NULL = the plate has no offset template yet).
     """
     try:
         return IntakePlateRead(

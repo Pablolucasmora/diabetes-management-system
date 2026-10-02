@@ -1,4 +1,4 @@
-"""Queries para la tabla `users`."""
+"""Queries for the `users` table."""
 
 from typing import Optional
 

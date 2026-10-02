@@ -1,14 +1,14 @@
-"""Dataclasses y reglas puras de la tanda (plato) de un evento.
+"""Dataclasses and pure rules of an event's plate (serving batch).
 
-Ver conventions/code_conventions.md §3.6 y
-conventions/measurement_conventions.md §4.6 (decisión 2026-09-19).
+See conventions/code_conventions.md §3.6 and
+conventions/measurement_conventions.md §4.6 (decision 2026-09-19).
 
-Este módulo no importa psycopg, rutas ni componentes. La conversión de fila
-SQL a estas dataclasses vive en DayBetes_food/database/mappers.py, no aquí.
+This module imports no psycopg, routes or components. The conversion from a
+SQL row to these dataclasses lives in DayBetes_food/database/mappers.py, not here.
 
-Una tanda subdivide un `intake_event` en los platos que se comieron en
-momentos distintos, sin partir la comida en varios eventos: todos los offsets
-siguen midiéndose contra el mismo `meal_time` (§4.6).
+A plate splits an `intake_event` into the dishes eaten at different moments,
+without splitting the meal into several events: every offset is still
+measured against the same `meal_time` (§4.6).
 """
 
 from dataclasses import dataclass
@@ -19,42 +19,41 @@ from DayBetes_food.domain.portion_detail import (
     PORTION_DETAIL_OFFSET_MIN_MINUTES,
 )
 
-# Longitud máxima de intake_plate.name, igual al VARCHAR(255) de la columna
-# (database/schema.py). §7.3 exige declarar la longitud máxima por campo y
-# rechazar el exceso en el boundary con 422, sin truncar.
+# Maximum length of intake_plate.name, equal to the column's VARCHAR(255)
+# (database/schema.py). §7.3 requires declaring the maximum length per field
+# and rejecting the excess at the boundary with 422, without truncating.
 INTAKE_PLATE_NAME_MAX_LENGTH = 255
 
-# Cota de cordura del offset de la tanda: es la de
-# portion_detail.offset_minutes, importada y no repetida (§4.7), porque la
-# plantilla no puede admitir valores que la fila rechazaría
-# (measurement_conventions.md §4.5, §4.6.2). Igual al CHECK
-# ck_intake_plate_offset_minutes de database/schema.py.
+# Sanity bound for the plate offset: it is portion_detail.offset_minutes',
+# imported and not repeated (§4.7), because the template cannot accept values
+# the row would reject (measurement_conventions.md §4.5, §4.6.2). Equal to the
+# CHECK ck_intake_plate_offset_minutes in database/schema.py.
 INTAKE_PLATE_OFFSET_MIN_MINUTES = PORTION_DETAIL_OFFSET_MIN_MINUTES
 INTAKE_PLATE_OFFSET_MAX_MINUTES = PORTION_DETAIL_OFFSET_MAX_MINUTES
 
-# Nombre mostrado cuando la tanda no tiene nombre propio ni ingredientes de
-# los que derivarlo (measurement_conventions.md §4.6.3). Es interfaz, y la
-# interfaz está en inglés (frontend_conventions.md §7.12).
+# Name shown when the plate has neither its own name nor ingredients to derive
+# it from (measurement_conventions.md §4.6.3). It is interface text, and the
+# interface is in English (frontend_conventions.md §7.12).
 #
-# No es un ordinal ("First"): una tanda vacía puede ser la segunda o la
-# tercera del evento, y llamarla "First" sería sencillamente falso. Describe
-# el estado —sin ingredientes todavía—, que es lo único que se sabe de ella.
+# It is not an ordinal ("First"): an empty plate can be the event's second or
+# third one, and calling it "First" would simply be false. It describes the
+# state —no ingredients yet—, which is the only thing known about it.
 INTAKE_PLATE_EMPTY_NAME = "Empty plate"
 
-# Cuántos ingredientes participan en el nombre derivado.
+# How many ingredients take part in the derived name.
 INTAKE_PLATE_NAME_INGREDIENTS = 2
 
 
 @dataclass(frozen=True)
 class IntakePlateRead:
-    """Lectura completa de una tanda.
+    """Full read model of a plate.
 
-    `name` a None significa que el nombre se deriva de sus ingredientes
-    (§4.6.3): no es un nombre vacío, es la ausencia de nombre propio.
-    `offset_minutes` es la plantilla que heredan las porciones al insertarse,
-    no un dato clínico: el valor autoritativo es el de cada
+    `name` set to None means the name is derived from its ingredients
+    (§4.6.3): it is not an empty name, it is the absence of an own name.
+    `offset_minutes` is the template the portions inherit when inserted, not
+    clinical data: the authoritative value is each
     portion_detail.offset_minutes (§4.6.2).
-    created_at y updated_at son datetime aware en UTC (TIMESTAMPTZ).
+    created_at and updated_at are aware datetimes in UTC (TIMESTAMPTZ).
     """
     id: int
     intake_event_id: int
@@ -66,7 +65,7 @@ class IntakePlateRead:
 
 @dataclass(frozen=True)
 class IntakePlateCreate:
-    """Payload para crear una tanda dentro de un evento."""
+    """Payload to create a plate inside an event."""
     intake_event_id: int
     name: str | None = None
     offset_minutes: int | None = None
@@ -74,27 +73,28 @@ class IntakePlateCreate:
 
 @dataclass(frozen=True)
 class IntakePlateUpdate:
-    """Payload para actualizar una tanda (§3.1). Solo campos modificables.
+    """Payload to update a plate (§3.1). Editable fields only.
 
-    Un campo en None significa "no se toca", igual que el resto de payloads de
-    actualización del proyecto. Para borrar el nombre propio y devolver la
-    tanda a su nombre derivado existe `update_intake_plate_name`, por el mismo
-    motivo que `update_intake_event_name` (§7.4).
+    A field set to None means "leave untouched", like the rest of the
+    project's update payloads. To clear the own name and return the plate to
+    its derived name there is `update_intake_plate_name`, for the same reason
+    as `update_intake_event_name` (§7.4).
     """
     name: str | None = None
     offset_minutes: int | None = None
 
 
 def derive_plate_name(ingredient_names: list[str]) -> str:
-    """Nombre mostrado de una tanda sin nombre propio (§4.6.3).
+    """Name shown for a plate without its own name (§4.6.3).
 
-    Toma la primera palabra del nombre de los dos primeros ingredientes, por
-    orden de inserción, separadas por coma ("Arroz basmati Hacendado" +
-    "Pechuga de pollo" -> "Arroz, Pechuga"). Con un solo ingrediente, esa única
-    palabra; sin ingredientes, INTAKE_PLATE_EMPTY_NAME.
+    It takes the first word of the names of the first two ingredients, in
+    insertion order, separated by a comma ("Arroz basmati Hacendado" +
+    "Pechuga de pollo" -> "Arroz, Pechuga"). With a single ingredient, that
+    single word; with no ingredients, INTAKE_PLATE_EMPTY_NAME.
 
-    Es un valor derivado que no se guarda: cambia al añadir, borrar o mover
-    ingredientes, y deja de usarse en cuanto la tanda tiene nombre propio.
+    It is a derived value that is not stored: it changes when ingredients are
+    added, deleted or moved, and stops being used as soon as the plate has
+    its own name.
     """
     first_words = []
     for name in ingredient_names:

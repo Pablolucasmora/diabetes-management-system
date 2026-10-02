@@ -1,4 +1,4 @@
-"""Queries para la tabla `tags`."""
+"""Queries for the `tags` table."""
 
 from typing import Optional
 

@@ -1,8 +1,8 @@
-"""Queries para la tabla puente `linked_tags` (catalog/manual_intake/recipe <-> tags).
+"""Queries for the `linked_tags` bridge table (catalog/manual_intake/recipe <-> tags).
 
-`set_entry_tags` crea o reutiliza tags al enlazarlos (mismo criterio que
-`ensure_tag`), por lo que reutiliza los helpers de normalización de
-`crud.py` en vez de duplicarlos.
+`set_entry_tags` creates or reuses tags when linking them (same criterion as
+`ensure_tag`), so it reuses the normalization helpers of `crud.py` instead
+of duplicating them.
 """
 
 from DayBetes_food.database.queries.crud import (

@@ -1,17 +1,17 @@
-"""CRUD para insulin_injections (code_conventions.md §3.3, §3.4, §3.5).
+"""CRUD for insulin_injections (code_conventions.md §3.3, §3.4, §3.5).
 
-Funciones públicas:
-- create_insulin_injection: inserta y devuelve id
-- list_insulin_injections: lista con paginación
-- get_insulin_injection: obtiene una inyección
-- get_injection_shot_time_at_offset: helper para paginación backwards
-- update_insulin_injection: actualización por user_id + injection_id
-- delete_insulin_injection: borrado por user_id + injection_id
+Public functions:
+- create_insulin_injection: inserts and returns the id
+- list_insulin_injections: paginated list
+- get_insulin_injection: fetches one injection
+- get_injection_shot_time_at_offset: helper for backwards pagination
+- update_insulin_injection: update by user_id + injection_id
+- delete_insulin_injection: delete by user_id + injection_id
 
-Contratos (code_conventions.md §3.4):
-- create_*: devuelve id, fallo de infraestructura lanza excepción
-- update_*/delete_*: lanzan NotFoundError si no existe o no es del usuario
-- Nunca devuelven False; None indica "no encontrado"
+Contracts (code_conventions.md §3.4):
+- create_*: returns the id; an infrastructure failure raises an exception
+- update_*/delete_*: raise NotFoundError if it does not exist or is not the user's
+- They never return False; None means "not found"
 """
 
 from datetime import datetime
@@ -32,21 +32,21 @@ def create_insulin_injection(
     *,
     commit: bool = True,
 ) -> int:
-    """Crea una inyección de insulina.
+    """Create an insulin injection.
 
     Args:
-        connection: conexión a BD
-        payload: InsulinInjectionCreate con todos los campos
-        commit: si True, confirma la transacción
+        connection: DB connection
+        payload: InsulinInjectionCreate with every field
+        commit: if True, commits the transaction
 
     Returns:
-        id de la fila creada
+        id of the created row
 
     Raises:
-        ValidationError: si insulin_type/units no son coherentes
-        InfrastructureError: si falla la inserción
+        ValidationError: if insulin_type/units are not consistent
+        InfrastructureError: if the insert fails
     """
-    # Validar antes de pasar a BD
+    # Validate before reaching the DB
     validate_insulin_dose(payload.insulin_type, payload.units)
 
     query = """
@@ -97,18 +97,18 @@ def list_insulin_injections(
     limit: int = 15,
     offset: int = 0,
 ) -> list[InsulinInjectionRead]:
-    """Lista inyecciones del usuario con paginación.
+    """List the user's injections with pagination.
 
-    Orden: shot_time DESC, id DESC (índice: idx_insulin_injections_users_id_shot_time).
+    Order: shot_time DESC, id DESC (index: idx_insulin_injections_users_id_shot_time).
 
     Args:
-        connection: conexión a BD
-        user_id: id del usuario propietario
-        limit: máximo de filas por página
-        offset: filas a saltar
+        connection: DB connection
+        user_id: id of the owner user
+        limit: maximum rows per page
+        offset: rows to skip
 
     Returns:
-        lista de InsulinInjectionRead (vacía si no hay filas)
+        list of InsulinInjectionRead (empty if there are no rows)
     """
     query = """
         SELECT
@@ -133,15 +133,15 @@ def get_insulin_injection(
     user_id: int,
     injection_id: int,
 ) -> InsulinInjectionRead | None:
-    """Obtiene una inyección por id, verificando propietario.
+    """Fetch an injection by id, checking its owner.
 
     Args:
-        connection: conexión a BD
-        user_id: id del usuario (filtro de ownership)
-        injection_id: id de la inyección
+        connection: DB connection
+        user_id: id of the user (ownership filter)
+        injection_id: id of the injection
 
     Returns:
-        InsulinInjectionRead si existe y es del usuario, None en caso contrario
+        InsulinInjectionRead if it exists and belongs to the user, None otherwise
     """
     query = """
         SELECT
@@ -164,17 +164,17 @@ def get_injection_shot_time_at_offset(
     user_id: int,
     offset: int,
 ) -> datetime | None:
-    """Obtiene el shot_time de la inyección en una posición de paginación.
+    """Fetch the shot_time of the injection at a pagination position.
 
-    Usado para mostrar la fecha de cambio en la paginación (e.g. "Previous: 2026-09-06").
+    Used to show the boundary date in the pagination (e.g. "Previous: 2026-09-06").
 
     Args:
-        connection: conexión a BD
-        user_id: id del usuario
-        offset: posición en la lista ordenada
+        connection: DB connection
+        user_id: id of the user
+        offset: position in the ordered list
 
     Returns:
-        datetime (aware UTC) si existe, None en caso contrario
+        datetime (aware UTC) if it exists, None otherwise
     """
     query = """
         SELECT shot_time
@@ -200,26 +200,26 @@ def update_insulin_injection(
     *,
     commit: bool = True,
 ) -> None:
-    """Actualiza una inyección existente.
+    """Update an existing injection.
 
-    Campos actualizables: insulin_type, shot_time, injection_zone, units.
-    updated_at se actualiza automáticamente por DEFAULT CURRENT_TIMESTAMP en BD.
+    Updatable fields: insulin_type, shot_time, injection_zone, units.
+    updated_at is set automatically by DEFAULT CURRENT_TIMESTAMP in the DB.
 
     Args:
-        connection: conexión a BD
-        user_id: id del usuario (filtro de ownership)
-        injection_id: id de la inyección
-        payload: InsulinInjectionUpdate con nuevos valores
-        commit: si True, confirma la transacción
+        connection: DB connection
+        user_id: id of the user (ownership filter)
+        injection_id: id of the injection
+        payload: InsulinInjectionUpdate with the new values
+        commit: if True, commits the transaction
 
     Returns:
-        None. Lanza NotFoundError si la fila no existe o no es del usuario.
+        None. Raises NotFoundError if the row does not exist or is not the user's.
 
     Raises:
-        ValidationError: si insulin_type/units no son coherentes
-        NotFoundError: si la fila no existe o no es del usuario
+        ValidationError: if insulin_type/units are not consistent
+        NotFoundError: if the row does not exist or is not the user's
     """
-    # Validar antes de pasar a BD
+    # Validate before reaching the DB
     validate_insulin_dose(payload.insulin_type, payload.units)
 
     query = """
@@ -264,19 +264,19 @@ def delete_insulin_injection(
     *,
     commit: bool = True,
 ) -> None:
-    """Borra una inyección existente.
+    """Delete an existing injection.
 
     Args:
-        connection: conexión a BD
-        user_id: id del usuario (filtro de ownership)
-        injection_id: id de la inyección
-        commit: si True, confirma la transacción
+        connection: DB connection
+        user_id: id of the user (ownership filter)
+        injection_id: id of the injection
+        commit: if True, commits the transaction
 
     Returns:
-        None. Lanza NotFoundError si la fila no existe o no es del usuario.
+        None. Raises NotFoundError if the row does not exist or is not the user's.
 
     Raises:
-        NotFoundError: si la fila no existe o no es del usuario
+        NotFoundError: if the row does not exist or is not the user's
     """
     query = """
         DELETE FROM insulin_injections

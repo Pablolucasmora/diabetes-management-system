@@ -1,8 +1,8 @@
-"""Enums de dominio (conventions/code_conventions.md §3.6 y §4.1).
+"""Domain enums (conventions/code_conventions.md §3.6 and §4.1).
 
-Este módulo no importa psycopg, rutas ni componentes. Cada concepto tiene
-un único enum aquí; no se crean listas paralelas del mismo concepto en
-routes/, components/, crud.py o schema.py.
+This module imports no psycopg, routes or components. Each concept has a
+single enum here; no parallel lists of the same concept are created in
+routes/, components/, crud.py or schema.py.
 """
 
 from enum import Enum, unique
@@ -46,21 +46,21 @@ class IntakeEventState(str, Enum):
 
 @unique
 class AmountInputUnit(str, Enum):
-    """Unidades de entrada de cantidad que la interfaz puede emitir.
+    """Amount input units the interface can emit.
 
-    Es el enum central de unidades que exige measurement_conventions.md §11:
-    el código interno de una unidad cerrada vive aquí y no se escribe como
-    texto libre en rutas ni componentes. Los valores son los códigos estables
-    de §4.2 de ese mismo documento.
+    It is the central units enum required by measurement_conventions.md §11:
+    the internal code of a closed unit lives here and is not written as free
+    text in routes or components. The values are the stable codes of §4.2 of
+    that same document.
 
-    `lb` y `oz` llevan en el propio enum su factor exacto a gramos y son la
-    única fuente de ese número (decisión 2026-09-22). `portion` no tiene factor
-    constante: su factor es el `unit_g` del alimento y se resuelve en tiempo de
-    ejecución. `percent` no es una masa: se interpreta contra el total y no se
-    admite en la ruta de cantidad.
+    `lb` and `oz` carry their exact factor to grams in the enum itself and are
+    the only source of that number (decision 2026-09-22). `portion` has no
+    constant factor: its factor is the food's `unit_g` and is resolved at run
+    time. `percent` is not a mass: it is interpreted against the total and is
+    not accepted on the amount route.
 
-    Ninguna de estas unidades se persiste: deciden cómo se interpreta la
-    cantidad recibida antes de convertirla a la unidad canónica (gramos).
+    None of these units is persisted: they decide how the received amount is
+    interpreted before converting it to the canonical unit (grams).
     """
 
     def __new__(cls, code, grams_factor=None):
@@ -196,10 +196,10 @@ CLEAR = Clear()
 
 
 def sql_in_list(enum_cls) -> str:
-    """Lista de valores del enum para un CHECK: "'rapid', 'basal'".
+    """List of the enum's values for a CHECK: "'rapid', 'basal'".
 
-    Los valores son constantes de código, no datos de una petición: la regla de
-    parametrización de code_conventions.md 11.9 se refiere a valores dinámicos.
-    Generarla aquí garantiza que el CHECK coincida siempre con el enum (4.4).
+    The values are code constants, not request data: the parametrization rule
+    of code_conventions.md 11.9 refers to dynamic values. Generating it here
+    guarantees that the CHECK always matches the enum (4.4).
     """
     return ", ".join(f"'{member.value}'" for member in enum_cls)

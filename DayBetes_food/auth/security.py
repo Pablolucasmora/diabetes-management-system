@@ -22,12 +22,12 @@ def normalize_identifier(value: str) -> str:
 
 
 def sanitize_text(value: str) -> str:
-    """Normaliza un texto de entrada: descarta caracteres no imprimibles y
-    recorta espacios de los extremos.
+    """Normalize an input text: drop non-printable characters and trim
+    surrounding whitespace.
 
-    Es solo normalización (§7.2): **no** trunca. La longitud máxima de cada
-    campo es la de su columna y se comprueba en el boundary, que rechaza el
-    exceso en vez de recortarlo silenciosamente (§7.3, decisión 2026-09-09).
+    It is normalization only (§7.2): it does **not** truncate. Each field's
+    maximum length is its column's, and it is checked at the boundary, which
+    rejects the excess instead of silently trimming it (§7.3, decision 2026-09-09).
     """
     return "".join(ch for ch in (value or "") if ch.isprintable()).strip()
 
@@ -63,7 +63,7 @@ def verify_password(password_hash: str, password: str) -> tuple[bool, str | None
     if not _password_hasher:
         return False, None
 
-    # 1. Intenta con pepper (usuario ya migrado)
+    # 1. Try with the pepper (user already migrated)
     try:
         _password_hasher.verify(password_hash, password + PASSWORD_PEPPER)
         return True, None
@@ -72,7 +72,7 @@ def verify_password(password_hash: str, password: str) -> tuple[bool, str | None
     except (InvalidHashError, TypeError):
         return False, None
 
-    # 2. Intenta sin pepper (usuario legacy) → migra
+    # 2. Try without the pepper (legacy user) → migrate
     try:
         _password_hasher.verify(password_hash, password)
         new_hash = _password_hasher.hash(password + PASSWORD_PEPPER)

@@ -90,13 +90,13 @@ class DBSchema:
         email VARCHAR(255) NOT NULL,
         username VARCHAR(50) NOT NULL,
         password_hash TEXT NOT NULL,
-        -- Reservada a propósito: no la usa ningún endpoint, servicio ni
-        -- query todavía. Se deja preparada para un futuro sistema de
-        -- roles/permisos (p.ej. distinguir cuentas admin de cuentas
-        -- normales) sin tener que migrar el esquema cuando haga falta.
-        -- No implementar lógica de autorización basada en esta columna
-        -- sin antes documentar la decisión (ver CLAUDE.md, convenciones
-        -- faltantes).
+        -- Reserved on purpose: no endpoint, service or query uses it yet.
+        -- It is kept ready for a future roles/permissions system (e.g.
+        -- telling admin accounts apart from regular ones) without having
+        -- to migrate the schema when it is needed.
+        -- Do not implement authorization logic based on this column
+        -- without documenting the decision first (see CLAUDE.md, missing
+        -- conventions).
         category VARCHAR(255) CHECK (category IN ('admin', 'common')),
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
         last_login_at TIMESTAMPTZ,
@@ -104,11 +104,11 @@ class DBSchema:
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     """
-    # Los índices únicos sobre email/username normalizados NO van aquí: en una
-    # instalación heredada (columna `mail`, sin `username` todavía) esta sentencia
-    # se ejecutaría antes de que _ensure_users_schema migre esas columnas, y el
-    # CREATE INDEX fallaría por columna inexistente. _ensure_users_schema los crea
-    # (idempotente, IF NOT EXISTS) una vez migrado el esquema — ver db_init.py.
+    # The unique indexes on normalized email/username do NOT go here: on a
+    # legacy install (`mail` column, no `username` yet) this statement would
+    # run before _ensure_users_schema migrates those columns, and the
+    # CREATE INDEX would fail on a missing column. _ensure_users_schema creates
+    # them (idempotent, IF NOT EXISTS) once the schema is migrated — see db_init.py.
 
     auth_sessions = """
     CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -149,8 +149,8 @@ class DBSchema:
     food_brands = """
     CREATE TABLE IF NOT EXISTS food_brands (
         id SERIAL PRIMARY KEY,
-        code VARCHAR(255) NOT NULL,          -- clave estable normalizada
-        label VARCHAR(255) NOT NULL,         -- etiqueta visible, tal cual la escribe el usuario
+        code VARCHAR(255) NOT NULL,          -- normalized stable key
+        label VARCHAR(255) NOT NULL,         -- visible label, exactly as the user writes it
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
         created_by INTEGER,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -163,10 +163,10 @@ class DBSchema:
             CHECK (btrim(label) <> '')
     );
     """
-    # uq_food_brands_code NO va aquí por el mismo motivo que en `users`: en una
-    # instalación heredada (columna `name`, sin `code` todavía) el CREATE INDEX
-    # fallaría antes de que _ensure_food_brands_schema migre la columna.
-    # _ensure_food_brands_schema lo crea (idempotente) tras la migración.
+    # uq_food_brands_code does NOT go here for the same reason as in `users`: on
+    # a legacy install (`name` column, no `code` yet) the CREATE INDEX would
+    # fail before _ensure_food_brands_schema migrates the column.
+    # _ensure_food_brands_schema creates it (idempotent) after the migration.
 
     @classmethod
     def insulin_injections(cls):
@@ -209,18 +209,17 @@ class DBSchema:
     @classmethod
     def meal_type_schedule(cls):
         """
-        Generate meal_type_schedule table SQL. Franjas horarias, por usuario,
-        para el meal_type que se asigna automáticamente a un intake_event
-        creado sin pasar por el carrito (decisión 2026-09-11). Solo existe una
-        fila por (users_id, meal_type) cuando el usuario ha personalizado esa
-        franja desde /settings/meal_type_schedule; si no hay fila, el default
-        vive en código (domain/meal_type_schedule.py:DEFAULT_MEAL_TYPE_WINDOWS),
-        no en la base, para no tener que sembrar filas al dar de alta un
-        usuario nuevo.
+        Generate meal_type_schedule table SQL. Per-user time slots for the
+        meal_type assigned automatically to an intake_event created without
+        going through the cart (decision 2026-09-11). There is only one row per
+        (users_id, meal_type) when the user has customized that slot from
+        /settings/meal_type_schedule; if there is no row, the default lives in
+        code (domain/meal_type_schedule.py:DEFAULT_MEAL_TYPE_WINDOWS), not in
+        the database, so no rows need to be seeded when a new user signs up.
 
-        meal_type está restringido a AUTO_ASSIGNABLE_MEAL_TYPES, no al enum
-        MealType completo: snack y rescue son siempre manuales y nunca deben
-        poder tener una franja horaria aquí.
+        meal_type is restricted to AUTO_ASSIGNABLE_MEAL_TYPES, not to the full
+        MealType enum: snack and rescue are always manual and must never be
+        able to have a time slot here.
         """
         auto_meal_type_list = sql_in_list(AUTO_ASSIGNABLE_MEAL_TYPES)
         return f"""
@@ -239,7 +238,7 @@ class DBSchema:
         CONSTRAINT uq_meal_type_schedule_users_id_meal_type
             UNIQUE (users_id, meal_type),
         CONSTRAINT ck_meal_type_schedule_start_end_distinct
-            CHECK (start_time <> end_time) -- una franja degenerada (start = end) no cubriría ninguna hora; se rechaza al guardar, no se permite persistirla
+            CHECK (start_time <> end_time) -- a degenerate slot (start = end) would cover no hour; it is rejected on save and never allowed to persist
     );
     """
 
@@ -422,7 +421,7 @@ class DBSchema:
         name VARCHAR(255), -- Name for this meal event, useful when there are multiple carts and the user wants to label each one. Editable at any time.
 
         meal_time TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP, -- Defaults to the moment it is added, but should be easy to change within the cart
-        timezone_at_event TEXT NOT NULL DEFAULT 'Europe/Madrid', -- IANA key de la zona en que el usuario introdujo meal_time
+        timezone_at_event TEXT NOT NULL DEFAULT 'Europe/Madrid', -- IANA key of the zone in which the user entered meal_time
         eating_out BOOLEAN DEFAULT FALSE, -- Whether the user is eating out. Adjustable in the cart.
         insulin_dose BOOLEAN DEFAULT TRUE, -- Whether this meal requires an insulin dose. Adjustable in the cart.
         injection_zone VARCHAR(50)
@@ -462,7 +461,7 @@ class DBSchema:
         notes TEXT, -- Free-text note about the meal, edited from the cart card (input above "Confirm food"). No physical limit: the 500-character cap is a domain rule (INTAKE_EVENT_NOTES_MAX_LENGTH in domain/intake_event.py), enforced at the boundary with 422 and never truncated (decision 2026-09-10, §7.3)
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        deleted_at TIMESTAMPTZ  -- soft-delete; solo se usa en state='consumed' (decisión 2026-09-08)
+        deleted_at TIMESTAMPTZ  -- soft delete; only used in state='consumed' (decision 2026-09-08)
     );
     """
 
