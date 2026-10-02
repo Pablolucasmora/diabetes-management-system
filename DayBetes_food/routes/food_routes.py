@@ -141,15 +141,15 @@ logger = logging.getLogger(__name__)
 
 def _default_meal_type_now(connection, user_id: int) -> MealType | None:
     """
-    `meal_type` automático para un `intake_event` creado sin pasar por el
-    carrito (añadir un alimento directo), a partir de la hora local actual y
-    de las franjas horarias del usuario (o los defaults si no las ha
-    personalizado en /settings/meal_type_schedule).
+    Automatic `meal_type` for an `intake_event` created without going through
+    the cart (adding a food directly), from the current local time and the
+    user's time slots (or the defaults if they have not customized them in
+    /settings/meal_type_schedule).
 
-    Se calcula aquí, en el momento de crear la fila, y no en el componente
-    que la muestra: el `<select>` de `EventHeader` (cart_components.py) debe
-    poder confiar en que `event.meal_type` ya es el valor real, nunca uno que
-    tenga que inferir en el render (code_conventions.md §7.14, decisión
+    It is computed here, when the row is created, and not in the component
+    that shows it: the `<select>` in `EventHeader` (cart_components.py) must
+    be able to trust that `event.meal_type` already is the real value, never
+    one it has to infer at render time (code_conventions.md §7.14, decision
     2026-09-11).
     """
     overrides = get_meal_type_schedule(connection, user_id)
@@ -157,12 +157,11 @@ def _default_meal_type_now(connection, user_id: int) -> MealType | None:
 
 
 def _event_auto_offset_minutes(event_data) -> int:
-    """Offset autocalculado de una tanda nueva (measurement_conventions.md §4.5).
+    """Auto-computed offset of a new plate (measurement_conventions.md §4.5).
 
-    Diferencia en minutos entre el `meal_time` del evento y este instante. Es
-    el valor con el que nace la tanda; a partir de ahí lo heredan sus
-    porciones, que es lo que evita corregirlo ingrediente a ingrediente
-    (§4.6.2).
+    Difference in minutes between the event's `meal_time` and this instant. It
+    is the value the plate is born with; from then on its portions inherit it,
+    which is what avoids correcting it ingredient by ingredient (§4.6.2).
     """
     if not event_data or not event_data.meal_time:
         return 0
@@ -171,16 +170,16 @@ def _event_auto_offset_minutes(event_data) -> int:
 
 
 def _resolve_event_plate(connection, user_id: int, event_id: int, plate_id: str, offset_minutes: int) -> int:
-    """Tanda a la que va un alimento que se añade a un evento (§4.6.1, §7.7).
+    """Plate a food added to an event goes to (§4.6.1, §7.7).
 
-    - Un id concreto: esa tanda, validando dentro del SQL que es del usuario y
-      del evento (§5.3); el `event_id` de la petición no basta como prueba.
-    - `"0"`: la opción `+ New plate` del selector, que crea la tanda en el acto.
-    - Vacío o ausente: la última tanda del evento y, si no hay ninguna, la
-      primera creada implícitamente.
+    - A specific id: that plate, checking inside the SQL that it belongs to
+      the user and to the event (§5.3); the request's `event_id` is not proof.
+    - `"0"`: the selector's `+ New plate` option, which creates the plate on the spot.
+    - Empty or missing: the event's last plate and, if there is none, a first
+      one created implicitly.
 
     Raises:
-        NotFoundError: la tanda no existe, no es del usuario o es de otro evento.
+        NotFoundError: the plate does not exist, is not the user's or belongs to another event.
     """
     raw = (plate_id or "").strip()
     if raw.isdigit() and int(raw) != 0:
@@ -1307,8 +1306,8 @@ def setup_food_routes(rt):
                         ),
                         commit=False,
                     )
-                    # Un rescate es una única toma: nace con su tanda propia y
-                    # offset 0, el mismo que ya tenía la porción (§4.6.1).
+                    # A rescue is a single intake: it is born with its own plate
+                    # and offset 0, the same the portion already had (§4.6.1).
                     plate_id = create_intake_plate(
                         connection,
                         IntakePlateCreate(intake_event_id=int(event_id), offset_minutes=0),
@@ -1385,9 +1384,9 @@ def setup_food_routes(rt):
             can_edit = _can_edit_entry(entry_type, entry, user_id)
             can_delete = can_edit
             events = list_planned_intake_events(connection, int(user_id)) if user_id else []
-            # Las tandas del evento que el selector va a mostrar seleccionado
-            # (§7.7): sin esto el selector de tanda nacería vacío y solo se
-            # llenaría al cambiar de comida.
+            # The event's plates the selector will show as selected (§7.7):
+            # without this the plate selector would be born empty and would
+            # only fill in when the meal changed.
             plate_options, selected_plate_id = (
                 plate_selector_options(connection, int(user_id), events[0].id) if events else ([], None)
             )
@@ -2087,9 +2086,9 @@ def setup_food_routes(rt):
                         if total_recipe_amount <= 0:
                             raise ValidationError("recipe_without_ingredients")
                         factor = plated_grams / total_recipe_amount
-                        # Una receta importada entra como tanda propia, con el
-                        # nombre de la receta (§4.6.5): es un plato completo,
-                        # no ingredientes sueltos que se mezclen con los demás.
+                        # An imported recipe goes in as its own plate, named
+                        # after the recipe (§4.6.5): it is a complete dish, not
+                        # loose ingredients to mix with the others.
                         recipe_plate_id = create_intake_plate(
                             connection,
                             IntakePlateCreate(
@@ -2125,11 +2124,11 @@ def setup_food_routes(rt):
                         if not created:
                             raise ValidationError("recipe_without_ingredients")
             except NotFoundError:
-                # intake_event_id ajeno o archivado: recurso inexistente (§5.4),
-                # no un fallo de servidor (hallazgo 23).
+                # Another user's or an archived intake_event_id: a nonexistent
+                # resource (§5.4), not a server failure (finding 23).
                 return app_error_response(request, NotFoundError, "That meal no longer exists.")
             except ConflictError:
-                # El evento ya no está 'planned'.
+                # The event is no longer 'planned'.
                 return app_error_response(request, ConflictError, "That meal has already been confirmed.")
             except ValidationError as error:
                 if str(error) == "recipe_without_ingredients":
@@ -2339,8 +2338,8 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             user_id = get_current_user_id()
             if not user_id:
-                # Sin sesión: 401 (error_conventions.md §3.3). Defensa en
-                # profundidad; el middleware ya cubre estas rutas (hallazgo 26).
+                # No session: 401 (error_conventions.md §3.3). Defense in
+                # depth; the middleware already covers these routes (finding 26).
                 return HTMLResponse(status_code=401)
 
             intake_item = get_manual_intake(connection, intake_id)
@@ -2400,8 +2399,8 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             user_id = get_current_user_id()
             if not user_id:
-                # Sin sesión: 401 (error_conventions.md §3.3). Defensa en
-                # profundidad; el middleware ya cubre estas rutas (hallazgo 26).
+                # No session: 401 (error_conventions.md §3.3). Defense in
+                # depth; the middleware already covers these routes (finding 26).
                 return HTMLResponse(status_code=401)
 
             recipe = get_recipe(connection, recipe_id)
@@ -2417,9 +2416,9 @@ def setup_food_routes(rt):
                             recipe_meal_type = MealType(recipe["meal_type"]) if recipe.get("meal_type") else None
                         except ValueError:
                             recipe_meal_type = None
-                        # La receta manda si trae su propio meal_type; si no,
-                        # cae al mismo default por franja horaria que el resto
-                        # de altas automáticas (§7.14, decisión 2026-09-11).
+                        # The recipe wins if it carries its own meal_type;
+                        # otherwise it falls back to the same time-slot default
+                        # as the rest of automatic creations (§7.14, decision 2026-09-11).
                         if recipe_meal_type is None:
                             recipe_meal_type = _default_meal_type_now(connection, int(user_id))
                         event_id = create_intake_event(
@@ -2435,7 +2434,7 @@ def setup_food_routes(rt):
 
                     event_data = get_intake_event(connection, int(user_id), event_id)
                     offset_minutes = _event_auto_offset_minutes(event_data)
-                    # La receta entra como tanda propia con su nombre (§4.6.5).
+                    # The recipe goes in as its own plate, with its name (§4.6.5).
                     recipe_plate_id = create_intake_plate(
                         connection,
                         IntakePlateCreate(
@@ -3142,10 +3141,10 @@ def setup_food_routes(rt):
 
     @rt("/food/plate_selector")
     def get(request: Request, intake_event_id: str = ""):
-        """Selector de tanda del evento elegido en el selector de comida (§7.7).
+        """Plate selector for the event chosen in the meal selector (§7.7).
 
-        Devuelve vacío solo cuando no hay evento del que listar tandas (ninguno
-        seleccionado, `New Meal`, o un evento que ya no está en el carrito).
+        It returns empty only when there is no event to list plates from (none
+        selected, `New Meal`, or an event no longer in the cart).
         """
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -3161,8 +3160,8 @@ def setup_food_routes(rt):
                 event_id = get_planned_intake_event(connection, int(user_id), int(raw_event_id))
             except (NotFoundError, ConflictError):
                 return render_fragment(PlateSelector([]))
-            # Preseleccionada la última tanda a la que se añadió algo: montando
-            # el segundo plato se añaden varios alimentos seguidos al mismo (§7.7).
+            # The last plate something was added to is preselected: when putting
+            # together the second dish, several foods are added to it in a row (§7.7).
             options, last_used = plate_selector_options(connection, int(user_id), event_id)
             return render_fragment(PlateSelector(options, selected_id=last_used))
 
@@ -3173,15 +3172,15 @@ def setup_food_routes(rt):
 
         clean_name = (meal_name or "").strip()
         if len(clean_name) > INTAKE_EVENT_NAME_MAX_LENGTH:
-            # §7.3: no truncar silenciosamente; el exceso sobre el VARCHAR(255)
-            # se rechaza en el boundary (decisión 2026-09-09, hallazgo 24).
+            # §7.3: never truncate silently; anything beyond the VARCHAR(255)
+            # is rejected at the boundary (decision 2026-09-09, finding 24).
             return HTMLResponse(status_code=422)
 
         with get_connection() as connection:
             user_id = get_current_user_id()
             if not user_id:
-                # Sin sesión: 401 (error_conventions.md §3.3). Defensa en
-                # profundidad; el middleware ya cubre estas rutas (hallazgo 26).
+                # No session: 401 (error_conventions.md §3.3). Defense in
+                # depth; the middleware already covers these routes (finding 26).
                 return HTMLResponse(status_code=401)
 
             event_id = create_intake_event(
