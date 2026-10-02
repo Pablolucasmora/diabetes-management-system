@@ -76,9 +76,9 @@
 
   function initUnitSelect(selectEl) {
     if (!selectEl) return;
-    // Idempotencia: initAllUnitSelects se ejecuta sobre `document` en cada
-    // swap, así que un select ya inicializado se vuelve a visitar. Sin esta
-    // marca acumularía un listener "change" por swap.
+    // Idempotency: initAllUnitSelects runs over `document` on every swap, so
+    // an already initialized select is visited again. Without this mark it
+    // would pile up one "change" listener per swap.
     if (selectEl.dataset.dbUnitsInit === "1") return;
     selectEl.dataset.dbUnitsInit = "1";
     var persistKey = selectEl.getAttribute("data-persist-key");
@@ -113,18 +113,18 @@
 
   function bindInitEvents() {
     initAllUnitSelects(document);
-    // Reacciona a cualquier swap (carrito completo, #cart_events_list o una
-    // tarjeta #cart_card_event_{id}): el refresco local del carrito
-    // (decisión 2026-09-10) puede insertar selects nuevos en targets que no
-    // son #main_content.
+    // Reacts to any swap (the whole cart, #cart_events_list or a
+    // #cart_card_event_{id} card): the local cart refresh (decision
+    // 2026-09-10) can insert new selects into targets other than
+    // #main_content.
     //
-    // Se recorre `document`, no `event.detail.target`: con hx-swap="outerHTML"
-    // —el swap que usan todas las acciones del carrito— el target del evento
-    // es el nodo *sustituido*, que ya está desconectado del DOM, así que los
-    // selects recién insertados no aparecerían en su querySelectorAll
-    // (hallazgo 42 de audit/audit_intake_event.md, comprobado en navegador).
-    // Recorrer el documento es barato y idempotente: initUnitSelect marca los
-    // selects ya inicializados con data-db-units-init.
+    // It walks `document`, not `event.detail.target`: with
+    // hx-swap="outerHTML" —the swap every cart action uses— the event's
+    // target is the *replaced* node, already detached from the DOM, so the
+    // newly inserted selects would not show up in its querySelectorAll
+    // (finding 42 of audit/audit_intake_event.md, checked in the browser).
+    // Walking the document is cheap and idempotent: initUnitSelect marks the
+    // already initialized selects with data-db-units-init.
     document.body.addEventListener("htmx:afterSwap", function () {
       initAllUnitSelects(document);
     });
@@ -138,13 +138,13 @@
 })();
 
 (function () {
-  // Un refresco parcial no es un cambio de página y no debe mover el scroll
-  // (frontend_conventions.md §5). Las acciones del carrito reemplazan la
-  // tarjeta entera con hx-swap="outerHTML", y al desaparecer del DOM el nodo
-  // que tenía el foco —un botón como `Apply all`, que no tiene id que htmx
-  // pueda restaurar— el navegador puede reposicionar la página por su cuenta.
-  // Aquí se guarda la posición antes del swap y se restaura después, solo si
-  // ha cambiado y solo para los targets del carrito.
+  // A partial refresh is not a page change and must not move the scroll
+  // (frontend_conventions.md §5). The cart actions replace the whole card
+  // with hx-swap="outerHTML", and when the focused node disappears from the
+  // DOM —a button like `Apply all`, which has no id htmx could restore— the
+  // browser may reposition the page on its own. Here the position is saved
+  // before the swap and restored afterwards, only if it changed and only for
+  // the cart targets.
   if (window.__dbCartScrollGuard) return;
   window.__dbCartScrollGuard = true;
 
@@ -174,9 +174,9 @@
       savedScrollY = window.scrollY;
     });
 
-    // Se restaura en los dos momentos: afterSwap deja la posición correcta de
-    // inmediato y afterSettle la mantiene si el navegador la mueve al asentar
-    // el contenido nuevo.
+    // It is restored at both moments: afterSwap sets the right position right
+    // away and afterSettle keeps it if the browser moves it while settling the
+    // new content.
     document.body.addEventListener("htmx:afterSwap", function () {
       restore(false);
     });

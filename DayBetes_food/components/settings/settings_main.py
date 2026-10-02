@@ -272,13 +272,12 @@ _MEAL_TYPE_SCHEDULE_LABELS = {
 
 def meal_type_schedule_row(meal_type, start_time, end_time, is_default: bool):
     """
-    Una fila editable del horario de asignación automática de meal_type.
+    An editable row of the automatic meal_type assignment schedule.
 
-    start_time/end_time siempre se envían juntos (`hx_include="closest
-    form"`): las dos columnas de una misma franja se escriben en la misma
-    petición, nunca por separado, para no dejar la franja a medio guardar con
-    el significado ambiguo de "campo ausente" (§7.4/§7.9 de
-    code_conventions.md).
+    start_time/end_time are always sent together (`hx_include="closest
+    form"`): the two columns of the same slot are written in the same
+    request, never separately, so the slot is never left half saved with the
+    ambiguous meaning of "missing field" (§7.4/§7.9 of code_conventions.md).
     """
     row_id = f"meal_type_schedule_row_{meal_type.value}"
     label = _MEAL_TYPE_SCHEDULE_LABELS[meal_type]
