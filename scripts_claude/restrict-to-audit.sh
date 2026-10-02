@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# PreToolUse hook (Write|Edit) para audit-tabla / propose / review:
-# estos agentes solo pueden escribir dentro de audit/ o conventions/,
-# nunca en el código real del proyecto.
+# PreToolUse hook (Write|Edit) for the audit-tabla and propose agents:
+# they can only write inside audit/ or conventions/, never in the
+# project's real code.
 set -euo pipefail
 
 input="$(cat)"
@@ -23,7 +23,7 @@ case "$file_path" in
         exit 0
         ;;
     *)
-        echo "Bloqueado: este agente solo puede escribir dentro de audit/ o conventions/. Intento de escritura en: $file_path" >&2
+        echo "Blocked: this agent can only write inside audit/ or conventions/. Write attempted on: $file_path" >&2
         exit 2
         ;;
 esac

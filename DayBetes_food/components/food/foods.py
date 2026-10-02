@@ -211,8 +211,8 @@ def MealSelector(events: list, selected_id: int = None, plate_options: list = No
             name="intake_event_id",
             data_skip_page_loading="true",
             aria_label="Meal selector",
-            # Al cambiar de comida cambian sus tandas: el selector de tanda se
-            # repinta con las del evento elegido (§7.7).
+            # Changing the meal changes its plates: the plate selector is
+            # redrawn with the chosen event's plates (§7.7).
             hx_get="/food/plate_selector",
             hx_trigger="change",
             hx_target="#plate_selector_box",
@@ -295,16 +295,16 @@ def MealSelector(events: list, selected_id: int = None, plate_options: list = No
 
 
 def PlateSelector(plate_options: list, selected_id: int = None):
-    """Selector de tanda, al lado del selector de comida (§7.7).
+    """Plate selector, next to the meal selector (§7.7).
 
-    `plate_options` son pares `(id, etiqueta)` ya resueltos por la ruta: el
-    nombre mostrado de una tanda puede ser derivado de sus ingredientes
-    (measurement_conventions.md §4.6.3) y eso es una consulta, que no
-    corresponde al componente (§1.4).
+    `plate_options` are `(id, label)` pairs already resolved by the route: a
+    plate's shown name can be derived from its ingredients
+    (measurement_conventions.md §4.6.3), and that is a query, which does not
+    belong in the component (§1.4).
 
-    Siempre hay una tanda concreta seleccionada —la última usada, que resuelve
-    la ruta— para que el control no mienta sobre dónde va a caer el alimento
-    (§6). Sin evento seleccionado no se pinta ningún control.
+    There is always a specific plate selected —the last one used, resolved by
+    the route— so that the control does not lie about where the food will
+    land (§6). With no event selected, no control is drawn.
     """
     if not plate_options:
         return ""
@@ -2703,10 +2703,10 @@ def FavoriteButton(entry_type: str, entry_id: int, favorite: bool):
 
 def AddButton(label: str = "+", include_meal_selector: bool = True, **attrs):
     if include_meal_selector:
-        # El selector de tanda viaja con el de comida: el alimento tiene que
-        # saber a qué tanda va, no solo a qué evento (§7.7). Si no se está
-        # mostrando, el selector no existe y la petición sale sin plate_id,
-        # que es exactamente "la tanda por defecto".
+        # The plate selector travels with the meal selector: the food has to
+        # know which plate it goes to, not only which event (§7.7). If it is
+        # not being shown, the selector does not exist and the request goes
+        # out without plate_id, which is exactly "the default plate".
         attrs.setdefault("hx_include", "#meal_selector, #plate_selector")
     else:
         attrs.pop("hx_include", None)

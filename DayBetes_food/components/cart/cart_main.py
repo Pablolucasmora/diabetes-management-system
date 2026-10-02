@@ -6,10 +6,10 @@ from DayBetes_food.components.injection_zone import asset_busted
 
 def cart_events_list(events, portions_by_event, plates_by_event=None):
     """
-    Contenedor local de las tarjetas de evento (#cart_events_list). Es el
-    target de las acciones que pueden reordenar la lista (p.ej. meal_hour,
-    que cambia el orden `meal_time DESC`) sin necesidad de recargar el resto
-    de la página (decisión 2026-09-10, refresco local del carrito).
+    Local container of the event cards (#cart_events_list). It is the target
+    of the actions that can reorder the list (e.g. meal_hour, which changes
+    the `meal_time DESC` order) without reloading the rest of the page
+    (decision 2026-09-10, local cart refresh).
     """
     plates_by_event = plates_by_event or {}
     return Div(
@@ -28,10 +28,10 @@ def cart_events_list(events, portions_by_event, plates_by_event=None):
 
 def cart_main(events, portions_by_event, plates_by_event=None, oob: bool = False):
     """
-    `oob=True` marca el Div raíz (#cart_body) como swap fuera de banda
-    (hx-swap-oob), para que un endpoint que borra/confirma el último evento
-    planificado pueda inyectar el estado "carrito vacío" sin recargar el
-    resto de la página (decisión 2026-09-10, refresco local del carrito).
+    `oob=True` marks the root Div (#cart_body) as an out-of-band swap
+    (hx-swap-oob), so that an endpoint that deletes/confirms the last planned
+    event can inject the "empty cart" state without reloading the rest of
+    the page (decision 2026-09-10, local cart refresh).
     """
     oob_attrs = {"hx_swap_oob": "true"} if oob else {}
 
@@ -81,9 +81,9 @@ def cart_main(events, portions_by_event, plates_by_event=None, oob: bool = False
     return Div(
         H1("Food cart", cls="text-xl font-bold"),
         cart_events_list(events, portions_by_event, plates_by_event),
-        # Con cache busting: /js/ se sirve con max-age de una semana
-        # (main.py), así que sin el ?v= el navegador seguiría ejecutando la
-        # versión anterior del fichero tras cada cambio.
+        # With cache busting: /js/ is served with a one-week max-age
+        # (main.py), so without the ?v= the browser would keep running the
+        # previous version of the file after every change.
         Script(src=asset_busted("/js/cart_units.js"), defer="defer"),
         id="cart_body",
         data_hide_cart="true",

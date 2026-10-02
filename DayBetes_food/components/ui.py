@@ -32,16 +32,16 @@ def PageLoadingOverlay():
 
 def AppToast():
     """
-    Canal único de avisos de error de la web (decisión 2026-09-10, hallazgo 37
-    de audit/audit_intake_event.md).
+    Single channel for the web's error notices (decision 2026-09-10, finding
+    37 of audit/audit_intake_event.md).
 
-    Las rutas HTMX conservan su status semántico (`422`/`404`/`409`, §3.2 y
-    §3.6 de error_conventions.md) y devuelven cuerpo vacío —htmx no hace swap
-    ante un `4xx`—, pero acompañan la respuesta con el código y el mensaje
-    público del catálogo de errores. `static/js/app_toast.js` los pinta aquí,
-    de modo que un error deja de ser invisible sin que ninguna ruta tenga que
-    reconstruir su fragmento (error_conventions.md §7: "no devolver un cuerpo
-    vacío para un error que el usuario necesita ver").
+    HTMX routes keep their semantic status (`422`/`404`/`409`, §3.2 and §3.6
+    of error_conventions.md) and return an empty body —htmx does not swap on
+    a `4xx`—, but they send along the code and the public message from the
+    error catalog. `static/js/app_toast.js` paints them here, so an error is
+    no longer invisible without any route having to rebuild its fragment
+    (error_conventions.md §7: "never return an empty body for an error the
+    user needs to see").
     """
     return Div(
         Div(

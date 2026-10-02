@@ -1,7 +1,7 @@
-"""Helpers y mapeos para zonas de inyección (code_conventions.md §4.2).
+"""Helpers and mappings for injection zones (code_conventions.md §4.2).
 
-Las etiquetas e imágenes no entran en domain/constants.py (§4.2):
-son artefactos de presentación, no conceptos de dominio.
+The labels and images do not go into domain/constants.py (§4.2): they are
+presentation artifacts, not domain concepts.
 """
 
 from pathlib import Path
@@ -9,7 +9,7 @@ from DayBetes_food.domain.constants import InjectionZone
 
 BASE_INJECTION_ZONE_IMAGE = "/images/content/injection_zones/injection_zones.svg"
 
-# Mapeos enum → presentación (diccionarios tipados, code_conventions.md §3.2)
+# Enum → presentation mappings (typed dictionaries, code_conventions.md §3.2)
 INJECTION_ZONE_IMAGE_BY_ZONE: dict[InjectionZone, str] = {
     InjectionZone.RIGHT_ARM: "/images/content/injection_zones/injection_zones_right_arm.svg",
     InjectionZone.LEFT_ARM: "/images/content/injection_zones/injection_zones_left_arm.svg",
@@ -32,7 +32,7 @@ INJECTION_ZONE_LABEL_BY_ZONE: dict[InjectionZone, str] = {
 
 
 def asset_busted(path: str) -> str:
-    """Añade cache busting (timestamp) a rutas de assets estáticos."""
+    """Add cache busting (timestamp) to static asset paths."""
     static_root = Path(__file__).resolve().parents[1] / "static"
     rel = path[1:] if path.startswith("/") else path
     full = static_root / rel
@@ -42,27 +42,27 @@ def asset_busted(path: str) -> str:
 
 
 def injection_zone_label(zone: InjectionZone | None) -> str:
-    """Etiqueta legible para una zona de inyección.
+    """Readable label for an injection zone.
 
-    Si zone es None (no registrada), devuelve "Zone not recorded".
+    If zone is None (not recorded), it returns "Zone not recorded".
     """
     return INJECTION_ZONE_LABEL_BY_ZONE[zone] if zone else "Zone not recorded"
 
 
 def injection_zone_image(zone: InjectionZone | None) -> str:
-    """Imagen/ícono para una zona de inyección.
+    """Image/icon for an injection zone.
 
-    Si zone es None (no registrada), devuelve BASE_INJECTION_ZONE_IMAGE.
+    If zone is None (not recorded), it returns BASE_INJECTION_ZONE_IMAGE.
     """
     return INJECTION_ZONE_IMAGE_BY_ZONE[zone] if zone else BASE_INJECTION_ZONE_IMAGE
 
 
 def parse_injection_zone(value) -> InjectionZone | None:
-    """Convierte a InjectionZone un valor de presentación (cadena de BD o enum).
+    """Convert a presentation value (DB string or enum) to InjectionZone.
 
-    Tolerante por diseño: es capa de presentación. Un valor no reconocido se pinta
-    como "zona no registrada", no revienta la página. La validación dura vive en el
-    CHECK de base de datos y en database/mappers.py (§4.3).
+    Lenient by design: it is the presentation layer. An unrecognized value is
+    drawn as "zone not recorded" and does not break the page. Strict
+    validation lives in the database CHECK and in database/mappers.py (§4.3).
     """
     if isinstance(value, InjectionZone):
         return value
