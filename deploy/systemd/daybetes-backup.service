@@ -1,5 +1,5 @@
 [Unit]
-Description=DayBetes: copia de seguridad de la base de datos
+Description=DayBetes: database backup
 Requires=docker.service
 After=docker.service
 
