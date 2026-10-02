@@ -1,0 +1,10 @@
+[Unit]
+Description=DayBetes: copia de seguridad diaria a las 03:30
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+# Si el servidor estaba apagado a las 03:30, la copia se hace al arrancar.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

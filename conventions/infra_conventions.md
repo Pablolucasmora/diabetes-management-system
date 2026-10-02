@@ -99,3 +99,16 @@ Este documento complementa `conventions/code_conventions.md` §8 (configuración
 - **Docker**: se instala desde el repositorio oficial de Docker (clave de firma con huella `9DC858229FC7DD38854AE2D88D81803C0EBFCD88`). No entra en `unattended-upgrades`, porque actualizarlo reinicia todos los contenedores: se actualiza a mano con `apt`, tras comprobar las notas de la versión.
 - Docker se usa con `sudo`. `pablo` no pertenece al grupo `docker`: ese grupo equivale a ser root sin contraseña.
 - Los logs de los contenedores se limitan en `/etc/docker/daemon.json` (`json-file`, `max-size` 10m, `max-file` 3), para que no puedan llenar el disco.
+
+## 12. Copias de seguridad
+
+- El backup automático de OVH (imagen diaria del disco) no cuenta como copia de la base de datos: vive en el mismo proveedor que el servidor, solo permite restaurar el servidor entero y copia los archivos de un Postgres en marcha.
+- La copia de la base de datos de producción es un `pg_dump -Fc` de los datos y un `pg_dumpall --roles-only` de los roles, cada noche a las 03:30, con `scripts/backup.sh`.
+- Las copias se cifran con `age` antes de salir de Postgres. El servidor solo tiene la clave **pública**, así que puede cifrar pero no descifrar. La clave privada vive únicamente en el gestor de contraseñas del desarrollador: sin ella ninguna copia se puede restaurar.
+- Destino fuera del servidor: bucket `daybetes-backups` de Cloudflare R2, con jurisdicción UE (datos de salud), que borra los objetos a los 90 días mediante una regla de ciclo de vida. El token de R2 solo tiene permiso *Object Read & Write* sobre ese bucket. Las últimas 7 copias se conservan además en `/var/backups/daybetes` para restaurar sin depender de R2.
+- El script falla si cualquier paso falla (`set -euo pipefail`), escribe en `.tmp` y renombra al terminar, y no sube nada si el volcado falla: nunca se guarda una copia vacía o a medias con nombre de copia válida.
+- Vigilancia: el script avisa a Healthchecks.io al empezar y con su código de salida al terminar. Healthchecks envía un email si una copia falla **o si no llega ninguna señal** en el plazo previsto (interruptor de hombre muerto).
+- Ejecución: timer de systemd (`deploy/systemd/daybetes-backup.timer`, `Persistent=true`) que lanza `daybetes-backup.service` como root con la configuración de `/etc/daybetes/backup.env` (root, `chmod 600`, plantilla en `deploy/backup.env.example`).
+- Root nunca ejecuta un archivo que pueda modificar un usuario sin privilegios. El script se instala como copia propiedad de root (`sudo install -m 755 scripts/backup.sh /usr/local/sbin/daybetes-backup`) y no se ejecuta desde `/opt/daybetes`. Un cambio en `scripts/backup.sh` o en `deploy/systemd/` no tiene efecto hasta que se reinstala en el servidor.
+- `deploy/` contiene los archivos de configuración del servidor que se versionan (unidades de systemd, plantillas): se copian o instalan en el VPS, no se ejecutan desde el repositorio.
+- Una copia que nunca se ha restaurado no cuenta como copia. Se hace una prueba de restauración completa al ponerlas en marcha y después **una vez al mes**: descargar de R2 la copia más reciente, descifrarla y restaurarla en un Postgres desechable en el Mac, comparar el recuento de filas por tabla con producción y borrar después la copia descifrada.
