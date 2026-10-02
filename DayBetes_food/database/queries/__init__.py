@@ -1,16 +1,16 @@
 """Database query operations.
 
-Un módulo por tabla (`users.py`, `catalog.py`, `manual_intake.py`,
+One module per table (`users.py`, `catalog.py`, `manual_intake.py`,
 `recipe.py`, `tags.py`, `linked_tags.py`, `user_favorites.py`,
 `food_brands.py`, `intake_event.py`, `insulin_injections.py`,
 `portion_detail.py`, `meal_type_schedule.py`, `auth_sessions.py`,
-`auth_rate_limits.py`), más
-`entries.py` para lecturas cross-entity sin tabla dueña y `crud.py` con los
-helpers genéricos compartidos (privados, no se re-exportan aquí).
+`auth_rate_limits.py`), plus
+`entries.py` for cross-entity reads without an owning table and `crud.py`
+with the shared generic helpers (private, not re-exported here).
 
-Este paquete re-exporta toda la API pública para que el resto de la app
-importe siempre `from DayBetes_food.database.queries import <nombre>`, sin
-conocer en qué archivo vive cada query (code_conventions.md §1.3.1).
+This package re-exports the whole public API so the rest of the app always
+imports `from DayBetes_food.database.queries import <name>`, without
+knowing which file each query lives in (code_conventions.md §1.3.1).
 """
 
 from DayBetes_food.database.queries.users import (

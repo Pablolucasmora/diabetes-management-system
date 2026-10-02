@@ -309,11 +309,11 @@ def _add_entity_filters(
     favorite_condition: str = None,
     viewer_user_id: int = None,
 ) -> None:
-    # Las condiciones se cualifican con el alias `entity`: todas las llamadas
-    # a esta función vienen de queries que aliasan así su tabla principal
+    # Conditions are qualified with the `entity` alias: every call to this
+    # function comes from queries that alias their main table that way
     # (FROM catalog entity / FROM manual_intake entity / FROM recipe entity).
-    # Sin cualificar, un JOIN con una tabla que tenga una columna del mismo
-    # nombre (p.ej. food_brands.created_by) vuelve la referencia ambigua.
+    # Unqualified, a JOIN with a table that has a column with the same
+    # name (e.g. food_brands.created_by) makes the reference ambiguous.
     if users_id:
         conditions.append(f"entity.{owner_column} = %(users_id)s")
         params["users_id"] = users_id

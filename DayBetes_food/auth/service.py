@@ -138,10 +138,10 @@ def create_session(
     except AppError:
         raise
     except Exception as exc:
-        # Solo se traduce a InfrastructureError cuando este servicio es
-        # dueño de la operación (commit=True). En modo caller-owned se
-        # propaga tal cual para que decida el coordinador de la
-        # transacción compuesta.
+        # It is only translated to InfrastructureError when this service
+        # owns the operation (commit=True). In caller-owned mode it is
+        # propagated as is, so the coordinator of the composite
+        # transaction decides.
         if not commit:
             raise
         raise InfrastructureError("Could not create authentication session") from exc

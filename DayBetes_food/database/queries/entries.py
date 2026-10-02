@@ -1,11 +1,11 @@
-"""Lecturas cross-entity sobre el concepto polimórfico "entrada de comida"
-(`catalog` / `manual_intake`, y en `get_consumed_food_usage_rankings`
-también `portion_detail` + `intake_event`).
+"""Cross-entity reads over the polymorphic "food entry" concept
+(`catalog` / `manual_intake`, and in `get_consumed_food_usage_rankings`
+also `portion_detail` + `intake_event`).
 
-Ninguna de estas queries tiene una única tabla dueña: agregan o combinan
-varias tablas para una necesidad de lectura concreta (autocompletado,
-sugerencias de "rescate", rankings de uso). No son CRUD de una entidad y
-por eso no viven en el archivo de ninguna tabla individual
+None of these queries has a single owning table: they aggregate or combine
+several tables for a specific read need (autocomplete, "rescue"
+suggestions, usage rankings). They are not the CRUD of an entity, and
+that is why they do not live in any individual table's file
 (code_conventions.md §1.3.1).
 """
 
@@ -220,7 +220,7 @@ def get_consumed_food_usage_rankings(connection, users_id: int, days: int = 60) 
             "users_id": users_id,
             "days": safe_days,
             "app_timezone": APP_TIMEZONE.key,
-            # §4.1: el estado sale del enum central, no de un literal en el SQL.
+            # §4.1: the state comes from the central enum, not from a literal in the SQL.
             "state": IntakeEventState.CONSUMED.value,
         },
         commit=False,

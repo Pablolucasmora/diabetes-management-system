@@ -55,10 +55,10 @@ def create_auth_session(
             connection.rollback()
         raise ConflictError("Could not create authentication session") from exc
     except Exception:
-        # Caller-owned (commit=False): se propaga la excepción tal cual,
-        # sin traducir. Clasificarla como InfrastructureError es
-        # responsabilidad de quien posee la operación (auth/service.py o
-        # el coordinador de la transacción compuesta), no del CRUD.
+        # Caller-owned (commit=False): the exception is propagated as is,
+        # untranslated. Classifying it as InfrastructureError is the
+        # responsibility of whoever owns the operation (auth/service.py or
+        # the coordinator of the composite transaction), not of the CRUD.
         if commit:
             connection.rollback()
         raise

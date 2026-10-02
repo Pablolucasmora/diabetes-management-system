@@ -1,8 +1,8 @@
-"""Queries para la tabla `intake_event`, incluyendo las operaciones de
-inyección de insulina asociadas (H1, H2):
+"""Queries for the `intake_event` table, including the associated insulin
+injection operations (H1, H2):
 
-- create_injection_for_event (H1): crea automáticamente inyección al confirmar evento
-- set_injection_zone (H2): registra zona de inyección en el borrador del evento
+- create_injection_for_event (H1): automatically creates an injection when an event is confirmed
+- set_injection_zone (H2): records the injection zone in the event draft
 """
 
 from dataclasses import fields as dataclass_fields
@@ -61,25 +61,25 @@ def set_injection_zone(
     *,
     commit: bool = True,
 ) -> bool:
-    """Registra zona de inyección en un evento (borrador).
+    """Record the injection zone of an event (draft).
 
-    Filtra por user_id, event_id e insulin_dose=TRUE.
-    Lanza NotFoundError si el evento no existe o no es del usuario.
-    Lanza ConflictError si el evento no lleva insulina.
+    Filters by user_id, event_id and insulin_dose=TRUE.
+    Raises NotFoundError if the event does not exist or is not the user's.
+    Raises ConflictError if the event carries no insulin.
 
     Args:
-        connection: conexión a BD
-        user_id: id del usuario (filtro de ownership)
-        intake_event_id: id del evento
-        zone: InjectionZone a registrar
-        commit: si True, confirma la transacción
+        connection: DB connection
+        user_id: id of the user (ownership filter)
+        intake_event_id: id of the event
+        zone: InjectionZone to record
+        commit: if True, commits the transaction
 
     Returns:
-        True si se actualizó
+        True if it was updated
 
     Raises:
-        NotFoundError: evento no existe o no es del usuario
-        ConflictError: evento no lleva insulina (insulin_dose = FALSE)
+        NotFoundError: the event does not exist or is not the user's
+        ConflictError: the event carries no insulin (insulin_dose = FALSE)
     """
     query = """
         UPDATE intake_event
@@ -104,7 +104,7 @@ def set_injection_zone(
             row = cursor.fetchone()
 
         if row is None:
-            # Verificar cuál fue la razón del fallo
+            # Find out why it failed
             with connection.cursor() as cursor:
                 cursor.execute(
                     "SELECT id, insulin_dose FROM intake_event WHERE id = %(id)s AND users_id = %(user_id)s AND deleted_at IS NULL;",
@@ -140,32 +140,32 @@ def create_injection_for_event(
     *,
     commit: bool = True,
 ) -> int | None:
-    """Crea automáticamente una inyección al confirmar un evento.
+    """Automatically create an injection when an event is confirmed.
 
-    Contrato: si insulin_dose es TRUE se crea SIEMPRE una fila; la zona es opcional.
-    Si insulin_dose es FALSE devuelve None sin hacer nada.
+    Contract: if insulin_dose is TRUE a row is ALWAYS created; the zone is optional.
+    If insulin_dose is FALSE it returns None and does nothing.
 
-    Flujo:
-    1. Verifica que el evento existe y es del usuario
-    2. Si insulin_dose=FALSE, devuelve None
-    3. Si insulin_dose=TRUE:
-       - Extrae zona del evento (puede ser NULL)
-       - Crea inyección con tipo RAPID, units=None, zona opcional
-       - Devuelve id de la inyección creada
+    Flow:
+    1. Checks that the event exists and belongs to the user
+    2. If insulin_dose=FALSE, returns None
+    3. If insulin_dose=TRUE:
+       - Takes the zone from the event (it can be NULL)
+       - Creates an injection with type RAPID, units=None, optional zone
+       - Returns the id of the created injection
 
     Args:
-        connection: conexión a BD
-        user_id: id del usuario (filtro de ownership)
-        intake_event_id: id del evento confirmado
-        commit: si True, confirma la transacción
+        connection: DB connection
+        user_id: id of the user (ownership filter)
+        intake_event_id: id of the confirmed event
+        commit: if True, commits the transaction
 
     Returns:
-        id de la inyección creada, o None si el evento no lleva insulina
+        id of the created injection, or None if the event carries no insulin
 
     Raises:
-        NotFoundError: evento no existe o no es del usuario
-        ValidationError: zona inválida en base de datos
-        InfrastructureError: otros errores
+        NotFoundError: the event does not exist or is not the user's
+        ValidationError: invalid zone in the database
+        InfrastructureError: other errors
     """
     query = """
         SELECT id, users_id AS user_id, insulin_dose, injection_zone,
@@ -189,7 +189,7 @@ def create_injection_for_event(
         if not row["insulin_dose"]:
             return None
 
-        # Procesar zona (puede ser NULL)
+        # Process the zone (it can be NULL)
         raw_zone = (row.get("injection_zone") or "").strip()
         zone = None
         if raw_zone:
@@ -198,7 +198,7 @@ def create_injection_for_event(
             except ValueError as exc:
                 raise ValidationError("Invalid injection zone stored in intake event") from exc
 
-        # Crear inyección (rápida, sin dosis, zona opcional)
+        # Create the injection (rapid, no dose, optional zone)
         injection_payload = InsulinInjectionCreate(
             user_id=row["user_id"],
             intake_event_id=intake_event_id,
@@ -209,7 +209,7 @@ def create_injection_for_event(
             injection_zone=zone,
         )
 
-        # No revalidamos porque insulin_type=RAPID y units=None es válido
+        # No revalidation: insulin_type=RAPID with units=None is valid
         injection_id = create_insulin_injection(
             connection,
             injection_payload,
@@ -234,12 +234,12 @@ def confirm_intake_event(
     *,
     commit: bool = True,
 ) -> int:
-    """Transiciona un evento planned -> consumed. Ownership e idempotencia en el UPDATE.
+    """Move an event from planned to consumed. Ownership and idempotency live in the UPDATE.
 
-    Devuelve el id confirmado.
+    Returns the confirmed id.
     Raises:
-        NotFoundError: el evento no existe o no es del usuario.
-        ConflictError: existe y es del usuario, pero ya no está en 'planned'.
+        NotFoundError: the event does not exist or is not the user's.
+        ConflictError: it exists and is the user's, but is no longer 'planned'.
     """
     query = """
         UPDATE intake_event
@@ -264,8 +264,8 @@ def confirm_intake_event(
             )
             row = cursor.fetchone()
         if row is None:
-            # Comprobación protegida por ownership (§6.7): distingue 404 de 409
-            # sin revelar eventos ajenos.
+            # Ownership-protected check (§6.7): tells 404 from 409 without
+            # revealing other users' events.
             with connection.cursor() as cursor:
                 cursor.execute(
                     "SELECT id FROM intake_event WHERE id = %(event_id)s AND users_id = %(user_id)s;",
@@ -289,13 +289,13 @@ def confirm_intake_event(
 # ============================================
 
 def create_intake_event(connection, payload: IntakeEventCreate, *, commit: bool = True) -> int:
-    """Crea un evento y devuelve su id (§3.3, §3.4).
+    """Create an event and return its id (§3.3, §3.4).
 
-    timezone_at_event se fija a la zona de la aplicación: es la zona en que se
-    interpretó meal_time (§10.4).
+    timezone_at_event is set to the application's zone: it is the zone in
+    which meal_time was interpreted (§10.4).
 
     Raises:
-        InfrastructureError: si el INSERT no devuelve fila.
+        InfrastructureError: if the INSERT returns no row.
     """
     query = """
         INSERT INTO intake_event
@@ -329,8 +329,8 @@ def create_intake_event(connection, payload: IntakeEventCreate, *, commit: bool 
 
 
 def get_intake_event(connection, user_id: int, event_id: int) -> IntakeEventRead | None:
-    """Lectura privada de un evento activo. None si no existe, no es del usuario
-    o está archivado (§5.3, §5.4, §11.3)."""
+    """Private read of an active event. None if it does not exist, is not the
+    user's or is archived (§5.3, §5.4, §11.3)."""
     query = f"""
         SELECT {_INTAKE_EVENT_COLUMNS}
         FROM intake_event
@@ -345,7 +345,7 @@ def get_intake_event(connection, user_id: int, event_id: int) -> IntakeEventRead
 
 
 def list_planned_intake_events(connection, user_id: int) -> list[IntakeEventRead]:
-    """Eventos en 'planned' (el carrito) del usuario, orden estable (§11.9)."""
+    """The user's 'planned' events (the cart), in a stable order (§11.9)."""
     query = f"""
         SELECT {_INTAKE_EVENT_COLUMNS}
         FROM intake_event
@@ -366,7 +366,7 @@ def list_planned_intake_events(connection, user_id: int) -> list[IntakeEventRead
 def list_consumed_intake_events_for_day(
     connection, user_id: int, day: date | None = None
 ) -> list[IntakeEventRead]:
-    """Eventos consumidos de un día natural local del usuario."""
+    """Consumed events of one local calendar day of the user."""
     if day is None:
         day = local_today()
     query = f"""
@@ -393,7 +393,7 @@ def list_consumed_intake_events_for_day(
 
 
 def list_consumed_intake_events(connection, user_id: int) -> list[IntakeEventRead]:
-    """Todos los eventos consumidos del usuario, orden estable (§11.9)."""
+    """All the user's consumed events, in a stable order (§11.9)."""
     query = f"""
         SELECT {_INTAKE_EVENT_COLUMNS}
         FROM intake_event
@@ -419,21 +419,22 @@ def update_intake_event(
     *,
     commit: bool = True,
 ) -> None:
-    """Actualiza campos de un evento activo del usuario. Ownership en el SQL (§5.3).
+    """Update fields of an active event of the user. Ownership lives in the SQL (§5.3).
 
-    data: IntakeEventUpdate (§3.1); solo los campos que representan realmente
-    los editables de la entidad. Los campos en None se ignoran (comportamiento
-    de _build_update_query); para poner name a NULL existe
-    update_intake_event_name. La traducción de dataclass a columnas físicas
-    (incluida la extracción de .value de los enums) ocurre en este único punto,
-    en vez de en cada ruta.
+    data: IntakeEventUpdate (§3.1); only the fields that really are the
+    entity's editable ones. Fields set to None are ignored (behaviour of
+    _build_update_query); update_intake_event_name exists to set name to
+    NULL. The translation from dataclass to physical columns (including
+    taking .value from the enums) happens at this single point instead of in
+    every route.
 
-    NO filtra por state: un evento 'consumed' sigue siendo editable en todos sus
-    campos (decisión 2026-09-08) y la ruta /confirm actualiza el evento cuando ya
-    está en 'consumed'. Sí excluye archivados (deleted_at IS NULL, §11.3).
+    It does NOT filter by state: a 'consumed' event stays editable in all its
+    fields (decision 2026-09-08), and the /confirm route updates the event
+    when it is already 'consumed'. It does exclude archived ones
+    (deleted_at IS NULL, §11.3).
 
     Raises:
-        NotFoundError: el evento no existe, no es del usuario o está archivado.
+        NotFoundError: the event does not exist, is not the user's or is archived.
     """
     payload = {}
     for field in dataclass_fields(data):
@@ -475,7 +476,7 @@ def update_intake_event(
 def update_intake_event_name(
     connection, user_id: int, event_id: int, name: str | None, *, commit: bool = True
 ) -> None:
-    """Actualiza el nombre de un evento activo del usuario."""
+    """Update the name of an active event of the user."""
     query = """
         UPDATE intake_event
         SET name = %(name)s,
@@ -507,11 +508,11 @@ def update_intake_event_name(
 def update_intake_event_notes(
     connection, user_id: int, event_id: int, notes: str | None, *, commit: bool = True
 ) -> None:
-    """Actualiza las notas de un evento activo del usuario.
+    """Update the notes of an active event of the user.
 
-    Función propia, igual que update_intake_event_name y por el mismo motivo:
-    IntakeEventUpdate interpreta None como "no tocar", así que borrar una nota
-    (cadena vacía -> NULL, §7.3) no puede hacerse por esa vía.
+    A dedicated function, like update_intake_event_name and for the same
+    reason: IntakeEventUpdate reads None as "leave untouched", so clearing a
+    note (empty string -> NULL, §7.3) cannot be done that way.
     """
     query = """
         UPDATE intake_event
@@ -542,19 +543,19 @@ def update_intake_event_notes(
 
 
 def delete_intake_event(connection, user_id: int, event_id: int, *, commit: bool = True) -> None:
-    """Borrado FÍSICO de un evento en 'planned' del usuario.
+    """PHYSICAL delete of a 'planned' event of the user.
 
-    'planned' es no archivable (decisión 2026-09-08): descartar un carrito es un
-    borrado legítimo. Un evento 'consumed' es archivable y NO puede borrarse por
-    esta vía: usa archive_intake_event.
+    'planned' cannot be archived (decision 2026-09-08): discarding a cart is a
+    legitimate delete. A 'consumed' event can be archived and can NOT be
+    deleted this way: use archive_intake_event.
 
-    Si el evento borrado tenía una inyección asociada, la FK
-    insulin_injections.intake_event_id (ON DELETE SET NULL) la conserva
-    desasociada. Es el comportamiento elegido, no un efecto colateral.
+    If the deleted event had an associated injection, the FK
+    insulin_injections.intake_event_id (ON DELETE SET NULL) keeps it,
+    detached. That is the chosen behaviour, not a side effect.
 
     Raises:
-        NotFoundError: no existe o no es del usuario.
-        ConflictError: existe y es del usuario, pero no está en 'planned'.
+        NotFoundError: it does not exist or is not the user's.
+        ConflictError: it exists and is the user's, but is not 'planned'.
     """
     query = """
         DELETE FROM intake_event
@@ -575,8 +576,8 @@ def delete_intake_event(connection, user_id: int, event_id: int, *, commit: bool
             )
             row = cursor.fetchone()
         if row is None:
-            # Comprobación protegida por ownership (§5.4): distingue 404 de 409
-            # sin revelar eventos ajenos.
+            # Ownership-protected check (§5.4): tells 404 from 409 without
+            # revealing other users' events.
             with connection.cursor() as cursor:
                 cursor.execute(
                     "SELECT id FROM intake_event "
@@ -598,15 +599,15 @@ def delete_intake_event(connection, user_id: int, event_id: int, *, commit: bool
 
 
 def archive_intake_event(connection, user_id: int, event_id: int, *, commit: bool = True) -> None:
-    """Soft-delete de un evento 'consumed' del usuario (§11.3).
+    """Soft delete of a 'consumed' event of the user (§11.3).
 
-    Archivar es un UPDATE, no un DELETE: la FK ON DELETE SET NULL de
-    insulin_injections NO se activa y la inyección conserva su contexto de comida
-    (decisión 2026-09-08).
+    Archiving is an UPDATE, not a DELETE: the ON DELETE SET NULL FK of
+    insulin_injections is NOT triggered and the injection keeps its meal
+    context (decision 2026-09-08).
 
     Raises:
-        NotFoundError: no existe o no es del usuario.
-        ConflictError: no está en 'consumed', o ya estaba archivado.
+        NotFoundError: it does not exist or is not the user's.
+        ConflictError: it is not 'consumed', or it was already archived.
     """
     query = """
         UPDATE intake_event
@@ -630,7 +631,7 @@ def archive_intake_event(connection, user_id: int, event_id: int, *, commit: boo
             )
             row = cursor.fetchone()
         if row is None:
-            # Comprobación protegida por ownership
+            # Ownership-protected check
             with connection.cursor() as cursor:
                 cursor.execute(
                     "SELECT id FROM intake_event "
@@ -652,11 +653,11 @@ def archive_intake_event(connection, user_id: int, event_id: int, *, commit: boo
 
 
 def restore_intake_event(connection, user_id: int, event_id: int, *, commit: bool = True) -> None:
-    """Deshace el archivado (§11.3). No hay unicidad que revalidar en esta tabla.
+    """Undo the archiving (§11.3). There is no uniqueness to revalidate in this table.
 
     Raises:
-        NotFoundError: no existe o no es del usuario.
-        ConflictError: no estaba archivado.
+        NotFoundError: it does not exist or is not the user's.
+        ConflictError: it was not archived.
     """
     query = """
         UPDATE intake_event
@@ -675,7 +676,7 @@ def restore_intake_event(connection, user_id: int, event_id: int, *, commit: boo
             )
             row = cursor.fetchone()
         if row is None:
-            # Comprobación protegida por ownership
+            # Ownership-protected check
             with connection.cursor() as cursor:
                 cursor.execute(
                     "SELECT id FROM intake_event "
@@ -697,13 +698,13 @@ def restore_intake_event(connection, user_id: int, event_id: int, *, commit: boo
 
 
 def get_planned_intake_event(connection, user_id: int, event_id: int) -> int:
-    """Valida que el evento existe, es del usuario, está activo y sigue en 'planned'.
+    """Check that the event exists, is the user's, is active and is still 'planned'.
 
-    Devuelve el id del evento. Ownership y estado van dentro del SQL (§5.3).
+    Returns the event id. Ownership and state live inside the SQL (§5.3).
 
     Raises:
-        NotFoundError: no existe, no es del usuario o está archivado.
-        ConflictError: es del usuario pero ya no está en 'planned'.
+        NotFoundError: it does not exist, is not the user's or is archived.
+        ConflictError: it is the user's but is no longer 'planned'.
     """
     query = """
         SELECT id, state

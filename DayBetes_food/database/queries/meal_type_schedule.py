@@ -1,9 +1,9 @@
-"""Queries para la tabla `meal_type_schedule` (§1.3.1 de code_conventions.md).
+"""Queries for the `meal_type_schedule` table (§1.3.1 of code_conventions.md).
 
-Franjas horarias personalizadas por usuario para el meal_type automático de
-`intake_event` (decisión 2026-09-11, domain/meal_type_schedule.py). Solo
-existen filas para el meal_type que el usuario ha personalizado; el default
-de los demás vive en código (`DEFAULT_MEAL_TYPE_WINDOWS`), no en la base.
+Per-user customized time slots for the automatic meal_type of
+`intake_event` (decision 2026-09-11, domain/meal_type_schedule.py). Rows
+only exist for the meal_type the user has customized; the default for the
+rest lives in code (`DEFAULT_MEAL_TYPE_WINDOWS`), not in the database.
 """
 
 from datetime import time
@@ -16,11 +16,11 @@ from DayBetes_food.errors import ValidationError
 
 def get_meal_type_schedule(connection, user_id: int) -> dict[MealType, tuple[time, time]]:
     """
-    Franjas que el usuario ha personalizado. Un meal_type ausente del dict
-    devuelto usa el default de código
-    (`domain.meal_type_schedule.DEFAULT_MEAL_TYPE_WINDOWS`); esta función no
-    conoce esos defaults, solo lee lo que hay persistido (§1.3, un CRUD no
-    decide reglas de negocio).
+    Slots the user has customized. A meal_type missing from the returned dict
+    uses the code default
+    (`domain.meal_type_schedule.DEFAULT_MEAL_TYPE_WINDOWS`); this function
+    does not know those defaults, it only reads what is persisted (§1.3, a
+    CRUD does not decide business rules).
     """
     query = """
         SELECT meal_type, start_time, end_time
@@ -47,13 +47,13 @@ def upsert_meal_type_window(
     commit: bool = True,
 ) -> bool:
     """
-    Crea o reemplaza la franja personalizada de un meal_type para un usuario.
+    Create or replace a user's customized slot for a meal_type.
 
-    `meal_type` fuera de `AUTO_ASSIGNABLE_MEAL_TYPES` o `start_time ==
-    end_time` (franja degenerada, no cubriría ninguna hora) se rechazan aquí
-    con `ValidationError` en vez de dejar que el `CHECK` de la base lo
-    traduzca en un error de infraestructura (§7.1: validar antes de tocar la
-    base cuando la regla no depende de su estado).
+    A `meal_type` outside `AUTO_ASSIGNABLE_MEAL_TYPES` or `start_time ==
+    end_time` (degenerate slot, it would cover no hour) is rejected here with
+    `ValidationError` instead of letting the database `CHECK` turn it into an
+    infrastructure error (§7.1: validate before touching the database when
+    the rule does not depend on its state).
     """
     if meal_type not in AUTO_ASSIGNABLE_MEAL_TYPES:
         raise ValidationError("meal_type_not_auto_assignable")
@@ -83,7 +83,7 @@ def upsert_meal_type_window(
 
 
 def delete_meal_type_window(connection, user_id: int, meal_type: MealType, commit: bool = True) -> bool:
-    """Borra la franja personalizada: el meal_type vuelve a usar el default de código."""
+    """Delete the customized slot: the meal_type goes back to the code default."""
     query = """
         DELETE FROM meal_type_schedule
         WHERE users_id = %(user_id)s AND meal_type = %(meal_type)s

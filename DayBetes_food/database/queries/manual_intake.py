@@ -1,4 +1,4 @@
-"""Queries para la tabla `manual_intake`."""
+"""Queries for the `manual_intake` table."""
 
 from typing import Optional
 
