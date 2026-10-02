@@ -46,23 +46,23 @@ from DayBetes_food.database.connection import get_connection
 
 
 def _normalize_ip(raw: str) -> str | None:
-    """Valida y normaliza una IP según infra_conventions §9: IPv4 tal cual,
-    IPv6 que encapsula una IPv4 como esa IPv4 y el resto de IPv6 por su /64."""
+    """Validate and normalize an IP as in infra_conventions §9: IPv4 as is,
+    IPv4-mapped IPv6 as that IPv4, and any other IPv6 as its /64."""
     try:
         ip = ipaddress.ip_address((raw or "").strip())
     except ValueError:
         return None
     if ip.version == 4:
         return str(ip)
-    # Antes que el /64: ::ffff:a.b.c.d es un cliente IPv4 y agruparlo por /64
-    # metería a todos los clientes IPv4 en la misma clave.
+    # Before the /64: ::ffff:a.b.c.d is an IPv4 client, and grouping it by /64
+    # would put every IPv4 client under the same key.
     if ip.ipv4_mapped:
         return str(ip.ipv4_mapped)
     return str(ipaddress.ip_network(f"{ip}/64", strict=False))
 
 
 def _client_ip(request: Request) -> str:
-    # X-Forwarded-For no se usa nunca: es falsificable (infra_conventions §9).
+    # X-Forwarded-For is never used: it can be spoofed (infra_conventions §9).
     if TRUST_CF_CONNECTING_IP:
         cf_ip = _normalize_ip(request.headers.get("cf-connecting-ip", ""))
         if cf_ip:
@@ -211,13 +211,14 @@ def _setup_registration_routes(rt):
         username = normalize_identifier(sanitize_text(username))
         email = normalize_identifier(sanitize_text(email))
 
-        # `is_valid_username` acota a 3-32 caracteres, más estricto que el
-        # VARCHAR(50) de la columna: rechazar por regex ya cubre el límite.
+        # `is_valid_username` limits it to 3-32 characters, stricter than the
+        # column's VARCHAR(50): rejecting by regex already covers the limit.
         if not is_valid_username(username):
             return _redirect_with_error("/auth/register", "Usuario invalido: usa 3-32 caracteres (letras, numeros o _)")
-        # `is_valid_email` no acota longitud, así que el límite de columna se
-        # comprueba aquí y se rechaza; antes se truncaba en silencio y se podía
-        # registrar una cuenta con un email distinto del escrito (§7.3).
+        # `is_valid_email` does not limit length, so the column limit is
+        # checked and rejected here; it used to be silently truncated, which
+        # could register an account with an email other than the one typed
+        # (§7.3).
         if len(email) > USER_EMAIL_MAX_LENGTH:
             return _redirect_with_error(
                 "/auth/register",
@@ -293,15 +294,15 @@ def setup_auth_routes(rt):
             if not rate_limit_login_allowed(connection, limiter_key_hash):
                 return _redirect_with_error("/auth/login", GENERIC_AUTH_ERROR)
 
-            # Un identificador más largo que la columna no puede corresponder a
-            # ningún usuario: se rechaza sin truncarlo (§7.3) y por la misma vía
-            # que un usuario inexistente, para no distinguir ambos casos
+            # An identifier longer than the column cannot match any user: it
+            # is rejected without truncating it (§7.3) and through the same
+            # path as a nonexistent user, so both cases look the same
             # (error_conventions.md §3.5).
             if len(identifier) > USER_EMAIL_MAX_LENGTH:
                 register_login_failure(connection, limiter_key_hash)
                 return _redirect_with_error("/auth/login", GENERIC_AUTH_ERROR)
 
-            # Migración gradual de la base de datos, para añadir el pepper
+            # Gradual database migration to add the pepper
             user = get_user_by_identifier(connection, identifier)
             if not user:
                 register_login_failure(connection, limiter_key_hash)

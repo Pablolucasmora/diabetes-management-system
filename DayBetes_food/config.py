@@ -46,19 +46,19 @@ if APP_ENV not in VALID_APP_ENVIRONMENTS:
         f"Unknown APP_ENV {APP_ENV!r}. Expected one of: {sorted(VALID_APP_ENVIRONMENTS)}."
     )
 
-# Punto único de configuración de logging (nivel y formato). Ningún otro
-# módulo debe llamar a logging.basicConfig() ni a print() para eventos
-# operativos, de arranque o de seguridad.
+# Single place where logging is configured (level and format). No other
+# module may call logging.basicConfig() or print() for operational, startup
+# or security events.
 LOG_LEVEL = logging.DEBUG if APP_ENV in {"development", "test"} else logging.INFO
 logging.basicConfig(
     level=LOG_LEVEL,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 
-# Ruido de terceros que en DEBUG ahoga los logs propios sin aportar nada: el
-# parser de formularios multipart emite cinco líneas por cada campo de cada
-# POST. Se sube su nivel, no se baja el global, para no perder el DEBUG de la
-# aplicación en desarrollo.
+# Third-party noise that drowns our own DEBUG logs without adding anything:
+# the multipart form parser emits five lines per field of every POST. Their
+# level is raised instead of lowering the global one, so the app keeps its
+# DEBUG output in development.
 for _noisy_logger in ("python_multipart", "python_multipart.multipart", "multipart"):
     logging.getLogger(_noisy_logger).setLevel(logging.INFO)
 
@@ -70,8 +70,8 @@ if not DATABASE_URL.startswith(("postgres://", "postgresql://")):
         "DATABASE_URL must be a postgres:// or postgresql:// connection string"
     )
 
-# Identidad de migraciones (§12.6): propietaria del esquema, nunca usada por
-# routes/, services/ ni database/queries/.
+# Migrations identity (§12.6): owner of the schema, never used by routes/,
+# services/ or database/queries/.
 MIGRATIONS_DATABASE_URL = (os.getenv("MIGRATIONS_DATABASE_URL") or "").strip()
 if DB_INIT_ON_STARTUP:
     if not MIGRATIONS_DATABASE_URL:
@@ -79,12 +79,12 @@ if DB_INIT_ON_STARTUP:
             "MIGRATIONS_DATABASE_URL is required when DB_INIT_ON_STARTUP is enabled"
         )
         raise RuntimeError("MIGRATIONS_DATABASE_URL is required when DB_INIT_ON_STARTUP is enabled")
-# El formato se valida siempre que la variable exista, aunque el bootstrap no
-# arranque en este proceso (§8.1): el flujo manual la usa igual.
+# The format is validated whenever the variable is set, even if the bootstrap
+# does not run in this process (§8.1): the manual flow uses it as well.
 if MIGRATIONS_DATABASE_URL and not MIGRATIONS_DATABASE_URL.startswith(("postgres://", "postgresql://")):
     raise RuntimeError("MIGRATIONS_DATABASE_URL must be a postgres:// or postgresql:// connection string")
 
-# Rol de runtime al que el bootstrap concede DML sobre los objetos que crea.
+# Runtime role that the bootstrap grants DML on the objects it creates.
 DB_RUNTIME_ROLE = (os.getenv("DB_RUNTIME_ROLE") or "daybetes_app").strip()
 
 SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "daybetes_session")
@@ -95,12 +95,12 @@ SESSION_REFRESH_SECONDS = _as_int("SESSION_REFRESH_SECONDS", 60 * 30)
 SESSION_COOKIE_SECURE = _as_bool("SESSION_COOKIE_SECURE", APP_ENV != "development")
 SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "lax")
 
-# Registro de usuarios: abierto en desarrollo y cerrado por defecto en
-# producción (§8.1). Cerrado, sus rutas no se registran y responden 404.
+# User registration: open in development and closed by default in production
+# (§8.1). When closed, its routes are not registered and answer 404.
 REGISTRATION_ENABLED = _as_bool("REGISTRATION_ENABLED", APP_ENV == "development")
 
-# IP del cliente (infra_conventions §9): CF-Connecting-IP solo es fiable cuando
-# la única entrada a la app es Cloudflare Tunnel, es decir, en producción.
+# Client IP (infra_conventions §9): CF-Connecting-IP can only be trusted when
+# Cloudflare Tunnel is the only way into the app, i.e. in production.
 TRUST_CF_CONNECTING_IP = _as_bool("TRUST_CF_CONNECTING_IP", APP_ENV == "production")
 
 AUTH_RATE_LIMIT_ATTEMPTS =_as_int("AUTH_RATE_LIMIT_ATTEMPTS", 6)
