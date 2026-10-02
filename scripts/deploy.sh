@@ -5,8 +5,8 @@
 # run `sudo /usr/local/sbin/daybetes-deploy`. It is not run from the
 # repository: it is installed as a root-owned copy (§12).
 #
-# Updates /opt/daybetes to origin/main, rebuilds and starts production and
-# checks that the app responds. Any failure exits non-zero, which marks the
+# Updates /opt/daybetes to origin/main, applies schema migrations, rebuilds and
+# starts production and checks that the app responds. Any failure exits non-zero, which marks the
 # Action as failed.
 set -euo pipefail
 
@@ -24,6 +24,11 @@ git fetch --quiet origin main
 git merge --ff-only --quiet origin/main
 after="$(git rev-parse --short HEAD)"
 echo "Code: $before -> $after"
+
+# Migrate first, as a separate one-shot container. If it fails, the script
+# stops here and the running web is never touched: `up` would remove the old
+# web container before a dependency finished, even with depends_on.
+./scripts/prod.sh run --rm --build migrate
 
 ./scripts/prod.sh up -d --build --remove-orphans
 

@@ -10,7 +10,7 @@ Este documento complementa `conventions/code_conventions.md` §8 (configuración
 - Cada entorno tiene **su propio archivo de Compose completo e independiente**:
   - `docker-compose.yml` — desarrollo.
   - `docker-compose.prod.yml` — producción.
-- No se usan archivos base + override ni perfiles para derivar un entorno del otro. Un archivo se lee solo y lo que dice es exactamente lo que se ejecuta. Motivo: en Compose, las listas como `ports:` se **suman** entre archivos combinados, de modo que un puerto añadido a un archivo base llegaría a producción sin que `docker-compose.prod.yml` pudiera quitarlo.
+- No se usan archivos base + override ni perfiles para derivar un entorno del otro. Un perfil sí puede usarse dentro de un mismo archivo para un servicio de una sola ejecución que no debe arrancar con `up` (§14). Un archivo se lee solo y lo que dice es exactamente lo que se ejecuta. Motivo: en Compose, las listas como `ports:` se **suman** entre archivos combinados, de modo que un puerto añadido a un archivo base llegaría a producción sin que `docker-compose.prod.yml` pudiera quitarlo.
 - La repetición entre los dos archivos (por ejemplo, el servicio `db`) se acepta. Un cambio que afecte a ambos entornos (versión de Postgres, variables nuevas) se aplica en los dos archivos en el mismo cambio.
 
 ## 2. Comunicación entre servicios
@@ -39,7 +39,7 @@ Este documento complementa `conventions/code_conventions.md` §8 (configuración
 |---|---|---|
 | `ports:` | Permitido, para acceder desde el Mac | Prohibido (§3) |
 | Código | Montado con `.:/app` y `--reload` | Copiado dentro de la imagen; sin montaje de código ni `--reload` |
-| `restart:` | Opcional | Obligatorio en todos los servicios (`unless-stopped` o `always`) |
+| `restart:` | Opcional | Obligatorio en todos los servicios permanentes (`unless-stopped` o `always`); `"no"` en los de una sola ejecución (`migrate`, §14) |
 | Tailwind `--watch` | Sí | No; `output.css` está versionado en git |
 | Túnel | No (§4) | Sí |
 | `APP_ENV` | `development` | `production` |
@@ -55,7 +55,7 @@ Este documento complementa `conventions/code_conventions.md` §8 (configuración
 
 ## 7. Archivos de entorno
 
-- Cada entorno tiene su propio archivo de variables: `.env` para desarrollo y `.env.prod` para producción. `docker-compose.prod.yml` carga `.env.prod` con `env_file:` solo en los servicios que lo necesitan (mínimo privilegio: `db` y `tunnel` no reciben secretos de la app).
+- Cada entorno tiene su propio archivo de variables: `.env` para desarrollo y `.env.prod` para producción. En producción, `MIGRATIONS_DATABASE_URL` no está en `.env.prod` sino en `.env.migrations`, que solo lee el servicio `migrate` (§14). `docker-compose.prod.yml` carga `.env.prod` con `env_file:` solo en los servicios que lo necesitan (mínimo privilegio: `db` y `tunnel` no reciben secretos de la app).
 - Ninguno de los dos se sube a git ni entra en la imagen: ambos figuran en `.gitignore` y en `.dockerignore`. Esos patrones excluyen solo el nombre exacto, así que un archivo de entorno nuevo se añade explícitamente a los dos.
 - `.env.example` sí se versiona: contiene el nombre de todas las variables y ningún valor real. Se actualiza en el mismo cambio que añade o elimina una variable.
 - `APP_ENV=production` solo cambia los valores **por defecto** de `config.py`; un valor escrito en el archivo de entorno gana siempre. Por eso `.env.prod` no se crea copiando `.env`: los valores de desarrollo (`SESSION_COOKIE_SECURE=false`, `DEFAULT_USER_PASSWORD` con valor...) se revisan uno a uno.
@@ -123,3 +123,11 @@ Este documento complementa `conventions/code_conventions.md` §8 (configuración
 - `/opt/daybetes`, incluido `.env.prod`, pertenece a root: lo modifica el despliegue, que se ejecuta como root. Cualquier operación manual sobre él se hace con `sudo`, y nunca se edita código directamente en el servidor.
 - Las acciones de terceros del workflow se fijan por hash de commit, no por etiqueta: una etiqueta puede moverse a otro código.
 - Quien puede escribir en `main` controla el servidor. La cuenta de GitHub tiene verificación en dos pasos y `main` está protegida.
+
+## 14. Migraciones del esquema en producción
+
+- En producción, la app (`web`) nunca aplica el bootstrap del esquema ni recibe la identidad de migraciones: `docker-compose.prod.yml` fija `DB_INIT_ON_STARTUP=false` en `web` y `MIGRATIONS_DATABASE_URL` no está en `.env.prod`. Motivo: la identidad de migraciones (`plucmor`) es superusuario, y un proceso que la tiene en su entorno de forma permanente anula la separación de privilegios de `code_conventions.md` §12.6 aunque no la use. En desarrollo `web` sigue migrando al arrancar.
+- El bootstrap lo aplica el servicio de una sola ejecución `migrate` (`python -m DayBetes_food.database.db_init`), con la misma imagen que `web`, `restart: "no"` y el perfil `migrate` para que un `up` normal no lo arranque. Es el único servicio que lee `.env.migrations` (root, `chmod 600`, fuera de git y de la imagen).
+- `scripts/deploy.sh` ejecuta `prod.sh run --rm --build migrate` **antes** de `prod.sh up`. Si la migración falla, el despliegue se detiene y `web` sigue con la versión anterior. El orden lo impone el script y no `depends_on`: comprobado que `up` sustituye el contenedor antiguo de `web` antes de que termine una dependencia con `service_completed_successfully`, de modo que un fallo de la migración dejaba la app parada.
+- Durante unos segundos, la versión anterior de `web` funciona sobre el esquema ya migrado. Los cambios de esquema deben ser compatibles con el código anterior mientras dura el despliegue (añadir antes de quitar).
+- Deuda: la identidad de migraciones es superusuario y bastaría con que fuera propietaria de los objetos del esquema.
