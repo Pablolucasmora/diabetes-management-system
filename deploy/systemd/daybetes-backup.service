@@ -1,0 +1,9 @@
+[Unit]
+Description=DayBetes: copia de seguridad de la base de datos
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/daybetes/backup.env
+ExecStart=/usr/local/sbin/daybetes-backup
