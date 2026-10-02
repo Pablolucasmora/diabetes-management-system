@@ -1,418 +1,319 @@
-# DayBetes — Sistema de Gestión Personalizada para Diabetes
+# DayBetes — Sistema de gestión personalizada para la diabetes
 
-## 1. Introducción y Contexto del Proyecto
+> Registro preciso de comidas, insulina y contexto diario, como base para entender **cómo responde la glucosa de una persona concreta** y, a futuro, darle recomendaciones hechas a su medida.
 
-Este documento describe el estado actual del proyecto DayBetes, un sistema integral diseñado para el estudio personalizado de la diabetes y el acompañamiento diario en la gestión de esta condición crónica. El proyecto surge de la necesidad personal de su creador de comprender cómo reaccionan los niveles de glucosa ante diversos factores cotidianos, con el objetivo final de construir un modelo de aprendizaje automático que aprenda de los patrones individuales de cada usuario para ofrecer recomendaciones personalizadas.
-
-El alcance del proyecto es ambicioso pero claro: desarrollar una aplicación que funcione como acompañante digital para personas diabéticas, facilitando el registro diario de alimentos, insulina, actividad física y otros factores determinantes en el control glucémico. A diferencia de las soluciones comerciales existentes, este sistema busca personalizarse completamente para cada usuario, aprendiendo de sus datos específicos y adaptándose a sus características individuales.
-
-La arquitectura del proyecto se fundamenta en principios de modularidad y escalabilidad. El sistema está diseñado para funcionar inicialmente como un estudio personalizado de un solo individuo, pero con la capacidad de expandirse para servir a múltiples usuarios simultáneamente. Cada usuario tendrá su propio modelo de aprendizaje que aprenderá de sus patrones únicos, permitiendo recomendaciones cada vez más precisas y útiles.
-
----
-
-## 2. Estado Actual del Proyecto
-
-### 2.1 Fase de Desarrollo
-
-El proyecto se encuentra actualmente en una **fase intermedia de desarrollo**. La infraestructura base está establecida, incluyendo la base de datos, el framework web y los componentes principales de la interfaz de usuario. Sin embargo, muchas funcionalidades están en desarrollo o pendientes de implementación completa.
-
-El estado actual puede caracterizarse como **MVP (Minimum Viable Product) en construcción**: las piezas fundamentales están en su lugar, pero el sistema aún no está completamente funcional para uso diario. Se han implementado los cimientos sobre los cuales se construirán las funcionalidades completas de registro, análisis y predicción.
-
-### 2.2 Componentes Implementados
-
-La aplicación cuenta con los siguientes componentes funcionales:
-
-- **Sistema de navegación**: Una isla flotante que permite navegar entre las principales secciones de la aplicación (Menu, Stats, Food, Settings). El diseño es moderno y adaptativo, utilizando radio buttons ocultos para manejar el estado de navegación.
-
-- **Sección de comida (Food)**: Un catálogo de alimentos funcional con búsqueda en tiempo real mediante HTMX. Los usuarios pueden buscar alimentos, filtrarlos por categoría, y añadirlos a eventos de ingesta planificados.
-
-- **Sistema de eventos de ingesta**: Capacidad de crear eventos de comida (planificados o consumidos), con soporte para múltiples comidas por día y diferentes tipos de comida (desayuno, almuerzo, comida, merienda, cena, snack, rescate).
-
-- **Carrito de compras**: Una funcionalidad básica que muestra las comidas planificadas pendientes de consumir.
-
-- **Catálogo de alimentos**: Una base de datos completa de alimentos con información nutricional detallada, incluyendo macronutrientes, Nutriscore, puntuación Nova y Yuka.
-
-- **Registro manual de comidas**: Sistema para registrar comidas preparadas fuera de casa o de fuentes externas, con la capacidad de estimar valores nutricionales.
-
-- **Sistema de recetas**: Estructura para guardar y reutilizar combinaciones de alimentos recurrentes.
-
-- **Sistema de nevera**: Funcionalidad para gestionar sobras y alimentos preparados previamente, permitiendo su reutilización en futuras comidas.
-
-### 2.3 Componentes Pendientes o en Desarrollo
-
-Varias características importantes aún no están completamente implementadas:
-
-- Integración con LibreView para importación automática de datos de glucosa.
-- Integración con Apple Health para datos de actividad y salud.
-- Panel de estadísticas y análisis de datos.
-- Página de ajustes y configuración de usuario.
-- Cálculo automático de incertidumbres en macronutrientes.
-- Sistema de predicciones y recomendaciones.
-- API de Open Food Facts para enriquecimiento de datos nutricionales.
-- Sistema de autenticación de usuarios completo.
-- Interfaz de confirmación de comida (cantidad ingerida real).
+| | |
+|---|---|
+| **Estado** | En producción, uso personal diario (un único usuario) |
+| **Web** | [daybetes.com](https://daybetes.com), de acceso privado |
+| **Fase** | Trabajo de Fin de Grado (TFG): registro y análisis personal |
+| **Stack** | Python · FastHTML · HTMX · PostgreSQL 17 · Tailwind CSS · Docker |
+| **Despliegue** | VPS + Cloudflare Tunnel, con despliegue continuo desde GitHub Actions |
 
 ---
 
-## 3. Arquitectura Técnica
+## Índice
 
-### 3.1 Stack Tecnológico
+1. [Qué es DayBetes](#1-qué-es-daybetes)
+2. [Objetivo y visión](#2-objetivo-y-visión)
+3. [Estado actual](#3-estado-actual)
+4. [Funcionalidades](#4-funcionalidades)
+5. [Modelo de datos](#5-modelo-de-datos)
+6. [Arquitectura técnica](#6-arquitectura-técnica)
+7. [Despliegue y operación](#7-despliegue-y-operación)
+8. [Cómo se desarrolla](#8-cómo-se-desarrolla)
+9. [Desarrollo local](#9-desarrollo-local)
+10. [Hoja de ruta](#10-hoja-de-ruta)
+11. [Documentación del proyecto](#11-documentación-del-proyecto)
 
-El proyecto utiliza las siguientes tecnologías:
+---
 
-**Backend:**
+## 1. Qué es DayBetes
 
-- **Python**: Lenguaje de programación principal del proyecto.
-- **FastHTML**: Framework web moderno basado en Python que permite crear aplicaciones web interactivas con facilidad. Utiliza un paradigma similar a HTMX pero con la potencia de Python.
-- **PostgreSQL**: Sistema de gestión de base de datos relacional, elegido por su robustez, soporte para tipos de datos complejos y capacidades avanzadas de consultas.
+DayBetes nace de una necesidad personal de su autor: **entender cómo reaccionan sus niveles de glucosa** ante lo que come, la insulina que se pone y el resto de factores del día a día. Las aplicaciones comerciales para la diabetes registran datos, pero rara vez aprenden de la persona que las usa. Tratan a todos los usuarios con las mismas reglas, aunque la respuesta glucémica a una misma comida varía mucho de una persona a otra.
 
-**Frontend:**
+DayBetes parte de la idea contraria: **cada persona necesita su propio modelo**. Para construirlo, lo primero es tener datos fiables. Por eso el núcleo actual del proyecto es un sistema de registro muy preciso, que guarda qué se ha comido y además **con qué fiabilidad se conoce cada dato**:
+- si el alimento se pesó o se estimó;
+- si los macronutrientes son exactos o aproximados;
+- si se pesó en crudo o cocinado;
+- cuánto se sirvió y cuánto se comió de verdad.
 
-- **Tailwind CSS**: Framework de utilidades CSS para el diseño de la interfaz de usuario. Proporciona un diseño moderno y responsivo con mínima escritura de CSS personalizado.
-- **HTMX**: Librería JavaScript ligera que permite crear interfaces interactivas sin escribir JavaScript complejo. Las solicitudes HTTP parciales actualizan partes específicas de la página.
-- **Alpine.js**: Framework JavaScript minimalista para manejar interactividad del lado del cliente.
+Sobre esos datos se construirán después el análisis de la respuesta glucémica y, en una fase posterior, un algoritmo personalizado que aprenda de los patrones de cada usuario.
 
-**Infraestructura:**
+---
 
-- **Docker**: Contenedorización de la aplicación para facilitar el despliegue y la portabilidad.
-- ** psycopg**: Biblioteca PostgreSQL para Python que permite la conexión y manipulación de la base de datos.
+## 2. Objetivo y visión
 
-### 3.2 Estructura del Proyecto
+El proyecto se plantea en dos fases.
 
-El proyecto sigue una estructura modular organizada por funcionalidad:
+### Fase 1: TFG, estudio personalizado de un individuo (actual)
+
+El Trabajo de Fin de Grado se centra en **una sola persona, el autor**, y tiene tres objetivos:
+
+1. **Construir un sistema de registro de calidad**: comidas con sus porciones, macronutrientes, momento de cada plato, dosis de insulina, zona de inyección y tipo de comida. Cada dato lleva su nivel de confianza y su incertidumbre.
+2. **Cruzar esos registros con otras fuentes de datos**:
+   - la **glucosa** del sensor continuo, importada de LibreView;
+   - los datos de **Apple Health y el Apple Watch**: ejercicio, sueño, frecuencia cardiaca, su variabilidad... En esta fase se exportan y se cruzan **en el análisis, fuera de la app**. Integrarlos dentro de la aplicación es trabajo de la fase 2.
+3. **Analizar la respuesta glucémica personal**: qué alimentos, combinaciones, horarios, dosis, actividad física y descanso producen qué curvas de glucosa, con estadísticas de tiempo en rango, comparativas entre días y franjas horarias, y correlaciones entre lo registrado y lo medido.
+
+El resultado esperado del TFG es tanto la herramienta, ya en uso diario, como el análisis de los datos recogidos con ella. El análisis incluye una valoración crítica de qué factores explican la variabilidad de la glucosa en este caso concreto.
+
+### Fase 2: aplicación para personas con diabetes (posterior al TFG)
+
+La ambición a largo plazo es convertir DayBetes en un **acompañante digital para personas con diabetes**, basado en un **algoritmo personalizado por usuario**:
+
+- **Un modelo por persona**, entrenado con sus propios datos de comidas, insulina, glucosa, actividad física, sueño y estrés. No hay un modelo único para todos.
+- **Predicción de la respuesta glucémica** ante una comida planificada, antes de comerla.
+- **Recomendaciones**: momento de la comida y de la insulina, y avisos de riesgo de hipoglucemia o hiperglucemia, cada vez más precisos a medida que el modelo aprende del usuario.
+- **Integración directa de Apple Health** en la aplicación (frecuencia cardiaca, variabilidad de la frecuencia cardiaca como indicador de estrés, ejercicio, sueño...), en lugar de la exportación manual que se usa en el TFG.
+- **Varios usuarios**, cada uno con sus datos aislados y su propio modelo.
+
+> DayBetes no es un producto sanitario. Sus análisis y sus futuras recomendaciones son una herramienta de apoyo y no sustituyen el criterio del equipo médico, aunque se pretende si se llega a crear un modelo sólido comunicarlo con médicos y especialistas para mejorar la fiabilidad y robustez de la aplicación.
+
+---
+
+## 3. Estado actual
+
+La aplicación está **en producción y se usa a diario**. La parte de registro está prácticamente completa. La integración de datos de glucosa y el análisis son lo siguiente.
+
+| Área | Estado |
+|---|---|
+| Catálogo de alimentos, recetas e ingestas manuales | ✅ Implementado |
+| Eventos de comida: planificar, ajustar platos y porciones, confirmar lo comido | ✅ Implementado |
+| Confianza e incertidumbre de los macronutrientes | ✅ Implementado |
+| Registro de inyecciones de insulina, con zona de inyección | ✅ Implementado |
+| Escáner de código de barras + Open Food Facts | ✅ Implementado |
+| Comidas de rescate (hipoglucemia) | ✅ Implementado |
+| Ajustes: horario de tipos de comida, etiquetas, inyecciones | ✅ Implementado |
+| Estadísticas básicas: totales diarios y desglose por tipo de comida | ✅ Implementado |
+| Autenticación y sesiones; registro cerrado en producción | ✅ Implementado |
+| Despliegue en VPS, CI/CD, copias de seguridad cifradas | ✅ En marcha |
+| Nevera (tuppers y sobras reutilizables) | 🟡 Modelo de datos creado, falta la interfaz |
+| Importación de glucosa desde LibreView | ⏳ Pendiente (siguiente paso del TFG) |
+| Análisis de la respuesta glucémica | ⏳ Pendiente (TFG) |
+| Cruce con Apple Health y Apple Watch (en el análisis, fuera de la app) | ⏳ Pendiente (TFG) |
+| Integración de Apple Health en la app | ⏳ Pendiente (fase 2) |
+| Modelo predictivo y recomendaciones | ⏳ Pendiente (fase 2) |
+
+En cifras: unas 22 000 líneas de Python y 2 000 de JavaScript; 16 tablas; 84 rutas; seis documentos de convenciones; y más de 60 decisiones de arquitectura registradas.
+
+---
+
+## 4. Funcionalidades
+
+La interfaz se organiza en cuatro secciones, a las que se accede desde una barra de navegación flotante (**Menu, Stats, Food, Settings**). Además hay un **carrito** siempre accesible con las comidas en curso.
+
+### 4.1 Alimentos (Food)
+
+- **Biblioteca unificada** de tres tipos de entrada:
+  - **alimentos del catálogo**, con valores nutricionales por 100 g;
+  - **recetas**, que combinan ingredientes y calculan sus macros;
+  - **ingestas manuales**, para comidas de fuera o sin información exacta.
+- **Búsqueda en tiempo real** (HTMX), filtros, favoritos y etiquetas.
+- **Creación rápida con "smart macros"**: se escribe `120kcal 30hc 12az 20prot` y el sistema rellena los campos. Usa una gramática estricta, que rechaza lo que no entiende en lugar de adivinar. El navegador muestra una vista previa, pero quien decide es siempre el servidor.
+- **Escáner de código de barras**: busca el producto en **Open Food Facts** y rellena el formulario de alta, conservando de qué fuente procede cada dato.
+- **Biblioteca personal y publicada**: un alimento es privado de quien lo crea hasta que se publica.
+- **Comidas de rescate**: un registro rápido de lo que se toma para tratar una hipoglucemia, con sus propias opciones y su propio tipo de comida.
+
+### 4.2 Carrito y eventos de comida
+
+Cada comida es un **evento de ingesta**: se **planifica**, se ajusta y se **confirma como consumida**. Un evento se puede archivar y restaurar. Dentro de un evento:
+- **Platos (tandas)**: una comida puede tener varios platos, servidos en momentos distintos. Cada plato tiene su desfase en minutos respecto al inicio de la comida.
+- **Porciones**: cada alimento del plato lleva su cantidad, su propio desfase y tres indicadores de calidad: si se pesó de forma estricta, si se pesó en crudo o cocinado, y si sus macros son exactos o aproximados.
+- **Datos del evento**: tipo de comida (asignado automáticamente según el horario configurado), hora, si se comió fuera, dosis de insulina, zona de inyección y notas.
+- **Confirmación**: al confirmar, se registra lo que se comió de verdad y se calculan la **confianza** y la **incertidumbre** de cada nutriente.
+
+### 4.3 Confianza e incertidumbre
+
+Es una de las piezas diferenciales del proyecto. Para cada evento se calculan:
+- la **confianza en la cantidad** (`amount_confidence`): cuánto se sabe de lo que se comió realmente;
+- la **confianza en la calidad** (`quality_confidence`): cuánto se sabe de la composición de lo comido;
+- la **incertidumbre de cada nutriente** (hidratos, azúcares, grasas, saturadas, proteínas, fibra), entre 0 y 1, ponderada por la cantidad de cada ingrediente y por si su dato es conocido o estimado.
+
+Así, el análisis posterior puede **distinguir un dato fiable de uno aproximado**, en lugar de tratarlos igual. Las reglas exactas están en [`measurement_conventions.md`](conventions/measurement_conventions.md) §6.
+
+### 4.4 Insulina, ajustes y estadísticas
+
+- **Registro de inyecciones de insulina**: rápida o basal, con dosis, momento y zona del cuerpo, en un registro editable.
+- **Ajustes**: el horario que asigna automáticamente el tipo de comida (desayuno, almuerzo, comida, merienda, cena...), las etiquetas y las inyecciones.
+- **Estadísticas**: totales y promedios diarios de macronutrientes, y desglose por tipo de comida. Es la base sobre la que se construirá el análisis con datos de glucosa.
+
+---
+
+## 5. Modelo de datos
+
+PostgreSQL 17, con **16 tablas**. Las restricciones de integridad, los valores de los enumerados y la propiedad de cada fila se garantizan **también en SQL**, no solo en la aplicación.
+
+| Grupo | Tablas | Para qué |
+|---|---|---|
+| Usuarios y seguridad | `users`, `auth_sessions`, `auth_rate_limits` | Cuentas, sesiones revocables y límite de intentos de login |
+| Alimentos | `catalog`, `food_brands`, `recipe`, `manual_intake` | Alimentos con su información nutricional, marcas, recetas e ingestas manuales |
+| Comidas | `intake_event`, `intake_plate`, `portion_detail` | Eventos de comida, sus platos y las porciones de cada uno |
+| Insulina y horario | `insulin_injections`, `meal_type_schedule` | Inyecciones y franjas horarias de cada tipo de comida |
+| Organización | `tags`, `linked_tags`, `user_favorites` | Etiquetas y favoritos |
+| Sobras | `fridge` | Tuppers reutilizables (pendiente de interfaz) |
+
+`portion_detail` usa un **patrón de arco**: cada porción tiene **un único origen** (un alimento del catálogo, una ingesta manual o una receta) y **un único destino** (un plato de un evento, una receta o un tupper de la nevera). Así, una misma tabla describe tanto lo que se come como de qué está hecha una receta.
+
+---
+
+## 6. Arquitectura técnica
+
+### 6.1 Stack
+
+| Capa | Tecnología |
+|---|---|
+| Lenguaje | Python 3.12 |
+| Web | [FastHTML](https://fastht.ml) 0.14 sobre Starlette 1.x y Uvicorn |
+| Interactividad | HTMX 2, con JavaScript propio y mínimo para detalles concretos (escáner, vista previa de macros, avisos) |
+| Estilos | Tailwind CSS. El CSS se compila en desarrollo y se versiona |
+| Base de datos | PostgreSQL 17, accedida con `psycopg` 3 (SQL explícito, sin ORM) |
+| Seguridad | Argon2 para contraseñas, sesiones en base de datos, CSRF, límite de intentos de login |
+| Datos externos | Open Food Facts |
+| Contenedores | Docker y Docker Compose |
+| Infraestructura | VPS de OVH (Ubuntu 26.04 LTS), Cloudflare (DNS, Tunnel, R2), GitHub Actions |
+
+### 6.2 Estructura del código
 
 ```
 DayBetes_food/
-├── main.py
-├── config.py
-├── time_utils.py
-├── auth/
-├── components/
+├── main.py              # Arranque de la app, middleware de seguridad y gestión de errores
+├── config.py            # Toda la configuración, cargada y validada al arrancar
+├── auth/                # Autenticación, sesiones, contraseñas y CSRF
+├── domain/              # Reglas de negocio puras: enumerados, dataclasses, nutrición e incertidumbre
 ├── database/
-├── routes/
-└── static/
-    ├── css/
-    ├── images/
-    └── js/
+│   ├── schema.py        # Definición del esquema
+│   ├── db_init.py       # Bootstrap y migraciones del esquema
+│   └── queries/         # Un módulo por tabla
+├── integrations/        # Adaptadores externos (Open Food Facts)
+├── routes/              # Endpoints: auth, food, cart, menu, stats, settings, scanner
+├── components/          # Componentes de interfaz (funciones Python que devuelven HTML)
+└── static/              # CSS compilado, JavaScript e imágenes
 ```
 
-### 3.3 Patrones de Diseño
+### 6.3 Principios de diseño
 
-El proyecto sigue varios patrones de diseño importantes:
-
-**Patrón MVC (Model-View-Controller):** La separación entre la base de datos (modelo), los componentes UI (vista) y las rutas (controlador) permite mantener el código organizado y mantenible.
-
-**Patrón Repository:** El archivo `crud.py` actúa como repositorio centralizado de todas las operaciones de base de datos, proporcionando una interfaz unificada para el acceso a datos.
-
-**Patrón de Componentes:** Los elementos de la interfaz de usuario están encapsulados como funciones Python que devuelven componentes FastHTML, permitiendo su reutilización y composición.
-
-**HTMX para Interactividad:** En lugar de escribir JavaScript complejo, la aplicación utiliza HTMX para manejar solicitudes asíncronas y actualizar partes específicas de la página, reduciendo significativamente la complejidad del frontend.
+- **HTML desde el servidor.** Las páginas y fragmentos se generan en Python, y HTMX actualiza solo la parte de la página que cambia. Apenas hay estado en el navegador.
+- **Capas con responsabilidades claras.** Las rutas validan la entrada y la autorización. `domain/` contiene la lógica pura, sin base de datos. `database/queries/` contiene el SQL, organizado por tabla. Los componentes solo pintan.
+- **Dos identidades de base de datos.** La app trabaja con un rol **sin permisos para modificar el esquema**. El esquema solo lo cambia una identidad de migraciones, que no se usa nunca en tiempo de ejecución.
+- **La propiedad de los datos se comprueba en SQL.** Cada consulta filtra por usuario, de modo que un fallo en una ruta no puede exponer datos de otra persona.
+- **Errores tipados y uniformes.** Un único formato de error, códigos HTTP con significado y mensajes que no revelan información interna.
 
 ---
 
-## 4. Sistema de Base de Datos
+## 7. Despliegue y operación
 
-### 4.1 Esquema de Base de Datos
+La aplicación funciona en producción en **[daybetes.com](https://daybetes.com)** desde octubre de 2026.
 
-La base de datos PostgreSQL del proyecto contiene las siguientes tablas:
+### 7.1 Cómo llega una visita
 
-#### Tabla: usuario
+```
+Navegador ──HTTPS──▶ Cloudflare ──Tunnel (conexión saliente)──▶ VPS
+                                                                  │
+                                              ┌─── Docker Compose ┴─────────────┐
+                                              │ tunnel ─▶ web (FastHTML) ─▶ db │
+                                              └─────────────────────────────────┘
+```
 
-Esta tabla almacena la información de los usuarios del sistema.
+- **El servidor no tiene ningún puerto web abierto.** El contenedor `cloudflared` abre una conexión **saliente** hacia Cloudflare, y las visitas entran por ella. La IP del servidor no aparece en el DNS, y el firewall solo deja pasar SSH.
+- **Acceso privado.** El registro de usuarios está cerrado en producción, y la autenticación de la app es la primera barrera. Está previsto añadir Cloudflare Access para que solo usuarios autorizados lleguen a la web.
 
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| id | SERIAL | Identificador único |
-| name | VARCHAR(255) | Nombre del usuario |
-| email | VARCHAR(255) | Correo electrónico único |
-| password | TEXT | Contraseña (hasheada) |
-| registration_date | TIMESTAMP | Fecha de creación de la cuenta |
-| category | VARCHAR(255) | Tipo de usuario (admin/common) |
+### 7.2 Servidor
 
-#### Tabla: catalogo
+- VPS de OVH en la UE, con Ubuntu 26.04 LTS.
+- Endurecimiento: acceso SSH solo con clave y sin contraseñas ni root; firewall con todo cerrado salvo SSH; parches de seguridad automáticos con reinicio programado cuando hacen falta; swap de reserva; logs de contenedores limitados.
 
-Almacena el catálogo de alimentos disponibles para seleccionar en las comidas.
+### 7.3 Despliegue continuo
 
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| id | SERIAL | Identificador único |
-| created_by | INTEGER | Usuario que creó el alimento |
-| nombre | VARCHAR(255) | Nombre del producto |
-| marca | VARCHAR(255) | Marca comercial |
-| categoria | VARCHAR(100) | Categoría principal |
-| subtipo | VARCHAR(100) | Subcategoría específica |
-| estado_inicial | VARCHAR(50) | Estado físico del alimento |
-| nutriscore | VARCHAR(1) | Puntuación Nutriscore (A-E) |
-| NOVA | INTEGER | Clasificación Nova (1-4) |
-| yuka | INTEGER | Puntuación Yuka (0-100) |
-| porcion_default | INTEGER | Porción por defecto en gramos |
-| calorias_100g | REAL | Calorías por 100g |
-| hidratos_100g | REAL | Hidratos de carbono por 100g |
-| azucares_100g | REAL | Azúcares por 100g |
-| grasas_100g | REAL | Grasas por 100g |
-| saturadas_100g | REAL | Grasas saturadas por 100g |
-| proteinas_100g | REAL | Proteínas por 100g |
-| fibra_100g | REAL | Fibra por 100g |
-| cafeina | REAL | Contenido en cafeína |
-| alcohol | REAL | Contenido en alcohol |
-| cod_barras | VARCHAR | Código de barras |
-| factor_cocinado | REAL | Factor para calcular peso en crudo |
-| favorito | BOOLEAN | Marcador de favorito |
+Producción ejecuta siempre la rama `main`, que está protegida: solo admite cambios mediante Pull Request y con la auditoría de dependencias en verde.
 
-#### Tabla: ingesta_manual
+```
+rama ─▶ Pull Request ─▶ pip-audit ─▶ merge en main ─▶ GitHub Actions
+                                                         │  (SSH con clave dedicada y de un solo uso)
+                                                         ▼
+                                          VPS: git pull ─▶ migraciones ─▶ build + up ─▶ comprobación de salud
+```
 
-Registro de comidas consumidas fuera de casa o de fuentes externas sin información nutricional exacta.
+- **Las migraciones del esquema** se ejecutan en un contenedor de un solo uso **antes** de sustituir la app. Si fallan, la versión anterior sigue funcionando.
+- **El usuario de despliegue no tiene terminal.** Su clave solo puede lanzar el script de despliegue, de modo que si se filtrara solo serviría para desplegar lo que ya está en `main`.
+- Las dependencias se auditan con `pip-audit` en cada Pull Request y antes de cada despliegue.
 
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| id | SERIAL | Identificador único |
-| created_by | INTEGER | Usuario que creó el registro |
-| nombre | VARCHAR(255) | Nombre de la comida |
-| descripcion | TEXT | Descripción del plato |
-| subtipo | VARCHAR(100) | Categoría específica |
-| procedencia | VARCHAR(255) | Origen (restaurante, casa, etc.) |
-| cantidad_g | REAL | Cantidad en gramos |
-| macronutrientes | REAL | Campos de información nutricional |
-| indice_glucemico | VARCHAR(20) | IG estimado (alto/medio/bajo) |
-| confianza_ig | INTEGER | Confianza en el IG (1-5) |
-| favorito | BOOLEAN | Marcador de favorito |
+### 7.4 Copias de seguridad
 
-#### Tabla: evento_ingesta
+- Cada noche se hace un volcado completo de la base de datos, **cifrado con `age` en el propio servidor**. El servidor solo tiene la clave pública, así que puede cifrar pero no descifrar.
+- Las copias se guardan en Cloudflare R2, en la jurisdicción de la UE, durante 90 días, y además localmente durante 7 días.
+- Un servicio de monitorización avisa si una copia falla **o si no llega a ejecutarse**.
+- La restauración se prueba de principio a fin cada mes. Una copia que nunca se ha restaurado no se da por válida.
 
-Representa una comida o evento de ingesta, ya sea planificado o consumido.
-
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| id | SERIAL | Identificador único |
-| user_id | INTEGER | Usuario asociado |
-| estado | VARCHAR(20) | Estado (planificado/consumido) |
-| tipo_comida | VARCHAR(50) | Tipo de comida |
-| nombre | VARCHAR(255) | Nombre identificativo |
-| hora_comida | TIMESTAMP | Fecha y hora de la comida |
-| comida_fuera | BOOLEAN | Si se comió fuera |
-| dosis_insulina | BOOLEAN | Si requiere insulina |
-| cantidad_total | REAL | Cantidad total planificada |
-| cantidad_ingerida | REAL | Cantidad realmente consumida |
-| confianza_cantidad | REAL | Confianza en cantidad (0-1) |
-| confianza_calidad | REAL | Confianza en calidad de macros |
-| incertidumbre_hidratos | REAL | Incertidumbre en hidratos |
-| incertidumbre_azucares | REAL | Incertidumbre en azúcares |
-| incertidumbre_grasas | REAL | Incertidumbre en grasas |
-| incertidumbre_saturadas | REAL | Incertidumbre en saturadas |
-| incertidumbre_proteinas | REAL | Incertidumbre en proteínas |
-| incertidumbre_fibra | REAL | Incertidumbre en fibra |
-| notas | TEXT | Notas adicionales |
-
-#### Tabla: porcion_detalle
-
-Tabla de relación que conecta alimentos con eventos de ingesta, recetas o tuppers de nevera. Utiliza un patrón de arco (arc pattern) para relacionar un alimento con su destino.
-
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| id | SERIAL | Identificador único |
-| catalogo_id | INTEGER | Origen del catálogo |
-| ingesta_manual_id | INTEGER | Origen de ingesta manual |
-| evento_ingesta_id | INTEGER | Destino en evento |
-| receta_id | INTEGER | Destino en receta |
-| nunca_id | INTEGER | Destino en neverita |
-| cantidad_g | REAL | Cantidad pesada |
-| cocinado | VARCHAR(50) | Método de cocinado |
-| conservacion | VARCHAR(50) | Método de conservación |
-| estado_final | VARCHAR(50) | Estado final del alimento |
-| pesado_estricto | BOOLEAN | Si se pesó exactamente |
-| calidad_macros | BOOLEAN | Si los macros son exactos |
-| cantidad_plato | REAL | Cantidad servida en plato |
-| es_peso_cocinado | BOOLEAN | Si se pesó cocinado |
-| offset_minutos | INTEGER | Diferencia horaria |
-
-#### Tabla: recetas
-
-Almacena recetas guardadas por el usuario.
-
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| id | SERIAL | Identificador único |
-| user_id | INTEGER | Usuario propietario |
-| tipo_comida | VARCHAR(50) | Tipo de comida asociado |
-| nombre | VARCHAR(255) | Nombre de la receta |
-| notas | TEXT | Notas de la receta |
-| favorito | BOOLEAN | Marcador de favorito |
-
-#### Tabla: nevera
-
-Gestiona los tuppers de comida preparada guardados en la neverita.
-
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| id | SERIAL | Identificador único |
-| user_id | INTEGER | Usuario propietario |
-| nombre_tupper | VARCHAR(255) | Nombre identificativo |
-| fecha_entrada | TIMESTAMP | Fecha de creación |
-| es_compuesto | BOOLEAN | Si tiene varios ingredientes |
-| peso_total_tupper | REAL | Peso total del tupper |
-
-#### Tabla: etiquetas
-
-Sistema de etiquetas para categorizar alimentos.
-
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| id | SERIAL | Identificador único |
-| nombre | VARCHAR(100) | Nombre único de la etiqueta |
-| descripcion | TEXT | Descripción del significado |
-
-#### Tabla: etiquetas_vinculadas
-
-Tabla de relación muchos a muchos entre etiquetas y alimentos/recetas/ingestas manuales.
-
-### 4.2 Sistema de Incertidumbres
-
-Una característica distintiva del esquema es el sistema de cálculo automático de incertidumbres. Por cada macronutriente (hidratos, azúcares, grasas, saturadas, proteínas, fibra), se calcula un valor de incertidumbre entre 0 y 1 que representa la fiabilidad del dato. Este sistema utiliza una suma ponderada basada en las cantidades de cada ingrediente y si el dato es conocido o estimado.
+Los detalles de toda la infraestructura están en [`infra_conventions.md`](conventions/infra_conventions.md).
 
 ---
 
-## 5. Funcionalidades Implementadas
+## 8. Cómo se desarrolla
 
-### 5.1 Navegación y UI
+### 8.1 Desarrollo guiado por convenciones
 
-La aplicación cuenta con una interfaz de navegación moderna que incluye:
+Todas las decisiones de diseño están escritas en [`conventions/`](conventions/), y el código se escribe **siguiéndolas**:
 
-- **Isla Flotante (IslaFlotante)**: Un menú de navegación fijo en la parte inferior de la pantalla con cuatro opciones principales: Menu, Stats, Food y Settings. Utiliza un diseño de glas morphism con efecto blur.
+- Cuando aparece una decisión nueva que no está cubierta, se para el desarrollo hasta acordarla y documentarla.
+- Las decisiones relevantes se registran con su contexto, las alternativas consideradas y el motivo de la elección.
+- El código y sus comentarios se escriben en inglés. Los textos de la interfaz y la documentación, en español.
 
-- **Logo Animado**: Un logo fijo en la parte superior que sirve como elemento identificativo de la marca.
+### 8.2 Auditorías por tabla
 
-- **Botón de Carrito**: Un botón flotante que muestra el estado actual del carrito de compras y permite acceder rápidamente a él.
+El código se revisa **tabla a tabla** contra las convenciones: esquema, restricciones, consultas, rutas e interfaz que dependen de cada una. Cada auditoría produce una lista de hallazgos y un plan de corrección, que se aplica y se verifica contra la base de datos real. En este proceso se usan agentes de [Claude Code](https://claude.com/claude-code) definidos en [`.claude/agents/`](.claude/agents/): `audit-tabla` para auditar y `propose` para preparar el plan.
 
-- **Diseño Responsivo**: La interfaz se adapta a diferentes tamaños de pantalla, con diferentes configuraciones para móvil, tablet y escritorio.
+### 8.3 Flujo de trabajo
 
-### 5.2 Catálogo de Alimentos
-
-La funcionalidad de catálogo incluye:
-
-- **Búsqueda en Tiempo Real**: Un campo de búsqueda que filtra los alimentos del catálogo mientras el usuario escribe, utilizando HTMX para actualizar la lista sin recargar la página.
-
-- **Filtros**: Botones para filtrar el catálogo por diferentes criterios (todos, alimentos, recetas, favoritos).
-
-- **Selector de Comida**: Un desplegable que permite seleccionar o crear una comida a la cual añadir alimentos.
-
-- **Tarjetas de Alimento**: Cada alimento se muestra en una tarjeta con su nombre, contenido de hidratos de carbono y un botón para añadirlo a la comida seleccionada.
-
-- **Añadir a Evento**: Los alimentos pueden añadirse a eventos de ingesta existentes o crear nuevos eventos.
-
-### 5.3 Carrito de Compras
-
-El sistema de carrito permite:
-
-- **Ver Comidas Planificadas**: Muestra todas las comidas que están en estado "planificado" y aún no se han consumido.
-
-- **Gestión de Estado**: Las comidas pueden cambiar de estado de planificado a consumido.
-
-- **Información de Evento**: Cada evento muestra su identificador, estado actual y hora programada.
-
-### 5.4 Acceso a Datos
-
-El sistema incluye una capa completa de acceso a datos con funciones CRUD para todas las tablas:
-
-- Operaciones de creación (INSERT)
-- Operaciones de lectura (SELECT con filtros)
-- Operaciones de actualización (UPDATE)
-- Operaciones de eliminación (DELETE)
-- Funciones específicas como obtener eventos del carrito, favoritos, etc.
+[GitHub Flow](https://docs.github.com/en/get-started/using-github/github-flow): cada cambio en su rama, una Pull Request revisada y la fusión en `main`, que despliega automáticamente. Los commits siguen el formato [Conventional Commits](https://www.conventionalcommits.org) (`feat`, `fix`, `docs`, `chore`...).
 
 ---
 
-## 6. Funcionalidades Pendientes de Desarrollo
+## 9. Desarrollo local
 
-### 6.1 Integración con Fuentes de Datos Externas
+Requisitos: Docker (o Docker Desktop).
 
-**LibreView Integration (Pendiente):**
+```sh
+git clone https://github.com/Pablolucasmora/diabetes-management-system.git
+cd diabetes-management-system
+cp .env.example .env        # rellenar los valores (no se suben nunca a git)
+docker compose up -d        # base de datos, app con recarga automática y Tailwind en modo watch
+```
 
-- Importación automática de datos de glucosa minuto a minuto
-- Importación de registros de insulina rápida y basal
-- Captura de tendencias y velocidad de cambio de glucosa
-- Información de zona de inyección y tiempos de espera
-- Datos de corrección vs. comida
+La app queda en `http://localhost:8000`. En desarrollo, el registro de usuarios está abierto y el esquema se crea solo al arrancar.
 
-**Apple Health Integration (Pendiente):**
-
-- Frecuencia cardíaca
-- Heart Rate Variability (HRV) como indicador de estrés
-- Datos de ejercicios (duración, tipo, intensidad)
-- Datos de sueño (calidad, fases, duración)
-- Otras métricas fisiológicas disponibles
-
-### 6.2 Análisis y Estadísticas
-
-**Panel de Estadísticas (Pendiente):**
-
-- Gráficos de tendencia de glucosa
-- Análisis de correlación entre alimentos y respuesta glucémica
-- Estadísticas de tiempo en rango
-- Comparativas de diferentes días y horarios
-- Identificación de patrones temporales
-
-### 6.3 Sistema de Recomendaciones
-
-**Motor de Recomendaciones (Pendiente):**
-
-- Algoritmo de aprendizaje automático personalizado
-- Predicción de respuesta glucémica basada en alimentos, insulina y actividad
-- Recomendaciones de dosis de insulina
-- Sugerencias de timing de comidas
-- Alertas de hipoglucemia e hiperglucemia
-
-### 6.4 Enriquecimiento de Datos
-
-**API de Open Food Facts (Pendiente):**
-
-- Búsqueda automática de alimentos por código de barras
-- Obtención de información nutricional enriquecida
-- Integración de puntuaciones Nutriscore
-- Integración de clasificaciones Nova
-- Integración de datos de Yuka
-
-### 6.5 Mejoras de Interfaz
-
-- Página de ajustes y configuración de usuario
-- Sistema de confirmación de comida detallado
-- Cálculo automático de sobras y guardado en neverita
-- Sistema de gestión de favoritos avanzado
-- Interfaz de edición de eventos de ingesta
+Desarrollo y producción usan **archivos de Compose separados** (`docker-compose.yml` y `docker-compose.prod.yml`) y **volúmenes de datos distintos**. Los comandos de producción se ejecutan siempre con `./scripts/prod.sh`.
 
 ---
 
-## 7. Próximos Pasos Recomendados
+## 10. Hoja de ruta
 
-### 7.1 Prioridad Alta
+**Corto plazo**
+- Cloudflare Access delante de la aplicación.
+- Límite de intentos en el registro y respuesta `429` en los bloqueos de login.
+- Interfaz de la nevera (sobras y tuppers).
 
-1. **Completar la funcionalidad del carrito**: Permitir añadir alimentos con cantidades específicas, editar porciones y confirmar comidas consumidas.
+**TFG**
+- Importación de datos de glucosa desde **LibreView**: lecturas del sensor, tendencias e insulina.
+- Panel de **análisis glucémico**: curvas tras cada comida, tiempo en rango, comparativas por día y franja horaria.
+- Exportación de **Apple Health y el Apple Watch** (ejercicio, sueño, frecuencia cardiaca, variabilidad...) para cruzarla con los registros en el análisis.
+- **Análisis de correlación** entre lo registrado (macros, cantidades, horarios, dosis, confianza de los datos), la actividad y el sueño, y la respuesta de glucosa.
+- Memoria del TFG con los resultados del análisis personal.
 
-2. **Implementar la página de estadísticas**: Crear visualizaciones de datos que permitan al usuario entender sus patrones glucémicos.
-
-3. **Sistema de importación manual**: Permitir al usuario introducir datos de glucosa de forma manual mientras se prepara la integración automática.
-
-### 7.2 Prioridad Media
-
-4. **Integración con LibreView**: Desarrollar el connector para obtener datos de glucosa automáticamente.
-
-5. **API de Open Food Facts**: Implementar la búsqueda y enriquecimiento automático de alimentos.
-
-6. **Sistema de usuarios**: Completar el sistema de autenticación para soportar múltiples usuarios.
-
-### 7.3 Prioridad Baja
-
-7. **Apple Health Integration**: Integrar datos de actividad y sueño del Apple Watch.
-
-8. **Motor de Machine Learning**: Desarrollar el modelo predictivo personalizado.
-
-9. **Despliegue en producción**: Preparar la aplicación para producción con Docker y AWS.
+**Después del TFG**
+- Integración directa de **Apple Health** en la app: actividad, sueño, frecuencia cardiaca, variabilidad...
+- **Modelo predictivo personalizado** por usuario y motor de recomendaciones.
+- Soporte de varios usuarios y una experiencia pensada para móvil.
 
 ---
 
-## 8. Conclusiones
+## 11. Documentación del proyecto
 
-El proyecto DayBetes se encuentra en un estado de desarrollo activo con una base sólida. La arquitectura técnica está bien definida, el esquema de base de datos es completo y funcional, y los componentes principales de la interfaz de usuario están implementados. Sin embargo, queda un camino significativo por recorrer para alcanzar el objetivo final de un sistema de acompañamiento inteligente para personas diabéticas.
-
-Las funcionalidades más críticas pendientes son el sistema de registro detallado de comidas (con cantidades, sobras y cálculo automático de incertidumbre), el panel de estadísticas, y la integración con fuentes de datos externas. Una vez estas funcionalidades estén operativas, el sistema podrá cumplir su propósito de facilitar el control diario de la diabetes y generar los datos necesarios para el análisis y la construcción del modelo de aprendizaje automático.
-
-El enfoque incremental del proyecto, comenzando con un MVP funcional y expandiéndolo progresivamente, es adecuado para un proyecto de esta envergadura. La documentación de este estado actual servirá como referencia para planificar las siguientes fases de desarrollo y mantener un registro histórico del progreso del proyecto.
+| Documento | Contenido |
+|---|---|
+| [`code_conventions.md`](conventions/code_conventions.md) | Capas, transacciones, tipado, seguridad, configuración y esquema |
+| [`measurement_conventions.md`](conventions/measurement_conventions.md) | Unidades, cantidades, porciones, platos, confianza e incertidumbre |
+| [`error_conventions.md`](conventions/error_conventions.md) | Tipos de error, códigos HTTP, mensajes y registros |
+| [`frontend_conventions.md`](conventions/frontend_conventions.md) | Componentes, HTMX, interfaz e idioma |
+| [`infra_conventions.md`](conventions/infra_conventions.md) | Entornos, despliegue, servidor, copias de seguridad y dependencias |
+| [`decisions.md`](conventions/decisions.md) | Registro histórico de decisiones de arquitectura |
