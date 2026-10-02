@@ -92,10 +92,10 @@ def setup_settings_routes(rt):
     @rt("/settings/meal_type_schedule/update")
     def post(req: Request, meal_type: str = "", start_time: str = "", end_time: str = ""):
         """
-        Autosave de una franja horaria (start_time y end_time siempre juntos,
-        ver docstring de meal_type_schedule_row). meal_type restringido a
-        AUTO_ASSIGNABLE_MEAL_TYPES: snack/rescue nunca tienen franja aquí
-        (decisión 2026-09-11).
+        Autosave of a time slot (start_time and end_time always together, see
+        the meal_type_schedule_row docstring). meal_type is restricted to
+        AUTO_ASSIGNABLE_MEAL_TYPES: snack/rescue never have a slot here
+        (decision 2026-09-11).
         """
         if req.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -135,7 +135,7 @@ def setup_settings_routes(rt):
 
     @rt("/settings/meal_type_schedule/reset")
     def post(req: Request, meal_type: str = ""):
-        """Borra la franja personalizada: la fila vuelve a mostrar (y a usar) el default de código."""
+        """Delete the customized slot: the row goes back to showing (and using) the code default."""
         if req.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()
@@ -236,7 +236,7 @@ def setup_settings_routes(rt):
         if not user_id:
             return HTMLResponse(status_code=401)
 
-        # Parsear fecha y hora
+        # Parse date and time
         try:
             parsed_time = datetime.strptime((shot_hour or "").strip(), "%H:%M").time()
             parsed_date = datetime.strptime((shot_date or "").strip(), "%Y-%m-%d").date()
@@ -245,13 +245,13 @@ def setup_settings_routes(rt):
         except ValueError:
             return HTMLResponse(status_code=422)
 
-        # Parsear tipo de insulina
+        # Parse insulin type
         try:
             parsed_insulin_type = InsulinType(insulin_type.strip().lower())
         except ValueError:
             return HTMLResponse(status_code=422)
 
-        # Parsear dosis (si aplica)
+        # Parse dose (if any)
         units_value = None
         if parsed_insulin_type is InsulinType.BASAL:
             try:
@@ -259,7 +259,7 @@ def setup_settings_routes(rt):
             except (TypeError, ValueError):
                 return HTMLResponse(status_code=422)
 
-        # Parsear zona (opcional)
+        # Parse zone (optional)
         injection_zone = None
         if zone and zone.strip():
             try:

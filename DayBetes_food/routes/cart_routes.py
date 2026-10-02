@@ -98,8 +98,8 @@ def _load_events_and_portions(connection, user_id: int):
     portions_by_event = {event_id: [] for event_id in event_ids}
     for portion in all_portions:
         portions_by_event.setdefault(portion.destination_id, []).append(portion)
-    # Las tandas de todos los eventos en una sola consulta, ya ordenadas por la
-    # query (§4.6.1); aquí solo se reparten por evento, sin reordenar.
+    # The plates of every event in a single query, already ordered by the
+    # query (§4.6.1); here they are only distributed by event, never reordered.
     plates_by_event = {event_id: [] for event_id in event_ids}
     for plate in list_intake_plates_by_events(connection, event_ids):
         plates_by_event.setdefault(plate.intake_event_id, []).append(plate)
@@ -116,21 +116,20 @@ def _load_cart_main(connection):
 
 def _cart_response(connection):
     """
-    Refresco de la página completa del carrito. Reservado para las acciones
-    que no tienen un elemento de UI propio en el carrito (archive/restore,
-    hallazgo n/a: no están enlazadas desde ninguna tarjeta hoy). Las acciones
-    que sí se disparan desde el carrito usan un refresco local: la tarjeta
-    (`_card_response`), la lista (`_events_list_response`) o, si el evento
-    deja de estar planificado, `_removal_response` (decisión 2026-09-10,
-    refresco local del carrito).
+    Full refresh of the cart page. Reserved for the actions that have no UI
+    element of their own in the cart (archive/restore, finding n/a: no card
+    links to them today). The actions triggered from the cart use a local
+    refresh: the card (`_card_response`), the list (`_events_list_response`)
+    or, if the event stops being planned, `_removal_response` (decision
+    2026-09-10, local cart refresh).
     """
     return render_fragment(_load_cart_main(connection))
 
 
 def _events_list_response(connection, user_id: int):
     """
-    Refresca solo #cart_events_list. Es el target de meal_hour, la única
-    acción que puede reordenar la lista (orden `meal_time DESC`).
+    Refresh only #cart_events_list. It is the target of meal_hour, the only
+    action that can reorder the list (order `meal_time DESC`).
     """
     events, portions_by_event, plates_by_event = _load_events_and_portions(connection, user_id)
     return render_fragment(cart_events_list(events, portions_by_event, plates_by_event))
@@ -138,9 +137,9 @@ def _events_list_response(connection, user_id: int):
 
 def _card_response(request: Request, connection, user_id: int, event_id: int):
     """
-    Refresca solo #cart_card_event_{id}. Target por defecto para cualquier
-    edición dentro de una tarjeta que no cambia si el evento sigue en
-    'planned' ni su posición en la lista.
+    Refresh only #cart_card_event_{id}. Default target for any edit inside a
+    card that changes neither whether the event is still 'planned' nor its
+    position in the list.
     """
     event = get_intake_event(connection, user_id, event_id)
     if not event:
@@ -151,18 +150,18 @@ def _card_response(request: Request, connection, user_id: int, event_id: int):
 
 
 def _portion_event_id(connection, user_id: int, portion, *, require_planned: bool = True) -> int:
-    """Resuelve la porción a su evento comprobando propiedad y estado (§5.3, §6.9.3).
+    """Resolve a portion to its event, checking ownership and state (§5.3, §6.9.3).
 
-    Las rutas de porción viajan por `portion_id`, así que el evento nunca viene
-    de la URL: se deriva de la porción, cuyo ownership ya validó
-    `get_portion_detail` dentro del SQL.
+    Portion routes travel by `portion_id`, so the event never comes from the
+    URL: it is derived from the portion, whose ownership `get_portion_detail`
+    already validated inside the SQL.
 
-    `require_planned=False` para las acciones válidas sobre un evento consumido
+    `require_planned=False` for the actions valid on a consumed event
     (measurement_conventions.md §6.9.3).
 
     Raises:
-        NotFoundError: la porción no es de un evento (receta/nevera).
-        NotFoundError/ConflictError: del evento, según `get_planned_intake_event`.
+        NotFoundError: the portion does not belong to an event (recipe/fridge).
+        NotFoundError/ConflictError: from the event, as `get_planned_intake_event` decides.
     """
     if portion.destination is not PortionDestination.INTAKE_EVENT:
         raise NotFoundError("portion_not_in_event")
@@ -174,18 +173,18 @@ def _portion_event_id(connection, user_id: int, portion, *, require_planned: boo
 
 
 def _plate_event_id(connection, user_id: int, plate_id: int, *, require_planned: bool = True) -> int:
-    """Resuelve la tanda a su evento comprobando la propiedad en el SQL (§5.3).
+    """Resolve a plate to its event, checking ownership in the SQL (§5.3).
 
-    Las rutas de ingrediente viajan por `plate_id`, así que el evento nunca
-    viene de la URL: se deriva de la tanda, que `get_intake_plate` valida
-    contra el usuario dueño del evento.
+    Ingredient routes travel by `plate_id`, so the event never comes from the
+    URL: it is derived from the plate, which `get_intake_plate` validates
+    against the user who owns the event.
 
-    `require_planned=False` para las acciones que también son válidas sobre un
-    evento ya consumido (measurement_conventions.md §6.9.3).
+    `require_planned=False` for the actions that are also valid on an already
+    consumed event (measurement_conventions.md §6.9.3).
 
     Raises:
-        NotFoundError: la tanda no existe o no es del usuario.
-        ConflictError: se exigía 'planned' y el evento ya está confirmado.
+        NotFoundError: the plate does not exist or is not the user's.
+        ConflictError: 'planned' was required and the event is already confirmed.
     """
     plate = get_intake_plate(connection, user_id, plate_id)
     if require_planned:
@@ -195,12 +194,11 @@ def _plate_event_id(connection, user_id: int, plate_id: int, *, require_planned:
 
 def _removal_response(connection, user_id: int):
     """
-    El evento ya salió de 'planned' (borrado o confirmado): su tarjeta se
-    elimina devolviendo cuerpo vacío sobre el mismo target
-    (#cart_card_event_{id}, outerHTML → nodo eliminado). Si no queda ningún
-    evento planificado, se añade un swap OOB de #cart_body con el estado
-    "carrito vacío", sin recargar el resto de la página (decisión
-    2026-09-10, refresco local del carrito).
+    The event has left 'planned' (deleted or confirmed): its card is removed
+    by returning an empty body on the same target (#cart_card_event_{id},
+    outerHTML → node removed). If no planned event is left, an OOB swap of
+    #cart_body with the "empty cart" state is added, without reloading the
+    rest of the page (decision 2026-09-10, local cart refresh).
     """
     remaining = list_planned_intake_events(connection, user_id)
     if remaining:
@@ -218,14 +216,14 @@ def _to_float(value: str):
 
 
 def _parse_offset_minutes(raw_value: str) -> int:
-    """Valida un offset en minutos en el boundary (§7.5).
+    """Validate an offset in minutes at the boundary (§7.5).
 
-    Entero y dentro de la cota de cordura de measurement_conventions.md §4.5
-    (`-300..300`), la misma que declara el CHECK de `intake_plate`: escribir
-    fuera de rango daría un error de base de datos en vez de un 422.
+    An integer within the sanity bound of measurement_conventions.md §4.5
+    (`-300..300`), the same one the `intake_plate` CHECK declares: writing
+    out of range would give a database error instead of a 422.
 
     Raises:
-        ValidationError: no es entero o se sale del rango.
+        ValidationError: it is not an integer or is out of range.
     """
     try:
         value = int((raw_value or "").strip())
@@ -241,12 +239,12 @@ def _parse_offset_minutes(raw_value: str) -> int:
 
 def _parse_strict_bool(raw_value: str) -> bool:
     """
-    Parser estricto para los booleanos de transporte HTML de esta ruta
-    (checkboxes con `value="true"`): campo ausente o vacío -> `False` (así es
-    como un checkbox sin marcar llega, el formulario no envía el campo);
-    `"true"` -> `True`; cualquier otro valor presente es una entrada inválida
-    y se rechaza en vez de convertirse en `False` en silencio (§7.6,
-    decisión 2026-09-10; hallazgo 31 de audit/audit_intake_event.md).
+    Strict parser for this route's HTML transport booleans (checkboxes with
+    `value="true"`): missing or empty field -> `False` (that is how an
+    unchecked checkbox arrives, the form does not send the field); `"true"`
+    -> `True`; any other value present is invalid input and is rejected
+    instead of silently becoming `False` (§7.6, decision 2026-09-10; finding
+    31 of audit/audit_intake_event.md).
     """
     normalized = (raw_value or "").strip().lower()
     if normalized == "":
@@ -257,13 +255,13 @@ def _parse_strict_bool(raw_value: str) -> bool:
 
 
 def _parse_tristate_bool(raw_value: str):
-    """Parser estricto del tri-estado de `strictly_weighed`/`macros_quality` (§7.4/§7.6).
+    """Strict parser of the `strictly_weighed`/`macros_quality` tri-state (§7.4/§7.6).
 
-    Distinto de `_parse_strict_bool` a propósito: en un checkbox la ausencia es
-    `False`, pero en un control de tres estados la ausencia es "sin dato"
-    (`None`). `"true"` -> `True`, `"false"` -> `False`, `""` -> `None`, cualquier
-    otra cosa -> `422`. El cliente no decide la transición: envía el valor que
-    el servidor calculó al renderizar (decisión 2026-09-18).
+    Different from `_parse_strict_bool` on purpose: in a checkbox, absence is
+    `False`, but in a three-state control, absence is "no data" (`None`).
+    `"true"` -> `True`, `"false"` -> `False`, `""` -> `None`, anything else ->
+    `422`. The client does not decide the transition: it sends the value the
+    server computed when rendering (decision 2026-09-18).
     """
     normalized = (raw_value or "").strip().lower()
     if normalized == "":
@@ -277,15 +275,15 @@ def _parse_tristate_bool(raw_value: str):
 
 def _parse_ingested_unit(raw_value: str) -> AmountInputUnit:
     """
-    Parser estricto de la unidad de la cantidad ingerida del `/confirm`.
+    Strict parser of the ingested amount unit of `/confirm`.
 
-    Mismo criterio que `_parse_strict_bool` (§7.6/§7.7): el conjunto es
-    cerrado y vive en `domain/` (`AmountInputUnit`, restringido para este
-    boundary por `INTAKE_EVENT_INGESTED_UNITS`); cualquier otro valor
-    —incluido el vacío— se rechaza con `422` en vez de degradarse al `else`
-    de gramos. Sin esto, `ingested_unit=kg` con `ingested_value=0.05`
-    confirmaba la comida como 0,05 g y sobrescribía `amount`, que es un
-    dato clínico irrecuperable (hallazgo 47 de audit/audit_intake_event.md).
+    Same criterion as `_parse_strict_bool` (§7.6/§7.7): the set is closed and
+    lives in `domain/` (`AmountInputUnit`, restricted for this boundary by
+    `INTAKE_EVENT_INGESTED_UNITS`); any other value —including empty— is
+    rejected with `422` instead of degrading into the grams `else`. Without
+    this, `ingested_unit=kg` with `ingested_value=0.05` confirmed the meal as
+    0.05 g and overwrote `amount`, which is unrecoverable clinical data
+    (finding 47 of audit/audit_intake_event.md).
     """
     normalized = (raw_value or "").strip()
     try:
@@ -298,11 +296,11 @@ def _parse_ingested_unit(raw_value: str) -> AmountInputUnit:
 
 
 def _parse_amount_unit(raw_value: str) -> AmountInputUnit:
-    """Parser estricto de la unidad de cantidad del carrito (§7.7).
+    """Strict parser of the cart amount unit (§7.7).
 
-    Acepta los miembros de `AmountInputUnit` (enum central, §11); `PERCENT` no
-    es una masa y no se admite en esta ruta. Cualquier otro valor, incluido el
-    vacío, es 422 en vez de interpretarse como gramos.
+    It accepts the members of `AmountInputUnit` (central enum, §11); `PERCENT`
+    is not a mass and is not accepted on this route. Any other value,
+    including empty, is a 422 instead of being interpreted as grams.
     """
     normalized = (raw_value or "").strip().lower()
     try:
@@ -316,23 +314,22 @@ def _parse_amount_unit(raw_value: str) -> AmountInputUnit:
 
 def _resync_consumed_event_metrics(connection, user_id: int, event_id: int, portions) -> None:
     """
-    Recalcula el snapshot de métricas de un evento ya `consumed`.
+    Recompute the metrics snapshot of an already `consumed` event.
 
-    `amount_confidence`, `quality_confidence` y los seis `*_uncertainty` se
-    calculan una sola vez en `/confirm` a partir de las porciones del evento.
-    Las porciones de un evento consumido **son editables** (decisión
-    2026-09-10, hallazgo 48), así que toda escritura sobre ellas tiene que
-    reescribir ese snapshot: si no, el evento queda con métricas que ya no
-    corresponden a sus porciones.
+    `amount_confidence`, `quality_confidence` and the six `*_uncertainty` are
+    computed once in `/confirm` from the event's portions. The portions of a
+    consumed event **are editable** (decision 2026-09-10, finding 48), so
+    every write on them has to rewrite that snapshot: otherwise the event is
+    left with metrics that no longer match its portions.
 
-    Las métricas son proporciones ponderadas por cantidad, así que se calculan
-    sobre las porciones tal y como están guardadas (ya escaladas por la
-    fracción consumida en el `confirm`, §6.9.1); una escala uniforme no las
-    altera. `ingested_amount` no se toca aquí porque estos flags no cambian
-    `amount`; la ruta que llegue a cambiarlo deberá recalcularlo también.
+    The metrics are amount-weighted proportions, so they are computed on the
+    portions as stored (already scaled by the fraction consumed at
+    `confirm`, §6.9.1); a uniform scale does not alter them.
+    `ingested_amount` is not touched here because these flags do not change
+    `amount`; any route that does change it must recompute it too.
 
-    No hace nada si el evento sigue en `planned`: ahí el snapshot todavía no
-    existe y lo escribe el `confirm`.
+    It does nothing if the event is still `planned`: the snapshot does not
+    exist yet there, and `confirm` writes it.
     """
     update_intake_event(
         connection,
@@ -379,7 +376,7 @@ def setup_cart_routes(rt):
         try:
             parsed_time = datetime.strptime(meal_hour, "%H:%M").time()
         except ValueError:
-            # Valor presente y bien formado como petición, contenido inválido:
+            # Value present and well formed as a request, invalid content:
             # validation_error → 422 (error_conventions.md §3.2).
             return _error(request, ValidationError, "La hora de la comida no es válida.")
 
@@ -392,7 +389,7 @@ def setup_cart_routes(rt):
                 try:
                     chosen_date = datetime.strptime(meal_date, "%Y-%m-%d").date()
                 except ValueError:
-                    # "fecha inválida" es validation_error → 422, no 400.
+                    # "invalid date" is validation_error → 422, not 400.
                     return _error(request, ValidationError, "La fecha de la comida no es válida.")
             else:
                 chosen_date = current_local.date() if current_local else local_today()
@@ -457,8 +454,8 @@ def setup_cart_routes(rt):
             return _error(request, AuthenticationError, _NO_SESSION)
         clean_name = (event_name or "").strip()
         if len(clean_name) > INTAKE_EVENT_NAME_MAX_LENGTH:
-            # §7.3: no truncar silenciosamente; el exceso se rechaza como
-            # validation_error (decisión 2026-09-09).
+            # §7.3: never truncate silently; the excess is rejected as
+            # validation_error (decision 2026-09-09).
             return _error(request, 
                 ValidationError,
                 f"El nombre no puede pasar de {INTAKE_EVENT_NAME_MAX_LENGTH} caracteres.",
@@ -484,10 +481,10 @@ def setup_cart_routes(rt):
         """
         Update the meal note, returning the refreshed card.
 
-        Mismo contrato que /name: se guarda al salir del campo, la cadena vacía
-        borra la nota (§7.3) y el exceso de longitud se rechaza con 422 en vez
-        de truncarse (hallazgo 44 de audit/audit_intake_event.md,
-        decisión 2026-09-10).
+        Same contract as /name: it is saved when leaving the field, the empty
+        string clears the note (§7.3) and excess length is rejected with 422
+        instead of being truncated (finding 44 of audit/audit_intake_event.md,
+        decision 2026-09-10).
         """
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
@@ -638,7 +635,7 @@ def setup_cart_routes(rt):
         if not user_id:
             return _error(request, AuthenticationError, _NO_SESSION)
 
-        # Parsear zona
+        # Parse the zone
         if not zone or not zone.strip():
             return _error(request, ValidationError, "Elige una zona de inyección.")
         try:
@@ -646,7 +643,7 @@ def setup_cart_routes(rt):
         except ValueError:
             return _error(request, ValidationError, "Esa zona de inyección no existe.")
 
-        # Registrar zona
+        # Record the zone
         with get_connection() as connection:
             try:
                 set_injection_zone(
@@ -677,7 +674,7 @@ def setup_cart_routes(rt):
         try:
             value = _to_float(amount_value)
         except (TypeError, ValueError):
-            # Cantidad no numérica: validation_error → 422.
+            # Non-numeric amount: validation_error → 422.
             return _error(request, ValidationError, "La cantidad no es un número válido.")
 
         with get_connection() as connection:
@@ -686,9 +683,9 @@ def setup_cart_routes(rt):
                 event_id = _portion_event_id(connection, int(user_id), portion)
                 grams = amount_to_grams(value, unit, portion.source.unit_g)
                 with connection.transaction():
-                    # update_portion_amount valida finitud, > 0 y cota superior
-                    # (T2.7): una cantidad 0 o inválida es 422 y no borra nada
-                    # (T0.7: el borrado tiene ruta propia).
+                    # update_portion_amount validates finiteness, > 0 and the upper
+                    # bound (T2.7): a 0 or invalid amount is a 422 and deletes
+                    # nothing (T0.7: deletion has its own route).
                     update_portion_amount(connection, int(user_id), portion_id, grams, commit=False)
             except NotFoundError:
                 return _error(request, NotFoundError, _INGREDIENT_GONE)
@@ -744,11 +741,11 @@ def setup_cart_routes(rt):
 
     @rt("/cart/portion/{portion_id}/move")
     def post(request: Request, portion_id: int, target_plate_id: str = ""):
-        """Mueve una porción a otra tanda del mismo evento, o a una nueva.
+        """Move a portion to another plate of the same event, or to a new one.
 
-        `target_plate_id` vacío o "0" es la opción `+ New plate` del selector
-        (frontend_conventions.md §7.5): la tanda se crea en el acto, hereda el
-        offset de la porción de origen y la recibe.
+        An empty or "0" `target_plate_id` is the selector's `+ New plate` option
+        (frontend_conventions.md §7.5): the plate is created on the spot,
+        inherits the offset of the source portion and receives it.
         """
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
@@ -788,22 +785,20 @@ def setup_cart_routes(rt):
 
     def _portion_flag_route(request: Request, portion_id: int, field_name: str, raw_value: str, label: str, *, tristate: bool = False):
         """
-        Cuerpo común de los tres booleanos de porción (strictly_weighed,
-        macros_quality, is_cooked_weight): mismo contrato HTMX
-        (target #macros_summary_event_{id}, swap outerHTML) y mismo mapeo de
-        errores, como exige §9.5 ("las acciones equivalentes deben usar el
-        mismo patrón").
+        Common body of the three portion booleans (strictly_weighed,
+        macros_quality, is_cooked_weight): same HTMX contract
+        (target #macros_summary_event_{id}, swap outerHTML) and same error
+        mapping, as §9.5 requires ("equivalent actions must use the same
+        pattern").
 
-        `tristate=True` para los dos campos de calidad del dato, que admiten
-        "sin dato" (`None`, decisión 2026-09-18); `is_cooked_weight` es de dos
-        estados.
+        `tristate=True` for the two data quality fields, which accept "no
+        data" (`None`, decision 2026-09-18); `is_cooked_weight` has two states.
 
-        A diferencia de sus rutas hermanas de cantidad/offset, acepta también un
-        evento `consumed`: las porciones de un evento confirmado son editables
-        (decisión 2026-09-10, hallazgo 48). La contrapartida es que el snapshot
-        de métricas del evento, calculado en el `confirm`, deja de
-        corresponder a sus porciones, así que se recalcula y se reescribe en la
-        misma transacción que el flag.
+        Unlike its sibling amount/offset routes, it also accepts a `consumed`
+        event: the portions of a confirmed event are editable (decision
+        2026-09-10, finding 48). The trade-off is that the event's metrics
+        snapshot, computed at `confirm`, no longer matches its portions, so it
+        is recomputed and rewritten in the same transaction as the flag.
         """
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
@@ -816,8 +811,8 @@ def setup_cart_routes(rt):
             return _error(request, ValidationError, f"No se ha entendido la casilla '{label}'.")
         with get_connection() as connection:
             try:
-                # require_planned=False: un evento consumido sigue siendo
-                # editable en estos tres campos (decisión 2026-09-10).
+                # require_planned=False: a consumed event stays editable in
+                # these three fields (decision 2026-09-10).
                 portion = get_portion_detail(connection, int(user_id), portion_id)
                 event_id = _portion_event_id(connection, int(user_id), portion, require_planned=False)
             except NotFoundError:
@@ -844,11 +839,11 @@ def setup_cart_routes(rt):
                 )
             is_consumed = event.state == IntakeEventState.CONSUMED
             try:
-                # Escribir el flag y reescribir el snapshot son una sola
-                # operación: si el recálculo falla, el flag tampoco se guarda
-                # (§2.3, §6.5). Para un evento 'planned' no hay snapshot que
-                # tocar todavía —lo escribe el confirm—, así que la
-                # transacción envuelve solo la escritura del flag.
+                # Writing the flag and rewriting the snapshot are a single
+                # operation: if the recompute fails, the flag is not saved
+                # either (§2.3, §6.5). For a 'planned' event there is no
+                # snapshot to touch yet —confirm writes it—, so the
+                # transaction only wraps the flag write.
                 with connection.transaction():
                     update_portion_flag(connection, int(user_id), portion_id, field_name, value, commit=False)
                     portions = list_portions_by_event(connection, int(user_id), event_id)
@@ -862,8 +857,8 @@ def setup_cart_routes(rt):
                 # difference labels, so the whole card is repainted.
                 return _card_response(request, connection, int(user_id), event_id)
             if is_consumed:
-                # El fragmento debe mostrar el snapshot recién guardado, no el
-                # que se leyó antes de recalcularlo.
+                # The fragment must show the snapshot just saved, not the one
+                # read before recomputing it.
                 event = get_intake_event(connection, int(user_id), event_id)
                 if not event:
                     return _error(request, NotFoundError, _EVENT_GONE)
@@ -895,11 +890,12 @@ def setup_cart_routes(rt):
 
     @rt("/cart/event/{event_id}/plate")
     def post(request: Request, event_id: int):
-        """`+ Add plate`: crea una tanda vacía al final del evento.
+        """`+ Add plate`: create an empty plate at the end of the event.
 
-        Nace sin nombre —lo derivará de sus ingredientes (§4.6.3)— y sin
-        offset: lo hereda del que el usuario escriba en su cabecera antes de
-        añadir nada, o queda en NULL si añade primero y lo ajusta después.
+        It is born without a name —it will derive it from its ingredients
+        (§4.6.3)— and without an offset: it inherits the one the user types in
+        its header before adding anything, or stays NULL if they add first and
+        adjust it afterwards.
         """
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
@@ -918,7 +914,7 @@ def setup_cart_routes(rt):
 
     @rt("/cart/plate/{plate_id}/name")
     def post(request: Request, plate_id: int, name: str = ""):
-        """Nombre propio de la tanda. Vacío lo borra y vuelve al derivado (§4.6.3)."""
+        """Own name of the plate. Empty clears it and goes back to the derived one (§4.6.3)."""
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
@@ -926,7 +922,7 @@ def setup_cart_routes(rt):
             return _error(request, AuthenticationError, _NO_SESSION)
         clean_name = (name or "").strip()
         if len(clean_name) > INTAKE_PLATE_NAME_MAX_LENGTH:
-            # §7.3: el exceso se rechaza con 422, nunca se trunca.
+            # §7.3: the excess is rejected with 422, never truncated.
             return _error(
                 request,
                 ValidationError,
@@ -942,10 +938,10 @@ def setup_cart_routes(rt):
 
     @rt("/cart/plate/{plate_id}/offset")
     def post(request: Request, plate_id: int, offset_minutes: str = ""):
-        """Offset plantilla de la tanda.
+        """Template offset of the plate.
 
-        No reescribe sus porciones: eso es `Apply all` (§4.6.2). Solo cambia lo
-        que heredarán los alimentos que se añadan después.
+        It does not rewrite its portions: that is `Apply all` (§4.6.2). It only
+        changes what the foods added afterwards will inherit.
         """
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
@@ -966,11 +962,11 @@ def setup_cart_routes(rt):
 
     @rt("/cart/plate/{plate_id}/apply_offset")
     def post(request: Request, plate_id: int, offset_minutes: str = ""):
-        """`Apply all`: fija el offset de la tanda y lo propaga a sus porciones.
+        """`Apply all`: set the plate's offset and propagate it to its portions.
 
-        Mismo endpoint para el botón de la cabecera y para el de una fila
-        (frontend_conventions.md §7.4): en los dos casos el valor enviado pasa a
-        ser el de la tanda y el de todas sus filas.
+        Same endpoint for the header button and for a row's button
+        (frontend_conventions.md §7.4): in both cases the value sent becomes the
+        plate's and that of all its rows.
         """
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
@@ -992,7 +988,7 @@ def setup_cart_routes(rt):
 
     @rt("/cart/plate/{plate_id}/delete")
     def post(request: Request, plate_id: int):
-        """Borra una tanda vacía. Con ingredientes dentro responde 409 (§4.6.5)."""
+        """Delete an empty plate. With ingredients inside it answers 409 (§4.6.5)."""
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
@@ -1000,9 +996,9 @@ def setup_cart_routes(rt):
             return _error(request, AuthenticationError, _NO_SESSION)
         with get_connection() as connection:
             try:
-                # require_planned=False para que el único ConflictError posible
-                # sea el RESTRICT de una tanda con ingredientes, y no se
-                # confunda con "el evento ya no está en el carrito".
+                # require_planned=False so that the only possible ConflictError
+                # is the RESTRICT of a plate with ingredients, and it is not
+                # confused with "the event is no longer in the cart".
                 event_id = _plate_event_id(connection, int(user_id), plate_id, require_planned=False)
                 delete_intake_plate(connection, plate_id)
             except NotFoundError:
@@ -1019,16 +1015,16 @@ def setup_cart_routes(rt):
         ingested_unit: str = AmountInputUnit.GRAMS.value,
     ):
         """
-        Confirma el evento (planned -> consumed). ingested_value/ingested_unit
-        representan cuánto del plato servido se ha comido realmente:
-        - vacío -> se asume el 100% (todo el plato).
-        - ingested_unit == "%" -> fracción = ingested_value / 100.
-        - ingested_unit == "g" -> fracción = ingested_value / total_amount
-          (suma en vivo de amount, calculada en este mismo request).
-        No hay más unidades: cualquier otro valor es 422, nunca gramos por
-        defecto (hallazgo 47).
-        fracción debe quedar en (0, 1] (decisión 2026-09-22); fuera de rango es 422.
-        Ver measurement_conventions.md §4.4/§6.9.1 (decisión 2026-09-10).
+        Confirm the event (planned -> consumed). ingested_value/ingested_unit
+        represent how much of the served plate was actually eaten:
+        - empty -> 100% is assumed (the whole plate).
+        - ingested_unit == "%" -> fraction = ingested_value / 100.
+        - ingested_unit == "g" -> fraction = ingested_value / total_amount
+          (live sum of amount, computed in this same request).
+        There are no other units: any other value is a 422, never grams by
+        default (finding 47).
+        The fraction must end up in (0, 1] (decision 2026-09-22); out of range is a 422.
+        See measurement_conventions.md §4.4/§6.9.1 (decision 2026-09-10).
         """
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
@@ -1036,8 +1032,8 @@ def setup_cart_routes(rt):
         if not user_id:
             return _error(request, AuthenticationError, _NO_SESSION)
 
-        # 1) Validación del payload HTTP que no depende del estado de la base
-        # (§7.1): se hace antes de abrir nada.
+        # 1) Validation of the HTTP payload that does not depend on the database
+        # state (§7.1): it happens before opening anything.
         try:
             unit = _parse_ingested_unit(ingested_unit)
         except ValidationError:
@@ -1048,16 +1044,16 @@ def setup_cart_routes(rt):
             try:
                 value = _to_float(raw_value)
             except (TypeError, ValueError):
-                # No numérico: validation_error → 422 (hallazgo 33: mismo
-                # comportamiento aquí que en el resto de la ruta).
+                # Non-numeric: validation_error → 422 (finding 33: same
+                # behaviour here as in the rest of the route).
                 return _error(request, ValidationError, "La cantidad ingerida no es un número válido.")
-            # NaN/Infinity no deben guardarse: rechazo explícito (hallazgo 32),
-            # no depender solo de que la comparación de fracción los descarte.
+            # NaN/Infinity must not be stored: explicit rejection (finding 32),
+            # instead of relying only on the fraction comparison to discard them.
             if not math.isfinite(value) or value < 0:
                 return _error(request, ValidationError, "La cantidad ingerida no es un número válido.")
 
         with get_connection() as connection:
-            # 2) Autorizar antes de leer nada del evento (§5.3; cierra el hallazgo 19).
+            # 2) Authorize before reading anything from the event (§5.3; closes finding 19).
             try:
                 get_planned_intake_event(connection, int(user_id), event_id)
             except NotFoundError:
@@ -1066,26 +1062,26 @@ def setup_cart_routes(rt):
                 return _error(request, ConflictError, "Esta comida ya está confirmada.")
 
             try:
-                # 3) Todo lo que depende del estado de la base ocurre dentro de
-                # la misma transacción: leer las porciones fuera dejaba una
-                # ventana en la que otra petición podía insertar una porción
-                # que se escalaría sin haber contado en total_amount, así que
-                # el ingested_amount guardado no correspondía a la suma real de
-                # amount (hallazgo 46, punto 11 de §13).
+                # 3) Everything that depends on the database state happens
+                # inside the same transaction: reading the portions outside it
+                # left a window in which another request could insert a
+                # portion that would be scaled without having counted in
+                # total_amount, so the stored ingested_amount did not match the
+                # real sum of amount (finding 46, item 11 of §13).
                 with connection.transaction():
                     portions = list_portions_by_event(connection, int(user_id), event_id)
                     if not portions:
-                        # Regla dependiente del estado de la base (§7.10): un evento sin
-                        # porciones no puede confirmarse; transición de estado no
-                        # permitida → conflict (error_conventions.md §3.6). Hallazgo 34
-                        # de audit/audit_intake_event.md, decisión 2026-09-10.
+                        # Rule that depends on the database state (§7.10): an event
+                        # without portions cannot be confirmed; a disallowed state
+                        # transition → conflict (error_conventions.md §3.6). Finding 34
+                        # of audit/audit_intake_event.md, decision 2026-09-10.
                         raise ConflictError("intake_event_without_portions")
                     total_amount = sum(portion_intake_amount(p) for p in portions)
                     if not math.isfinite(total_amount) or total_amount > INTAKE_EVENT_INGESTED_AMOUNT_MAX_G:
-                        # Defensa en profundidad: total_amount se calcula en vivo a partir
-                        # de portion_detail (fuera del alcance de esta tabla), pero un
-                        # ingested_amount derivado de él sigue teniendo que respetar el
-                        # límite de cordura de esta tabla (§6.9.2, hallazgo 32/35).
+                        # Defense in depth: total_amount is computed live from
+                        # portion_detail (outside this table's scope), but an
+                        # ingested_amount derived from it must still respect this
+                        # table's sanity limit (§6.9.2, finding 32/35).
                         raise ValidationError("total_amount_out_of_range")
 
                     if value is None:
@@ -1095,7 +1091,7 @@ def setup_cart_routes(rt):
                     else:
                         # Única rama restante: gramos, ya validada arriba.
                         if total_amount <= 0:
-                            # No hay nada que consumir: gramos > 0 no es interpretable.
+                            # There is nothing to consume: grams > 0 cannot be interpreted.
                             raise ValidationError("total_amount_not_positive")
                         fraction = value / total_amount
                     # (0, 1] since decision 2026-09-22: eating nothing is not a
@@ -1103,27 +1099,27 @@ def setup_cart_routes(rt):
                     if not (0.0 < fraction <= 1.0):
                         raise ValidationError("fraction_out_of_range")
 
-                    # amount_confidence/quality_confidence/*_uncertainty son proporciones:
-                    # una escala uniforme de todas las porciones no las cambia, así que se
-                    # calculan sobre las porciones servidas, antes de escalarlas (§6.9.1).
+                    # amount_confidence/quality_confidence/*_uncertainty are proportions:
+                    # a uniform scale of every portion does not change them, so they are
+                    # computed on the served portions, before scaling them (§6.9.1).
                     update_fields = calculate_macro_summary_metrics(portions)
                     update_fields["ingested_amount"] = total_amount * fraction
                     update_payload = IntakeEventUpdate(**update_fields)
 
-                    # 4) Ownership + idempotencia en una sola sentencia (§6.6).
+                    # 4) Ownership + idempotency in a single statement (§6.6).
                     confirm_intake_event(
                         connection, user_id=int(user_id), event_id=event_id, commit=False
                     )
-                    # 5) Sobrescribe amount = amount * fracción para todas
-                    # las porciones del evento, en una sola sentencia SQL (§6.9.1).
+                    # 5) Overwrite amount = amount * fraction for every portion
+                    # of the event, in a single SQL statement (§6.9.1).
                     scale_event_portion_amounts(
                         connection, int(user_id), event_id, fraction, commit=False
                     )
-                    # 6) Resto de escrituras, ya dentro de la misma transacción.
+                    # 6) The rest of the writes, already inside the same transaction.
                     update_intake_event(
                         connection, user_id=int(user_id), event_id=event_id, data=update_payload, commit=False
                     )
-                    # 7) Inyección automática: devuelve id o None (evento sin insulina).
+                    # 7) Automatic injection: returns an id or None (event without insulin).
                     create_injection_for_event(
                         connection, user_id=int(user_id), intake_event_id=event_id, commit=False
                     )

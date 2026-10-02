@@ -41,7 +41,7 @@ def setup_main_routes(rt):
         if not user_id:
             return HTMLResponse(status_code=401)
 
-        # Parsear fecha y hora
+        # Parse date and time
         try:
             parsed_time = datetime.strptime((shot_hour or "").strip(), "%H:%M").time()
             parsed_date = datetime.strptime((shot_date or "").strip(), "%Y-%m-%d").date()
@@ -50,13 +50,13 @@ def setup_main_routes(rt):
         except ValueError:
             return HTMLResponse(status_code=422)
 
-        # Parsear tipo de insulina
+        # Parse insulin type
         try:
             parsed_insulin_type = InsulinType(insulin_type.strip().lower())
         except ValueError:
             return HTMLResponse(status_code=422)
 
-        # Parsear dosis (si aplica)
+        # Parse dose (if any)
         units_value = None
         if parsed_insulin_type is InsulinType.BASAL:
             try:
@@ -64,7 +64,7 @@ def setup_main_routes(rt):
             except (TypeError, ValueError):
                 return HTMLResponse(status_code=422)
 
-        # Parsear zona (opcional)
+        # Parse zone (optional)
         injection_zone = None
         if zone and zone.strip():
             try:
