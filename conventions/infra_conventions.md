@@ -99,6 +99,7 @@ Este documento complementa `conventions/code_conventions.md` §8 (configuración
 - **Docker**: se instala desde el repositorio oficial de Docker (clave de firma con huella `9DC858229FC7DD38854AE2D88D81803C0EBFCD88`). No entra en `unattended-upgrades`, porque actualizarlo reinicia todos los contenedores: se actualiza a mano con `apt`, tras comprobar las notas de la versión.
 - Docker se usa con `sudo`. `pablo` no pertenece al grupo `docker`: ese grupo equivale a ser root sin contraseña.
 - Los logs de los contenedores se limitan en `/etc/docker/daemon.json` (`json-file`, `max-size` 10m, `max-file` 3), para que no puedan llenar el disco.
+- **Swap**: archivo `/swapfile` de 1 GB (root, `chmod 600`: puede contener cualquier contenido de la memoria), activado en `/etc/fstab` y con `vm.swappiness=10` en `/etc/sysctl.d/99-daybetes.conf`. Es una red de seguridad contra el OOM killer, no memoria de trabajo: con el consumo normal debe estar vacía. Un cambio en `/etc/fstab` se valida con `findmnt --verify` antes de reiniciar.
 
 ## 12. Copias de seguridad
 
