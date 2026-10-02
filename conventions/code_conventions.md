@@ -8,7 +8,21 @@ Las convenciones se aplican inmediatamente al código nuevo. El código existent
 
 Durante la fase de desarrollo personal (TFG, un único desarrollador, un único usuario) no se exige una suite de tests automatizados. La verificación manual del comportamiento afectado es suficiente antes de dar por cerrada una tabla o módulo. Esta decisión se revisará cuando el proyecto salga de esta fase; no debe señalarse como convención faltante en auditorías mientras siga vigente.
 
-**Idioma del código (obligatorio).** Todo el código escrito se redacta en inglés: identificadores, nombres de funciones y variables, docstrings, **comentarios** y mensajes internos de excepción y de log. Los comentarios no son una excepción: un comentario en español en código nuevo es un defecto, no un detalle de estilo, y el código existente que se toque debe traducirse en la misma pasada (sin mezclar esa traducción con cambios funcionales no relacionados, §12.1). La única excepción es el texto que ve el usuario (etiquetas y contenido de la interfaz, y los mensajes públicos de error): su idioma se rige por `frontend_conventions.md` §7.12 y `error_conventions.md` §7, y la decisión de internacionalización —elegir idioma y traducir las listas de categorías y estados de los alimentos— sigue pendiente y no se resuelve aquí.
+## 0. Idioma (obligatorio)
+
+La regla general es: **lo que se ejecuta, en inglés; lo que se lee como documentación, en español.**
+
+| Qué | Idioma |
+|---|---|
+| Código: identificadores, nombres de funciones y variables, docstrings, **comentarios**, comentarios dentro de SQL, mensajes internos de excepción y de log | Inglés |
+| Archivos de infraestructura y configuración: scripts de shell, workflows de GitHub Actions, Compose, Dockerfiles, unidades de systemd, plantillas de entorno (`.env.example` y similares), incluidos sus comentarios y mensajes | Inglés |
+| Mensajes de commit, nombres de ramas, títulos y descripciones de Pull Requests | Inglés |
+| `README.md`, `conventions/` (incluido `decisions.md`) y la memoria del TFG | Español |
+| Texto que ve el usuario (interfaz y mensajes públicos de error) | Lo rige `frontend_conventions.md` §7.12 y `error_conventions.md` §7. La internacionalización sigue pendiente |
+
+- Un comentario en español en código nuevo es un defecto, no un detalle de estilo.
+- El código existente se tradujo entero en octubre de 2026. Desde entonces no hay excepciones por código heredado: cualquier comentario en español que aparezca se corrige.
+- Una traducción nunca se mezcla con cambios funcionales (§12.1). Una PR de traducción se verifica comprobando que el código, sin comentarios ni docstrings, no cambia.
 
 ## 1. Capas y responsabilidades
 
