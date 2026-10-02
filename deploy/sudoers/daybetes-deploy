@@ -1,0 +1,3 @@
+# /etc/sudoers.d/daybetes-deploy (root:root, chmod 440). Validate with: visudo -cf
+# The deploy user can only run the deploy script, without a password.
+deploy ALL=(root) NOPASSWD: /usr/local/sbin/daybetes-deploy
