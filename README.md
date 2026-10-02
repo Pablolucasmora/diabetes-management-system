@@ -51,8 +51,10 @@ El proyecto se plantea en dos fases.
 El Trabajo de Fin de Grado se centra en **una sola persona, el autor**, y tiene tres objetivos:
 
 1. **Construir un sistema de registro de calidad**: comidas con sus porciones, macronutrientes, momento de cada plato, dosis de insulina, zona de inyección y tipo de comida. Cada dato lleva su nivel de confianza y su incertidumbre.
-2. **Unir esos registros con los datos de glucosa** del sensor continuo, importándolos de LibreView.
-3. **Analizar la respuesta glucémica personal**: qué alimentos, combinaciones, horarios y dosis producen qué curvas de glucosa, con estadísticas de tiempo en rango, comparativas entre días y franjas horarias, y correlaciones entre lo registrado y lo medido.
+2. **Cruzar esos registros con otras fuentes de datos**:
+   - la **glucosa** del sensor continuo, importada de LibreView;
+   - los datos de **Apple Health y el Apple Watch**: ejercicio, sueño, frecuencia cardiaca, su variabilidad... En esta fase se exportan y se cruzan **en el análisis, fuera de la app**. Integrarlos dentro de la aplicación es trabajo de la fase 2.
+3. **Analizar la respuesta glucémica personal**: qué alimentos, combinaciones, horarios, dosis, actividad física y descanso producen qué curvas de glucosa, con estadísticas de tiempo en rango, comparativas entre días y franjas horarias, y correlaciones entre lo registrado y lo medido.
 
 El resultado esperado del TFG es tanto la herramienta, ya en uso diario, como el análisis de los datos recogidos con ella. El análisis incluye una valoración crítica de qué factores explican la variabilidad de la glucosa en este caso concreto.
 
@@ -63,10 +65,10 @@ La ambición a largo plazo es convertir DayBetes en un **acompañante digital pa
 - **Un modelo por persona**, entrenado con sus propios datos de comidas, insulina, glucosa, actividad física, sueño y estrés. No hay un modelo único para todos.
 - **Predicción de la respuesta glucémica** ante una comida planificada, antes de comerla.
 - **Recomendaciones**: momento de la comida y de la insulina, y avisos de riesgo de hipoglucemia o hiperglucemia, cada vez más precisos a medida que el modelo aprende del usuario.
-- **Integración con más fuentes de datos**: Apple Health (frecuencia cardiaca, variabilidad de la frecuencia cardiaca como indicador de estrés, ejercicio, sueño).
+- **Integración directa de Apple Health** en la aplicación (frecuencia cardiaca, variabilidad de la frecuencia cardiaca como indicador de estrés, ejercicio, sueño...), en lugar de la exportación manual que se usa en el TFG.
 - **Varios usuarios**, cada uno con sus datos aislados y su propio modelo.
 
-> DayBetes no es un producto sanitario. Sus análisis y sus futuras recomendaciones son una herramienta de apoyo y no sustituyen el criterio del equipo médico.
+> DayBetes no es un producto sanitario. Sus análisis y sus futuras recomendaciones son una herramienta de apoyo y no sustituyen el criterio del equipo médico, aunque se pretende si se llega a crear un modelo sólido comunicarlo con médicos y especialistas para mejorar la fiabilidad y robustez de la aplicación.
 
 ---
 
@@ -89,7 +91,8 @@ La aplicación está **en producción y se usa a diario**. La parte de registro 
 | Nevera (tuppers y sobras reutilizables) | 🟡 Modelo de datos creado, falta la interfaz |
 | Importación de glucosa desde LibreView | ⏳ Pendiente (siguiente paso del TFG) |
 | Análisis de la respuesta glucémica | ⏳ Pendiente (TFG) |
-| Apple Health | ⏳ Pendiente (fase 2) |
+| Cruce con Apple Health y Apple Watch (en el análisis, fuera de la app) | ⏳ Pendiente (TFG) |
+| Integración de Apple Health en la app | ⏳ Pendiente (fase 2) |
 | Modelo predictivo y recomendaciones | ⏳ Pendiente (fase 2) |
 
 En cifras: unas 22 000 líneas de Python y 2 000 de JavaScript; 16 tablas; 84 rutas; seis documentos de convenciones; y más de 60 decisiones de arquitectura registradas.
@@ -293,11 +296,12 @@ Desarrollo y producción usan **archivos de Compose separados** (`docker-compose
 **TFG**
 - Importación de datos de glucosa desde **LibreView**: lecturas del sensor, tendencias e insulina.
 - Panel de **análisis glucémico**: curvas tras cada comida, tiempo en rango, comparativas por día y franja horaria.
-- **Análisis de correlación** entre lo registrado (macros, cantidades, horarios, dosis, confianza de los datos) y la respuesta de glucosa.
+- Exportación de **Apple Health y el Apple Watch** (ejercicio, sueño, frecuencia cardiaca, variabilidad...) para cruzarla con los registros en el análisis.
+- **Análisis de correlación** entre lo registrado (macros, cantidades, horarios, dosis, confianza de los datos), la actividad y el sueño, y la respuesta de glucosa.
 - Memoria del TFG con los resultados del análisis personal.
 
 **Después del TFG**
-- Integración con **Apple Health**: actividad, sueño, frecuencia cardiaca y su variabilidad.
+- Integración directa de **Apple Health** en la app: actividad, sueño, frecuencia cardiaca, variabilidad...
 - **Modelo predictivo personalizado** por usuario y motor de recomendaciones.
 - Soporte de varios usuarios y una experiencia pensada para móvil.
 
