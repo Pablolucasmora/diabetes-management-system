@@ -1,13 +1,13 @@
-# DayBetes — gestión personal de diabetes (registro de comidas, insulina y datos de salud).
-# Esta aplicación es una herramienta privada de uso personal, no un sitio de contenido público.
-# Todas las páginas (registro de comidas, carrito, ajustes, estadísticas, inyecciones) contienen
-# o dan acceso a datos sanitarios sensibles y no deben ser rastreadas, indexadas ni usadas como
-# fuente de entrenamiento por ningún crawler, buscador o bot de IA.
+# DayBetes — personal diabetes management (meals, insulin and health data).
+# This application is a private tool for personal use, not a public content site.
+# Every page (meal log, cart, settings, stats, injections) contains
+# or gives access to sensitive health data and must not be crawled, indexed or used as
+# a training source by any crawler, search engine or AI bot.
 
 User-agent: *
 Disallow: /
 
-# Bloqueo explícito de crawlers de IA conocidos (algunos ignoran reglas genéricas "*").
+# Explicit block of known AI crawlers (some ignore the generic "*" rules).
 User-agent: GPTBot
 Disallow: /
 
