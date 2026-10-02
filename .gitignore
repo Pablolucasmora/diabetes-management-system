@@ -25,6 +25,7 @@ Thumbs.db
 pgdata/
 .env
 .env.prod
+.env.migrations
 
 # Archivos temporales de Python (ya los tienes, pero asegúrate)
 __pycache__/
