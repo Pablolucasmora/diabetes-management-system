@@ -65,10 +65,10 @@ def get_subtype_label(connection, subtype: str) -> str | None:
     return str(row["label"]) if row and row.get("label") is not None else None
 
 
-def get_rescue_entries_suggestions(connection, users_id: int, search: str = "", limit: int = 50) -> list[dict]:
+def get_rescue_entries_suggestions(connection, user_id: int, search: str = "", limit: int = 50) -> list[dict]:
     normalized = (search or "").strip()
     params = {
-        "visibility_user_id": users_id,
+        "visibility_user_id": user_id,
         "q": normalized,
         "q_like": f"%{normalized}%",
         "limit": max(1, min(int(limit or 50), 200)),

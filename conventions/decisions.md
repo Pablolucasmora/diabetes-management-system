@@ -858,3 +858,38 @@ En los datos reales, `manual_intake` tiene 4 de 5 filas privadas. Los motivos re
 - Añadirlos a `catalog` con el mismo significado y los alimentos existentes en `NULL`.
 **Decisión**: `catalog` gana `macros_quality`, `default_strictly_weighed` y `macros_confidence` (`0–2`), opcionales y con el mismo significado y comportamiento que en `manual_intake`. Los 64 alimentos existentes empiezan en `NULL`; no se infiere nada. El índice glucémico sigue sin decidir para `catalog`.
 **Convención actualizada**: `measurement_conventions.md` sección 6.10 y sección 6.11; `code_conventions.md` sección 11.2.2
+
+## 2026-10-09 — Las métricas de un evento que dependen del alimento se calculan siempre en vivo
+
+**Origen**: hallazgo 18 de `audit/audits/audit_manual_intake.md` (segunda pasada)
+**Contexto**: la decisión 2026-10-09 ("La calidad de los macros es un dato del alimento y la porción la lee en vivo") daba por hecho que toda comida confirmada guarda su `quality_confidence`. En la base solo 13 de 61 lo tenían. En las otras 48 la interfaz lo calculaba al pintar, ya con la calidad del alimento, que es `NULL` en todos, y la media pasó de 0,92 a 0,00. Además, la decisión 2026-09-10 ("Las porciones de un evento `consumed` son editables y obligan a recalcular su snapshot") reescribía el valor guardado cada vez que se cambiaba un flag, así que las dos decisiones chocaban. Las seis `*_uncertainty` tienen el mismo problema: dependen de qué macros tiene registrados el alimento.
+**Alternativas consideradas**:
+- Leer, para las comidas anteriores al 2026-10-09, la calidad que guardaba cada porción (`portion_detail.macros_quality`).
+- Rellenar una sola vez el snapshot de las 48 comidas con las calidades antiguas.
+- Que cambiar un flag no recalcule la calidad.
+- Recalcular con los valores actuales del alimento y propagar el snapshot a todas las comidas que lo usan cada vez que el alimento cambie.
+- Recalcular con los valores actuales del alimento, calculando siempre en vivo y sin guardar nada.
+**Decisión**: `quality_confidence` y las seis `*_uncertainty` se calculan siempre en vivo, en cualquier estado del evento, con los valores actuales de cada alimento. Con el versionado se leerán de la versión de cada porción. El histórico refleja lo que hoy se sabe del alimento, y la calidad se irá completando alimento a alimento. Las siete columnas de `intake_event` se eliminan (migración destructiva aprobada, `code_conventions.md` §12.4). Sus valores locales se exportaron antes a `audit/backups/intake_event_live_metrics_2026-10-09.csv`, y los de producción quedan en las copias nocturnas. `amount_confidence` sigue siendo un snapshot: solo depende de la porción, porque el `strictly_weighed` que se fija en el carrito es el dato definitivo y el valor por defecto del alimento solo es el inicial. Modifica la decisión 2026-09-10 sobre las porciones editables (el recálculo obligatorio ya solo afecta a `amount_confidence` e `ingested_amount`) y la decisión 2026-10-09 sobre la calidad leída en vivo (las comidas confirmadas tampoco conservan su calidad).
+**Convención actualizada**: `measurement_conventions.md` sección 6.9, sección 6.9.1, sección 6.9.3, sección 6.9.4 (nueva) y sección 6.11
+
+## 2026-10-09 — Al renombrar una ruta no se mantienen alias de compatibilidad
+
+**Origen**: hallazgo 20 de `audit/audits/audit_manual_intake.md` (segunda pasada)
+**Contexto**: el plato manual aparecía como `manual` en unas rutas (`/food/create/manual`, `/food/edit/manual/{id}`) y como `manual_intake` en otras. `/food/delete/{entry_type}/{entry_id}` mantenía ramas para `catalog` y `manual_intake` que solo archivaban, "por si había páginas cacheadas", sin que ninguna convención lo pidiera.
+**Alternativas consideradas**:
+- Borrar la ruta antigua en el mismo cambio.
+- Mantenerla como alias temporal, anotado en la deuda.
+- Mantenerla como alias permanente.
+**Decisión**: al renombrar una ruta, la antigua se elimina en el mismo cambio y se actualizan todas sus referencias. Una página abierta antes del despliegue recibe un `404` y basta con recargarla. Una entidad usa un único segmento de recurso en todas sus rutas: las del plato manual pasan a `manual_intake` y `/food/delete` queda como `/food/delete/recipe/{recipe_id}`, sin las ramas que archivaban.
+**Convención actualizada**: `code_conventions.md` sección 9.2
+
+## 2026-10-09 — La búsqueda difusa se escribe para que todas sus ramas usen índice
+
+**Origen**: hallazgo 19 de `audit/audits/audit_manual_intake.md` (segunda pasada)
+**Contexto**: quitar el `COALESCE` de la búsqueda por origen no bastaba para que se usara `idx_manual_intake_origin_trgm`. `_build_fuzzy_search` une cuatro ramas con `OR`, y tres no podían usar índice: `col ILIKE` sin `lower()`, `similarity(...) >= 0.25` y la rama que colapsa letras repetidas. Como basta una rama sin índice para recorrer la tabla entera, ningún índice trigram del proyecto respaldaba ninguna búsqueda. La marca de `catalog` se filtraba además sobre un `LEFT JOIN` con `COALESCE`.
+**Alternativas consideradas**:
+- Mantener la rama de letras repetidas con un índice de expresión propio.
+- Eliminar esa rama.
+- Dejarla sin índice y reconocer que los índices trigram no respaldan ninguna consulta.
+**Decisión**: todas las ramas se escriben sobre `lower(col)` o sobre su forma colapsada (`fuzzy_compact_sql`). La similitud usa el operador `%` con el umbral `TRGM_SIMILARITY_THRESHOLD` fijado en la sesión, en lugar de `similarity() >=`, y en el límite da el mismo resultado. Cada columna buscada gana un índice `idx_<tabla>_<columna>_compact_trgm`. La marca de `catalog` se resuelve con `= ANY(ARRAY(SELECT ...))`. Los resultados no cambian: se comprobó con 341 términos en 5 columnas y con el listado de `catalog` para 10 usuarios.
+**Convención actualizada**: `code_conventions.md` sección 11.7

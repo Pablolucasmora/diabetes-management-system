@@ -312,30 +312,32 @@ def _parse_amount_unit(raw_value: str) -> AmountInputUnit:
     return unit
 
 
-def _resync_consumed_event_metrics(connection, user_id: int, event_id: int, portions) -> None:
+def _resync_consumed_amount_confidence(connection, user_id: int, event_id: int, portions) -> None:
     """
-    Recompute the metrics snapshot of an already `consumed` event.
+    Recompute the `amount_confidence` snapshot of an already `consumed` event.
 
-    `amount_confidence`, `quality_confidence` and the six `*_uncertainty` are
-    computed once in `/confirm` from the event's portions. The portions of a
-    consumed event **are editable** (decision 2026-09-10, finding 48), so
-    every write on them has to rewrite that snapshot: otherwise the event is
-    left with metrics that no longer match its portions.
+    `amount_confidence` is computed in `/confirm` from the event's portions.
+    The portions of a consumed event **are editable** (decision 2026-09-10,
+    finding 48), so every write on them has to rewrite it: otherwise the
+    event is left with a value that no longer matches its portions.
+    `quality_confidence` and the six `*_uncertainty` are not stored: they
+    depend on the food and are computed live (measurement §6.9.4).
 
-    The metrics are amount-weighted proportions, so they are computed on the
-    portions as stored (already scaled by the fraction consumed at
-    `confirm`, §6.9.1); a uniform scale does not alter them.
-    `ingested_amount` is not touched here because these flags do not change
-    `amount`; any route that does change it must recompute it too.
+    It is an amount-weighted proportion, so it is computed on the portions as
+    stored (already scaled by the fraction consumed at `confirm`, §6.9.1); a
+    uniform scale does not alter it. `ingested_amount` is not touched here
+    because these flags do not change `amount`; any route that does change it
+    must recompute it too.
 
     It does nothing if the event is still `planned`: the snapshot does not
     exist yet there, and `confirm` writes it.
     """
+    metrics = calculate_macro_summary_metrics(portions)
     update_intake_event(
         connection,
         user_id=user_id,
         event_id=event_id,
-        data=IntakeEventUpdate(**calculate_macro_summary_metrics(portions)),
+        data=IntakeEventUpdate(amount_confidence=metrics["amount_confidence"]),
         commit=False,
     )
 
@@ -797,9 +799,10 @@ def setup_cart_routes(rt):
 
         Unlike its sibling amount/offset routes, it also accepts a `consumed`
         event: the portions of a confirmed event are editable (decision
-        2026-09-10, finding 48). The trade-off is that the event's metrics
-        snapshot, computed at `confirm`, no longer matches its portions, so it
-        is recomputed and rewritten in the same transaction as the flag.
+        2026-09-10, finding 48). The trade-off is that the event's
+        `amount_confidence` snapshot, computed at `confirm`, no longer matches
+        its portions, so it is recomputed and rewritten in the same
+        transaction as the flag. The rest of the metrics are live (§6.9.4).
         """
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
@@ -858,7 +861,7 @@ def setup_cart_routes(rt):
                     update_portion_flag(connection, int(user_id), portion_id, field_name, value, commit=False)
                     portions = list_portions_by_event(connection, int(user_id), event_id)
                     if is_consumed:
-                        _resync_consumed_event_metrics(connection, int(user_id), event_id, portions)
+                        _resync_consumed_amount_confidence(connection, int(user_id), event_id, portions)
             except NotFoundError:
                 return _error(request, NotFoundError, _INGREDIENT_GONE)
             if field_name == "is_cooked_weight":
@@ -1105,12 +1108,15 @@ def setup_cart_routes(rt):
                     if not (0.0 < fraction <= 1.0):
                         raise ValidationError("fraction_out_of_range")
 
-                    # amount_confidence/quality_confidence/*_uncertainty are proportions:
-                    # a uniform scale of every portion does not change them, so they are
-                    # computed on the served portions, before scaling them (§6.9.1).
-                    update_fields = calculate_macro_summary_metrics(portions)
-                    update_fields["ingested_amount"] = total_amount * fraction
-                    update_payload = IntakeEventUpdate(**update_fields)
+                    # amount_confidence is a proportion: a uniform scale of every portion
+                    # does not change it, so it is computed on the served portions, before
+                    # scaling them (§6.9.1). quality_confidence and *_uncertainty are not
+                    # stored: they are computed live (§6.9.4).
+                    metrics = calculate_macro_summary_metrics(portions)
+                    update_payload = IntakeEventUpdate(
+                        ingested_amount=total_amount * fraction,
+                        amount_confidence=metrics["amount_confidence"],
+                    )
 
                     # 4) Ownership + idempotency in a single statement (§6.6).
                     confirm_intake_event(

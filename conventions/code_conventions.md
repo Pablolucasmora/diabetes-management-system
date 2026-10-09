@@ -1009,6 +1009,8 @@ La decisión entre llamar directamente a CRUD o delegar en un servicio sigue la 
 
 No se utiliza `GET` para modificar datos. Las rutas usan nombres de recursos claros, parámetros específicos como `event_id` o `recipe_id` y no reciben `user_id` como fuente de autorización.
 
+Una misma entidad usa un único segmento de recurso en todas sus rutas: el plato manual es `manual_intake` tanto al crear como al editar o archivar, y no `manual` en unas y `manual_intake` en otras. Al renombrar una ruta, la antigua se elimina en el mismo cambio y se actualizan todas sus referencias. No se mantienen alias de compatibilidad: una página abierta antes del despliegue recibe un `404` y basta con recargarla (hallazgo 20 de `audit_manual_intake.md`).
+
 ### 9.3 Canales y formato de respuesta
 
 Un endpoint debe declarar si devuelve HTML completo, fragmento HTML o JSON. No se mezclan formatos arbitrariamente.
@@ -1500,6 +1502,13 @@ Los índices se crean para consultas y relaciones reales:
 - después de una migración se revisan las queries críticas.
 
 Los índices deben seguir `idx_<tabla>_<columnas>` o `uq_<tabla>_<columnas>` y documentar qué consulta soportan cuando no sea evidente.
+
+**Búsqueda difusa** (`_build_fuzzy_search`, decisión 2026-10-09). En PostgreSQL, un `OR` solo usa índices si todas sus ramas pueden usarlos, así que cada rama se escribe sobre una expresión indexada:
+- subcadena: `lower(col) ILIKE '%texto%'`;
+- similitud trigram: `lower(col) % 'texto'`. No se usa `similarity(...) >= x`, porque no puede usar índice. El umbral es `TRGM_SIMILARITY_THRESHOLD`, que el helper fija en la sesión (`pg_trgm.similarity_threshold`);
+- forma colapsada, con las letras repetidas reducidas a una ("coffee" → "cofe"): `fuzzy_compact_sql(col) ILIKE '%texto%'`.
+
+Cada columna buscada tiene dos índices GIN trigram: `idx_<tabla>_<columna>_trgm` sobre `lower(col)` e `idx_<tabla>_<columna>_compact_trgm` sobre `fuzzy_compact_sql(col)`. La expresión del índice y la de la consulta salen de la misma función. La columna se pasa sin envolver: un `COALESCE` o cualquier otra función rompe la coincidencia con el índice. Si la búsqueda se hace sobre una tabla relacionada, sus ids se resuelven aparte, con `= ANY(ARRAY(SELECT ...))` y no con `IN (...)`, porque solo así el `OR` puede combinarse con los demás índices (marca de `catalog`).
 
 ### 11.8 Claves foráneas
 

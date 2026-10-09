@@ -119,13 +119,13 @@ La interfaz se organiza en cuatro secciones, a las que se accede desde una barra
 
 Cada comida es un **evento de ingesta**: se **planifica**, se ajusta y se **confirma como consumida**. Un evento se puede archivar y restaurar. Dentro de un evento:
 - **Platos (tandas)**: una comida puede tener varios platos, servidos en momentos distintos. Cada plato tiene su desfase en minutos respecto al inicio de la comida.
-- **Porciones**: cada alimento del plato lleva su cantidad, su propio desfase y tres indicadores de calidad: si se pesó de forma estricta, si se pesó en crudo o cocinado, y si sus macros son exactos o aproximados.
+- **Porciones**: cada alimento del plato lleva su cantidad, su propio desfase y dos indicadores: si se pesó de forma estricta y si se pesó en crudo o cocinado. Si los macros son exactos o aproximados es un dato del alimento, no de la porción.
 - **Datos del evento**: tipo de comida (asignado automáticamente según el horario configurado), hora, si se comió fuera, dosis de insulina, zona de inyección y notas.
-- **Confirmación**: al confirmar, se registra lo que se comió de verdad y se calculan la **confianza** y la **incertidumbre** de cada nutriente.
+- **Confirmación**: al confirmar, se registra lo que se comió de verdad y se guarda la **confianza en la cantidad**.
 
 ### 4.3 Confianza e incertidumbre
 
-Es una de las piezas diferenciales del proyecto. Para cada evento se calculan:
+Es una de las piezas diferenciales del proyecto. Para cada evento se calculan las métricas siguientes. La confianza en la cantidad se guarda al confirmar. La confianza en la calidad y las incertidumbres dependen de los datos del alimento, así que se calculan siempre en vivo y siguen a sus valores actuales, también en las comidas ya confirmadas:
 - la **confianza en la cantidad** (`amount_confidence`): cuánto se sabe de lo que se comió realmente;
 - la **confianza en la calidad** (`quality_confidence`): cuánto se sabe de la composición de lo comido;
 - la **incertidumbre de cada nutriente** (hidratos, azúcares, grasas, saturadas, proteínas, fibra), entre 0 y 1, ponderada por la cantidad de cada ingrediente y por si su dato es conocido o estimado.

@@ -551,7 +551,7 @@ antes de tratar un `0.0` como una medida.
 
 ### 6.9 Momento del cálculo
 
-Las métricas se calculan a partir de las porciones actuales del evento y se almacenan como un snapshot en `intake_event` cuando la operación de confirmación lo requiere.
+Las métricas se calculan a partir de las porciones actuales del evento. Solo `amount_confidence` se almacena como snapshot en `intake_event`, al confirmar, junto con `ingested_amount` (§4.4). `quality_confidence` y los seis `*_uncertainty` no se almacenan: se calculan siempre en vivo (§6.9.4).
 
 Si las porciones cambian antes de confirmar o si una operación posterior modifica el peso servido, las métricas deben recalcularse en la misma unidad de trabajo. No se deben mantener valores derivados antiguos después de cambiar sus datos de origen.
 
@@ -572,10 +572,10 @@ El único punto donde se persiste algo es la transición `planned -> consumed`, 
 
 1. Se leen las porciones actuales del evento (`portion_detail`, todavía sin tocar).
 2. `total_amount = SUM(amount)` de esas porciones, calculado en vivo (§4.4).
-3. `amount_confidence`, `quality_confidence` y `*_uncertainty` (§6.3-§6.6) se calculan sobre esas porciones **antes** de escalarlas. Al ser proporciones (peso que cumple una condición / peso total), una escala uniforme de todas las porciones por el mismo factor no cambia el resultado, así que da igual calcularlas antes o después del paso 5.
+3. `amount_confidence` (§6.3-§6.4) se calcula sobre esas porciones **antes** de escalarlas. Al ser una proporción (peso que cumple una condición / peso total), una escala uniforme de todas las porciones por el mismo factor no cambia el resultado, así que da igual calcularla antes o después del paso 5. `quality_confidence` y `*_uncertainty` no se guardan (§6.9.4).
 4. Se obtiene la `fracción` (`(0, 1]`) a partir de `ingested_value`/`ingested_unit`, según la fórmula de §4.4. Fuera de rango es `422`.
 5. `UPDATE portion_detail SET amount = amount * fracción WHERE intake_event_id = ...`: una sola sentencia SQL para todas las porciones del evento, no un recálculo recursivo en Python.
-6. `intake_event.ingested_amount = total_amount (paso 2) * fracción`, junto con el resto de campos del snapshot (paso 3) y la transición de `state`.
+6. `intake_event.ingested_amount = total_amount (paso 2) * fracción`, junto con `amount_confidence` (paso 3) y la transición de `state`.
 
 No hay ninguna otra columna de cantidad que tocar: desde la decisión 2026-09-18 `portion_detail` solo tiene `amount`. El mecanismo de guardar en la nevera la diferencia entre lo cocinado y lo servido sigue ocurriendo antes, en el momento de emplatar, y no lee ni escribe ninguna columna de esta tabla: la cantidad cocinada solo existe como campo del formulario (§4.4).
 
@@ -608,8 +608,7 @@ sus porciones en cuanto estas cambian, así que **toda escritura sobre las
 porciones de un evento `consumed` recalcula y reescribe los campos derivados,
 en la misma transacción que la escritura**:
 
-- `amount_confidence`, `quality_confidence` y los seis `*_uncertainty`
-  (§6.3-§6.6), siempre;
+- `amount_confidence` (§6.3-§6.4), siempre;
 - `ingested_amount` (§6.9.1 paso 6), además, si la escritura cambia algún
   `amount`.
 
@@ -625,9 +624,19 @@ se recalculan en memoria en cada petición (§6.9).
 baja de ingrediente, y las de tandas, exigen `state = planned` y responden `409` sobre un evento
 confirmado. Eso es una **limitación de interfaz, no la regla**: la regla es que las porciones de un
 evento `consumed` son editables. El día que se construya la interfaz del histórico, cada ruta que
-se abra a `consumed` deberá recalcular el snapshot en la misma transacción —métricas siempre, e
+se abra a `consumed` deberá recalcular el snapshot en la misma transacción —`amount_confidence` siempre, e
 `ingested_amount` si toca `amount`—, exactamente como ya hacen las tres rutas de flags. Queda
 anotado en `audit/deuda_pendiente.md` decidir entonces qué operaciones se abren.
+
+### 6.9.4 Métricas que dependen del alimento: siempre en vivo (decisión 2026-10-09)
+
+`quality_confidence` (§6.5) y los seis `*_uncertainty` (§6.6) dependen de datos del alimento, no de la porción: su `macros_quality` y qué macros tiene registrados. Esos datos se leen en vivo, igual que los macros, así que estas métricas también se calculan en vivo, en cualquier estado del evento, a partir de las porciones actuales y de los valores actuales de cada alimento. `intake_event` no tiene columnas para ellas.
+
+- Si cambia la calidad o un macro de un alimento, cambian las métricas de todas las comidas que lo usan, también las confirmadas. Es lo buscado: el histórico refleja lo que hoy se sabe del alimento. Cuando exista el versionado (`portion_detail` H1), se leerán de la versión que use cada porción y cambiarán al editar esa versión.
+- No hay nada que propagar ni que recalcular al editar un alimento o una porción, porque no hay ningún valor guardado que pueda quedarse antiguo (§6.9).
+- `amount_confidence` sí se guarda (§6.9.1 y §6.9.3). Depende solo de las porciones: el `strictly_weighed` que el usuario fija en el carrito es el dato definitivo, y el `default_strictly_weighed` del alimento (§6.11) solo es el valor con el que nace la porción.
+- Las columnas `quality_confidence`, `carbs_uncertainty`, `sugars_uncertainty`, `fats_uncertainty`, `saturated_uncertainty`, `proteins_uncertainty` y `fiber_uncertainty` de `intake_event` se eliminaron el 2026-10-09 (migración destructiva aprobada, `code_conventions.md` §12.4). Sus valores locales se exportaron antes a `audit/backups/intake_event_live_metrics_2026-10-09.csv`. Los de producción están en las copias nocturnas (`infra_conventions.md`).
+- Un análisis que necesite estas métricas las calcula desde `portion_detail` y el alimento, con las mismas fórmulas de §6.5 y §6.6.
 
 ### 6.10 Confianza declarada por el usuario (escala ordinal 0–2)
 
@@ -656,7 +665,7 @@ Decisiones 2026-10-09. La segunda (calidad de los macros como dato del alimento)
 
 - `catalog.macros_quality` y `manual_intake.macros_quality` son `BOOLEAN` nullable con tres estados: `TRUE` = los macros proceden de información publicada por quien hace el producto o prepara el plato (la etiqueta, la carta, la web oficial); `FALSE` = son una estimación (propia, con IA o de una fuente genérica); `NULL` = sin dato.
 - Describe de dónde salen los macros del alimento, no el acto de comer, así que no se ajusta por porción. Si es distinta otro día, es otro alimento u otra versión.
-- La porción **no guarda copia**: el carrito y `quality_confidence` (§6.5) la leen en vivo del alimento, como los macros. Las comidas confirmadas no pierden nada, porque `quality_confidence` se guarda en el evento al confirmar.
+- La porción **no guarda copia**: el carrito y `quality_confidence` (§6.5) la leen en vivo del alimento, como los macros. Esto vale también para las comidas confirmadas: `quality_confidence` no se guarda en el evento y su valor sigue a la calidad actual del alimento (§6.9.4).
 - Es un campo versionable: cuando exista el versionado (`portion_detail` H1), la porción la leerá de la versión que use.
 - `portion_detail.macros_quality` se conserva sin uso (ni se lee ni se escribe) con los valores que tenía el 2026-10-09; se borrará con el versionado (`audit/deuda_pendiente.md`). El carrito ya no la muestra como ajuste.
 - Los alimentos que existían el 2026-10-09 en `catalog` empiezan en `NULL`; no se infiere nada.

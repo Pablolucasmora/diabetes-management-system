@@ -218,9 +218,17 @@ def list_catalog_items(
             connection, "entity.name", normalized, param_prefix="catalog_name"
         )
         brand_condition, brand_params, _ = _build_fuzzy_search(
-            connection, "COALESCE(fb.label, '')", normalized, param_prefix="catalog_brand"
+            connection, "brand_search.label", normalized, param_prefix="catalog_brand"
         )
-        conditions.append(f"({name_condition} OR {brand_condition})")
+        # The matching brands are resolved first, on their own trigram indexes,
+        # instead of filtering the joined `fb.label`. `= ANY(ARRAY(...))` and not
+        # `IN (...)`: only the array form lets the OR combine with the name
+        # indexes and idx_catalog_brand_id instead of scanning `catalog`. An item
+        # without brand only matches by name.
+        conditions.append(
+            f"({name_condition} OR entity.brand_id = ANY(ARRAY("
+            f"SELECT brand_search.id FROM food_brands brand_search WHERE {brand_condition})))"
+        )
         params.update(name_params)
         params.update(brand_params)
     if favorites_only:

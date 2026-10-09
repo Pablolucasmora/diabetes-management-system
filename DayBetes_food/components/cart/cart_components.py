@@ -370,11 +370,10 @@ def MacrosSummary(event, portions, compact: bool = False):
         total_calories += portion_macro_amount(portion) * float(calories_100) / 100.0
 
     amount_confidence = event.amount_confidence
-    quality_confidence = event.quality_confidence
     if amount_confidence is None:
         amount_confidence = inferred_metrics["amount_confidence"]
-    if quality_confidence is None:
-        quality_confidence = inferred_metrics["quality_confidence"]
+    # Depends on the food, so it is always live (measurement §6.9.4).
+    quality_confidence = inferred_metrics["quality_confidence"]
 
     compact_keys = {"carbs", "proteins", "fats", "fiber"}
     pills = []
@@ -394,10 +393,7 @@ def MacrosSummary(event, portions, compact: bool = False):
                 continue
             total += amount * float(macro_100) / 100.0
 
-        inferred_uncertainty = inferred_metrics[uncertainty_key]
-        uncertainty = getattr(event, uncertainty_key)
-        if uncertainty is None:
-            uncertainty = inferred_uncertainty
+        uncertainty = inferred_metrics[uncertainty_key]
 
         label_block = Span(label, cls="font-semibold")
         if not compact:
@@ -406,8 +402,8 @@ def MacrosSummary(event, portions, compact: bool = False):
                 Button(
                     "?",
                     type="button",
-                    title=f"Uncertainty: {inferred_uncertainty * 100:.1f}%",
-                    onclick=f"alert('Uncertainty: {inferred_uncertainty * 100:.1f}%');",
+                    title=f"Uncertainty: {uncertainty * 100:.1f}%",
+                    onclick=f"alert('Uncertainty: {uncertainty * 100:.1f}%');",
                     cls="""
                         web_button rounded-full border-[1px] border-black/50
                         h-4 w-4 md:h-5 md:w-5
@@ -430,7 +426,7 @@ def MacrosSummary(event, portions, compact: bool = False):
                 ),
                 title=(
                     f"Unknown {label.lower()} in "
-                    f"{inferred_uncertainty * 100:.1f}% of ingredient amount | "
+                    f"{uncertainty * 100:.1f}% of ingredient amount | "
                     f"Strictly weighted confidence: {float(amount_confidence) * 100:.1f}% | "
                     f"Macros quality confidence: {float(quality_confidence) * 100:.1f}%"
                 ),

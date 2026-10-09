@@ -1095,9 +1095,15 @@ def _community_sections_content(entries: list[dict]):
 
 
 def _entry_owner_id(entry_type: str, entry: dict) -> int | None:
-    if not entry:
+    """Owner of a `recipe` row, the only entry type still read as a dict.
+
+    `catalog` and `manual_intake` resolve visibility and ownership in SQL
+    (`_food_visibility_sql`, `_OWNER_WRITABLE`), so any other type has no
+    owner here and every permission built on it is denied.
+    """
+    if not entry or entry_type != "recipe":
         return None
-    raw = entry.get("created_by") if entry_type in ("catalog", "manual_intake") else entry.get("users_id")
+    raw = entry.get("users_id")
     try:
         return int(raw) if raw is not None else None
     except (TypeError, ValueError):
@@ -1105,8 +1111,9 @@ def _entry_owner_id(entry_type: str, entry: dict) -> int | None:
 
 
 def _can_view_entry(entry_type: str, entry: dict, viewer_user_id: int | None) -> bool:
-    """Viewability of a `manual_intake`/`recipe` row (catalog is resolved to
-    CatalogItemRead before this point)."""
+    """Viewability of a `recipe` row; any other type is denied (see `_entry_owner_id`)."""
+    if entry_type != "recipe":
+        return False
     if not entry:
         return False
     if bool(entry.get("is_published")):
@@ -1383,7 +1390,7 @@ def setup_food_routes(rt):
             show_cart=False,
         )
 
-    @rt("/food/create/manual/form")
+    @rt("/food/create/manual_intake/form")
     def get(request: Request):
         user_id = get_current_user_id()
         if not user_id:
@@ -1418,7 +1425,7 @@ def setup_food_routes(rt):
             user_id = get_current_user_id()
             if not user_id:
                 return render_fragment(P("No user.", cls="text-xs text-red-700"))
-            rows = get_rescue_entries_suggestions(connection, users_id=int(user_id), search=(q or "").strip(), limit=30)
+            rows = get_rescue_entries_suggestions(connection, user_id=int(user_id), search=(q or "").strip(), limit=30)
         if not rows:
             return render_fragment(P("No rescue items found.", cls="text-xs text-gray-600 px-1 py-1"))
         nodes = []
@@ -2212,29 +2219,23 @@ def setup_food_routes(rt):
                 return app_error_response(request, ConflictError, str(error))
         return HTMLResponse("", headers={"HX-Redirect": f"/food/item/manual_intake/{manual_intake_id}"})
 
-    @rt("/food/delete/{entry_type}/{entry_id}")
-    def post(request: Request, entry_type: str, entry_id: int):
+    @rt("/food/delete/recipe/{recipe_id}")
+    def post(request: Request, recipe_id: int):
+        """Physical delete of a recipe. `catalog` and `manual_intake` are
+        archived, never deleted (`/food/archive/...`, §11.2)."""
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
-        if entry_type not in ("catalog", "manual_intake", "recipe"):
-            return app_error_response(request, NotFoundError, "Unsupported entry type.")
         user_id = get_current_user_id()
         if not user_id:
             return app_error_response(request, AuthenticationError, "Your session has expired.")
-        if entry_type == "catalog":
-            # Old cached pages still call /food/delete/catalog/{id}.
-            return _archive_catalog_item(request, int(user_id), entry_id)
-        if entry_type == "manual_intake":
-            # Old cached pages still call /food/delete/manual_intake/{id}.
-            return _archive_manual_intake(request, int(user_id), entry_id)
 
         with get_connection() as connection:
-            current = get_recipe(connection, entry_id)
+            current = get_recipe(connection, recipe_id)
             if not current or not _can_view_entry("recipe", current, user_id):
                 return app_error_response(request, NotFoundError, "Recipe not found.")
             if not _can_edit_entry("recipe", current, user_id):
                 return app_error_response(request, AuthorizationError, "Only the owner can delete this item.")
-            if not delete_recipe(connection, entry_id):
+            if not delete_recipe(connection, recipe_id):
                 return app_error_response(
                     request, NotFoundError, "Could not delete this item. It may not exist or you may not own it."
                 )
@@ -2274,7 +2275,7 @@ def setup_food_routes(rt):
         try:
             cooked_weight = _parse_strict_bool(is_cooked_weight)
         except ValidationError:
-            return app_error_response(request, ValidationError, "No se ha entendido la casilla 'Cooked weight'.")
+            return app_error_response(request, ValidationError, "The 'Cooked weight' checkbox could not be read.")
         try:
             unit = AmountInputUnit((amount_unit or "").strip())
             plated_unit = AmountInputUnit((plate_unit or "").strip())
@@ -2646,8 +2647,8 @@ def setup_food_routes(rt):
                 return app_error_response(request, ConflictError, "That meal has already been confirmed.")
             return HTMLResponse("", headers={"HX-Trigger": "addSuccess"})
 
-    @rt("/add_manual_intake/{intake_id}")
-    def post(request: Request, intake_id: int, intake_event_id: str = "", plate_id: str = ""):
+    @rt("/add_manual_intake/{manual_intake_id}")
+    def post(request: Request, manual_intake_id: int, intake_event_id: str = "", plate_id: str = ""):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
 
@@ -2655,13 +2656,13 @@ def setup_food_routes(rt):
             user_id = get_current_user_id()
             if not user_id:
                 return app_error_response(request, AuthenticationError, "Your session has expired.")
-            intake_item = get_manual_intake(connection, int(user_id), intake_id)
-            if intake_item is None:
+            manual_intake = get_manual_intake(connection, int(user_id), manual_intake_id)
+            if manual_intake is None:
                 return app_error_response(request, NotFoundError, "Dish not found.")
             # R3, same as catalog: no serving -> 100 g initial amount for a one-click add.
             portion_amount = (
-                intake_item.default_portion
-                if intake_item.default_portion is not None
+                manual_intake.default_portion
+                if manual_intake.default_portion is not None
                 else INITIAL_AMOUNT_WITHOUT_SERVING_G
             )
             try:
@@ -2677,12 +2678,12 @@ def setup_food_routes(rt):
                         int(user_id),
                         PortionDetailCreate(
                             origin=PortionOrigin.MANUAL_INTAKE,
-                            origin_id=intake_id,
+                            origin_id=manual_intake_id,
                             destination=PortionDestination.INTAKE_EVENT,
                             destination_id=event_id,
                             plate_id=target_plate_id,
                             amount=portion_amount,
-                            **_portion_defaults(intake_item),
+                            **_portion_defaults(manual_intake),
                         ),
                         commit=False,
                     )
@@ -2928,10 +2929,10 @@ def setup_food_routes(rt):
                 return app_error_response(request, error, str(error))
         return HTMLResponse("", headers={"HX-Redirect": f"/food/item/catalog/{entry_id}"})
 
-    @rt("/food/edit/manual/{entry_id}")
+    @rt("/food/edit/manual_intake/{manual_intake_id}")
     def post(
         request: Request,
-        entry_id: int,
+        manual_intake_id: int,
         name: str = "",
         description: str = "",
         subtype: str = "",
@@ -2997,19 +2998,19 @@ def setup_food_routes(rt):
                     update_manual_intake(
                         connection,
                         int(user_id),
-                        entry_id,
+                        manual_intake_id,
                         _manual_intake_update(req, subtype_value),
                         commit=False,
                     )
                     if req.tags is not None:
-                        set_entry_tags(connection, "manual_intake", entry_id, req.tags, commit=False)
+                        set_entry_tags(connection, "manual_intake", manual_intake_id, req.tags, commit=False)
             except ValidationError as error:
                 return _error_msg(str(error))
             except NotFoundError:
                 return app_error_response(request, NotFoundError, "Dish not found or no longer editable.")
             except ConflictError as error:
                 return app_error_response(request, error, str(error))
-        return HTMLResponse("", headers={"HX-Redirect": f"/food/item/manual_intake/{entry_id}"})
+        return HTMLResponse("", headers={"HX-Redirect": f"/food/item/manual_intake/{manual_intake_id}"})
 
     @rt("/food/edit/recipe/{entry_id}")
     def post(
@@ -3155,7 +3156,7 @@ def setup_food_routes(rt):
                 return app_error_response(request, error, str(error))
         return HTMLResponse("", headers={"HX-Redirect": "/food"})
 
-    @rt("/food/create/manual")
+    @rt("/food/create/manual_intake")
     def post(
         request: Request,
         name: str = "",

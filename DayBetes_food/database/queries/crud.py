@@ -235,12 +235,42 @@ def _pg_trgm_enabled(connection) -> bool:
     return _HAS_PG_TRGM
 
 
+def fuzzy_compact_sql(column: str) -> str:
+    """The column lowercased with runs of a repeated letter collapsed ("coffee"
+    -> "cofe"), so a search that doubles or drops a letter still matches.
+
+    Shared by `_build_fuzzy_search` and the `idx_*_compact_trgm` indexes of
+    `db_init.py`: an expression index is only used if the query repeats the
+    exact same expression (§11.7).
+    """
+    return f"regexp_replace(lower({column}), '(.)\\1+', '\\1', 'g')"
+
+
+def _set_trgm_similarity_threshold(connection) -> None:
+    """Make the `%` operator use TRGM_SIMILARITY_THRESHOLD instead of the
+    pg_trgm default (0.3). Unlike `similarity(...) >= x`, `%` can use a
+    trigram index. Session scope: every request opens its own connection."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT set_config('pg_trgm.similarity_threshold', %(threshold)s, false);",
+            {"threshold": str(TRGM_SIMILARITY_THRESHOLD)},
+        )
+
+
 def _build_fuzzy_search(
     connection,
     column: str,
     search: Optional[str],
     param_prefix: str = "search",
 ) -> tuple[str, dict, str]:
+    """Fuzzy match of `column` against `search`: substring, trigram similarity
+    and substring of the collapsed form (`fuzzy_compact_sql`).
+
+    With pg_trgm every branch is written over `lower(column)` or its collapsed
+    form, so the `idx_*_trgm` and `idx_*_compact_trgm` indexes can serve the
+    whole OR; one branch without an index would turn it into a full scan.
+    Returns the condition, its params and an ORDER BY expression.
+    """
     normalized = (search or "").strip()
     if not normalized:
         return "", {}, "1"
@@ -253,15 +283,15 @@ def _build_fuzzy_search(
         param("like"): f"%{normalized}%",
         param("prefix"): f"{normalized_lower}%",
         param("compact_like"): f"%{compact_search}%",
-        param("threshold"): TRGM_SIMILARITY_THRESHOLD,
     }
+    compact_column = fuzzy_compact_sql(column)
 
     if _pg_trgm_enabled(connection):
+        _set_trgm_similarity_threshold(connection)
         condition = (
-            f"({column} ILIKE %({param('like')})s "
+            f"(lower({column}) ILIKE %({param('like')})s "
             f"OR lower({column}) %% %({param('norm')})s "
-            f"OR similarity(lower({column}), %({param('norm')})s) >= %({param('threshold')})s "
-            f"OR regexp_replace(lower({column}), '(.)\\1+', '\\1', 'g') ILIKE %({param('compact_like')})s)"
+            f"OR {compact_column} ILIKE %({param('compact_like')})s)"
         )
         order = (
             f"CASE "
@@ -272,8 +302,8 @@ def _build_fuzzy_search(
         )
     else:
         condition = (
-            f"({column} ILIKE %({param('like')})s "
-            f"OR regexp_replace(lower({column}), '(.)\\1+', '\\1', 'g') ILIKE %({param('compact_like')})s)"
+            f"(lower({column}) ILIKE %({param('like')})s "
+            f"OR {compact_column} ILIKE %({param('compact_like')})s)"
         )
         order = (
             f"CASE "

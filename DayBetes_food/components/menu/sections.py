@@ -86,7 +86,7 @@ def quick_actions(latest_event, portions):
             Button(
                 "Add manual",
                 cls="web_button w-full text-xs md:text-sm px-2 py-1.5 md:px-3 md:py-2",
-                hx_get="/food/create/manual/form",
+                hx_get="/food/create/manual_intake/form",
                 hx_target="#main_content",
                 hx_push_url="true",
             ),

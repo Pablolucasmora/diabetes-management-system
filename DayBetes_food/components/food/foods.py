@@ -2170,7 +2170,7 @@ def QuickCreateButtons():
                         ),
                         type="button",
                         cls=option_button_cls,
-                        hx_get="/food/create/manual/form",
+                        hx_get="/food/create/manual_intake/form",
                         hx_target="#main_content",
                         hx_swap="innerHTML",
                         hx_push_url="true",
@@ -2563,7 +2563,7 @@ def CreateManualPage(
         ),
         Button("Create dish", type="submit", cls="web_button px-3 py-2 text-xs"),
         Script(src=asset_busted("/js/manual_intake_form.js"), defer="defer"),
-        hx_post="/food/create/manual",
+        hx_post="/food/create/manual_intake",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
         hx_push_url="false",
@@ -2950,7 +2950,7 @@ def EditManualPage(
             cls="grid grid-cols-2 gap-3",
         ),
         Script(src=asset_busted("/js/manual_intake_form.js"), defer="defer"),
-        hx_post=f"/food/edit/manual/{entry['id']}",
+        hx_post=f"/food/edit/manual_intake/{entry['id']}",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
         hx_push_url="false",
@@ -3890,7 +3890,7 @@ def FoodDetailPage(
                     hx_post=(
                         f"/food/archive/{entry_type}/{entry['id']}"
                         if archivable
-                        else f"/food/delete/{entry_type}/{entry['id']}"
+                        else f"/food/delete/recipe/{entry['id']}"
                     ),
                     hx_swap="none",
                     hx_push_url="false",

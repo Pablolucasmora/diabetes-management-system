@@ -15,16 +15,16 @@ from DayBetes_food.errors import ConflictError
 
 
 def get_tag_suggestions(connection, search: str = "", limit: int = 100) -> list[str]:
-    search_condition, search_params, search_order = _build_fuzzy_search(connection, "name", search)
+    search_condition, search_params, search_order = _build_fuzzy_search(connection, "source.name", search)
     params = {**search_params, "limit": max(1, min(int(limit or 100), 500))}
     query = """
         WITH source AS (
-            SELECT DISTINCT trim(name) AS name
+            SELECT DISTINCT trim(tags.name) AS name
             FROM tags
-            WHERE name IS NOT NULL
-              AND trim(name) <> ''
+            WHERE tags.name IS NOT NULL
+              AND trim(tags.name) <> ''
         )
-        SELECT name
+        SELECT source.name
         FROM source
         WHERE {search_condition}
         ORDER BY {search_order}

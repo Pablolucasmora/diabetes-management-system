@@ -7,6 +7,7 @@ from DayBetes_food.auth.models import USER_EMAIL_MAX_LENGTH, USER_USERNAME_MAX_L
 from DayBetes_food.auth.security import hash_password, normalize_identifier, sanitize_text
 from DayBetes_food.config import DB_RUNTIME_ROLE
 from DayBetes_food.database.connection import get_migrations_connection
+from DayBetes_food.database.queries.crud import fuzzy_compact_sql
 from DayBetes_food.database.schema import (
     DBSchema,
     catalog_check_constraints,
@@ -1011,6 +1012,16 @@ def _index_exists(cursor, name: str) -> bool:
         {"name": name},
     )
     return cursor.fetchone() is not None
+# Columns searched with `_build_fuzzy_search` that have a trigram index.
+_FUZZY_COMPACT_INDEXED_COLUMNS = (
+    ("catalog", "name"),
+    ("manual_intake", "name"),
+    ("manual_intake", "origin"),
+    ("recipe", "name"),
+    ("food_brands", "label"),
+)
+
+
 def _ensure_trgm_search(cursor):
     # Tolerated on purpose: `_build_fuzzy_search` falls back to ILIKE + regexp
     # when `pg_trgm` is missing (`_pg_trgm_enabled`), so search keeps working
@@ -1043,6 +1054,17 @@ def _ensure_trgm_search(cursor):
             "CREATE INDEX IF NOT EXISTS idx_manual_intake_origin_trgm "
             "ON manual_intake USING gin (lower(origin) gin_trgm_ops);"
         )
+        # Collapsed form of every searched column, so the third branch of
+        # `_build_fuzzy_search` is indexed too and the whole OR can use indexes
+        # (§11.7). Same expression as the query: `fuzzy_compact_sql`.
+        for table, column in _FUZZY_COMPACT_INDEXED_COLUMNS:
+            cursor.execute(
+                sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} USING gin ({} gin_trgm_ops);").format(
+                    sql.Identifier(f"idx_{table}_{column}_compact_trgm"),
+                    sql.Identifier(table),
+                    sql.SQL(fuzzy_compact_sql(column)),
+                )
+            )
         cursor.execute("RELEASE SAVEPOINT trgm_setup;")
     except Exception as exc:
         cursor.execute("ROLLBACK TO SAVEPOINT trgm_setup;")
@@ -1294,14 +1316,19 @@ _CANONICAL_INJECTION_CONSTRAINTS = (
 _INTAKE_EVENT_CONSTRAINT_RENAMES = {
     "intake_event_users_id_fkey": "fk_intake_event_users_id_users",
     "intake_event_amount_confidence_check": "ck_intake_event_amount_confidence",
-    "intake_event_quality_confidence_check": "ck_intake_event_quality_confidence",
-    "intake_event_carbs_uncertainty_check": "ck_intake_event_carbs_uncertainty",
-    "intake_event_sugars_uncertainty_check": "ck_intake_event_sugars_uncertainty",
-    "intake_event_fats_uncertainty_check": "ck_intake_event_fats_uncertainty",
-    "intake_event_saturated_uncertainty_check": "ck_intake_event_saturated_uncertainty",
-    "intake_event_proteins_uncertainty_check": "ck_intake_event_proteins_uncertainty",
-    "intake_event_fiber_uncertainty_check": "ck_intake_event_fiber_uncertainty",
 }
+
+
+# Event metrics that depend on the food and are computed live (§6.9.4).
+_INTAKE_EVENT_LIVE_METRIC_COLUMNS = (
+    "quality_confidence",
+    "carbs_uncertainty",
+    "sugars_uncertainty",
+    "fats_uncertainty",
+    "saturated_uncertainty",
+    "proteins_uncertainty",
+    "fiber_uncertainty",
+)
 
 
 def _constraint_exists(cursor, table: str, name: str) -> bool:
@@ -1403,6 +1430,19 @@ def _ensure_intake_event_schema(cursor):
 
     # ---- total_amount is no longer persisted: it is computed live (decision 2026-09-10) ----
     cursor.execute("ALTER TABLE intake_event DROP COLUMN IF EXISTS total_amount;")
+
+    # ---- quality_confidence and *_uncertainty are no longer persisted: they depend
+    # on the food, so they are computed live (measurement_conventions.md §6.9.4,
+    # finding 18 of audit_manual_intake.md). Destructive migration approved on
+    # 2026-10-09 (§12.4); dropping a column drops its CHECK too. Recovery: CSV
+    # export of the local values taken before dropping them and the nightly
+    # production pg_dump (infra_conventions.md). ----
+    for column in _INTAKE_EVENT_LIVE_METRIC_COLUMNS:
+        cursor.execute(
+            sql.SQL("ALTER TABLE intake_event DROP COLUMN IF EXISTS {};").format(
+                sql.Identifier(column)
+            )
+        )
 
     # ---- H32/H35: ingested_amount with sanity limits (measurement_conventions.md
     # §6.9.2, decision 2026-09-10). Verified on 2026-09-09: 0 rows negative or out

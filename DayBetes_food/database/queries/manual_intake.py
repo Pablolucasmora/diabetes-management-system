@@ -185,8 +185,11 @@ def list_manual_intakes(
         name_condition, name_params, _ = _build_fuzzy_search(
             connection, "entity.name", normalized, param_prefix="manual_name"
         )
+        # The bare column, so the expression matches idx_manual_intake_origin_trgm
+        # (lower(origin), §11.7). A NULL origin makes this branch NULL, and the OR
+        # then rests on the name alone.
         origin_condition, origin_params, _ = _build_fuzzy_search(
-            connection, "COALESCE(entity.origin, '')", normalized, param_prefix="manual_origin"
+            connection, "entity.origin", normalized, param_prefix="manual_origin"
         )
         conditions.append(f"({name_condition} OR {origin_condition})")
         params.update(name_params)
