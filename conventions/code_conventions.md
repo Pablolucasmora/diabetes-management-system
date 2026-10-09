@@ -292,7 +292,7 @@ components/<algo>.py  -> dataclass/enum -> etiqueta o imagen (presentación)
 
 ### 4.1 Fuente única de verdad
 
-Un valor se modela como enumeración cuando pertenece a un conjunto cerrado y conocido de opciones. Ejemplos: tipos de comida, zonas de inyección, tipos de insulina, estados de eventos, Nutriscore y modos internos de navegación. También son conjuntos cerrados la categoría de un alimento (`catalog.category`), los estados físicos del alimento (`catalog.initial_state` y `portion_detail.final_state`, que comparten un único enum), los métodos de cocción (`portion_detail.cooking`) y los métodos de conservación (`portion_detail.conservation`): que se prevea añadirles valores no los convierte en abiertos, porque solo se amplían de forma deliberada cambiando el enum en el código, con la revisión conjunta de §4.4. El criterio que separa un conjunto cerrado de uno abierto está en §4.5.
+Un valor se modela como enumeración cuando pertenece a un conjunto cerrado y conocido de opciones. Ejemplos: tipos de comida, zonas de inyección, tipos de insulina, estados de eventos, Nutriscore y modos internos de navegación. También son conjuntos cerrados la categoría de un alimento (`catalog.category`), los estados físicos del alimento (`catalog.initial_state` y `portion_detail.final_state`, que comparten un único enum), los métodos de cocción (`portion_detail.cooking`) los métodos de conservación (`portion_detail.conservation`) y el índice glucémico declarado de un plato manual (`manual_intake.glycemic_index`, `measurement_conventions.md` §5.5): que se prevea añadirles valores no los convierte en abiertos, porque solo se amplían de forma deliberada cambiando el enum en el código, con la revisión conjunta de §4.4. El criterio que separa un conjunto cerrado de uno abierto está en §4.5.
 
 Los enums de dominio se declaran en un módulo central, `DayBetes_food/domain/constants.py` (§3.6). Ese módulo no debe importar rutas, componentes ni la base de datos. Las dataclasses que usan estos enums viven en el módulo de su entidad dentro de `domain/`, por ejemplo `InsulinType` e `InjectionZone` se declaran en `domain/constants.py` y se consumen desde `domain/insulin.py`.
 
@@ -383,13 +383,14 @@ Debe almacenarse en una tabla de catálogo con, como mínimo:
 
 Los valores iniciales pueden cargarse mediante bootstrap o migración, pero añadir uno nuevo debe ser un cambio de datos, no un cambio obligatorio de código.
 
-En esta categoría entran actualmente tres conceptos:
+En esta categoría entran actualmente dos conceptos:
 
 | Concepto | Columnas | Estado |
 |---|---|---|
 | Marcas de comida | `catalog.brand_id` → `food_brands` | Catálogo implementado (`code`, `label`, `is_active`) |
 | Subtipos de comida | `catalog.subtype`, `manual_intake.subtype` | Texto libre; catálogo pendiente |
-| Origen de comida manual | `manual_intake.origin` | Texto libre; catálogo pendiente |
+
+El origen de un plato manual (`manual_intake.origin`) salió de esta tabla el 2026-10-09: no es una enumeración abierta, sino **texto libre normalizado** con autocompletado (§11.2.3). Un catálogo global expondría a todos los usuarios lugares y personas que solo tienen sentido para uno ("abuela Geno").
 
 Un concepto entra o sale de esta tabla solo por decisión explícita, y se actualiza aquí en el mismo cambio. Las listas Python existentes de los conceptos pendientes solo pueden actuar como datos iniciales mientras se completa el catálogo.
 
@@ -1269,6 +1270,7 @@ La clasificación de cada tabla se declara en este registro, que es el sitio ún
 | `food_brands` | **Pendiente**: por naturaleza no archivable (catálogo auxiliar), pero `is_active` actúa como soft-delete de facto y no encaja en §11.2/§11.3. | Sin función de borrado. | `audit/audit_food_brands.md`; `audit/deuda_pendiente.md`, H4 y H11. |
 | `insulin_injections` | **Historical**. Pendiente decidir si es archivable (`deleted_at`) o no archivable con borrado físico documentado. | Físico (statu quo). | `audit/audit_insulin_injections.md`; `audit/deuda_pendiente.md`, "Clasificación archivable / no archivable". |
 | `intake_event` | **Híbrida por `state`**: `planned` no archivable, `consumed` archivable. | Físico en `planned`; `deleted_at` en `consumed`. | Decisión 2026-09-08. |
+| `manual_intake` | **Archivable**, irreversible (sin `restore_`), con el mismo contrato que `catalog`. Contrato completo en §11.2.3. | Solo `deleted_at`; nunca físico (porciones de eventos consumidos y, si se publica, favoritos y recetas de otros usuarios apuntan al plato). | `audit/audits/audit_manual_intake.md`, hallazgos 5 y 14; decisiones 2026-10-09. |
 | `portion_detail` | **Dependent** de su destino (`intake_event`, `recipe` o `fridge`); hereda su propietario y su ciclo de vida. | `CASCADE` desde el destino. El borrado físico es apropiado en recetas y en eventos `planned`; en un evento `consumed` es histórico clínico y hoy lo impide la ruta, no la query (limitación declarada). | `audit/audit_portion_detail.md`; `measurement_conventions.md` §6.9.3; `audit/deuda_pendiente.md`, `portion_detail` H27. |
 
 #### 11.2.2 Contrato de ciclo de vida de `catalog`
@@ -1296,6 +1298,47 @@ Decisión 2026-09-24 (`conventions/decisions.md`). Cuando un contrato no cabe en
   - Los alimentos con el mismo `COALESCE(origin_root_id, id)` forman una **familia**.
 - **Versionado**: los valores son del dueño del alimento y la línea de tiempo de vigencias es de cada usuario (decisión 2026-09-24). El diseño está pendiente de implementar y se detalla en `audit/deuda_pendiente.md`, `portion_detail` H1. Mientras no exista, el alimento se comporta como si tuviera una única versión.
 - **Multiusuario** (diseñado, no se construye todavía): se aplican las reglas de congelación de versiones y de aviso de H1. Que las copias nazcan personales ya no es algo solo de multiusuario: lo cubre la regla general de §11.4.1.
+
+#### 11.2.3 Contrato de `manual_intake`
+
+Decisiones 2026-10-09 (`conventions/decisions.md`). Las unidades, la entrada de nutrientes, el índice glucémico y las confianzas están en `measurement_conventions.md` §5.4, §5.5, §6.10 y §6.11.
+
+- **Qué va a cada tabla**:
+  - `catalog`: productos industriales (envasados, de supermercado, con etiqueta o código de barras) e ingredientes genéricos (plátano, tomate, arroz).
+  - `manual_intake`: lo que ha preparado alguien, sea un local (restaurante, bar, puesto, cadena) o una persona (la abuela, un amigo), **aunque sus macros se conozcan** por la carta o por internet. El criterio es quién lo ha preparado, no si se conocen los macros: un Whopper es un plato manual con origen "Burger King" y `default_macros_quality = TRUE`.
+  - Si se conocen los ingredientes y sus cantidades, se registra como receta con ingredientes de `catalog`, no como plato manual.
+- **Dos tipos de fila**, distinguidos por `is_quick_add BOOLEAN NOT NULL DEFAULT FALSE`:
+  - **Plato reutilizable** (`is_quick_add = FALSE`): se guarda para volver a usarlo y se puede publicar para que otros lo reutilicen.
+  - **Añadido rápido** (`is_quick_add = TRUE`, "Quick add" en la interfaz): una comida puntual (un plato, una comida entera o varios platos) que se registra en un evento y no se quiere recordar. Se guarda en la base, pero no se ofrece para reutilizarla.
+- **Propietario**: `created_by`, `NOT NULL`. Creador y propietario son la misma persona y no hay transferencias (§11.1). No hay biblioteca general de platos: toda fila tiene creador. La FK a `users` conserva `ON DELETE CASCADE`; borrar un usuario sigue bloqueado por el `RESTRICT` de `portion_detail` (decisión 2026-09-22).
+- **Campos del plato reutilizable**:
+  - Obligatorios: `name` y `carbs_100g` (`NOT NULL` también en la base). Un `0` de hidratos es un valor válido; lo que no se admite es "no lo sé".
+  - Opcionales (`NULL` = sin dato, nunca `0`): `description` (500 caracteres, constante `MANUAL_INTAKE_DESCRIPTION_MAX_LENGTH`, §7.3), `subtype`, `origin`, el resto de nutrientes, `caffeine`, `alcohol`, `default_portion`, `glycemic_index`, `ig_confidence`, `macros_confidence`, `default_macros_quality` y `default_strictly_weighed`.
+  - Los macros se introducen por 100 g o como total de una porción (`measurement_conventions.md` §5.4).
+- **Añadido rápido**:
+  - Se abre desde el botón "Quick add" de la página principal y desde la opción equivalente del `+` de la página de Food.
+  - El formulario lleva arriba el selector de comida y tanda (el mismo que hay bajo el buscador de Food y en la ficha de un alimento). Debajo: nombre, peso estimado, macros del total (smart macros) y notas, que se guardan en `description`. Son obligatorios el nombre, el peso y los hidratos.
+  - No pide `subtype`, `origin`, índice glucémico, confianzas ni calidad: se quedan en `NULL`.
+  - Al guardar, en una sola transacción, se crea la fila (`default_portion` = peso, nutrientes convertidos a 100 g según §5.4, `default_strictly_weighed = FALSE` porque el peso es estimado) y su porción en la tanda elegida, con `amount` = peso.
+  - Solo existe a través de su porción. No aparece en búsquedas, listados, favoritos, etiquetas, sugerencias de origen ni en el selector de ingredientes de receta.
+  - No se puede publicar: `CHECK (NOT (is_quick_add AND is_published))`.
+  - No entra en los índices únicos: puede haber varios "Menú del día".
+  - Pendiente (`audit/deuda_pendiente.md`, sección `manual_intake`): convertirlo después en plato reutilizable, y qué pasa con la fila cuando se borra su porción.
+- **Visibilidad y publicación**: regla común de §11.4.1, en SQL. Solo se publican platos reutilizables.
+  - Se publica y despublica con la acción Publish/Unpublish de la ficha, como en `catalog`. Sustituye a la casilla "Published" de la edición, que la decisión 2026-09-25 solo admitía de forma provisional.
+  - Concepto de duplicado: nombre normalizado + origen normalizado, con un origen `NULL` equivalente a la cadena vacía. Es la "marca" de §11.4.1 para esta tabla. El `409` de publicar dice que ya existe un plato publicado con ese nombre y ese origen.
+- **`origin`**: de dónde viene el plato, sea una persona ("abuela Geno") o un lugar ("Saona", "Burger King").
+  - Texto libre de 255 caracteres como máximo (constante de dominio, §7.3).
+  - Se normaliza con la misma función que el nombre, compartida por Python y por los índices SQL (§7.3, §11.5).
+  - Autocompletado con los orígenes de los platos activos propios y de los publicados; nunca con los de platos personales ajenos ni con los de añadidos rápidos.
+  - Sirve para buscar (el buscador encuentra por nombre o por origen) y para el análisis por origen.
+  - No es una enumeración abierta de §4.5.
+- **Archivar, corregir, copiar y versionar**: el mismo contrato que `catalog` (§11.2.2), salvo lo que allí depende de la biblioteca general, que aquí no existe. Archivar es irreversible, solo lo hace el propietario, saca el plato de búsquedas y listados para todos, lo mantiene visible y utilizable para quien lo tenga en favoritos o en una receta propia, y en la misma transacción lo quita de los favoritos del propietario. Corregir no es archivar. La tabla de versiones (`portion_detail` H1) cubre también `manual_intake`.
+- **Porciones de un plato manual**:
+  - Se muestran cocción, conservación y estado final.
+  - Nunca se muestra `Cooked weight`, porque un plato manual no tiene `cooking_factor` (`measurement_conventions.md` §5.2). Esto vale para el carrito y para la ficha.
+  - Cambiar la cantidad de la porción escala los macros (§5.2), como en `catalog`.
+  - `macros_quality` y `strictly_weighed` nacen con los valores por defecto del plato (`measurement_conventions.md` §6.11).
 
 ### 11.3 Soft-delete
 
@@ -1358,7 +1401,7 @@ Los formularios de alta de las tres tablas no ofrecen publicar (decisión 2026-0
 - en la búsqueda y los listados: los alimentos publicados y activos, más los suyos (personales o publicados) activos;
 - además, los que dejaron de estar visibles para él (despublicados o archivados) pero tiene en favoritos o en una receta suya. Esos siguen la regla de visibilidad del archivado de §11.2.2.
 
-**Unicidad** (§6.1, §6.2, §11.5). Hay dos índices únicos parciales, los dos con `deleted_at IS NULL` y con la normalización única del nombre:
+**Unicidad** (§6.1, §6.2, §11.5). Hay dos índices únicos parciales, los dos con `deleted_at IS NULL` y con la normalización única del nombre. En `manual_intake`, el papel de la marca lo hace el origen normalizado y los añadidos rápidos quedan fuera de los dos índices (§11.2.3):
 - **Personales**: únicos **por propietario**, es decir `(created_by, nombre normalizado, marca) WHERE NOT is_published`. Que otra persona tenga un alimento personal igual no impide crear el tuyo, y el sistema no revela que existe.
 - **Publicados**: únicos **entre todos los publicados**, incluida la biblioteca general: `(nombre normalizado, marca) WHERE is_published`.
 - **Publicar** un alimento cuando ya hay uno publicado equivalente da **`409`**. El mensaje dice que ya existe un alimento publicado con ese nombre y esa marca, sin nada de datos privados. El usuario puede cambiar el nombre y volver a publicar. Tener un alimento personal igual que uno publicado de otra persona está permitido.

@@ -765,3 +765,64 @@ En los datos reales, `manual_intake` tiene 4 de 5 filas privadas. Los motivos re
 - Mantener la gramática y quitar solo de la ayuda el ejemplo que fallaba.
 **Decisión**: se acepta solo "número primero": una secuencia de pares `<número> [unidad] <nombre>` (`12 proteinas 23 grasas`, `120kcal 30hc`), separados por espacios, `,`, `;` o `+`, sin necesidad de comas. Se siguen admitiendo todos los sinónimos de cada macro, comparados exactamente (sin tildes ni mayúsculas), más algunas formas de varias palabras ("grasas saturadas", "hidratos de carbono"). Un nombre delante de su número, un número sin nombre, un nombre desconocido, un macro repetido o cualquier otro carácter se rechazan con `validation_error`. Python y JavaScript aplican la misma gramática con los mismos mensajes, y el juego de casos (`static/data/smart_macros_cases.json`, ahora versionado) se regenera con los valores correctos y casos de error. Modifica la decisión 2026-09-25 "Smart macros: el servidor parsea el texto; el JavaScript es solo vista previa" en la gramática y en el criterio de rechazo; el resto de aquella decisión (el servidor es la autoridad, se ignoran los campos ocultos, el texto no se guarda) se mantiene.
 **Convención actualizada**: `conventions/code_conventions.md` sección 7.15 (Texto libre con varios valores)
+
+## 2026-10-09 — `manual_intake`: frontera con `catalog`, plato reutilizable y añadido rápido
+
+**Origen**: hallazgos 4, 5 y 14 de `audit/audits/audit_manual_intake.md`; preguntas de diseño sobre el funcionamiento de `manual_intake` (bloques A y F)
+**Contexto**: no estaba definido qué alimento va a `catalog` y cuál a `manual_intake`. Tampoco cómo registrar una comida puntual sin crear un plato que luego aparece en búsquedas y listados. El usuario quiere dos formularios: uno rápido para lo puntual (a menudo estimado con IA) y otro completo para lo que se reutiliza o se comparte. Un añadido rápido suele llegar sin peso ("menú del día ≈ 90 g de hidratos"), pero los nutrientes se guardan por 100 g y `portion_detail.amount` es `NOT NULL > 0`. De ese peso dependen las métricas ponderadas del evento (`measurement_conventions.md` §6.3–§6.8).
+**Alternativas consideradas**:
+- Añadido rápido con peso estimado obligatorio, guardado como fila de `manual_intake` marcada con `is_quick_add`.
+- Añadido rápido con peso opcional y totales guardados, lo que obliga a admitir `amount` nulo en `portion_detail` y a redefinir §6.3–§6.8.
+- Tabla propia para los añadidos rápidos: duplica columnas y añade un tercer origen a `portion_detail` y al versionado.
+- Llevar a `catalog` los platos de cadenas con macros oficiales (Whopper) y dejar `manual_intake` solo para lo casero.
+**Decisión**:
+- `catalog` es para el producto industrial y el ingrediente genérico. `manual_intake` es para lo que prepara alguien, sea un local o una persona, aunque sus macros se conozcan.
+- El añadido rápido es una fila de `manual_intake` con `is_quick_add = TRUE`. Pide nombre, peso estimado e hidratos (obligatorios), el resto de macros como total y notas.
+- El añadido rápido no aparece en búsquedas, listados ni favoritos, no se puede publicar (`CHECK`) y queda fuera de los índices únicos.
+- El plato reutilizable se puede publicar (§11.4.1) y archivar con el mismo contrato que `catalog`.
+- `created_by` pasa a `NOT NULL` (no hay biblioteca general de platos), `carbs_100g` a obligatorio y `subtype` a opcional.
+- `description` tiene un límite de 500 caracteres.
+**Convención actualizada**: `code_conventions.md` sección 11.2.1 (fila de `manual_intake`), sección 11.2.3 (nueva) y sección 11.4.1 (unicidad)
+
+## 2026-10-09 — Macros de un plato manual por 100 g o del total; `amount_g` pasa a `default_portion`
+
+**Origen**: hallazgo 9 de `audit/audits/audit_manual_intake.md`; pregunta B4 de diseño
+**Contexto**: `manual_intake.amount_g` era `NOT NULL` y su significado no estaba documentado. El alta decía "cantidad consumida", pero se usaba como ración por defecto. Además, de un plato casero se suele saber "un trozo ≈ 35 g de hidratos", no los hidratos por 100 g.
+**Alternativas consideradas**:
+- Registrar por unidad (macros de "1 unidad" con peso opcional), rompiendo la unidad canónica por 100 g.
+- Guardar siempre por 100 g y ofrecer un selector de modo de entrada: por 100 g, con peso opcional, o total de una porción, con peso obligatorio y conversión en el servidor.
+**Decisión**: se guarda siempre por 100 g. El formulario de plato reutilizable ofrece los dos modos de entrada. El añadido rápido usa siempre el total. `amount_g` pasa a `default_portion`, con el mismo rango `(0, 3000]` y el mismo significado que en `catalog` (`NULL` = sin ración). Los límites de nutrientes se comprueban sobre el valor convertido, y ni el modo de entrada ni los totales originales se guardan.
+**Convención actualizada**: `measurement_conventions.md` sección 4.1, sección 5.3 y sección 5.4 (nueva)
+
+## 2026-10-09 — Confianzas declaradas en escala ordinal 0–2 e índice glucémico como velocidad de absorción
+
+**Origen**: hallazgos 6 y 15 de `audit/audits/audit_manual_intake.md`; preguntas C9 y C10 de diseño
+**Contexto**: `ig_confidence` usaba una escala `1–5`, mientras §6.1 exige `0–1` para "los campos de confianza", sin dejar claro si `ig_confidence` era uno de ellos. Los macros de un plato manual son casi siempre estimados, y el usuario quiere declarar lo seguro que está de ellos. El índice glucémico tenía tres valores en una lista de presentación, sin opción para un plato sin hidratos.
+**Alternativas consideradas**:
+- Migrar `ig_confidence` a `0–1` y tratarla como las métricas de §6.1.
+- Mantener `1–5` como escala ordinal propia.
+- Escala ordinal `0–2` (nada seguro, más o menos, bastante seguro), común a `macros_confidence` e `ig_confidence`.
+**Decisión**: escala ordinal `0–2` para `macros_confidence` (columna nueva) e `ig_confidence`, que pertenecen al plato y no a cada consumo. Se declaran fuera de §6.1: las métricas de §6.1 son proporciones que DayBetes calcula de forma mecánica, mientras que estas expresan con qué seguridad introdujo el usuario el dato. Los valores de `ig_confidence` existentes se migran así: `1`/`2` → `0`, `3` → `1`, `4`/`5` → `2`; si alguno queda mal, el usuario lo corrige a mano. `glycemic_index` pasa a ser el enum cerrado `GlycemicIndex`, con los códigos `none`/`low`/`medium`/`high` (sin absorción, lenta, media, rápida). Se conservan los códigos existentes y se añade `none`.
+**Convención actualizada**: `measurement_conventions.md` sección 5.5 (nueva), sección 6.1 y sección 6.10 (nueva); `code_conventions.md` sección 4.1
+
+## 2026-10-09 — Calidad y pesaje por defecto en el alimento, copiados a la porción al crearla
+
+**Origen**: preguntas C8 y C10 de diseño; deuda `intake_event` H13 (defaults inteligentes de `portion_detail`)
+**Contexto**: la decisión **2026-09-18** ("`strictly_weighed` y `macros_quality` son tri-estado…") hizo que las porciones nacieran en `NULL` como comportamiento interino, hasta que existieran valores por defecto. Para muchos alimentos, la calidad de los macros y el pesaje son siempre iguales: el bizcocho del bar es siempre estimado y la lata de atún pesa siempre 60 g. Rellenarlos en cada porción es fricción.
+**Alternativas consideradas**:
+- Mantener el `NULL` interino y rellenar a mano cada porción.
+- Inferir el valor del tipo de origen (`catalog` frente a `manual_intake`) sin guardarlo en el alimento.
+- Guardar en el alimento un valor por defecto tri-estado de cada campo y copiarlo a la porción al crearla.
+**Decisión**: `default_macros_quality` y `default_strictly_weighed` (booleanos nullable) en el alimento. Se copian a la porción en el momento de crearla, por cualquier camino. Si son `NULL`, la porción nace en `NULL`. Después la porción es independiente: cambiar el valor por defecto no reescribe las porciones existentes. Una porción copiada de otra conserva los valores de la de origen. Se implementa ahora en `manual_intake` y se añadirá igual a `catalog` más adelante; hasta entonces, en `catalog` sigue el `NULL` interino de 2026-09-18.
+**Convención actualizada**: `measurement_conventions.md` sección 6.11 (nueva)
+
+## 2026-10-09 — `origin` de `manual_intake`: texto libre normalizado y parte de la clave de publicados
+
+**Origen**: hallazgos 4 y 7 de `audit/audits/audit_manual_intake.md`; pregunta E13 de diseño
+**Contexto**: `origin` figuraba en `code_conventions.md` §4.5 como catálogo abierto pendiente. Sus valores reales son personas y lugares personales ("abuela geno", "cafetería tony's"), con variantes de la misma persona ("Abuela"). El usuario quiere filtrar por origen para reutilizar platos y analizar su efecto ("lo que cocina mi tía me sube más"). Además, el origen distingue platos publicados con el mismo nombre.
+**Alternativas consideradas**:
+- Catálogo global de §4.5: expondría a todos lugares y personas privados.
+- Tabla de orígenes por usuario: permite renombrar sin perder el histórico, pero publicar un plato expondría la fila de origen.
+- Texto libre con límite, normalización compartida y autocompletado de lo propio y lo publicado.
+**Decisión**: texto libre de 255 caracteres como máximo, normalizado con la misma función que el nombre (en Python y en los índices). El autocompletado ofrece los orígenes de los platos activos propios y de los publicados, nunca los de platos personales ajenos ni los de añadidos rápidos. El buscador encuentra por nombre o por origen. El concepto de duplicado de un plato es nombre normalizado + origen normalizado, con un origen `NULL` equivalente a la cadena vacía, tanto en el índice personal como en el de publicados. `origin` sale de la tabla de §4.5.
+**Convención actualizada**: `code_conventions.md` sección 4.5 y sección 11.2.3
