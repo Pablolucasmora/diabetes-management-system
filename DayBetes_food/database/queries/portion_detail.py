@@ -71,7 +71,7 @@ _PORTION_COLUMNS = """
     pd.created_at,
     pd.updated_at,
     COALESCE(c.name, im.name) AS source_name,
-    COALESCE(c.default_portion, im.amount_g) AS source_unit_g,
+    COALESCE(c.default_portion, im.default_portion) AS source_unit_g,
     c.category AS source_category,
     im.subtype AS source_subtype,
     c.cooking_factor AS source_cooking_factor,

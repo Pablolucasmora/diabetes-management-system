@@ -12,6 +12,7 @@ from DayBetes_food.domain.constants import (
     CookingMethod,
     FoodCategory,
     FoodPhysicalState,
+    GlycemicIndex,
     InjectionZone,
     IntakeEventState,
     InsulinType,
@@ -23,6 +24,7 @@ from DayBetes_food.domain.constants import (
 from DayBetes_food.domain.insulin import InsulinInjectionRead
 from DayBetes_food.domain.intake_event import IntakeEventRead
 from DayBetes_food.domain.intake_plate import IntakePlateRead
+from DayBetes_food.domain.manual_intake import ManualIntakeRead
 from DayBetes_food.domain.portion_detail import PortionDetailRead, PortionSourceRead
 from DayBetes_food.errors import InfrastructureError
 
@@ -84,6 +86,51 @@ def catalog_item_read_from_row(row: dict) -> CatalogItemRead:
         raise InfrastructureError(f"Invalid catalog category in database row: {exc}") from exc
     except KeyError as exc:
         raise InfrastructureError(f"Missing required field {exc} in catalog row") from exc
+
+
+def manual_intake_read_from_row(row: dict) -> ManualIntakeRead:
+    """Convert a SQL row from _MANUAL_INTAKE_COLUMNS to ManualIntakeRead.
+
+    Required columns: id, created_by, name, carbs_100g, is_quick_add,
+    is_published, created_at, updated_at. Nullables are read with `row.get`
+    (§3.2); an unknown glycemic_index code raises InfrastructureError (§4.3);
+    the computed flags (is_favorite, can_edit, is_listable) come from the query.
+    """
+    try:
+        return ManualIntakeRead(
+            id=int(row["id"]),
+            created_by=int(row["created_by"]),
+            origin_root_id=row.get("origin_root_id"),
+            name=row["name"],
+            description=row.get("description"),
+            subtype=row.get("subtype"),
+            origin=row.get("origin"),
+            default_portion=row.get("default_portion"),
+            calories_100g=row.get("calories_100g"),
+            carbs_100g=float(row["carbs_100g"]),
+            sugars_100g=row.get("sugars_100g"),
+            fats_100g=row.get("fats_100g"),
+            saturated_100g=row.get("saturated_100g"),
+            proteins_100g=row.get("proteins_100g"),
+            fiber_100g=row.get("fiber_100g"),
+            caffeine=row.get("caffeine"),
+            alcohol=row.get("alcohol"),
+            glycemic_index=_enum_from_row(row, "glycemic_index", GlycemicIndex),
+            ig_confidence=row.get("ig_confidence"),
+            macros_confidence=row.get("macros_confidence"),
+            default_macros_quality=row.get("default_macros_quality"),
+            default_strictly_weighed=row.get("default_strictly_weighed"),
+            is_quick_add=bool(row["is_quick_add"]),
+            is_published=bool(row["is_published"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            deleted_at=row.get("deleted_at"),
+            is_favorite=bool(row.get("is_favorite")),
+            can_edit=bool(row.get("can_edit")),
+            is_listable=bool(row.get("is_listable")),
+        )
+    except (KeyError, TypeError) as exc:
+        raise InfrastructureError(f"Missing required field {exc} in manual_intake row") from exc
 
 
 def insulin_injection_read_from_row(row: dict) -> InsulinInjectionRead:

@@ -91,6 +91,14 @@ def quick_actions(latest_event, portions):
                 hx_push_url="true",
             ),
             Button(
+                "Quick add",
+                cls="web_button w-full text-xs md:text-sm px-2 py-1.5 md:px-3 md:py-2",
+                hx_get="/food/quick_add/form",
+                hx_target="#main_content",
+                hx_push_url="true",
+                **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
+            ),
+            Button(
                 Img(src="/images/ui/bar_code.svg", alt="Scanner", cls="w-10 h-10 md:w-12 md:h-12"),
                 cls="web_button w-full flex items-center justify-center p-0.5 md:p-1",
                 hx_get="/scanner",

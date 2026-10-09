@@ -14,7 +14,7 @@ from DayBetes_food.database.queries.crud import (
     RawSQL,
     _build_fuzzy_search,
     _build_update_query,
-    _catalog_visibility_sql,
+    _food_visibility_sql,
     _execute_query,
     _execute_query_many,
 )
@@ -23,6 +23,7 @@ from DayBetes_food.domain.catalog import (
     CatalogItemCreate,
     CatalogItemUpdate,
 )
+from DayBetes_food.domain.constants import PortionOrigin
 from DayBetes_food.domain.food import normalize_food_text
 from DayBetes_food.errors import ConflictError, NotFoundError
 
@@ -158,7 +159,7 @@ def get_catalog_item(connection, user_id: int, catalog_id: int):
         SELECT {_CATALOG_COLUMNS}
         {_CATALOG_FROM}
         WHERE entity.id = %(catalog_id)s
-          AND {_catalog_visibility_sql("entity", include_retained=True)};
+          AND {_food_visibility_sql(PortionOrigin.CATALOG, "entity", include_retained=True)};
     """
     row = _execute_query(connection, query, params, commit=False)
     return catalog_item_read_from_row(row) if row else None
@@ -199,7 +200,7 @@ def list_catalog_items(
     `include_retained=True` explicitly includes archived or unpublished items
     the viewer keeps in favorites or in one of their recipes (§11.3).
     """
-    conditions = [_catalog_visibility_sql("entity", include_retained=include_retained)]
+    conditions = [_food_visibility_sql(PortionOrigin.CATALOG, "entity", include_retained=include_retained)]
     params = {"visibility_user_id": user_id}
     normalized = (search or "").strip()
     if normalized:

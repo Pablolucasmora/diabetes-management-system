@@ -107,7 +107,7 @@ class PortionSourceRead:
     single nutritional value (finding 1, still open).
     """
     name: str | None
-    unit_g: float | None           # catalog.default_portion | manual_intake.amount_g; None = no serving
+    unit_g: float | None           # catalog.default_portion | manual_intake.default_portion; None = no serving
     category: str | None
     subtype: str | None
     cooking_factor: float | None  # catalog only; None for manual_intake

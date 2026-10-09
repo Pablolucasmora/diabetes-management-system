@@ -18,6 +18,7 @@ from DayBetes_food.domain.constants import (
     CookingMethod,
     FoodCategory,
     FoodPhysicalState,
+    GlycemicIndex,
     IntakeEventState,
     InsulinType,
     InjectionZone,
@@ -26,6 +27,10 @@ from DayBetes_food.domain.constants import (
     sql_in_list,
 )
 from DayBetes_food.domain.food import FOOD_DEFAULT_PORTION_RANGE
+from DayBetes_food.domain.manual_intake import (
+    MANUAL_INTAKE_CONFIDENCE_MAX,
+    MANUAL_INTAKE_CONFIDENCE_MIN,
+)
 from DayBetes_food.domain.meal_type_schedule import AUTO_ASSIGNABLE_MEAL_TYPES
 from DayBetes_food.domain.nutrition import NUTRIENT_LIMITS, NumericRange
 
@@ -76,6 +81,37 @@ def catalog_check_constraints() -> dict[str, str]:
     }
     for field, limits in NUTRIENT_LIMITS.items():
         checks[f"ck_catalog_{field}_range"] = _range_check(field, limits)
+    return checks
+
+
+def manual_intake_check_constraints() -> dict[str, str]:
+    """CHECK name -> expression of `manual_intake`, generated from the enums and
+    the limits (§4.4, §12.1). The same list feeds the CREATE TABLE and
+    db_init._ensure_manual_intake_schema. NaN/Infinity are rejected by the
+    ranges (in `real`, NaN is greater than any number), as in catalog."""
+    confidence = f"BETWEEN {MANUAL_INTAKE_CONFIDENCE_MIN} AND {MANUAL_INTAKE_CONFIDENCE_MAX}"
+    checks = {
+        "ck_manual_intake_glycemic_index": (
+            f"glycemic_index IS NULL OR glycemic_index IN ({sql_in_list(GlycemicIndex)})"
+        ),
+        "ck_manual_intake_ig_confidence_range": f"ig_confidence IS NULL OR ig_confidence {confidence}",
+        "ck_manual_intake_macros_confidence_range": (
+            f"macros_confidence IS NULL OR macros_confidence {confidence}"
+        ),
+        "ck_manual_intake_ig_confidence_requires_glycemic_index": (
+            "ig_confidence IS NULL OR glycemic_index IS NOT NULL"
+        ),
+        "ck_manual_intake_default_portion_range": _range_check("default_portion", FOOD_DEFAULT_PORTION_RANGE),
+        "ck_manual_intake_sugars_le_carbs": "sugars_100g IS NULL OR carbs_100g IS NULL OR sugars_100g <= carbs_100g",
+        "ck_manual_intake_saturated_le_fats": "saturated_100g IS NULL OR fats_100g IS NULL OR saturated_100g <= fats_100g",
+        "ck_manual_intake_name_normalized": r"name <> '' AND name = regexp_replace(btrim(name), '\s+', ' ', 'g')",
+        "ck_manual_intake_origin_normalized": (
+            r"origin IS NULL OR (origin <> '' AND origin = regexp_replace(btrim(origin), '\s+', ' ', 'g'))"
+        ),
+        "ck_manual_intake_quick_add_not_published": "NOT (is_quick_add AND is_published)",
+    }
+    for field, limits in NUTRIENT_LIMITS.items():
+        checks[f"ck_manual_intake_{field}_range"] = _range_check(field, limits)
     return checks
 
 
@@ -297,36 +333,58 @@ class DBSchema:
     );
     """
 
-    manual_intake = """
-    CREATE TABLE IF NOT EXISTS manual_intake ( -- Table used when consuming already-prepared dishes outside, for which we don't know the exact nutritional characteristics
-        id SERIAL PRIMARY KEY,
-        created_by INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        origin_root_id INTEGER REFERENCES manual_intake(id) ON DELETE SET NULL,
-        name VARCHAR(255) NOT NULL, -- Name of this manual meal, such as "uni cafeteria cake", "grandma's stew"
-        description TEXT, -- Description of the dish (optional), which will be used to more precisely determine its nutritional info if an AI is integrated
-        subtype VARCHAR(100) NOT NULL, -- More specific product category, same as in catalog. This variable will also be used in the future to estimate macros based on meals of the same subtype for which we have nutritional info.
-        origin VARCHAR(255), -- Where it comes from: grandma's, Burger King, Saona, Big Twins, Subway... (to allow reuse when visiting the same place again). These meals should be updatable each time the user consumes from that place in case something has changed.
-
-        amount_g REAL NOT NULL,
+    @classmethod
+    def manual_intake(cls):
+        """Generate the manual_intake table SQL with enums and limits as source of truth."""
+        check_lines = ",\n".join(
+            f"        CONSTRAINT {name} CHECK ({expression})"
+            for name, expression in manual_intake_check_constraints().items()
+        )
+        return f"""
+    -- Dishes prepared by someone (a place or a person), even when their macros
+    -- are known (code_conventions.md §11.2.3).
+    -- Owner: created_by, NOT NULL. Creator = owner, no transfers, no general
+    -- library of dishes (§11.2.3).
+    -- Two kinds of row: reusable dish (is_quick_add = FALSE) and quick add
+    -- (is_quick_add = TRUE: never listed, never published, outside the unique indexes).
+    -- Visibility: personal / published (§11.4.1), enforced in SQL.
+    -- Lifecycle: archivable, irreversible (no restore_), same contract as catalog.
+    -- Deleting a user: CASCADE (blocked today by portion_detail RESTRICT, decision 2026-09-22).
+    -- Concurrency: last write wins on edit (§6.7, §6.10, §11.2.3).
+    -- Uniqueness: partial unique indexes uq_manual_intake_* live in db_init._ensure_manual_intake_schema.
+    CREATE TABLE IF NOT EXISTS manual_intake (
+        id SERIAL CONSTRAINT pk_manual_intake PRIMARY KEY,
+        created_by INTEGER NOT NULL
+            CONSTRAINT fk_manual_intake_created_by_users
+            REFERENCES users(id) ON DELETE CASCADE,
+        origin_root_id INTEGER
+            CONSTRAINT fk_manual_intake_origin_root_id_manual_intake
+            REFERENCES manual_intake(id) ON DELETE SET NULL,
+        name VARCHAR(255) NOT NULL, -- stored normalized (domain/food.normalize_food_text)
+        description TEXT, -- domain limit 500 (MANUAL_INTAKE_DESCRIPTION_MAX_LENGTH, §7.3); also the quick-add notes
+        subtype VARCHAR(100), -- optional (decision 2026-10-09)
+        origin VARCHAR(255), -- who or where made it; free text, stored normalized; part of the duplicate concept
+        default_portion REAL, -- serving in g; NULL = no serving (measurement §5.3)
         calories_100g REAL,
-        carbs_100g REAL,
+        carbs_100g REAL NOT NULL, -- 0 is valid; "unknown" is not (§11.2.3)
         sugars_100g REAL,
         fats_100g REAL,
         saturated_100g REAL,
         proteins_100g REAL,
         fiber_100g REAL,
-
-        caffeine REAL,
-        alcohol REAL,
-
-        glycemic_index VARCHAR(20) CHECK (
-            glycemic_index IN ('high', 'medium', 'low')
-        ), -- Estimated glycemic index of the meal
-        ig_confidence INTEGER CHECK (ig_confidence BETWEEN 1 AND 5), -- Confidence level with which the glycemic index value above was established
-        is_published BOOLEAN NOT NULL DEFAULT FALSE, -- True: visible to everyone; FALSE: only creator can view it
-        deleted_at TIMESTAMP NULL,
-        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        caffeine REAL, -- mg/100 g
+        alcohol REAL, -- g/100 g
+        glycemic_index VARCHAR(20), -- declared absorption speed (measurement §5.5)
+        ig_confidence INTEGER, -- declared 0-2 (measurement §6.10)
+        macros_confidence INTEGER, -- declared 0-2 (measurement §6.10)
+        default_macros_quality BOOLEAN, -- copied to each new portion (measurement §6.11)
+        default_strictly_weighed BOOLEAN, -- copied to each new portion (measurement §6.11)
+        is_quick_add BOOLEAN NOT NULL DEFAULT FALSE,
+        is_published BOOLEAN NOT NULL DEFAULT FALSE,
+        deleted_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+{check_lines}
     );
     """
 

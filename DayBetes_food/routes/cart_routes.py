@@ -822,6 +822,15 @@ def setup_cart_routes(rt):
             event = get_intake_event(connection, int(user_id), event_id)
             if not event:
                 return _error(request, NotFoundError, _EVENT_GONE)
+            # measurement_conventions.md §5.2: a manual dish has no cooking
+            # factor, so its portions are never cooked-weighed. Unchecking is
+            # still allowed.
+            if (
+                field_name == "is_cooked_weight"
+                and value is True
+                and portion.origin is PortionOrigin.MANUAL_INTAKE
+            ):
+                return _error(request, ValidationError, "Cooked weight only applies to catalog foods.")
             # Decision 2026-09-24 / R4: ticking the box on a catalog food with no
             # factor is rejected; unchecking is always allowed, and a portion that
             # already had it TRUE keeps the control to be unmarked.

@@ -9,8 +9,10 @@ This module no longer holds per-table CRUD functions (see code_conventions.md
   validation/whitelist helpers);
 - fuzzy-search helpers shared by several table modules
   (`_build_fuzzy_search`, `_add_fuzzy_name_condition`);
-- ownership/favorite filter helpers shared by `catalog.py`, `manual_intake.py`
-  and `recipe.py` (`_add_entity_filters`, `_favorite_filter_sql`);
+- ownership/favorite filter helpers used by `recipe.py`
+  (`_add_entity_filters`, `_favorite_filter_sql`);
+- the visibility rule of `catalog` and `manual_intake`, shared by
+  `catalog.py`, `manual_intake.py` and `entries.py` (`_food_visibility_sql`);
 - tag normalization helpers shared by `tags.py` and `linked_tags.py`
   (`_normalize_tag_name`, `_tag_color_from_name`);
 - constants shared across table modules (`TRGM_SIMILARITY_THRESHOLD`).
@@ -28,6 +30,8 @@ from enum import Enum
 from typing import Optional, Any
 
 from psycopg import sql
+
+from DayBetes_food.domain.constants import PortionOrigin
 
 TRGM_SIMILARITY_THRESHOLD = 0.25
 _HAS_PG_TRGM = None
@@ -298,7 +302,7 @@ def _add_fuzzy_name_condition(
 
 # ============================================
 # ENTITY-LEVEL FILTER HELPERS
-# (shared by catalog.py, manual_intake.py, recipe.py)
+# (used by recipe.py)
 # ============================================
 
 def _add_entity_filters(
@@ -335,29 +339,43 @@ def _favorite_filter_sql(target_column: str, favorite: bool, params: dict, viewe
     )
 
 
-def _catalog_visibility_sql(alias: str, *, include_retained: bool) -> str:
-    """SQL visibility rule of `catalog` (§11.2.2, §11.4.1).
+_FOOD_VISIBILITY_COLUMNS = {  # technical whitelist (§4.6): user_favorites / portion_detail columns
+    PortionOrigin.CATALOG: "catalog_id",
+    PortionOrigin.MANUAL_INTAKE: "manual_intake_id",
+}
 
-    Shared by catalog.py and entries.py, so it lives here (§1.3.1). `alias` is
-    validated because it is interpolated; the user id always travels as the
-    `%(visibility_user_id)s` SQL parameter. It returns:
+
+def _food_visibility_sql(origin: PortionOrigin, alias: str, *, include_retained: bool) -> str:
+    """SQL visibility rule of `catalog` and `manual_intake` (§11.2.2, §11.2.3, §11.4.1).
+
+    Shared by catalog.py, manual_intake.py and entries.py, so it lives here
+    (§1.3.1). `alias` is validated because it is interpolated; the user id
+    always travels as the `%(visibility_user_id)s` SQL parameter. It returns:
     - listable: active AND (published OR owned by the viewer);
     - retained (optional): unpublished or archived, but kept in the viewer's
       favorites or in one of their recipes.
+    manual_intake adds NOT is_quick_add to the whole rule: a quick add only
+    exists through its portion, which reads it through the portion_detail JOIN,
+    not through this rule (§11.2.3).
     """
     if not _IDENTIFIER_RE.fullmatch(alias or ""):
-        raise ValueError(f"Invalid catalog visibility alias: {alias!r}")
+        raise ValueError(f"Invalid food visibility alias: {alias!r}")
+    origin = PortionOrigin(origin)
+    column = _FOOD_VISIBILITY_COLUMNS[origin]
     a = alias
     listable = (
         f"({a}.deleted_at IS NULL AND ({a}.is_published OR {a}.created_by = %(visibility_user_id)s))"
     )
     retained = (
         f"(EXISTS (SELECT 1 FROM user_favorites vf "
-        f"WHERE vf.user_id = %(visibility_user_id)s AND vf.catalog_id = {a}.id)"
+        f"WHERE vf.user_id = %(visibility_user_id)s AND vf.{column} = {a}.id)"
         f" OR EXISTS (SELECT 1 FROM portion_detail vpd JOIN recipe vr ON vr.id = vpd.recipe_id "
-        f"WHERE vpd.catalog_id = {a}.id AND vr.users_id = %(visibility_user_id)s))"
+        f"WHERE vpd.{column} = {a}.id AND vr.users_id = %(visibility_user_id)s))"
     )
-    return f"({listable} OR {retained})" if include_retained else listable
+    rule = f"({listable} OR {retained})" if include_retained else listable
+    if origin is PortionOrigin.MANUAL_INTAKE:
+        rule = f"(NOT {a}.is_quick_add AND {rule})"
+    return rule
 
 
 # ============================================
