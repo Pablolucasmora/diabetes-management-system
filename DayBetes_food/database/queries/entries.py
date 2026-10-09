@@ -11,11 +11,11 @@ that is why they do not live in any individual table's file
 
 from DayBetes_food.database.queries.crud import (
     _build_fuzzy_search,
-    _catalog_visibility_sql,
+    _food_visibility_sql,
     _execute_query,
     _execute_query_many,
 )
-from DayBetes_food.domain.constants import IntakeEventState
+from DayBetes_food.domain.constants import IntakeEventState, PortionOrigin
 from DayBetes_food.time_utils import APP_TIMEZONE
 
 
@@ -54,7 +54,8 @@ def get_subtype_label(connection, subtype: str) -> str | None:
         FROM (
             SELECT trim(c.subtype) AS label FROM catalog c WHERE c.deleted_at IS NULL
             UNION
-            SELECT trim(m.subtype) FROM manual_intake m WHERE m.deleted_at IS NULL
+            SELECT trim(m.subtype) FROM manual_intake m
+            WHERE m.deleted_at IS NULL AND m.subtype IS NOT NULL
         ) s
         WHERE lower(s.label) = lower(%(subtype)s)
         ORDER BY s.label
@@ -64,11 +65,10 @@ def get_subtype_label(connection, subtype: str) -> str | None:
     return str(row["label"]) if row and row.get("label") is not None else None
 
 
-def get_rescue_entries_suggestions(connection, users_id: int, search: str = "", limit: int = 50) -> list[dict]:
+def get_rescue_entries_suggestions(connection, user_id: int, search: str = "", limit: int = 50) -> list[dict]:
     normalized = (search or "").strip()
     params = {
-        "users_id": users_id,
-        "visibility_user_id": users_id,
+        "visibility_user_id": user_id,
         "q": normalized,
         "q_like": f"%{normalized}%",
         "limit": max(1, min(int(limit or 50), 200)),
@@ -101,13 +101,12 @@ def get_rescue_entries_suggestions(connection, users_id: int, search: str = "", 
                 m.id AS entry_id,
                 m.name AS name,
                 COALESCE(m.origin, '') AS subtitle,
-                COALESCE(m.amount_g, 100.0) AS serving_g,
-                COALESCE(m.amount_g, 0.0) AS available_g
+                m.default_portion AS serving_g,
+                NULL::double precision AS available_g
             FROM linked_tags lt
             INNER JOIN rescue_tag rt ON rt.id = lt.tag_id
             INNER JOIN manual_intake m ON m.id = lt.manual_intake_id
-            WHERE m.deleted_at IS NULL
-              AND (m.is_published OR m.created_by = %(users_id)s)
+            WHERE {manual_visibility}
               AND (%(q)s = '' OR m.name ILIKE %(q_like)s OR COALESCE(m.origin, '') ILIKE %(q_like)s)
         )
         SELECT *
@@ -118,7 +117,10 @@ def get_rescue_entries_suggestions(connection, users_id: int, search: str = "", 
         ) src
         ORDER BY name ASC, entry_type ASC, entry_id ASC
         LIMIT %(limit)s;
-    """.format(catalog_visibility=_catalog_visibility_sql("c", include_retained=True))
+    """.format(
+        catalog_visibility=_food_visibility_sql(PortionOrigin.CATALOG, "c", include_retained=True),
+        manual_visibility=_food_visibility_sql(PortionOrigin.MANUAL_INTAKE, "m", include_retained=True),
+    )
     rows = _execute_query_many(connection, query, params, commit=False)
     out = []
     for row in rows:

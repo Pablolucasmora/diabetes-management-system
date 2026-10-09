@@ -65,6 +65,10 @@ class IntakeEventRead:
     consumed. There is no total_amount column: it is computed live with
     SUM(amount) when needed (decision 2026-09-10,
     measurement_conventions.md §4.4/§6.9.1).
+    amount_confidence is a snapshot of the portions' own data. There are no
+    quality_confidence or *_uncertainty columns: they depend on the food, so
+    they are computed live from the portions (measurement_conventions.md
+    §6.9.4).
     """
     id: int
     user_id: int
@@ -78,13 +82,6 @@ class IntakeEventRead:
     injection_zone: InjectionZone | None
     ingested_amount: float | None
     amount_confidence: float | None
-    quality_confidence: float | None
-    carbs_uncertainty: float | None
-    sugars_uncertainty: float | None
-    fats_uncertainty: float | None
-    saturated_uncertainty: float | None
-    proteins_uncertainty: float | None
-    fiber_uncertainty: float | None
     notes: str | None
     created_at: datetime
     updated_at: datetime
@@ -119,11 +116,4 @@ class IntakeEventUpdate:
     injection_zone: InjectionZone | None = None
     ingested_amount: float | None = None
     amount_confidence: float | None = None
-    quality_confidence: float | None = None
-    carbs_uncertainty: float | None = None
-    sugars_uncertainty: float | None = None
-    fats_uncertainty: float | None = None
-    saturated_uncertainty: float | None = None
-    proteins_uncertainty: float | None = None
-    fiber_uncertainty: float | None = None
     notes: str | None = None

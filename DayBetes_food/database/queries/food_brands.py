@@ -62,18 +62,18 @@ def get_food_brand_id_by_label(connection, label: str) -> Optional[int]:
 
 
 def get_food_brand_suggestions(connection, search: str = "", limit: int = 50) -> list[str]:
-    search_condition, search_params, search_order = _build_fuzzy_search(connection, "label", search)
+    search_condition, search_params, search_order = _build_fuzzy_search(connection, "food_brands.label", search)
     params = {**search_params, "limit": max(1, min(int(limit or 50), 500))}
     query = """
-        SELECT label
+        SELECT food_brands.label
         FROM food_brands
-        WHERE is_active = TRUE
+        WHERE food_brands.is_active = TRUE
           AND {search_condition}
         ORDER BY {search_order}
         LIMIT %(limit)s;
     """.format(
         search_condition=search_condition or "TRUE",
-        search_order=search_order if search_condition else "label",
+        search_order=search_order if search_condition else "food_brands.label",
     )
     rows = _execute_query_many(connection, query, params, commit=False)
     return [str(row["label"]) for row in rows if row and row.get("label")]

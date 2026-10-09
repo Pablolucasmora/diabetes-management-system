@@ -765,3 +765,152 @@ En los datos reales, `manual_intake` tiene 4 de 5 filas privadas. Los motivos re
 - Mantener la gramática y quitar solo de la ayuda el ejemplo que fallaba.
 **Decisión**: se acepta solo "número primero": una secuencia de pares `<número> [unidad] <nombre>` (`12 proteinas 23 grasas`, `120kcal 30hc`), separados por espacios, `,`, `;` o `+`, sin necesidad de comas. Se siguen admitiendo todos los sinónimos de cada macro, comparados exactamente (sin tildes ni mayúsculas), más algunas formas de varias palabras ("grasas saturadas", "hidratos de carbono"). Un nombre delante de su número, un número sin nombre, un nombre desconocido, un macro repetido o cualquier otro carácter se rechazan con `validation_error`. Python y JavaScript aplican la misma gramática con los mismos mensajes, y el juego de casos (`static/data/smart_macros_cases.json`, ahora versionado) se regenera con los valores correctos y casos de error. Modifica la decisión 2026-09-25 "Smart macros: el servidor parsea el texto; el JavaScript es solo vista previa" en la gramática y en el criterio de rechazo; el resto de aquella decisión (el servidor es la autoridad, se ignoran los campos ocultos, el texto no se guarda) se mantiene.
 **Convención actualizada**: `conventions/code_conventions.md` sección 7.15 (Texto libre con varios valores)
+
+## 2026-10-09 — `manual_intake`: frontera con `catalog`, plato reutilizable y añadido rápido
+
+**Origen**: hallazgos 4, 5 y 14 de `audit/audits/audit_manual_intake.md`; preguntas de diseño sobre el funcionamiento de `manual_intake` (bloques A y F)
+**Contexto**: no estaba definido qué alimento va a `catalog` y cuál a `manual_intake`. Tampoco cómo registrar una comida puntual sin crear un plato que luego aparece en búsquedas y listados. El usuario quiere dos formularios: uno rápido para lo puntual (a menudo estimado con IA) y otro completo para lo que se reutiliza o se comparte. Un añadido rápido suele llegar sin peso ("menú del día ≈ 90 g de hidratos"), pero los nutrientes se guardan por 100 g y `portion_detail.amount` es `NOT NULL > 0`. De ese peso dependen las métricas ponderadas del evento (`measurement_conventions.md` §6.3–§6.8).
+**Alternativas consideradas**:
+- Añadido rápido con peso estimado obligatorio, guardado como fila de `manual_intake` marcada con `is_quick_add`.
+- Añadido rápido con peso opcional y totales guardados, lo que obliga a admitir `amount` nulo en `portion_detail` y a redefinir §6.3–§6.8.
+- Tabla propia para los añadidos rápidos: duplica columnas y añade un tercer origen a `portion_detail` y al versionado.
+- Llevar a `catalog` los platos de cadenas con macros oficiales (Whopper) y dejar `manual_intake` solo para lo casero.
+**Decisión**:
+- `catalog` es para el producto industrial y el ingrediente genérico. `manual_intake` es para lo que prepara alguien, sea un local o una persona, aunque sus macros se conozcan.
+- El añadido rápido es una fila de `manual_intake` con `is_quick_add = TRUE`. Pide nombre, peso estimado e hidratos (obligatorios), el resto de macros como total y notas.
+- El añadido rápido no aparece en búsquedas, listados ni favoritos, no se puede publicar (`CHECK`) y queda fuera de los índices únicos.
+- El plato reutilizable se puede publicar (§11.4.1) y archivar con el mismo contrato que `catalog`.
+- `created_by` pasa a `NOT NULL` (no hay biblioteca general de platos), `carbs_100g` a obligatorio y `subtype` a opcional.
+- `description` tiene un límite de 500 caracteres.
+**Convención actualizada**: `code_conventions.md` sección 11.2.1 (fila de `manual_intake`), sección 11.2.3 (nueva) y sección 11.4.1 (unicidad)
+
+## 2026-10-09 — Macros de un plato manual por 100 g o del total; `amount_g` pasa a `default_portion`
+
+**Origen**: hallazgo 9 de `audit/audits/audit_manual_intake.md`; pregunta B4 de diseño
+**Contexto**: `manual_intake.amount_g` era `NOT NULL` y su significado no estaba documentado. El alta decía "cantidad consumida", pero se usaba como ración por defecto. Además, de un plato casero se suele saber "un trozo ≈ 35 g de hidratos", no los hidratos por 100 g.
+**Alternativas consideradas**:
+- Registrar por unidad (macros de "1 unidad" con peso opcional), rompiendo la unidad canónica por 100 g.
+- Guardar siempre por 100 g y ofrecer un selector de modo de entrada: por 100 g, con peso opcional, o total de una porción, con peso obligatorio y conversión en el servidor.
+**Decisión**: se guarda siempre por 100 g. El formulario de plato reutilizable ofrece los dos modos de entrada. El añadido rápido usa siempre el total. `amount_g` pasa a `default_portion`, con el mismo rango `(0, 3000]` y el mismo significado que en `catalog` (`NULL` = sin ración). Los límites de nutrientes se comprueban sobre el valor convertido, y ni el modo de entrada ni los totales originales se guardan.
+**Convención actualizada**: `measurement_conventions.md` sección 4.1, sección 5.3 y sección 5.4 (nueva)
+
+## 2026-10-09 — Confianzas declaradas en escala ordinal 0–2 e índice glucémico como velocidad de absorción
+
+**Origen**: hallazgos 6 y 15 de `audit/audits/audit_manual_intake.md`; preguntas C9 y C10 de diseño
+**Contexto**: `ig_confidence` usaba una escala `1–5`, mientras §6.1 exige `0–1` para "los campos de confianza", sin dejar claro si `ig_confidence` era uno de ellos. Los macros de un plato manual son casi siempre estimados, y el usuario quiere declarar lo seguro que está de ellos. El índice glucémico tenía tres valores en una lista de presentación, sin opción para un plato sin hidratos.
+**Alternativas consideradas**:
+- Migrar `ig_confidence` a `0–1` y tratarla como las métricas de §6.1.
+- Mantener `1–5` como escala ordinal propia.
+- Escala ordinal `0–2` (nada seguro, más o menos, bastante seguro), común a `macros_confidence` e `ig_confidence`.
+**Decisión**: escala ordinal `0–2` para `macros_confidence` (columna nueva) e `ig_confidence`, que pertenecen al plato y no a cada consumo. Se declaran fuera de §6.1: las métricas de §6.1 son proporciones que DayBetes calcula de forma mecánica, mientras que estas expresan con qué seguridad introdujo el usuario el dato. Los valores de `ig_confidence` existentes se migran así: `1`/`2` → `0`, `3` → `1`, `4`/`5` → `2`; si alguno queda mal, el usuario lo corrige a mano. `glycemic_index` pasa a ser el enum cerrado `GlycemicIndex`, con los códigos `none`/`low`/`medium`/`high` (sin absorción, lenta, media, rápida). Se conservan los códigos existentes y se añade `none`.
+**Convención actualizada**: `measurement_conventions.md` sección 5.5 (nueva), sección 6.1 y sección 6.10 (nueva); `code_conventions.md` sección 4.1
+
+## 2026-10-09 — Calidad y pesaje por defecto en el alimento, copiados a la porción al crearla
+
+**Origen**: preguntas C8 y C10 de diseño; deuda `intake_event` H13 (defaults inteligentes de `portion_detail`)
+**Contexto**: la decisión **2026-09-18** ("`strictly_weighed` y `macros_quality` son tri-estado…") hizo que las porciones nacieran en `NULL` como comportamiento interino, hasta que existieran valores por defecto. Para muchos alimentos, la calidad de los macros y el pesaje son siempre iguales: el bizcocho del bar es siempre estimado y la lata de atún pesa siempre 60 g. Rellenarlos en cada porción es fricción.
+**Alternativas consideradas**:
+- Mantener el `NULL` interino y rellenar a mano cada porción.
+- Inferir el valor del tipo de origen (`catalog` frente a `manual_intake`) sin guardarlo en el alimento.
+- Guardar en el alimento un valor por defecto tri-estado de cada campo y copiarlo a la porción al crearla.
+**Decisión**: `default_macros_quality` y `default_strictly_weighed` (booleanos nullable) en el alimento. Se copian a la porción en el momento de crearla, por cualquier camino. Si son `NULL`, la porción nace en `NULL`. Después la porción es independiente: cambiar el valor por defecto no reescribe las porciones existentes. Una porción copiada de otra conserva los valores de la de origen. Se implementa ahora en `manual_intake` y se añadirá igual a `catalog` más adelante; hasta entonces, en `catalog` sigue el `NULL` interino de 2026-09-18.
+**Convención actualizada**: `measurement_conventions.md` sección 6.11 (nueva)
+
+## 2026-10-09 — `origin` de `manual_intake`: texto libre normalizado y parte de la clave de publicados
+
+**Origen**: hallazgos 4 y 7 de `audit/audits/audit_manual_intake.md`; pregunta E13 de diseño
+**Contexto**: `origin` figuraba en `code_conventions.md` §4.5 como catálogo abierto pendiente. Sus valores reales son personas y lugares personales ("abuela geno", "cafetería tony's"), con variantes de la misma persona ("Abuela"). El usuario quiere filtrar por origen para reutilizar platos y analizar su efecto ("lo que cocina mi tía me sube más"). Además, el origen distingue platos publicados con el mismo nombre.
+**Alternativas consideradas**:
+- Catálogo global de §4.5: expondría a todos lugares y personas privados.
+- Tabla de orígenes por usuario: permite renombrar sin perder el histórico, pero publicar un plato expondría la fila de origen.
+- Texto libre con límite, normalización compartida y autocompletado de lo propio y lo publicado.
+**Decisión**: texto libre de 255 caracteres como máximo, normalizado con la misma función que el nombre (en Python y en los índices). El autocompletado ofrece los orígenes de los platos activos propios y de los publicados, nunca los de platos personales ajenos ni los de añadidos rápidos. El buscador encuentra por nombre o por origen. El concepto de duplicado de un plato es nombre normalizado + origen normalizado, con un origen `NULL` equivalente a la cadena vacía, tanto en el índice personal como en el de publicados. `origin` sale de la tabla de §4.5.
+**Convención actualizada**: `code_conventions.md` sección 4.5 y sección 11.2.3
+
+## 2026-10-09 — Un parámetro de ruta no puede llamarse como una cabecera HTTP
+
+**Origen**: prueba manual de `manual_intake`: un plato creado con origen "Burger King" se guardó con `origin = 'http://0.0.0.0:8000'`
+**Contexto**: FastHTML busca cada parámetro de la ruta en la ruta, las cookies, las cabeceras, la query y, por último, el cuerpo del formulario. El plan de `manual_intake` renombró el campo `source_origin` a `origin`, y FastHTML tomó la cabecera `Origin` que envía el navegador. Las pruebas no lo detectaron porque el cliente de pruebas no envía esa cabecera.
+**Alternativas consideradas**:
+- Leer el formulario explícitamente (`await request.form()`) en las rutas afectadas.
+- Prohibir que un parámetro de ruta se llame como una cabecera, una cookie o un nombre especial de FastHTML, y usar un prefijo cuando el concepto de dominio se llame así.
+**Decisión**: se prohíbe. El campo de origen de `manual_intake` se llama `source_origin` y la ruta lo traduce a `origin`. Las pruebas contra la aplicación envían las cabeceras de un navegador real.
+**Convención actualizada**: `code_conventions.md` sección 9.9 (nueva)
+
+## 2026-10-09 — La calidad de los macros es un dato del alimento y la porción la lee en vivo
+
+**Origen**: prueba manual de `manual_intake` tras su auditoría; decisión previa **2026-10-09** ("Calidad y pesaje por defecto en el alimento, copiados a la porción al crearla")
+**Contexto**: la decisión previa del mismo día copiaba `default_macros_quality` a `portion_detail.macros_quality` al crear la porción, y el carrito permitía cambiarla. En la práctica no hay motivo para que la calidad de una porción difiera de la de su alimento: describe de dónde salen los macros (etiqueta, carta, estimación), no el acto de comer. Los macros de la porción ya se leen en vivo del alimento, y su historial lo resolverá el versionado (`portion_detail` H1).
+**Alternativas consideradas**:
+- Mantener la copia al crear y el ajuste en el carrito (decisión previa).
+- Copia al crear como foto histórica, sin ajuste en el carrito.
+- Leerla en vivo del alimento, como los macros, y versionarla con ellos.
+**Decisión**: `macros_quality` es un dato del alimento (`catalog.macros_quality`, `manual_intake.macros_quality`; `default_macros_quality` se renombra). La porción no guarda copia: el carrito y `quality_confidence` la leen del alimento, y con el versionado se leerá de la versión. Las comidas confirmadas conservan su `quality_confidence`, que se guarda en el evento al confirmar. El ajuste por porción del carrito y su ruta desaparecen. `portion_detail.macros_quality` se conserva sin uso, con sus valores, hasta el versionado. `strictly_weighed` sigue siendo un dato de cada porción, que nace con el `default_strictly_weighed` del alimento.
+**Convención actualizada**: `measurement_conventions.md` sección 4.6.4, sección 6.5 y sección 6.11; `code_conventions.md` sección 9.5 y sección 11.2.3; `frontend_conventions.md` sección 6
+
+## 2026-10-09 — `catalog` gana calidad de los macros, pesaje por defecto y confianza de los macros
+
+**Origen**: `audit/deuda_pendiente.md`, sección `manual_intake`, "Extender a `catalog` los campos nuevos de `manual_intake`"
+**Contexto**: la extensión estaba acordada desde las decisiones del 2026-10-09 de `manual_intake`. Los macros de un alimento de `catalog` también pueden venir de la etiqueta o de una estimación (los de un plátano varían según la fuente), y hay productos cuyo peso es siempre el del envase.
+**Alternativas consideradas**:
+- Dejarlos solo en `manual_intake`.
+- Añadirlos a `catalog` con el mismo significado, rellenando los alimentos existentes a partir del historial de porciones o del código de barras.
+- Añadirlos a `catalog` con el mismo significado y los alimentos existentes en `NULL`.
+**Decisión**: `catalog` gana `macros_quality`, `default_strictly_weighed` y `macros_confidence` (`0–2`), opcionales y con el mismo significado y comportamiento que en `manual_intake`. Los 64 alimentos existentes empiezan en `NULL`; no se infiere nada. El índice glucémico sigue sin decidir para `catalog`.
+**Convención actualizada**: `measurement_conventions.md` sección 6.10 y sección 6.11; `code_conventions.md` sección 11.2.2
+
+## 2026-10-09 — Las métricas de un evento que dependen del alimento se calculan siempre en vivo
+
+**Origen**: hallazgo 18 de `audit/audits/audit_manual_intake.md` (segunda pasada)
+**Contexto**: la decisión 2026-10-09 ("La calidad de los macros es un dato del alimento y la porción la lee en vivo") daba por hecho que toda comida confirmada guarda su `quality_confidence`. En la base solo 13 de 61 lo tenían. En las otras 48 la interfaz lo calculaba al pintar, ya con la calidad del alimento, que es `NULL` en todos, y la media pasó de 0,92 a 0,00. Además, la decisión 2026-09-10 ("Las porciones de un evento `consumed` son editables y obligan a recalcular su snapshot") reescribía el valor guardado cada vez que se cambiaba un flag, así que las dos decisiones chocaban. Las seis `*_uncertainty` tienen el mismo problema: dependen de qué macros tiene registrados el alimento.
+**Alternativas consideradas**:
+- Leer, para las comidas anteriores al 2026-10-09, la calidad que guardaba cada porción (`portion_detail.macros_quality`).
+- Rellenar una sola vez el snapshot de las 48 comidas con las calidades antiguas.
+- Que cambiar un flag no recalcule la calidad.
+- Recalcular con los valores actuales del alimento y propagar el snapshot a todas las comidas que lo usan cada vez que el alimento cambie.
+- Recalcular con los valores actuales del alimento, calculando siempre en vivo y sin guardar nada.
+**Decisión**: `quality_confidence` y las seis `*_uncertainty` se calculan siempre en vivo, en cualquier estado del evento, con los valores actuales de cada alimento. Con el versionado se leerán de la versión de cada porción. El histórico refleja lo que hoy se sabe del alimento, y la calidad se irá completando alimento a alimento. Las siete columnas de `intake_event` se eliminan (migración destructiva aprobada, `code_conventions.md` §12.4). Sus valores locales se exportaron antes a `audit/backups/intake_event_live_metrics_2026-10-09.csv`, y los de producción quedan en las copias nocturnas. `amount_confidence` sigue siendo un snapshot: solo depende de la porción, porque el `strictly_weighed` que se fija en el carrito es el dato definitivo y el valor por defecto del alimento solo es el inicial. Modifica la decisión 2026-09-10 sobre las porciones editables (el recálculo obligatorio ya solo afecta a `amount_confidence` e `ingested_amount`) y la decisión 2026-10-09 sobre la calidad leída en vivo (las comidas confirmadas tampoco conservan su calidad).
+**Convención actualizada**: `measurement_conventions.md` sección 6.9, sección 6.9.1, sección 6.9.3, sección 6.9.4 (nueva) y sección 6.11
+
+## 2026-10-09 — Al renombrar una ruta no se mantienen alias de compatibilidad
+
+**Origen**: hallazgo 20 de `audit/audits/audit_manual_intake.md` (segunda pasada)
+**Contexto**: el plato manual aparecía como `manual` en unas rutas (`/food/create/manual`, `/food/edit/manual/{id}`) y como `manual_intake` en otras. `/food/delete/{entry_type}/{entry_id}` mantenía ramas para `catalog` y `manual_intake` que solo archivaban, "por si había páginas cacheadas", sin que ninguna convención lo pidiera.
+**Alternativas consideradas**:
+- Borrar la ruta antigua en el mismo cambio.
+- Mantenerla como alias temporal, anotado en la deuda.
+- Mantenerla como alias permanente.
+**Decisión**: al renombrar una ruta, la antigua se elimina en el mismo cambio y se actualizan todas sus referencias. Una página abierta antes del despliegue recibe un `404` y basta con recargarla. Una entidad usa un único segmento de recurso en todas sus rutas: las del plato manual pasan a `manual_intake` y `/food/delete` queda como `/food/delete/recipe/{recipe_id}`, sin las ramas que archivaban.
+**Convención actualizada**: `code_conventions.md` sección 9.2
+
+## 2026-10-09 — La búsqueda difusa se escribe para que todas sus ramas usen índice
+
+**Origen**: hallazgo 19 de `audit/audits/audit_manual_intake.md` (segunda pasada)
+**Contexto**: quitar el `COALESCE` de la búsqueda por origen no bastaba para que se usara `idx_manual_intake_origin_trgm`. `_build_fuzzy_search` une cuatro ramas con `OR`, y tres no podían usar índice: `col ILIKE` sin `lower()`, `similarity(...) >= 0.25` y la rama que colapsa letras repetidas. Como basta una rama sin índice para recorrer la tabla entera, ningún índice trigram del proyecto respaldaba ninguna búsqueda. La marca de `catalog` se filtraba además sobre un `LEFT JOIN` con `COALESCE`.
+**Alternativas consideradas**:
+- Mantener la rama de letras repetidas con un índice de expresión propio.
+- Eliminar esa rama.
+- Dejarla sin índice y reconocer que los índices trigram no respaldan ninguna consulta.
+**Decisión**: todas las ramas se escriben sobre `lower(col)` o sobre su forma colapsada (`fuzzy_compact_sql`). La similitud usa el operador `%` con el umbral `TRGM_SIMILARITY_THRESHOLD` fijado en la sesión, en lugar de `similarity() >=`, y en el límite da el mismo resultado. Cada columna buscada gana un índice `idx_<tabla>_<columna>_compact_trgm`. La marca de `catalog` se resuelve con `= ANY(ARRAY(SELECT ...))`. Los resultados no cambian: se comprobó con 341 términos en 5 columnas y con el listado de `catalog` para 10 usuarios.
+**Convención actualizada**: `code_conventions.md` sección 11.7
+
+## 2026-10-09 — Todo el texto de la interfaz, incluidos los mensajes públicos de error, en inglés
+
+**Origen**: hallazgo 21 de `audit/audits/audit_manual_intake.md` (segunda pasada) y los mensajes del carrito que esa auditoría dejó fuera de su alcance
+**Contexto**: `frontend_conventions.md` §7.12 fijaba la interfaz en inglés, pero solo hablaba de la funcionalidad de tandas. `error_conventions.md` daba los mensajes públicos de error en español, y en español estaban `errors.py`, el aviso CSRF de `main.py`, unos 40 mensajes de `cart_routes.py`, las páginas de acceso, los textos de estadísticas, el botón de cerrar sesión y los avisos de `app_toast.js`. Las convenciones se contradecían, y la misma interfaz mezclaba los dos idiomas.
+**Alternativas consideradas**:
+- Pasar todo al inglés y corregir `error_conventions.md`.
+- Documentar el español como excepción para los mensajes de error hasta que se decida la internacionalización.
+- Traducir solo el carrito y anotar el resto en la deuda.
+**Decisión**: todo el texto que ve el usuario va en inglés: interfaz, mensajes de validación, mensajes públicos de error, avisos del cliente, páginas de acceso y el atributo `lang` de las páginas. Lo que introduce el usuario no se traduce (nombres de alimentos, alias del parser de macros). Se traduce en un commit propio, solo de traducción (`code_conventions.md` §0). La internacionalización sigue pendiente.
+**Convención actualizada**: `frontend_conventions.md` sección 7.12; `error_conventions.md` sección 1, sección 2, sección 5 y sección 6; `code_conventions.md` sección 0
+
+## 2026-10-09 — El despliegue de la auditoría de `manual_intake` se acepta incompatible durante la ventana de despliegue
+
+**Origen**: revisión previa al merge de la PR #14 (`feat/manual-intake-audit`)
+**Contexto**: `infra_conventions.md` §14 exige que una migración sea compatible con el código anterior mientras dura el despliegue, porque `deploy.sh` migra con la versión anterior de `web` todavía sirviendo. La rama borra `intake_event.quality_confidence` y las seis `*_uncertainty`, y renombra `manual_intake.amount_g` y `default_macros_quality`. Durante unos segundos, la versión anterior fallaría al leer comidas y platos. La migración es atómica: si unos datos de producción no cumplen las reglas nuevas, aborta, se revierte entera y `web` sigue con la versión anterior.
+**Alternativas consideradas**:
+- Aceptar la incompatibilidad como excepción, con una ventana sin uso.
+- Dividirlo en dos despliegues: primero el código que ya no lee esas columnas, con columnas puente, y después el borrado y los renombrados.
+**Decisión**: se acepta la excepción, solo para este despliegue. Con un solo usuario, unos segundos de errores no compensan reescribir la migración. Condiciones previas al merge: comprobaciones de solo lectura en producción, export de las siete columnas que se borran, `pg_dump`, y un merge en un momento sin uso. Los ejecuta el usuario por SSH.
+**Convención actualizada**: `infra_conventions.md` sección 14

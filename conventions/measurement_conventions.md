@@ -72,7 +72,7 @@ La unidad canónica de masa para alimentos es el **gramo (`g`)**.
 Se aplica a:
 
 - `portion_detail.amount`;
-- `manual_intake.amount_g`;
+- `manual_intake.default_portion` (antes `amount_g`; decisión 2026-10-09, §5.4);
 - `ingested_amount`;
 - cantidades disponibles en nevera;
 - peso de tuppers;
@@ -238,7 +238,7 @@ WHERE plate_id IS NOT NULL
 **Qué ocurre con los campos que no están en la clave al fusionar** (decisión 2026-09-19, cierra el punto que el 2026-09-18 dejaba abierto):
 
 - `amount` **se suma**: es el sentido mismo de la fusión.
-- `strictly_weighed` y `macros_quality` **conservan el valor de la fila existente**. Gana lo que ya estaba: la fila lleva ahí desde la primera adición y su calidad de dato ya está afirmada; una adición posterior no sabe más sobre ella. `is_cooked_weight` ya no entra en esta regla: desde el 2026-09-23 es parte de la clave, así que dos filas que se fusionan lo tienen igual.
+- `strictly_weighed` **conserva el valor de la fila existente**. Gana lo que ya estaba: la fila lleva ahí desde la primera adición y su calidad de dato ya está afirmada; una adición posterior no sabe más sobre ella. (`macros_quality` estaba en esta regla hasta el 2026-10-09; desde entonces es un dato del alimento, §6.11, y la porción no lo guarda.) `is_cooked_weight` ya no entra en esta regla: desde el 2026-09-23 es parte de la clave, así que dos filas que se fusionan lo tienen igual.
 - `offset_minutes` no necesita regla: dentro de una misma tanda el offset heredado ya coincide.
 
 La misma regla se aplicó retroactivamente al histórico en la migración (§4.6.6).
@@ -345,6 +345,38 @@ Los límites deben documentarse junto con el campo y no repetirse de forma difer
 - Todos admiten `NULL` ("sin dato").
 - Texto no numérico, `NaN` e `Infinity` se rechazan con `validation_error` y nunca se convierten en `NULL`.
 - Campos propios de `catalog` (`domain/catalog.py`): `default_portion` en `(0, 3000]` (es una ración, no un límite físico) y `cooking_factor` en `(0, 10]`.
+- `manual_intake.default_portion` usa el mismo rango `(0, 3000]` y el mismo significado que en `catalog` (`NULL` = sin ración), con una sola constante compartida por las dos tablas (decisión 2026-10-09).
+- En `manual_intake`, `carbs_100g` es obligatorio (`NOT NULL`, `code_conventions.md` §11.2.3). Los demás nutrientes siguen admitiendo `NULL`.
+
+### 5.4 Entrada de nutrientes por 100 g o del total de una porción (`manual_intake`)
+
+Decisión 2026-10-09. Lo que se guarda es siempre por 100 g (§5.1). Lo que cambia es cómo los introduce el usuario.
+
+- El formulario de plato reutilizable tiene un selector con dos modos:
+  - **Por 100 g**: los valores se guardan tal cual y el peso (`default_portion`) es opcional.
+  - **Total de la porción**: el peso es obligatorio. El servidor convierte cada nutriente con `nutriente_100g = total * 100 / peso`, sin redondear (§3), y guarda el peso como `default_portion`.
+- El añadido rápido usa siempre el modo "total de la porción", con el peso obligatorio (`code_conventions.md` §11.2.3).
+- La conversión la hace el servidor, que es la autoridad. El JavaScript solo puede mostrar una vista previa (`code_conventions.md` §7.13 y §7.15).
+- Los límites de §5.3 se comprueban sobre el valor ya convertido. Si se sale del rango (por ejemplo, 80 g de hidratos en 60 g de peso dan 133 g por 100 g), se rechaza con `validation_error` (`422`). Nunca se recorta.
+- No se guardan ni el modo de entrada ni los totales originales, igual que el texto de las smart macros.
+- Por eso el formulario de edición se abre en el modo "por 100 g", con los valores guardados, igual que el de `catalog`. El usuario puede cambiar al modo "total de la porción" y el servidor convierte igual que en el alta.
+- Por ahora solo se aplica a `manual_intake`. Los formularios de `catalog` siguen pidiendo los valores por 100 g.
+
+### 5.5 Índice glucémico declarado (`manual_intake.glycemic_index`)
+
+Decisión 2026-10-09. No es un índice glucémico medido. Es la **velocidad de absorción** que el usuario atribuye al plato. Es un conjunto cerrado (`code_conventions.md` §4.1) con el enum `GlycemicIndex` en `domain/constants.py` y un `CHECK` generado desde él:
+
+| Código | Significado |
+|---|---|
+| `none` | sin absorción (sin hidratos) |
+| `low` | absorción lenta |
+| `medium` | absorción media |
+| `high` | absorción rápida |
+
+- `NULL` significa "no declarado".
+- Los códigos `low`, `medium` y `high` son los que ya había en la base, así que los datos existentes no cambian. Solo se añade `none`.
+- Su fiabilidad se declara en `ig_confidence` (§6.10). En una fase posterior, el valor de un plato que se repite podrá ajustarse a partir de la respuesta glucémica real. Hasta entonces lo actualiza el usuario a mano.
+- `catalog` no tiene este campo (`audit/deuda_pendiente.md`, sección `manual_intake`).
 
 ## 6. Confianza e incertidumbre
 
@@ -367,6 +399,8 @@ Esto aplica a:
 - `saturated_uncertainty`;
 - `proteins_uncertainty`;
 - `fiber_uncertainty`.
+
+No aplica a las confianzas que declara el usuario (`macros_confidence`, `ig_confidence`). Esas usan una escala ordinal propia (§6.10).
 
 La interfaz puede mostrar estos valores como porcentaje:
 
@@ -426,11 +460,11 @@ El valor no indica si la información nutricional es correcta. Solo indica la co
 
 ### 6.5 `quality_confidence`
 
-`quality_confidence` indica qué proporción del peso servido tiene información nutricional marcada como fiable mediante `macros_quality = true`.
+`quality_confidence` indica qué proporción del peso servido tiene información nutricional marcada como fiable mediante `macros_quality = true`. Desde el 2026-10-09, `macros_quality` es un dato del alimento de cada porción, leído en vivo (§6.11).
 
 ```text
 quality_confidence =
-    suma de amount de porciones con macros_quality = true
+    suma de amount de porciones cuyo alimento tiene macros_quality = true
     ------------------------------------------------------------
     suma de amount de todas las porciones
 ```
@@ -517,7 +551,7 @@ antes de tratar un `0.0` como una medida.
 
 ### 6.9 Momento del cálculo
 
-Las métricas se calculan a partir de las porciones actuales del evento y se almacenan como un snapshot en `intake_event` cuando la operación de confirmación lo requiere.
+Las métricas se calculan a partir de las porciones actuales del evento. Solo `amount_confidence` se almacena como snapshot en `intake_event`, al confirmar, junto con `ingested_amount` (§4.4). `quality_confidence` y los seis `*_uncertainty` no se almacenan: se calculan siempre en vivo (§6.9.4).
 
 Si las porciones cambian antes de confirmar o si una operación posterior modifica el peso servido, las métricas deben recalcularse en la misma unidad de trabajo. No se deben mantener valores derivados antiguos después de cambiar sus datos de origen.
 
@@ -538,10 +572,10 @@ El único punto donde se persiste algo es la transición `planned -> consumed`, 
 
 1. Se leen las porciones actuales del evento (`portion_detail`, todavía sin tocar).
 2. `total_amount = SUM(amount)` de esas porciones, calculado en vivo (§4.4).
-3. `amount_confidence`, `quality_confidence` y `*_uncertainty` (§6.3-§6.6) se calculan sobre esas porciones **antes** de escalarlas. Al ser proporciones (peso que cumple una condición / peso total), una escala uniforme de todas las porciones por el mismo factor no cambia el resultado, así que da igual calcularlas antes o después del paso 5.
+3. `amount_confidence` (§6.3-§6.4) se calcula sobre esas porciones **antes** de escalarlas. Al ser una proporción (peso que cumple una condición / peso total), una escala uniforme de todas las porciones por el mismo factor no cambia el resultado, así que da igual calcularla antes o después del paso 5. `quality_confidence` y `*_uncertainty` no se guardan (§6.9.4).
 4. Se obtiene la `fracción` (`(0, 1]`) a partir de `ingested_value`/`ingested_unit`, según la fórmula de §4.4. Fuera de rango es `422`.
 5. `UPDATE portion_detail SET amount = amount * fracción WHERE intake_event_id = ...`: una sola sentencia SQL para todas las porciones del evento, no un recálculo recursivo en Python.
-6. `intake_event.ingested_amount = total_amount (paso 2) * fracción`, junto con el resto de campos del snapshot (paso 3) y la transición de `state`.
+6. `intake_event.ingested_amount = total_amount (paso 2) * fracción`, junto con `amount_confidence` (paso 3) y la transición de `state`.
 
 No hay ninguna otra columna de cantidad que tocar: desde la decisión 2026-09-18 `portion_detail` solo tiene `amount`. El mecanismo de guardar en la nevera la diferencia entre lo cocinado y lo servido sigue ocurriendo antes, en el momento de emplatar, y no lee ni escribe ninguna columna de esta tabla: la cantidad cocinada solo existe como campo del formulario (§4.4).
 
@@ -574,8 +608,7 @@ sus porciones en cuanto estas cambian, así que **toda escritura sobre las
 porciones de un evento `consumed` recalcula y reescribe los campos derivados,
 en la misma transacción que la escritura**:
 
-- `amount_confidence`, `quality_confidence` y los seis `*_uncertainty`
-  (§6.3-§6.6), siempre;
+- `amount_confidence` (§6.3-§6.4), siempre;
 - `ingested_amount` (§6.9.1 paso 6), además, si la escritura cambia algún
   `amount`.
 
@@ -591,9 +624,59 @@ se recalculan en memoria en cada petición (§6.9).
 baja de ingrediente, y las de tandas, exigen `state = planned` y responden `409` sobre un evento
 confirmado. Eso es una **limitación de interfaz, no la regla**: la regla es que las porciones de un
 evento `consumed` son editables. El día que se construya la interfaz del histórico, cada ruta que
-se abra a `consumed` deberá recalcular el snapshot en la misma transacción —métricas siempre, e
+se abra a `consumed` deberá recalcular el snapshot en la misma transacción —`amount_confidence` siempre, e
 `ingested_amount` si toca `amount`—, exactamente como ya hacen las tres rutas de flags. Queda
 anotado en `audit/deuda_pendiente.md` decidir entonces qué operaciones se abren.
+
+### 6.9.4 Métricas que dependen del alimento: siempre en vivo (decisión 2026-10-09)
+
+`quality_confidence` (§6.5) y los seis `*_uncertainty` (§6.6) dependen de datos del alimento, no de la porción: su `macros_quality` y qué macros tiene registrados. Esos datos se leen en vivo, igual que los macros, así que estas métricas también se calculan en vivo, en cualquier estado del evento, a partir de las porciones actuales y de los valores actuales de cada alimento. `intake_event` no tiene columnas para ellas.
+
+- Si cambia la calidad o un macro de un alimento, cambian las métricas de todas las comidas que lo usan, también las confirmadas. Es lo buscado: el histórico refleja lo que hoy se sabe del alimento. Cuando exista el versionado (`portion_detail` H1), se leerán de la versión que use cada porción y cambiarán al editar esa versión.
+- No hay nada que propagar ni que recalcular al editar un alimento o una porción, porque no hay ningún valor guardado que pueda quedarse antiguo (§6.9).
+- `amount_confidence` sí se guarda (§6.9.1 y §6.9.3). Depende solo de las porciones: el `strictly_weighed` que el usuario fija en el carrito es el dato definitivo, y el `default_strictly_weighed` del alimento (§6.11) solo es el valor con el que nace la porción.
+- Las columnas `quality_confidence`, `carbs_uncertainty`, `sugars_uncertainty`, `fats_uncertainty`, `saturated_uncertainty`, `proteins_uncertainty` y `fiber_uncertainty` de `intake_event` se eliminaron el 2026-10-09 (migración destructiva aprobada, `code_conventions.md` §12.4). Sus valores locales se exportaron antes a `audit/backups/intake_event_live_metrics_2026-10-09.csv`. Los de producción están en las copias nocturnas (`infra_conventions.md`).
+- Un análisis que necesite estas métricas las calcula desde `portion_detail` y el alimento, con las mismas fórmulas de §6.5 y §6.6.
+
+### 6.10 Confianza declarada por el usuario (escala ordinal 0–2)
+
+Decisión 2026-10-09. `manual_intake.macros_confidence` y `manual_intake.ig_confidence` expresan **con qué seguridad introdujo el usuario el dato**. No son una proporción calculada. Por eso no siguen la escala `0–1` de §6.1, que reservamos para métricas que DayBetes calcula de forma mecánica a partir de las porciones.
+
+| Valor | Significado |
+|---|---|
+| `0` | nada seguro |
+| `1` | más o menos; creo que está bien |
+| `2` | bastante seguro |
+| `NULL` | no declarado |
+
+- Son enteros con `CHECK` de rango `0–2`, declarado una sola vez como constante de dominio.
+- `ig_confidence` solo puede tener valor si `glycemic_index` lo tiene: no se declara la seguridad de un dato que no existe. En la base es `ck_manual_intake_ig_confidence_requires_glycemic_index` (`ig_confidence IS NULL OR glycemic_index IS NOT NULL`). La validación de Python lo comprueba antes y rechaza con `validation_error` (`422`). Nunca se vacía `ig_confidence` sin avisar (`code_conventions.md` §7.2), tampoco al editar si se vacía el índice glucémico.
+- Pertenecen al plato, no a cada vez que se come. El usuario las actualiza cuando cambia su seguridad; por ejemplo, ajusta `ig_confidence` según cómo le afecta el plato a la glucosa.
+- No se promedian con las métricas de §6.1, no se muestran como porcentaje y no se convierten a `0–1` sin una fórmula documentada (§6.2).
+- No sustituyen a `macros_quality` (§6.5). Un plato puede tener macros de la carta (`macros_quality = TRUE`) y una confianza baja si el usuario duda de que la ración se parezca a la de la carta.
+- Migración de `ig_confidence`, que antes usaba `1–5`: `1` y `2` → `0`; `3` → `1`; `4` y `5` → `2`. Es una corrección de datos aprobada por el usuario (`code_conventions.md` §12.7). Si algún valor queda mal, lo corrige él a mano.
+- `macros_confidence` existe en `manual_intake` y en `catalog` (decisión 2026-10-09, extensión a `catalog`), con el mismo significado y la misma constante de rango. `ig_confidence` solo existe en `manual_intake`.
+
+### 6.11 Calidad de los macros y pesaje por defecto del alimento
+
+Decisiones 2026-10-09. La segunda (calidad de los macros como dato del alimento) modifica la primera (calidad y pesaje por defecto copiados a la porción) en lo que se refiere a la calidad. Las dos modifican el comportamiento interino de la decisión 2026-09-18, según el cual las porciones nacían siempre con `macros_quality` y `strictly_weighed` en `NULL`.
+
+**Calidad de los macros (`macros_quality`): dato del alimento.**
+
+- `catalog.macros_quality` y `manual_intake.macros_quality` son `BOOLEAN` nullable con tres estados: `TRUE` = los macros proceden de información publicada por quien hace el producto o prepara el plato (la etiqueta, la carta, la web oficial); `FALSE` = son una estimación (propia, con IA o de una fuente genérica); `NULL` = sin dato.
+- Describe de dónde salen los macros del alimento, no el acto de comer, así que no se ajusta por porción. Si es distinta otro día, es otro alimento u otra versión.
+- La porción **no guarda copia**: el carrito y `quality_confidence` (§6.5) la leen en vivo del alimento, como los macros. Esto vale también para las comidas confirmadas: `quality_confidence` no se guarda en el evento y su valor sigue a la calidad actual del alimento (§6.9.4).
+- Es un campo versionable: cuando exista el versionado (`portion_detail` H1), la porción la leerá de la versión que use.
+- `portion_detail.macros_quality` se conserva sin uso (ni se lee ni se escribe) con los valores que tenía el 2026-10-09; se borrará con el versionado (`audit/deuda_pendiente.md`). El carrito ya no la muestra como ajuste.
+- Los alimentos que existían el 2026-10-09 en `catalog` empiezan en `NULL`; no se infiere nada.
+
+**Pesaje por defecto (`default_strictly_weighed`): se copia a la porción.**
+
+- `catalog.default_strictly_weighed` y `manual_intake.default_strictly_weighed` son `BOOLEAN` nullable con los mismos tres estados que `portion_detail.strictly_weighed`.
+- `TRUE` encaja con alimentos cuyo peso es siempre el del envase (una lata de atún de 60 g). En un plato manual suele ser `FALSE` o `NULL`. El añadido rápido lo fija en `FALSE`.
+- Al crear una porción del alimento, por cualquier camino (carrito, añadido rápido, ingrediente de receta, rescate), se copia a `portion_detail.strictly_weighed`. Se escribe en el momento de crear la porción, no en el render (`code_conventions.md` §7.14). Si es `NULL`, la porción nace en `NULL`.
+- Una vez creada, la porción es independiente: pesar o no es un dato de cada vez que se come, y el usuario lo cambia en el carrito. Cambiar el valor por defecto del alimento no reescribe las porciones existentes.
+- Una porción que se crea copiando otra (importar o copiar una receta) conserva el `strictly_weighed` de la porción de origen.
 
 ## 7. Factor de cocinado
 

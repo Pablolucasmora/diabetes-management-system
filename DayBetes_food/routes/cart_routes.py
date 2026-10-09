@@ -82,7 +82,7 @@ def _no_user_cart():
 
 
 def _error(request: Request, error, message: str = ""):
-    """Alias de `http_errors.app_error_response` (helper compartido, §7.1)."""
+    """Alias of `http_errors.app_error_response` (shared helper, §7.1)."""
     return app_error_response(request, error, message)
 
 
@@ -143,7 +143,7 @@ def _card_response(request: Request, connection, user_id: int, event_id: int):
     """
     event = get_intake_event(connection, user_id, event_id)
     if not event:
-        return _error(request, NotFoundError, "Esta comida ya no existe.")
+        return _error(request, NotFoundError, "That meal no longer exists.")
     portions = list_portions_by_event(connection, user_id, event_id)
     plates = list_intake_plates(connection, event_id)
     return render_fragment(CartCard(event, portions, plates))
@@ -228,11 +228,11 @@ def _parse_offset_minutes(raw_value: str) -> int:
     try:
         value = int((raw_value or "").strip())
     except (TypeError, ValueError) as exc:
-        raise ValidationError("El offset debe ser un número entero de minutos.") from exc
+        raise ValidationError("The offset must be a whole number of minutes.") from exc
     if not (INTAKE_PLATE_OFFSET_MIN_MINUTES <= value <= INTAKE_PLATE_OFFSET_MAX_MINUTES):
         raise ValidationError(
-            f"El offset debe estar entre {INTAKE_PLATE_OFFSET_MIN_MINUTES} y "
-            f"{INTAKE_PLATE_OFFSET_MAX_MINUTES} minutos."
+            f"The offset must be between {INTAKE_PLATE_OFFSET_MIN_MINUTES} and "
+            f"{INTAKE_PLATE_OFFSET_MAX_MINUTES} minutes."
         )
     return value
 
@@ -255,7 +255,7 @@ def _parse_strict_bool(raw_value: str) -> bool:
 
 
 def _parse_tristate_bool(raw_value: str):
-    """Strict parser of the `strictly_weighed`/`macros_quality` tri-state (§7.4/§7.6).
+    """Strict parser of the `strictly_weighed` tri-state (§7.4/§7.6).
 
     Different from `_parse_strict_bool` on purpose: in a checkbox, absence is
     `False`, but in a three-state control, absence is "no data" (`None`).
@@ -312,47 +312,49 @@ def _parse_amount_unit(raw_value: str) -> AmountInputUnit:
     return unit
 
 
-def _resync_consumed_event_metrics(connection, user_id: int, event_id: int, portions) -> None:
+def _resync_consumed_amount_confidence(connection, user_id: int, event_id: int, portions) -> None:
     """
-    Recompute the metrics snapshot of an already `consumed` event.
+    Recompute the `amount_confidence` snapshot of an already `consumed` event.
 
-    `amount_confidence`, `quality_confidence` and the six `*_uncertainty` are
-    computed once in `/confirm` from the event's portions. The portions of a
-    consumed event **are editable** (decision 2026-09-10, finding 48), so
-    every write on them has to rewrite that snapshot: otherwise the event is
-    left with metrics that no longer match its portions.
+    `amount_confidence` is computed in `/confirm` from the event's portions.
+    The portions of a consumed event **are editable** (decision 2026-09-10,
+    finding 48), so every write on them has to rewrite it: otherwise the
+    event is left with a value that no longer matches its portions.
+    `quality_confidence` and the six `*_uncertainty` are not stored: they
+    depend on the food and are computed live (measurement §6.9.4).
 
-    The metrics are amount-weighted proportions, so they are computed on the
-    portions as stored (already scaled by the fraction consumed at
-    `confirm`, §6.9.1); a uniform scale does not alter them.
-    `ingested_amount` is not touched here because these flags do not change
-    `amount`; any route that does change it must recompute it too.
+    It is an amount-weighted proportion, so it is computed on the portions as
+    stored (already scaled by the fraction consumed at `confirm`, §6.9.1); a
+    uniform scale does not alter it. `ingested_amount` is not touched here
+    because these flags do not change `amount`; any route that does change it
+    must recompute it too.
 
     It does nothing if the event is still `planned`: the snapshot does not
     exist yet there, and `confirm` writes it.
     """
+    metrics = calculate_macro_summary_metrics(portions)
     update_intake_event(
         connection,
         user_id=user_id,
         event_id=event_id,
-        data=IntakeEventUpdate(**calculate_macro_summary_metrics(portions)),
+        data=IntakeEventUpdate(amount_confidence=metrics["amount_confidence"]),
         commit=False,
     )
 
 
-_NOT_HTMX = "Esta acción solo puede ejecutarse desde el carrito."
-_NO_SESSION = "Tu sesión ha caducado. Vuelve a iniciar sesión."
-_EVENT_GONE = "Esta comida ya no existe."
-_EVENT_NOT_PLANNED = "Esta comida ya no está en el carrito."
-_INGREDIENT_FAILED = "No se ha podido actualizar el ingrediente."
-_INGREDIENT_GONE = "Este ingrediente ya no existe."
+_NOT_HTMX = "This action can only be done from the cart."
+_NO_SESSION = "Your session has expired. Please log in again."
+_EVENT_GONE = "That meal no longer exists."
+_EVENT_NOT_PLANNED = "That meal is no longer in the cart."
+_INGREDIENT_FAILED = "The ingredient could not be updated."
+_INGREDIENT_GONE = "That ingredient no longer exists."
 _INGREDIENT_AMOUNT_INVALID = (
-    "La cantidad debe ser mayor que 0 y como máximo 100000 g. "
-    "Para quitar el ingrediente usa el icono de borrar."
+    "The amount must be greater than 0 and at most 100000 g. "
+    "To remove the ingredient, use the delete icon."
 )
-_PLATE_GONE = "Este plato ya no existe."
-_PLATE_NOT_EMPTY = "Mueve o borra sus ingredientes antes de eliminar el plato."
-_PLATE_FAILED = "No se ha podido actualizar el plato."
+_PLATE_GONE = "That plate no longer exists."
+_PLATE_NOT_EMPTY = "Move or delete its ingredients before removing the plate."
+_PLATE_FAILED = "The plate could not be updated."
 
 
 def setup_cart_routes(rt):
@@ -378,7 +380,7 @@ def setup_cart_routes(rt):
         except ValueError:
             # Value present and well formed as a request, invalid content:
             # validation_error → 422 (error_conventions.md §3.2).
-            return _error(request, ValidationError, "La hora de la comida no es válida.")
+            return _error(request, ValidationError, "The meal time is not valid.")
 
         with get_connection() as connection:
             event = get_intake_event(connection, int(user_id), event_id)
@@ -390,7 +392,7 @@ def setup_cart_routes(rt):
                     chosen_date = datetime.strptime(meal_date, "%Y-%m-%d").date()
                 except ValueError:
                     # "invalid date" is validation_error → 422, not 400.
-                    return _error(request, ValidationError, "La fecha de la comida no es válida.")
+                    return _error(request, ValidationError, "The meal date is not valid.")
             else:
                 chosen_date = current_local.date() if current_local else local_today()
             updated = local_naive_to_utc_aware(datetime.combine(chosen_date, parsed_time))
@@ -406,7 +408,7 @@ def setup_cart_routes(rt):
             except ConflictError:
                 return _error(request, ConflictError, _EVENT_NOT_PLANNED)
             except ValidationError:
-                return _error(request, ValidationError, "La hora de la comida no es válida.")
+                return _error(request, ValidationError, "The meal time is not valid.")
             return _events_list_response(connection, int(user_id))
 
     @rt("/cart/event/{event_id}/meal_type")
@@ -421,11 +423,11 @@ def setup_cart_routes(rt):
             return _error(request, AuthenticationError, _NO_SESSION)
         clean_meal_type = (meal_type or "").strip()
         if not clean_meal_type:
-            return _error(request, ValidationError, "Elige un tipo de comida.")
+            return _error(request, ValidationError, "Choose a meal type.")
         try:
             parsed = MealType(clean_meal_type)
         except ValueError:
-            return _error(request, ValidationError, "Ese tipo de comida no existe.")
+            return _error(request, ValidationError, "That meal type does not exist.")
         with get_connection() as connection:
             try:
                 update_intake_event(
@@ -439,7 +441,7 @@ def setup_cart_routes(rt):
             except ConflictError:
                 return _error(request, ConflictError, _EVENT_NOT_PLANNED)
             except ValidationError:
-                return _error(request, ValidationError, "Ese tipo de comida no existe.")
+                return _error(request, ValidationError, "That meal type does not exist.")
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/name")
@@ -458,7 +460,7 @@ def setup_cart_routes(rt):
             # validation_error (decision 2026-09-09).
             return _error(request, 
                 ValidationError,
-                f"El nombre no puede pasar de {INTAKE_EVENT_NAME_MAX_LENGTH} caracteres.",
+                f"The name cannot be longer than {INTAKE_EVENT_NAME_MAX_LENGTH} characters.",
             )
         with get_connection() as connection:
             try:
@@ -473,7 +475,7 @@ def setup_cart_routes(rt):
             except ConflictError:
                 return _error(request, ConflictError, _EVENT_NOT_PLANNED)
             except ValidationError:
-                return _error(request, ValidationError, "El nombre de la comida no es válido.")
+                return _error(request, ValidationError, "The meal name is not valid.")
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/notes")
@@ -495,7 +497,7 @@ def setup_cart_routes(rt):
         if len(clean_notes) > INTAKE_EVENT_NOTES_MAX_LENGTH:
             return _error(request, 
                 ValidationError,
-                f"La nota no puede pasar de {INTAKE_EVENT_NOTES_MAX_LENGTH} caracteres.",
+                f"The note cannot be longer than {INTAKE_EVENT_NOTES_MAX_LENGTH} characters.",
             )
         with get_connection() as connection:
             try:
@@ -510,7 +512,7 @@ def setup_cart_routes(rt):
             except ConflictError:
                 return _error(request, ConflictError, _EVENT_NOT_PLANNED)
             except ValidationError:
-                return _error(request, ValidationError, "La nota no es válida.")
+                return _error(request, ValidationError, "The note is not valid.")
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/delete")
@@ -528,7 +530,7 @@ def setup_cart_routes(rt):
             except ConflictError:
                 return _error(request, 
                     ConflictError,
-                    "Una comida ya confirmada no se borra: archívala en su lugar.",
+                    "A confirmed meal cannot be deleted: archive it instead.",
                 )
             except ValidationError:
                 return _error(request, ValidationError)
@@ -549,7 +551,7 @@ def setup_cart_routes(rt):
             except ConflictError:
                 return _error(request, 
                     ConflictError,
-                    "Solo se archivan las comidas ya confirmadas.",
+                    "Only confirmed meals can be archived.",
                 )
             except ValidationError:
                 return _error(request, ValidationError)
@@ -568,7 +570,7 @@ def setup_cart_routes(rt):
             except NotFoundError:
                 return _error(request, NotFoundError, _EVENT_GONE)
             except ConflictError:
-                return _error(request, ConflictError, "Esta comida no está archivada.")
+                return _error(request, ConflictError, "That meal is not archived.")
             except ValidationError:
                 return _error(request, ValidationError)
             return _cart_response(connection)
@@ -583,7 +585,7 @@ def setup_cart_routes(rt):
         try:
             value = _parse_strict_bool(eating_out)
         except ValidationError:
-            return _error(request, ValidationError, "No se ha entendido la casilla 'Eating out'.")
+            return _error(request, ValidationError, "The 'Eating out' checkbox could not be read.")
         with get_connection() as connection:
             try:
                 update_intake_event(
@@ -597,7 +599,7 @@ def setup_cart_routes(rt):
             except ConflictError:
                 return _error(request, ConflictError, _EVENT_NOT_PLANNED)
             except ValidationError:
-                return _error(request, ValidationError, "No se ha entendido la casilla 'Eating out'.")
+                return _error(request, ValidationError, "The 'Eating out' checkbox could not be read.")
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/insulin_dose")
@@ -610,7 +612,7 @@ def setup_cart_routes(rt):
         try:
             value = _parse_strict_bool(insulin_dose)
         except ValidationError:
-            return _error(request, ValidationError, "No se ha entendido la casilla 'Insulin'.")
+            return _error(request, ValidationError, "The 'Insulin' checkbox could not be read.")
         with get_connection() as connection:
             try:
                 update_intake_event(
@@ -624,7 +626,7 @@ def setup_cart_routes(rt):
             except ConflictError:
                 return _error(request, ConflictError, _EVENT_NOT_PLANNED)
             except ValidationError:
-                return _error(request, ValidationError, "No se ha entendido la casilla 'Insulin'.")
+                return _error(request, ValidationError, "The 'Insulin' checkbox could not be read.")
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/injection_zone")
@@ -637,11 +639,11 @@ def setup_cart_routes(rt):
 
         # Parse the zone
         if not zone or not zone.strip():
-            return _error(request, ValidationError, "Elige una zona de inyección.")
+            return _error(request, ValidationError, "Choose an injection zone.")
         try:
             parsed_zone = InjectionZone(zone.strip().lower())
         except ValueError:
-            return _error(request, ValidationError, "Esa zona de inyección no existe.")
+            return _error(request, ValidationError, "That injection zone does not exist.")
 
         # Record the zone
         with get_connection() as connection:
@@ -657,7 +659,7 @@ def setup_cart_routes(rt):
             except ConflictError:
                 return _error(request, ConflictError, _EVENT_NOT_PLANNED)
             except ValidationError:
-                return _error(request, ValidationError, "Esa zona de inyección no existe.")
+                return _error(request, ValidationError, "That injection zone does not exist.")
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/portion/{portion_id}/amount")
@@ -675,7 +677,7 @@ def setup_cart_routes(rt):
             value = _to_float(amount_value)
         except (TypeError, ValueError):
             # Non-numeric amount: validation_error → 422.
-            return _error(request, ValidationError, "La cantidad no es un número válido.")
+            return _error(request, ValidationError, "The amount is not a valid number.")
 
         with get_connection() as connection:
             try:
@@ -785,20 +787,22 @@ def setup_cart_routes(rt):
 
     def _portion_flag_route(request: Request, portion_id: int, field_name: str, raw_value: str, label: str, *, tristate: bool = False):
         """
-        Common body of the three portion booleans (strictly_weighed,
-        macros_quality, is_cooked_weight): same HTMX contract
+        Common body of the two portion booleans (strictly_weighed,
+        is_cooked_weight; macros_quality is the food's since 2026-10-09,
+        measurement §6.11): same HTMX contract
         (target #macros_summary_event_{id}, swap outerHTML) and same error
         mapping, as §9.5 requires ("equivalent actions must use the same
         pattern").
 
-        `tristate=True` for the two data quality fields, which accept "no
-        data" (`None`, decision 2026-09-18); `is_cooked_weight` has two states.
+        `tristate=True` for strictly_weighed, which accepts "no data" (`None`,
+        decision 2026-09-18); `is_cooked_weight` has two states.
 
         Unlike its sibling amount/offset routes, it also accepts a `consumed`
         event: the portions of a confirmed event are editable (decision
-        2026-09-10, finding 48). The trade-off is that the event's metrics
-        snapshot, computed at `confirm`, no longer matches its portions, so it
-        is recomputed and rewritten in the same transaction as the flag.
+        2026-09-10, finding 48). The trade-off is that the event's
+        `amount_confidence` snapshot, computed at `confirm`, no longer matches
+        its portions, so it is recomputed and rewritten in the same
+        transaction as the flag. The rest of the metrics are live (§6.9.4).
         """
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
@@ -808,7 +812,7 @@ def setup_cart_routes(rt):
         try:
             value = _parse_tristate_bool(raw_value) if tristate else _parse_strict_bool(raw_value)
         except ValidationError:
-            return _error(request, ValidationError, f"No se ha entendido la casilla '{label}'.")
+            return _error(request, ValidationError, f"The '{label}' checkbox could not be read.")
         with get_connection() as connection:
             try:
                 # require_planned=False: a consumed event stays editable in
@@ -822,6 +826,15 @@ def setup_cart_routes(rt):
             event = get_intake_event(connection, int(user_id), event_id)
             if not event:
                 return _error(request, NotFoundError, _EVENT_GONE)
+            # measurement_conventions.md §5.2: a manual dish has no cooking
+            # factor, so its portions are never cooked-weighed. Unchecking is
+            # still allowed.
+            if (
+                field_name == "is_cooked_weight"
+                and value is True
+                and portion.origin is PortionOrigin.MANUAL_INTAKE
+            ):
+                return _error(request, ValidationError, "Cooked weight only applies to catalog foods.")
             # Decision 2026-09-24 / R4: ticking the box on a catalog food with no
             # factor is rejected; unchecking is always allowed, and a portion that
             # already had it TRUE keeps the control to be unmarked.
@@ -848,7 +861,7 @@ def setup_cart_routes(rt):
                     update_portion_flag(connection, int(user_id), portion_id, field_name, value, commit=False)
                     portions = list_portions_by_event(connection, int(user_id), event_id)
                     if is_consumed:
-                        _resync_consumed_event_metrics(connection, int(user_id), event_id, portions)
+                        _resync_consumed_amount_confidence(connection, int(user_id), event_id, portions)
             except NotFoundError:
                 return _error(request, NotFoundError, _INGREDIENT_GONE)
             if field_name == "is_cooked_weight":
@@ -879,10 +892,6 @@ def setup_cart_routes(rt):
     @rt("/cart/portion/{portion_id}/strictly_weighed")
     def post(request: Request, portion_id: int, value: str = ""):
         return _portion_flag_route(request, portion_id, "strictly_weighed", value, "Strictly weighted", tristate=True)
-
-    @rt("/cart/portion/{portion_id}/macros_quality")
-    def post(request: Request, portion_id: int, value: str = ""):
-        return _portion_flag_route(request, portion_id, "macros_quality", value, "Macros quality", tristate=True)
 
     @rt("/cart/portion/{portion_id}/is_cooked_weight")
     def post(request: Request, portion_id: int, is_cooked_weight: str = ""):
@@ -926,7 +935,7 @@ def setup_cart_routes(rt):
             return _error(
                 request,
                 ValidationError,
-                f"El nombre del plato no puede superar {INTAKE_PLATE_NAME_MAX_LENGTH} caracteres.",
+                f"The plate name cannot be longer than {INTAKE_PLATE_NAME_MAX_LENGTH} characters.",
             )
         with get_connection() as connection:
             try:
@@ -1037,7 +1046,7 @@ def setup_cart_routes(rt):
         try:
             unit = _parse_ingested_unit(ingested_unit)
         except ValidationError:
-            return _error(request, ValidationError, "La unidad de la cantidad ingerida no es válida.")
+            return _error(request, ValidationError, "The unit of the amount eaten is not valid.")
         raw_value = (ingested_value or "").strip()
         value = None
         if raw_value != "":
@@ -1046,11 +1055,11 @@ def setup_cart_routes(rt):
             except (TypeError, ValueError):
                 # Non-numeric: validation_error → 422 (finding 33: same
                 # behaviour here as in the rest of the route).
-                return _error(request, ValidationError, "La cantidad ingerida no es un número válido.")
+                return _error(request, ValidationError, "The amount eaten is not a valid number.")
             # NaN/Infinity must not be stored: explicit rejection (finding 32),
             # instead of relying only on the fraction comparison to discard them.
             if not math.isfinite(value) or value < 0:
-                return _error(request, ValidationError, "La cantidad ingerida no es un número válido.")
+                return _error(request, ValidationError, "The amount eaten is not a valid number.")
 
         with get_connection() as connection:
             # 2) Authorize before reading anything from the event (§5.3; closes finding 19).
@@ -1059,7 +1068,7 @@ def setup_cart_routes(rt):
             except NotFoundError:
                 return _error(request, NotFoundError, _EVENT_GONE)
             except ConflictError:
-                return _error(request, ConflictError, "Esta comida ya está confirmada.")
+                return _error(request, ConflictError, "That meal has already been confirmed.")
 
             try:
                 # 3) Everything that depends on the database state happens
@@ -1089,7 +1098,7 @@ def setup_cart_routes(rt):
                     elif unit is AmountInputUnit.PERCENT:
                         fraction = value / 100.0
                     else:
-                        # Única rama restante: gramos, ya validada arriba.
+                        # Only remaining branch: grams, already validated above.
                         if total_amount <= 0:
                             # There is nothing to consume: grams > 0 cannot be interpreted.
                             raise ValidationError("total_amount_not_positive")
@@ -1099,12 +1108,15 @@ def setup_cart_routes(rt):
                     if not (0.0 < fraction <= 1.0):
                         raise ValidationError("fraction_out_of_range")
 
-                    # amount_confidence/quality_confidence/*_uncertainty are proportions:
-                    # a uniform scale of every portion does not change them, so they are
-                    # computed on the served portions, before scaling them (§6.9.1).
-                    update_fields = calculate_macro_summary_metrics(portions)
-                    update_fields["ingested_amount"] = total_amount * fraction
-                    update_payload = IntakeEventUpdate(**update_fields)
+                    # amount_confidence is a proportion: a uniform scale of every portion
+                    # does not change it, so it is computed on the served portions, before
+                    # scaling them (§6.9.1). quality_confidence and *_uncertainty are not
+                    # stored: they are computed live (§6.9.4).
+                    metrics = calculate_macro_summary_metrics(portions)
+                    update_payload = IntakeEventUpdate(
+                        ingested_amount=total_amount * fraction,
+                        amount_confidence=metrics["amount_confidence"],
+                    )
 
                     # 4) Ownership + idempotency in a single statement (§6.6).
                     confirm_intake_event(
@@ -1129,9 +1141,9 @@ def setup_cart_routes(rt):
                 if str(error) == "intake_event_without_portions":
                     return _error(request, 
                         ConflictError,
-                        "No puedes confirmar una comida sin ingredientes.",
+                        "A meal without ingredients cannot be confirmed.",
                     )
-                return _error(request, ConflictError, "Esta comida ya está confirmada.")
+                return _error(request, ConflictError, "That meal has already been confirmed.")
             except ValidationError:
-                return _error(request, ValidationError, "La cantidad ingerida no es válida.")
+                return _error(request, ValidationError, "The amount eaten is not valid.")
             return _removal_response(connection, int(user_id))

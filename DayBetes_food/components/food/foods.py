@@ -6,9 +6,18 @@ from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.domain.catalog import (
     CATALOG_BARCODE_MAX_LENGTH,
     CATALOG_NAME_MAX_LENGTH,
-    CATALOG_SUBTYPE_MAX_LENGTH,
-    INITIAL_AMOUNT_WITHOUT_SERVING_G,
     CatalogItemRead,
+)
+from DayBetes_food.domain.food import (
+    FOOD_DEFAULT_PORTION_RANGE,
+    FOOD_SUBTYPE_MAX_LENGTH,
+    INITIAL_AMOUNT_WITHOUT_SERVING_G,
+)
+from DayBetes_food.domain.manual_intake import (
+    MANUAL_INTAKE_DESCRIPTION_MAX_LENGTH,
+    MANUAL_INTAKE_NAME_MAX_LENGTH,
+    MANUAL_INTAKE_ORIGIN_MAX_LENGTH,
+    ManualIntakeRead,
 )
 from DayBetes_food.domain.constants import (
     NOVA_MAX,
@@ -20,8 +29,10 @@ from DayBetes_food.domain.constants import (
     CookingMethod,
     FoodCategory,
     FoodPhysicalState,
+    GlycemicIndex,
     MealType,
     Nutriscore,
+    NutrientEntryMode,
     PortionOrigin,
 )
 from DayBetes_food.domain.nutrition import NUTRIENT_LIMITS, SMART_MACROS_MAX_LENGTH
@@ -56,6 +67,9 @@ def catalog_entry_view(item: CatalogItemRead) -> dict:
         "alcohol": item.alcohol,
         "barcode": item.barcode,
         "cooking_factor": item.cooking_factor,
+        "macros_quality": item.macros_quality,
+        "default_strictly_weighed": item.default_strictly_weighed,
+        "macros_confidence": item.macros_confidence,
         "is_published": item.is_published,
         "created_by": item.created_by,
         "origin_root_id": item.origin_root_id,
@@ -66,7 +80,52 @@ def catalog_entry_view(item: CatalogItemRead) -> dict:
     }
 
 
-GLYCEMIC_INDEX_OPTIONS = ["high", "medium", "low"]
+def manual_intake_entry_view(item: ManualIntakeRead) -> dict:
+    """The only adapter from ManualIntakeRead to the dict the shared food
+    components expect (same debt as catalog_entry_view)."""
+    return {
+        "entry_type": "manual_intake",
+        "id": item.id,
+        "name": item.name,
+        "origin": item.origin,
+        "description": item.description,
+        "subtype": item.subtype,
+        "default_portion": item.default_portion,
+        "calories_100g": item.calories_100g,
+        "carbs_100g": item.carbs_100g,
+        "sugars_100g": item.sugars_100g,
+        "fats_100g": item.fats_100g,
+        "saturated_100g": item.saturated_100g,
+        "proteins_100g": item.proteins_100g,
+        "fiber_100g": item.fiber_100g,
+        "caffeine": item.caffeine,
+        "alcohol": item.alcohol,
+        "glycemic_index": item.glycemic_index.value if item.glycemic_index else None,
+        "ig_confidence": item.ig_confidence,
+        "macros_confidence": item.macros_confidence,
+        "macros_quality": item.macros_quality,
+        "default_strictly_weighed": item.default_strictly_weighed,
+        "is_published": item.is_published,
+        "created_by": item.created_by,
+        "origin_root_id": item.origin_root_id,
+        "deleted_at": item.deleted_at,
+        "favorite": item.is_favorite,
+        "can_edit": item.can_edit,
+        "is_listable": item.is_listable,
+    }
+
+
+# Presentation labels of the manual dish fields (§3.6: labels live in components).
+GLYCEMIC_INDEX_LABELS = {
+    GlycemicIndex.NONE: "No absorption",
+    GlycemicIndex.LOW: "Slow",
+    GlycemicIndex.MEDIUM: "Medium",
+    GlycemicIndex.HIGH: "Fast",
+}
+# Declared confidence, ordinal 0-2 (measurement §6.10).
+CONFIDENCE_LABELS = {0: "Not sure", 1: "More or less", 2: "Quite sure"}
+MACROS_QUALITY_LABELS = {True: "Published (label, menu, website)", False: "Estimated"}
+WEIGHED_LABELS = {True: "Weighed", False: "Not weighed"}
 
 FILTER_ITEM_CLS = """
     px-3 py-1.5
@@ -97,9 +156,14 @@ def _help_icon(help_text: str):
     )
 
 
-def _label_with_help(text: str, help_text: str, for_id: str = ""):
+def _label_with_help(text: str, help_text: str, for_id: str = "", label_attrs: dict | None = None):
     return Div(
-        Label(text, cls="text-xs text-gray-700", **({"for": for_id} if for_id else {})),
+        Label(
+            text,
+            cls="text-xs text-gray-700",
+            **({"for": for_id} if for_id else {}),
+            **(label_attrs or {}),
+        ),
         _help_icon(help_text),
         cls="flex items-center gap-1",
     )
@@ -782,6 +846,8 @@ def _labeled_input(
     max_value=None,
     maxlength=None,
     pattern: str | None = None,
+    label_attrs: dict | None = None,
+    input_attrs: dict | None = None,
 ):
     help_value = help_text or f"What to enter in {label}"
     input_id = f"field_{name}"
@@ -802,8 +868,9 @@ def _labeled_input(
         attrs["maxlength"] = str(maxlength)
     if pattern:
         attrs["pattern"] = pattern
+    attrs.update(input_attrs or {})
     return Div(
-        _label_with_help(label, help_value, for_id=input_id),
+        _label_with_help(label, help_value, for_id=input_id, label_attrs=label_attrs),
         Input(
             type=typ,
             id=input_id,
@@ -1576,18 +1643,127 @@ def RecipeMacrosGrid(recipe_id: int, per100: dict, total_amount: float):
     )
 
 
-def _labeled_select(label: str, name: str, options: list[str], help_text: str = "", selected_value: str = ""):
+def _labeled_select(
+    label: str,
+    name: str,
+    options: list[str],
+    help_text: str = "",
+    selected_value: str = "",
+    labels: dict | None = None,
+):
+    """With `labels`, the visible text comes from the map and the `value` stays
+    the code. The first option "-" is selected when nothing is chosen (§7.14:
+    an explicit "not chosen" state)."""
     help_value = help_text or f"What to select in {label}"
     select_id = f"field_{name}"
     return Div(
         _label_with_help(label, help_value, for_id=select_id),
         Select(
             Option("-", value="", selected=(selected_value == "")),
-            *[Option(opt, value=opt, selected=(opt == selected_value)) for opt in options],
+            *[
+                Option((labels or {}).get(opt, opt), value=opt, selected=(opt == selected_value))
+                for opt in options
+            ],
             id=select_id,
             name=name,
             cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-xs mr-1",
         ),
+        cls="flex flex-col gap-1",
+    )
+
+
+def _tristate_select(label: str, name: str, selected: bool | None, labels: dict, help_text: str = ""):
+    """Three states, three options (frontend §6): "" = unknown, "true", "false".
+    The real stored state is the one marked selected (§7.14)."""
+    select_id = f"field_{name}"
+    return Div(
+        _label_with_help(label, help_text or f"What to select in {label}", for_id=select_id),
+        Select(
+            Option("- Unknown", value="", selected=selected is None),
+            Option(labels[True], value="true", selected=selected is True),
+            Option(labels[False], value="false", selected=selected is False),
+            id=select_id,
+            name=name,
+            cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-xs mr-1",
+        ),
+        cls="flex flex-col gap-1",
+    )
+
+
+def _confidence_select(label: str, name: str, selected: int | None, help_text: str):
+    """Declared confidence 0-2 as three options plus "not declared" (measurement §6.10)."""
+    return _labeled_select(
+        label,
+        name,
+        [str(value) for value in CONFIDENCE_LABELS],
+        help_text=help_text,
+        selected_value="" if selected is None else str(selected),
+        labels={str(value): text for value, text in CONFIDENCE_LABELS.items()},
+    )
+
+
+def _macros_quality_select(selected: bool | None):
+    """The food's macros quality (measurement §6.11): portions read it live."""
+    return _tristate_select(
+        "Macros quality",
+        "macros_quality",
+        selected,
+        MACROS_QUALITY_LABELS,
+        "Where the macros come from: published by whoever makes it (label, menu, website) or estimated.",
+    )
+
+
+def _weighed_default_select(selected: bool | None):
+    """Copied to every new portion; each portion can change it (measurement §6.11)."""
+    return _tristate_select(
+        "Weighed by default",
+        "default_strictly_weighed",
+        selected,
+        WEIGHED_LABELS,
+        "Copied to every new portion: whether its weight is exact (e.g. a 60 g can).",
+    )
+
+
+def _macros_confidence_select(selected: int | None):
+    return _confidence_select(
+        "Macros confidence",
+        "macros_confidence",
+        selected,
+        "How sure you are about the macros you typed.",
+    )
+
+
+def _glycemic_index_select(selected: str | None):
+    return _labeled_select(
+        "Glycemic index",
+        "glycemic_index",
+        [member.value for member in GlycemicIndex],
+        help_text="Absorption speed you expect from this dish (measurement §5.5). Not a measured GI.",
+        selected_value=selected or "",
+        labels={member.value: text for member, text in GLYCEMIC_INDEX_LABELS.items()},
+    )
+
+
+def _nutrient_mode_select(prefix: str):
+    """Per 100 g (default, measurement §5.4) or total of one serving. Transport
+    only: the mode is never stored; the server converts the totals."""
+    select_id = f"{prefix}_nutrient_mode"
+    return Div(
+        _label_with_help(
+            "Nutrients entered",
+            "Per 100 g, or as the total of one serving. With totals, the serving weight is required.",
+            for_id=select_id,
+        ),
+        Select(
+            Option("Per 100 g", value=NutrientEntryMode.PER_100G.value, selected=True),
+            Option("Total of one serving", value=NutrientEntryMode.PORTION_TOTAL.value),
+            id=select_id,
+            name="nutrient_mode",
+            data_manual_mode="true",
+            onchange="dbManualModeChange(this)",
+            cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-xs mr-1",
+        ),
+        P("", data_manual_mode_hint="true", cls="text-[11px] text-amber-700 min-h-0"),
         cls="flex flex-col gap-1",
     )
 
@@ -1688,7 +1864,15 @@ def _create_flags_row(favorite_checked: bool = True):
     )
 
 
-def _smart_macros_block(prefix: str, prefill: dict | None = None):
+def _smart_macros_block(
+    prefix: str,
+    prefill: dict | None = None,
+    *,
+    label: str = "Smart macros (per 100 g)",
+    label_total: str | None = None,
+):
+    """With `label_total`, the label follows the nutrient mode select of the
+    form (static/js/manual_intake_form.js)."""
     prefill = prefill or {}
     def _smart_prefill_text():
         calories = prefill.get("calories_100g")
@@ -1716,9 +1900,14 @@ def _smart_macros_block(prefix: str, prefill: dict | None = None):
         return " ".join(parts)
     input_id = f"{prefix}_smart_macros_input"
     output_id = f"{prefix}_smart_macros_output"
+    mode_attrs = (
+        {"data_mode_label": "true", "data_label_per100": label, "data_label_total": label_total}
+        if label_total
+        else {}
+    )
     return Div(
         _label_with_help(
-            "Smart macros (per 100 g)",
+            label,
             (
                 "Write each value as a number followed by its macro. Examples: "
                 "'120kcal 30hc 12az 20prot 10 grasas 3 sat 5 fibra', '30g carbs 20g proteins'. "
@@ -1726,6 +1915,7 @@ def _smart_macros_block(prefix: str, prefill: dict | None = None):
                 "sat/saturadas/st/gs, fibra/fb/fiber, az/azucar/sugars, kcal/cal/calorias."
             ),
             for_id=input_id,
+            label_attrs=mode_attrs,
         ),
         Input(
             type="text",
@@ -1960,13 +2150,27 @@ def QuickCreateButtons():
                     ),
                     Button(
                         Div(
-                            Span("Add manual", cls="font-semibold text-gray-900"),
-                            Span("Create a manual intake", cls="text-[11px] text-gray-500"),
+                            Span("Quick add", cls="font-semibold text-gray-900"),
+                            Span("Log a one-off meal", cls="text-[11px] text-gray-500"),
                             cls="flex flex-col items-start gap-0.5",
                         ),
                         type="button",
                         cls=option_button_cls,
-                        hx_get="/food/create/manual/form",
+                        hx_get="/food/quick_add/form",
+                        hx_target="#main_content",
+                        hx_swap="innerHTML",
+                        hx_push_url="true",
+                        **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
+                    ),
+                    Button(
+                        Div(
+                            Span("Add manual", cls="font-semibold text-gray-900"),
+                            Span("Create a reusable dish", cls="text-[11px] text-gray-500"),
+                            cls="flex flex-col items-start gap-0.5",
+                        ),
+                        type="button",
+                        cls=option_button_cls,
+                        hx_get="/food/create/manual_intake/form",
                         hx_target="#main_content",
                         hx_swap="innerHTML",
                         hx_push_url="true",
@@ -2020,47 +2224,6 @@ def QuickCreateButtons():
         ),
         cls="w-full flex justify-end px-3 md:px-0 z-[130] mb-2 md:mb-3",
         data_quick_create_root="true",
-    )
-
-
-def CreateManualPanel(subtype_options: list[str] | None = None, origin_options: list[str] | None = None):
-    return Div(
-        Form(
-            Div(
-                _labeled_input("Name*", "name"),
-                _labeled_input("Description", "description"),
-                _searchable_autocomplete_input("Subtype*", "subtype", subtype_options or [], allow_add=True),
-                _searchable_autocomplete_input("Origin", "source_origin", origin_options or [], allow_add=True),
-                _labeled_input("Amount g*", "amount_g", "number"),
-                _labeled_input("Calories/100g", "calories_100g", "number"),
-                _labeled_input("Carbs/100g", "carbs_100g", "number"),
-                _labeled_input("Sugars/100g", "sugars_100g", "number"),
-                _labeled_input("Fats/100g", "fats_100g", "number"),
-                _labeled_input("Saturated/100g", "saturated_100g", "number"),
-                _labeled_input("Proteins/100g", "proteins_100g", "number"),
-                _labeled_input("Fiber/100g", "fiber_100g", "number"),
-                _labeled_input("Caffeine", "caffeine", "number"),
-                _labeled_input("Alcohol", "alcohol", "number"),
-                _searchable_autocomplete_input("Glycemic index", "glycemic_index", GLYCEMIC_INDEX_OPTIONS, help_text="Estimated glycemic index level.", allow_add=False),
-                _labeled_input("IG confidence 1-5", "ig_confidence", "number"),
-                _create_flags_row(),
-                cls="grid grid-cols-2 gap-2",
-            ),
-            Button(
-                "Create manual intake",
-                type="submit",
-                cls="web_button px-3 py-2 text-xs",
-            ),
-            hx_post="/food/create/manual",
-            hx_target="#create_manual_result",
-            hx_swap="innerHTML",
-            hx_push_url="false",
-            data_draft_key="food_form_create_manual_panel",
-            cls="web_container p-3 rounded-2xl flex flex-col gap-3",
-        ),
-        Div(id="create_manual_result", cls="text-xs"),
-        id="create_manual_panel",
-        cls="hidden md:w-md lg:w-md w-xs flex flex-col gap-2",
     )
 
 
@@ -2180,7 +2343,7 @@ def CreateCatalogPage(
                 help_text="Specific subtype, e.g. yogurt, pasta, soda. Required.",
                 allow_add=True,
                 value=_pv("subtype"),
-                maxlength=CATALOG_SUBTYPE_MAX_LENGTH,
+                maxlength=FOOD_SUBTYPE_MAX_LENGTH,
             ),
             _smart_macros_block("catalog", prefill=data),
             _labeled_input(
@@ -2235,6 +2398,9 @@ def CreateCatalogPage(
                     input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
                 ),
                 _labeled_input("Cooking factor", "cooking_factor", "number", help_text="Cooked/raw weight ratio. Leave empty if unknown.", step="any", inputmode="decimal", min_value=0, max_value=10, value=_pv("cooking_factor")),
+                _macros_quality_select(None),
+                _weighed_default_select(None),
+                _macros_confidence_select(None),
                 id="catalog_advanced",
                 cls=advanced_cls,
             ),
@@ -2267,32 +2433,109 @@ def CreateCatalogPage(
     return _create_page_shell("Create Catalog", form, result_id)
 
 
+def _manual_nutrient_input(label_per100: str, label_total: str, name: str, value: str | None = None):
+    """Nutrient field of the manual dish forms. Its label follows the nutrient
+    mode, and `max` only applies per 100 g: a total may legitimately exceed it,
+    and the server checks the converted value (measurement §5.4). The JS of
+    static/js/manual_intake_form.js moves both."""
+    limits = NUTRIENT_LIMITS[name]
+    return _labeled_input(
+        label_per100,
+        name,
+        "number",
+        step="any",
+        inputmode="decimal",
+        min_value=limits.minimum,
+        max_value=limits.maximum,
+        value=value,
+        label_attrs={
+            "data_mode_label": "true",
+            "data_label_per100": label_per100,
+            "data_label_total": label_total,
+        },
+        input_attrs={"data_nutrient_field": "true", "data_max_per100": str(limits.maximum)},
+    )
+
+
+def _manual_portion_input(value: str | None = None):
+    return _labeled_input(
+        "Serving weight (g)",
+        "default_portion",
+        "number",
+        help_text="Optional when you type values per 100 g; required when you type totals.",
+        step="any",
+        inputmode="decimal",
+        min_value=FOOD_DEFAULT_PORTION_RANGE.minimum,
+        max_value=FOOD_DEFAULT_PORTION_RANGE.maximum,
+        value=value,
+        input_attrs={"data_manual_weight": "true"},
+    )
+
+
+def _manual_description_input(value: str = "", textarea_id: str = "manual_description"):
+    return Div(
+        _label_with_help("Description", "Optional notes about the dish.", for_id=textarea_id),
+        Textarea(
+            value,
+            id=textarea_id,
+            name="description",
+            rows="3",
+            maxlength=str(MANUAL_INTAKE_DESCRIPTION_MAX_LENGTH),
+            cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-sm mr-1 w-full",
+        ),
+        cls="flex flex-col gap-1 col-span-1 md:col-span-2",
+    )
+
+
+def _manual_origin_input(origin_options: list[str] | None, value: str | None = None):
+    # Free text (decision 2026-10-09): no "Add"; the suggestions only help.
+    # The field is not called "origin": FastHTML resolves a route parameter
+    # from the request headers before the form body, and every browser POST
+    # carries an `Origin` header that would replace the typed value.
+    return _searchable_autocomplete_input(
+        "Origin",
+        "source_origin",
+        origin_options or [],
+        help_text="Who or where made it (e.g. grandma Geno, Burger King). Free text.",
+        allow_add=False,
+        value=value,
+        maxlength=MANUAL_INTAKE_ORIGIN_MAX_LENGTH,
+    )
+
+
 def CreateManualPage(
     subtype_options: list[str] | None = None,
     origin_options: list[str] | None = None,
     tag_options: list[str] | None = None,
 ):
+    """Reusable dish (code_conventions.md §11.2.3): name and carbs required."""
     result_id = "create_manual_result_page"
     form = Form(
         Div(
-            _labeled_input("Name*", "name", help_text="Manual intake name. Required."),
-            _labeled_input("Description", "description", help_text="Optional short description."),
+            _labeled_input(
+                "Name*",
+                "name",
+                help_text="Dish name. Required.",
+                maxlength=MANUAL_INTAKE_NAME_MAX_LENGTH,
+            ),
+            _manual_origin_input(origin_options),
             _searchable_autocomplete_input(
-                "Subtype*",
+                "Subtype",
                 "subtype",
                 subtype_options or [],
-                help_text="Specific subtype. Required.",
+                help_text="Specific subtype. Optional.",
                 allow_add=True,
+                maxlength=FOOD_SUBTYPE_MAX_LENGTH,
             ),
-            _searchable_autocomplete_input(
-                "Origin",
-                "source_origin",
-                origin_options or [],
-                help_text="Where it came from (home, restaurant, etc.).",
-                allow_add=True,
+            _nutrient_mode_select("manual"),
+            _manual_portion_input(),
+            _smart_macros_block(
+                "manual",
+                label="Smart macros (per 100 g)",
+                label_total="Smart macros (total of one serving)",
             ),
-            _labeled_input("Amount g*", "amount_g", "number", help_text="Consumed amount in grams. Required."),
-            _smart_macros_block("manual"),
+            P("Carbs are required: write 0hc if the dish has no carbs.", cls="text-[11px] text-gray-600 col-span-1 md:col-span-2"),
+            _manual_description_input(),
             _create_flags_row(),
             _tags_multiselect_input(
                 tag_options=tag_options,
@@ -2301,17 +2544,26 @@ def CreateManualPage(
             ),
             _advanced_toggle("manual_advanced"),
             Div(
-                _labeled_input("Caffeine", "caffeine", "number", help_text="Caffeine in mg per 100 g."),
-                _labeled_input("Alcohol", "alcohol", "number", help_text="Alcohol in g per 100 g."),
-                _searchable_autocomplete_input("Glycemic index", "glycemic_index", GLYCEMIC_INDEX_OPTIONS, help_text="Estimated glycemic index level.", allow_add=False),
-                _labeled_input("IG confidence 1-5", "ig_confidence", "number", help_text="Confidence in glycemic index estimate (1 low, 5 high)."),
+                _manual_nutrient_input("Caffeine (mg/100 g)", "Caffeine (mg in total)", "caffeine"),
+                _manual_nutrient_input("Alcohol (g/100 g)", "Alcohol (g in total)", "alcohol"),
+                _glycemic_index_select(None),
+                _confidence_select(
+                    "IG confidence",
+                    "ig_confidence",
+                    None,
+                    "How sure you are about the glycemic index. Needs a glycemic index.",
+                ),
+                _macros_confidence_select(None),
+                _macros_quality_select(None),
+                _weighed_default_select(None),
                 id="manual_advanced",
                 cls="hidden grid grid-cols-1 md:grid-cols-2 gap-2 col-span-1 md:col-span-2",
             ),
             cls="grid grid-cols-1 md:grid-cols-2 gap-2",
         ),
-        Button("Create manual intake", type="submit", cls="web_button px-3 py-2 text-xs"),
-        hx_post="/food/create/manual",
+        Button("Create dish", type="submit", cls="web_button px-3 py-2 text-xs"),
+        Script(src=asset_busted("/js/manual_intake_form.js"), defer="defer"),
+        hx_post="/food/create/manual_intake",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
         hx_push_url="false",
@@ -2319,6 +2571,76 @@ def CreateManualPage(
         cls="web_container p-3 rounded-2xl flex flex-col gap-3 w-full",
     )
     return _create_page_shell("Create Manual Intake", form, result_id)
+
+
+def QuickAddPage(events: list, plate_options: list, selected_plate_id: int | None):
+    """Quick add (code_conventions.md §11.2.3): a one-off meal logged into a
+    plate and never offered again. Name, estimated weight and carbs are
+    required; the smart-macros text is always the total eaten (measurement §5.4).
+
+    The meal and plate selector goes on top and outside the Form: its "New
+    Meal" input has its own hx_post and must not submit the form. Its values
+    travel with hx_include, as in AddButton (frontend §7.7)."""
+    result_id = "quick_add_result"
+    form = Form(
+        Div(
+            _labeled_input(
+                "Name*",
+                "name",
+                help_text="e.g. Menu of the day. Required.",
+                maxlength=MANUAL_INTAKE_NAME_MAX_LENGTH,
+            ),
+            _labeled_input(
+                "Estimated weight (g)*",
+                "default_portion",
+                "number",
+                help_text="Rough weight of everything you ate. Required.",
+                step="any",
+                inputmode="decimal",
+                min_value=FOOD_DEFAULT_PORTION_RANGE.minimum,
+                max_value=FOOD_DEFAULT_PORTION_RANGE.maximum,
+            ),
+            _smart_macros_block("quick", label="Smart macros (total of what you ate)"),
+            P("Carbs are required: write 0hc if there were none.", cls="text-[11px] text-gray-600 col-span-1 md:col-span-2"),
+            Div(
+                _label_with_help("Notes", "Optional notes about what you ate.", for_id="quick_add_notes"),
+                Textarea(
+                    "",
+                    id="quick_add_notes",
+                    name="description",
+                    rows="3",
+                    maxlength=str(MANUAL_INTAKE_DESCRIPTION_MAX_LENGTH),
+                    cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-sm mr-1 w-full",
+                ),
+                cls="flex flex-col gap-1 col-span-1 md:col-span-2",
+            ),
+            cls="grid grid-cols-1 md:grid-cols-2 gap-2",
+        ),
+        Button(
+            "Add to meal",
+            type="submit",
+            cls="web_button px-3 py-2 text-xs",
+            **{"hx-disabled-elt": "this"},
+        ),
+        hx_post="/food/quick_add",
+        hx_target=f"#{result_id}",
+        hx_swap="innerHTML",
+        hx_push_url="false",
+        hx_include="#meal_selector, #plate_selector",
+        data_draft_key="food_form_quick_add",
+        cls="web_container p-3 rounded-2xl flex flex-col gap-3 w-full",
+    )
+    content = Div(
+        MealSelector(
+            events or [],
+            selected_id=(events[0].id if events else None),
+            plate_options=plate_options,
+            selected_plate_id=selected_plate_id,
+        ),
+        form,
+        cls="flex flex-col gap-3 w-full",
+    )
+    return _create_page_shell("Quick add", content, result_id)
 
 
 def CreateRecipePage(tag_options: list[str] | None = None):
@@ -2392,7 +2714,7 @@ def _edit_tile(content, cls: str = ""):
     return Div(content, cls=f"web_container p-3 rounded-xl flex flex-col gap-1{extra}")
 
 
-def _edit_name_input(value: str):
+def _edit_name_input(value: str, maxlength: int = CATALOG_NAME_MAX_LENGTH):
     name_id = "edit_name"
     return Div(
         Label(
@@ -2405,7 +2727,7 @@ def _edit_name_input(value: str):
             value=value,
             id=name_id,
             name="name",
-            maxlength=CATALOG_NAME_MAX_LENGTH,
+            maxlength=maxlength,
             cls="""
                 w-full text-2xl font-bold text-black text-center
                 px-0 py-0 border-0 rounded-none
@@ -2467,7 +2789,7 @@ def EditCatalogPage(
             H2("Details", cls="font-semibold text-gray-900"),
             Div(
                 _edit_tile(_searchable_autocomplete_input("Category*", "category", [c.value for c in FoodCategory], allow_add=False, value=_input_value(entry.get("category")))),
-                _edit_tile(_searchable_autocomplete_input("Subtype*", "subtype", subtype_options or [], allow_add=True, value=_input_value(entry.get("subtype")), maxlength=CATALOG_SUBTYPE_MAX_LENGTH)),
+                _edit_tile(_searchable_autocomplete_input("Subtype*", "subtype", subtype_options or [], allow_add=True, value=_input_value(entry.get("subtype")), maxlength=FOOD_SUBTYPE_MAX_LENGTH)),
                 _edit_tile(_labeled_input("Default serving size", "default_portion", "number", step="any", inputmode="decimal", min_value=0, max_value=3000, value=_input_value(entry.get("default_portion")))),
                 _edit_tile(_searchable_autocomplete_input("Initial state", "initial_state", [s.value for s in FoodPhysicalState], allow_add=False, value=_input_value(entry.get("initial_state")))),
                 _edit_tile(_searchable_autocomplete_input("Nutriscore", "nutriscore", [n.value for n in Nutriscore], allow_add=False, value=_input_value(entry.get("nutriscore")))),
@@ -2488,6 +2810,9 @@ def EditCatalogPage(
                     )
                 ),
                 _edit_tile(_labeled_input("Cooking factor", "cooking_factor", "number", step="any", inputmode="decimal", min_value=0, max_value=10, value=_input_value(entry.get("cooking_factor")))),
+                _edit_tile(_macros_quality_select(entry.get("macros_quality"))),
+                _edit_tile(_weighed_default_select(entry.get("default_strictly_weighed"))),
+                _edit_tile(_macros_confidence_select(entry.get("macros_confidence"))),
                 cls="grid grid-cols-1 md:grid-cols-2 gap-2",
             ),
             cls="flex flex-col gap-2 w-full",
@@ -2524,14 +2849,26 @@ def EditManualPage(
     entry: dict,
     subtype_options: list[str] | None = None,
     origin_options: list[str] | None = None,
-    show_published: bool = False,
     tag_options: list[str] | None = None,
     selected_tags: list[str] | None = None,
 ):
+    """Full replacement of a reusable dish (H1). It opens in "per 100 g" mode
+    with the stored values (measurement §5.4). Publishing is the detail page's
+    action (decision 2026-10-09), and favorite is not part of the edit, as in
+    catalog."""
     result_id = f"edit_manual_result_{entry['id']}"
+    nutrient_specs = (
+        ("Calories/100g", "Calories (total)", "calories_100g"),
+        ("Carbs/100g*", "Carbs (total)*", "carbs_100g"),
+        ("Sugars/100g", "Sugars (total)", "sugars_100g"),
+        ("Fats/100g", "Fats (total)", "fats_100g"),
+        ("Saturated/100g", "Saturated (total)", "saturated_100g"),
+        ("Proteins/100g", "Proteins (total)", "proteins_100g"),
+        ("Fiber/100g", "Fiber (total)", "fiber_100g"),
+    )
     form = Form(
-        _edit_name_input(_input_value(entry.get("name"))),
-        _edit_tile(_searchable_autocomplete_input("Brand / Origin", "source_origin", origin_options or [], allow_add=True, value=_input_value(entry.get("origin")))),
+        _edit_name_input(_input_value(entry.get("name")), maxlength=MANUAL_INTAKE_NAME_MAX_LENGTH),
+        _edit_tile(_manual_origin_input(origin_options, value=_input_value(entry.get("origin")))),
         _edit_tile(
             _tags_multiselect_input(
                 tag_options=tag_options,
@@ -2543,13 +2880,15 @@ def EditManualPage(
         Div(
             H2("Macros Summary", cls="font-semibold text-gray-900"),
             Div(
-                _edit_tile(_labeled_input("Calories/100g", "calories_100g", "number", value=_input_value(entry.get("calories_100g")))),
-                _edit_tile(_labeled_input("Carbs/100g", "carbs_100g", "number", value=_input_value(entry.get("carbs_100g")))),
-                _edit_tile(_labeled_input("Sugars/100g", "sugars_100g", "number", value=_input_value(entry.get("sugars_100g")))),
-                _edit_tile(_labeled_input("Fats/100g", "fats_100g", "number", value=_input_value(entry.get("fats_100g")))),
-                _edit_tile(_labeled_input("Saturated/100g", "saturated_100g", "number", value=_input_value(entry.get("saturated_100g")))),
-                _edit_tile(_labeled_input("Proteins/100g", "proteins_100g", "number", value=_input_value(entry.get("proteins_100g")))),
-                _edit_tile(_labeled_input("Fiber/100g", "fiber_100g", "number", value=_input_value(entry.get("fiber_100g")))),
+                _edit_tile(_nutrient_mode_select(f"edit_manual_{entry['id']}")),
+                _edit_tile(_manual_portion_input(value=_input_value(entry.get("default_portion")))),
+                cls="grid grid-cols-1 md:grid-cols-2 gap-2",
+            ),
+            Div(
+                *[
+                    _edit_tile(_manual_nutrient_input(per100, total, name, _input_value(entry.get(name))))
+                    for per100, total, name in nutrient_specs
+                ],
                 cls="grid grid-cols-2 md:grid-cols-3 gap-2",
             ),
             cls="flex flex-col gap-2 w-full",
@@ -2558,30 +2897,40 @@ def EditManualPage(
             H2("Details", cls="font-semibold text-gray-900"),
             Div(
                 _edit_tile(
-                    Div(
-                        _label_with_help("Description", "Optional short description.", for_id="edit_manual_description"),
-                        Textarea(
-                            _input_value(entry.get("description")),
-                            id="edit_manual_description",
-                            name="description",
-                            rows="4",
-                        cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-sm mr-1 w-full",
+                    _manual_description_input(
+                        _input_value(entry.get("description")),
+                        textarea_id="edit_manual_description",
                     ),
-                    cls="flex flex-col gap-1",
+                    cls="col-span-1 md:col-span-2",
                 ),
-                cls="col-span-1 md:col-span-2",
+                _edit_tile(
+                    _searchable_autocomplete_input(
+                        "Subtype",
+                        "subtype",
+                        subtype_options or [],
+                        allow_add=True,
+                        value=_input_value(entry.get("subtype")),
+                        maxlength=FOOD_SUBTYPE_MAX_LENGTH,
+                    )
+                ),
+                _edit_tile(_manual_nutrient_input("Caffeine (mg/100 g)", "Caffeine (mg in total)", "caffeine", _input_value(entry.get("caffeine")))),
+                _edit_tile(_manual_nutrient_input("Alcohol (g/100 g)", "Alcohol (g in total)", "alcohol", _input_value(entry.get("alcohol")))),
+                _edit_tile(_glycemic_index_select(entry.get("glycemic_index"))),
+                _edit_tile(
+                    _confidence_select(
+                        "IG confidence",
+                        "ig_confidence",
+                        entry.get("ig_confidence"),
+                        "How sure you are about the glycemic index. Needs a glycemic index.",
+                    )
+                ),
+                _edit_tile(_macros_confidence_select(entry.get("macros_confidence"))),
+                _edit_tile(_macros_quality_select(entry.get("macros_quality"))),
+                _edit_tile(_weighed_default_select(entry.get("default_strictly_weighed"))),
+                cls="grid grid-cols-1 md:grid-cols-2 gap-2",
             ),
-            _edit_tile(_searchable_autocomplete_input("Subtype*", "subtype", subtype_options or [], allow_add=True, value=_input_value(entry.get("subtype")))),
-            _edit_tile(_labeled_input("Amount g*", "amount_g", "number", value=_input_value(entry.get("amount_g")))),
-            _edit_tile(_labeled_input("Caffeine", "caffeine", "number", value=_input_value(entry.get("caffeine")))),
-            _edit_tile(_labeled_input("Alcohol", "alcohol", "number", value=_input_value(entry.get("alcohol")))),
-            _edit_tile(_searchable_autocomplete_input("Glycemic index", "glycemic_index", GLYCEMIC_INDEX_OPTIONS, allow_add=False, value=_input_value(entry.get("glycemic_index")))),
-            _edit_tile(_labeled_input("IG confidence 1-5", "ig_confidence", "number", value=_input_value(entry.get("ig_confidence")))),
-            cls="grid grid-cols-1 md:grid-cols-2 gap-2",
+            cls="flex flex-col gap-2 w-full",
         ),
-        cls="flex flex-col gap-2 w-full",
-    ),
-    *([_published_checkbox(checked=bool(entry.get("is_published")), centered=True)] if show_published else []),
         Div(
             Button(
                 "Back",
@@ -2595,15 +2944,18 @@ def EditManualPage(
                 hx_target="#main_content",
                 hx_swap="innerHTML",
                 hx_push_url="true",
+                **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
             ),
             Button("Save changes", type="submit", cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-black text-white border-black"),
             cls="grid grid-cols-2 gap-3",
         ),
-        hx_post=f"/food/edit/manual/{entry['id']}",
+        Script(src=asset_busted("/js/manual_intake_form.js"), defer="defer"),
+        hx_post=f"/food/edit/manual_intake/{entry['id']}",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
         hx_push_url="false",
         data_draft_key=f"food_form_edit_manual_{entry['id']}",
+        data_manual_convert="true",
         cls="flex flex-col gap-3 w-full",
     )
     return _edit_page_shell(form, result_id)
@@ -3108,13 +3460,15 @@ def FoodDetailPage(
     cooking_factor: float | None = None,
 ):
     can_archive = can_edit if can_archive is None else can_archive
-    # catalog is archived (§11.2.2) under can_archive; manual_intake and recipe keep can_delete.
-    can_remove = can_archive if entry_type == "catalog" else can_delete
+    # catalog and manual_intake are archived (§11.2.2, §11.2.3) under can_archive;
+    # recipe keeps can_delete.
+    archivable = entry_type in ("catalog", "manual_intake")
+    can_remove = can_archive if archivable else can_delete
     base_unit = _display_base_unit(entry_type, entry)
     default_serving = summary.get("default_amount_g")
     # R3: the food page uses 100 g as the initial amount when the food has no
     # serving. It is not a serving: the `serving` option is not offered.
-    if entry_type == "catalog" and default_serving is None:
+    if archivable and default_serving is None:
         serving_amount = None
         default_amount = INITIAL_AMOUNT_WITHOUT_SERVING_G
     else:
@@ -3126,7 +3480,7 @@ def FoodDetailPage(
     info_rows = summary.get("info_rows") or []
     subtitle = summary.get("subtitle") or ""
     state_text = None
-    if entry_type == "catalog":
+    if archivable:
         if is_library:
             state_text = "General library"
         elif is_published:
@@ -3134,7 +3488,11 @@ def FoodDetailPage(
         else:
             state_text = "Personal"
     if is_archived:
-        state_text = "Archived: removed from the catalog. You can keep using it."
+        state_text = (
+            "Archived: removed from the catalog. You can keep using it."
+            if entry_type == "catalog"
+            else "Archived: removed from searches. You can keep using it."
+        )
     edit_label = (
         {"catalog": "Edit food", "manual_intake": "Edit manual", "recipe": "Edit recipe"}.get(entry_type, "Edit")
         if can_edit
@@ -3149,12 +3507,12 @@ def FoodDetailPage(
     delete_confirm_id = f"delete_confirm_{entry_type}_{entry['id']}"
     delete_title = {
         "catalog": "Archive food",
-        "manual_intake": "Archive manual intake",
+        "manual_intake": "Archive dish",
         "recipe": "Delete recipe",
     }.get(entry_type, "Delete item")
     delete_question = {
         "catalog": "This food will be removed from the catalog and from everyone's searches. Anyone who already has it in favorites or in a recipe can keep using it. This cannot be undone. Continue?",
-        "manual_intake": "Are you sure you want to archive this manual intake? It will be hidden from active food lists.",
+        "manual_intake": "This dish will be removed from your lists and from everyone's searches. Anyone who already has it in favorites or in a recipe can keep using it. This cannot be undone. Continue?",
         "recipe": "Are you sure you want to delete this recipe?",
     }.get(entry_type, "Are you sure you want to delete this item?")
 
@@ -3491,7 +3849,7 @@ def FoodDetailPage(
                         web_button w-full px-4 py-2 text-sm rounded-2xl
                         bg-white/85 text-gray-800 border border-gray-300
                     """,
-                    hx_post=f"/food/{'unpublish' if is_published else 'publish'}/catalog/{entry['id']}",
+                    hx_post=f"/food/{'unpublish' if is_published else 'publish'}/{entry_type}/{entry['id']}",
                     hx_swap="none",
                     data_skip_page_loading="true",
                 ),
@@ -3530,9 +3888,9 @@ def FoodDetailPage(
                     cls="web_button px-4 py-2 text-sm text-white",
                     style="background-color:#b91c1c;border-color:#b91c1c;",
                     hx_post=(
-                        f"/food/archive/catalog/{entry['id']}"
-                        if entry_type == "catalog"
-                        else f"/food/delete/{entry_type}/{entry['id']}"
+                        f"/food/archive/{entry_type}/{entry['id']}"
+                        if archivable
+                        else f"/food/delete/recipe/{entry['id']}"
                     ),
                     hx_swap="none",
                     hx_push_url="false",
@@ -3689,7 +4047,7 @@ def FoodCard(food):
     name_text = f"{food['name']}{owner_suffix}"
     archived_badge = (
         Span("Archived", cls="text-[10px] font-semibold text-amber-700")
-        if food.get("entry_type") == "catalog" and food.get("deleted_at") is not None
+        if food.get("entry_type") in ("catalog", "manual_intake") and food.get("deleted_at") is not None
         else ""
     )
     subtitle = ""

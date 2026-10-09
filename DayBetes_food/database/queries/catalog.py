@@ -14,7 +14,7 @@ from DayBetes_food.database.queries.crud import (
     RawSQL,
     _build_fuzzy_search,
     _build_update_query,
-    _catalog_visibility_sql,
+    _food_visibility_sql,
     _execute_query,
     _execute_query_many,
 )
@@ -22,8 +22,9 @@ from DayBetes_food.domain.catalog import (
     CATALOG_NAME_MAX_LENGTH,
     CatalogItemCreate,
     CatalogItemUpdate,
-    normalize_catalog_name,
 )
+from DayBetes_food.domain.constants import PortionOrigin
+from DayBetes_food.domain.food import normalize_food_text
 from DayBetes_food.errors import ConflictError, NotFoundError
 
 _CATALOG_COLUMNS = """
@@ -33,6 +34,7 @@ _CATALOG_COLUMNS = """
     entity.calories_100g, entity.carbs_100g, entity.sugars_100g, entity.fats_100g,
     entity.saturated_100g, entity.proteins_100g, entity.fiber_100g,
     entity.caffeine, entity.alcohol, entity.barcode, entity.cooking_factor,
+    entity.macros_quality, entity.default_strictly_weighed, entity.macros_confidence,
     entity.is_published, entity.created_at, entity.updated_at, entity.deleted_at,
     EXISTS (SELECT 1 FROM user_favorites uf
             WHERE uf.user_id = %(visibility_user_id)s AND uf.catalog_id = entity.id) AS is_favorite,
@@ -64,6 +66,9 @@ _CATALOG_CREATE_COLUMNS = (
     "alcohol",
     "barcode",
     "cooking_factor",
+    "macros_quality",
+    "default_strictly_weighed",
+    "macros_confidence",
 )
 
 # §6.2: never reveals another user's personal data.
@@ -109,6 +114,9 @@ def _create_params(payload: CatalogItemCreate) -> dict:
         "default_portion": payload.default_portion,
         "barcode": payload.barcode,
         "cooking_factor": payload.cooking_factor,
+        "macros_quality": payload.macros_quality,
+        "default_strictly_weighed": payload.default_strictly_weighed,
+        "macros_confidence": payload.macros_confidence,
         **_nutrient_params(payload.nutrients),
     }
 
@@ -126,6 +134,9 @@ def _update_fields(payload: CatalogItemUpdate) -> tuple[dict, set]:
         "default_portion": payload.default_portion,
         "barcode": payload.barcode,
         "cooking_factor": payload.cooking_factor,
+        "macros_quality": payload.macros_quality,
+        "default_strictly_weighed": payload.default_strictly_weighed,
+        "macros_confidence": payload.macros_confidence,
         **_nutrient_params(payload.nutrients),
     }
     null_fields = {field for field, value in fields.items() if value is None}
@@ -158,7 +169,7 @@ def get_catalog_item(connection, user_id: int, catalog_id: int):
         SELECT {_CATALOG_COLUMNS}
         {_CATALOG_FROM}
         WHERE entity.id = %(catalog_id)s
-          AND {_catalog_visibility_sql("entity", include_retained=True)};
+          AND {_food_visibility_sql(PortionOrigin.CATALOG, "entity", include_retained=True)};
     """
     row = _execute_query(connection, query, params, commit=False)
     return catalog_item_read_from_row(row) if row else None
@@ -199,7 +210,7 @@ def list_catalog_items(
     `include_retained=True` explicitly includes archived or unpublished items
     the viewer keeps in favorites or in one of their recipes (§11.3).
     """
-    conditions = [_catalog_visibility_sql("entity", include_retained=include_retained)]
+    conditions = [_food_visibility_sql(PortionOrigin.CATALOG, "entity", include_retained=include_retained)]
     params = {"visibility_user_id": user_id}
     normalized = (search or "").strip()
     if normalized:
@@ -207,9 +218,17 @@ def list_catalog_items(
             connection, "entity.name", normalized, param_prefix="catalog_name"
         )
         brand_condition, brand_params, _ = _build_fuzzy_search(
-            connection, "COALESCE(fb.label, '')", normalized, param_prefix="catalog_brand"
+            connection, "brand_search.label", normalized, param_prefix="catalog_brand"
         )
-        conditions.append(f"({name_condition} OR {brand_condition})")
+        # The matching brands are resolved first, on their own trigram indexes,
+        # instead of filtering the joined `fb.label`. `= ANY(ARRAY(...))` and not
+        # `IN (...)`: only the array form lets the OR combine with the name
+        # indexes and idx_catalog_brand_id instead of scanning `catalog`. An item
+        # without brand only matches by name.
+        conditions.append(
+            f"({name_condition} OR entity.brand_id = ANY(ARRAY("
+            f"SELECT brand_search.id FROM food_brands brand_search WHERE {brand_condition})))"
+        )
         params.update(name_params)
         params.update(brand_params)
     if favorites_only:
@@ -381,7 +400,7 @@ def next_catalog_copy_name(connection, user_id: int, base_name: str, brand_id: i
     name, the partial unique index returns 409. The base is normalized with the
     single normalization of `catalog` (H2).
     """
-    base = normalize_catalog_name(base_name) or "Food"
+    base = normalize_food_text(base_name) or "Food"
     candidate = _fit_copy_name(base, " (copy)")
     if not _catalog_name_taken(connection, user_id, candidate, brand_id):
         return candidate

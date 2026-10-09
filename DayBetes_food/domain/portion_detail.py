@@ -107,10 +107,13 @@ class PortionSourceRead:
     single nutritional value (finding 1, still open).
     """
     name: str | None
-    unit_g: float | None           # catalog.default_portion | manual_intake.amount_g; None = no serving
+    unit_g: float | None           # catalog.default_portion | manual_intake.default_portion; None = no serving
     category: str | None
     subtype: str | None
     cooking_factor: float | None  # catalog only; None for manual_intake
+    # The food's, read live (measurement §6.11, decision 2026-10-09): the
+    # portion does not store a copy. None = no data.
+    macros_quality: bool | None
     calories_100g: float | None
     carbs_100g: float | None
     sugars_100g: float | None
@@ -133,7 +136,6 @@ class PortionDetailRead:
     conservation: ConservationMethod | None
     final_state: FoodPhysicalState | None
     strictly_weighed: bool | None   # None = no data (decision 2026-09-18)
-    macros_quality: bool | None
     is_cooked_weight: bool
     offset_minutes: int | None
     created_at: datetime
@@ -153,7 +155,6 @@ class PortionDetailCreate:
     conservation: ConservationMethod | None = None
     final_state: FoodPhysicalState | None = None
     strictly_weighed: bool | None = None
-    macros_quality: bool | None = None
     is_cooked_weight: bool = False
     offset_minutes: int | None = None
 

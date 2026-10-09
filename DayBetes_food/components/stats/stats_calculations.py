@@ -90,7 +90,7 @@ def compute_stats_payload(
         event_totals = _compute_totals_for_portions(portions_by_event.get(event.id, []))
         _sum_totals(daily_totals_by_day[day_key], event_totals)
 
-        meal_type = event.meal_type.value if event.meal_type else "sin_tipo"
+        meal_type = event.meal_type.value if event.meal_type else "untyped"
         if meal_type not in meal_type_historical_totals:
             meal_type_historical_totals[meal_type] = empty_totals()
         _sum_totals(meal_type_historical_totals[meal_type], event_totals)
@@ -109,7 +109,7 @@ def compute_stats_payload(
 
     grouped = {meal_type: {"count": 0, "totals": empty_totals()} for meal_type in MEAL_TYPE_ORDER}
     for event in today_events:
-        meal_type = event.meal_type.value if event.meal_type else "sin_tipo"
+        meal_type = event.meal_type.value if event.meal_type else "untyped"
         if meal_type not in grouped:
             grouped[meal_type] = {"count": 0, "totals": empty_totals()}
         grouped[meal_type]["count"] += 1

@@ -18,13 +18,13 @@
   // Default message per status, for the responses that do not declare their
   // own yet (for example the 403 for "missing HX-Request header").
   var DEFAULT_BY_STATUS = {
-    400: "La petición no tiene un formato válido.",
-    401: "Necesitas iniciar sesión.",
-    403: "No tienes permiso para realizar esta operación.",
-    404: "El recurso no existe o no está disponible.",
-    409: "La operación entra en conflicto con el estado actual.",
-    422: "Los datos enviados no son válidos.",
-    429: "Se han realizado demasiadas peticiones. Inténtalo más tarde.",
+    400: "The request is not well formed.",
+    401: "You need to log in.",
+    403: "You are not allowed to perform this action.",
+    404: "The resource does not exist or is not available.",
+    409: "The action conflicts with the current state.",
+    422: "The submitted data is not valid.",
+    429: "Too many requests. Please try again later.",
   };
 
   function showToast(message) {
@@ -72,7 +72,7 @@
       showToast(messageFromXhr(detail ? detail.xhr : null));
     });
     document.body.addEventListener("htmx:sendError", function () {
-      showToast("No se ha podido contactar con el servidor.");
+      showToast("Could not reach the server.");
     });
 
     // Errors signalled with HX-Trigger on a 2xx response. `appError` carries
@@ -83,7 +83,7 @@
       showToast((detail && detail.message) || DEFAULT_BY_STATUS[422]);
     });
     document.body.addEventListener("addError", function () {
-      showToast("No se ha podido completar la operación.");
+      showToast("The action could not be completed.");
     });
   }
 

@@ -7,7 +7,12 @@ from DayBetes_food.auth.models import USER_EMAIL_MAX_LENGTH, USER_USERNAME_MAX_L
 from DayBetes_food.auth.security import hash_password, normalize_identifier, sanitize_text
 from DayBetes_food.config import DB_RUNTIME_ROLE
 from DayBetes_food.database.connection import get_migrations_connection
-from DayBetes_food.database.schema import DBSchema, catalog_check_constraints
+from DayBetes_food.database.queries.crud import fuzzy_compact_sql
+from DayBetes_food.database.schema import (
+    DBSchema,
+    catalog_check_constraints,
+    manual_intake_check_constraints,
+)
 from DayBetes_food.domain.catalog import CATALOG_BARCODE_MAX_LENGTH, CATALOG_BARCODE_MIN_LENGTH
 from DayBetes_food.domain.constants import (
     IntakeEventState,
@@ -20,7 +25,6 @@ from DayBetes_food.domain.constants import (
     FoodPhysicalState,
     sql_in_list,
 )
-from DayBetes_food.domain.nutrition import NUTRIENT_LIMITS
 
 logger = logging.getLogger(__name__)
 
@@ -388,6 +392,20 @@ def _ensure_catalog_schema(cursor):
             f"ALTER TABLE catalog ALTER COLUMN barcode TYPE VARCHAR({CATALOG_BARCODE_MAX_LENGTH});"
         )
 
+    # ---- 5b. Declared quality, weighing and confidence (decision 2026-10-09) ----
+    # Existing rows start as NULL ("no data"): nothing is inferred.
+    for column, definition in (
+        ("macros_quality", "BOOLEAN"),
+        ("default_strictly_weighed", "BOOLEAN"),
+        ("macros_confidence", "INTEGER"),
+    ):
+        if not _has_column(cursor, "catalog", column):
+            cursor.execute(
+                sql.SQL("ALTER TABLE catalog ADD COLUMN {} {};").format(
+                    sql.Identifier(column), sql.SQL(definition)
+                )
+            )
+
     # ---- 6. CHECKs (H1, H3, H6, H12, H13, H26) ----
     # 6a. Category safeguard before dropping: fail on divergence, never correct.
     cursor.execute(
@@ -509,100 +527,130 @@ def _ensure_catalog_schema(cursor):
         cursor.execute(statement)
 
 
-def _manual_numeric_check(column: str, maximum) -> str:
-    maximum_text = str(int(maximum)) if float(maximum).is_integer() else repr(float(maximum))
-    return (
-        f"CHECK ((({column} IS NULL) OR (({column} >= (0)::double precision) "
-        f"AND ({column} <= ({maximum_text})::double precision) "
-        f"AND ({column} <> 'NaN'::real) AND ({column} <> 'Infinity'::real) "
-        f"AND ({column} <> '-Infinity'::real)))) NOT VALID"
-    )
+_MANUAL_INTAKE_LEGACY_CHECKS = (
+    "chk_manual_amount_g_valid",
+    "chk_manual_calories_100g_valid",
+    "chk_manual_carbs_100g_valid",
+    "chk_manual_sugars_100g_valid",
+    "chk_manual_fats_100g_valid",
+    "chk_manual_saturated_100g_valid",
+    "chk_manual_proteins_100g_valid",
+    "chk_manual_fiber_100g_valid",
+    "chk_manual_caffeine_valid",
+    "chk_manual_alcohol_valid",
+    "chk_manual_saturated_le_fats",
+    "manual_intake_glycemic_index_check",
+    "manual_intake_ig_confidence_check",
+)
+
+_MANUAL_INTAKE_CONSTRAINT_RENAMES = {
+    "manual_intake_pkey": "pk_manual_intake",
+    "manual_intake_created_by_fkey": "fk_manual_intake_created_by_users",
+    "manual_intake_origin_root_id_fkey": "fk_manual_intake_origin_root_id_manual_intake",
+}
+
+# Exact definition of the legacy 1-5 scale (measurement_conventions.md §6.10).
+_MANUAL_INTAKE_LEGACY_IG_SCALE = "CHECK (((ig_confidence >= 1) AND (ig_confidence <= 5)))"
 
 
-def _ensure_manual_numeric_constraints(cursor):
-    constraints = {
-        "chk_manual_amount_g_valid": "CHECK (((amount_g > (0)::double precision) AND (amount_g <= (5000)::double precision) AND (amount_g <> 'NaN'::real) AND (amount_g <> 'Infinity'::real) AND (amount_g <> '-Infinity'::real))) NOT VALID",
-        "chk_manual_calories_100g_valid": _manual_numeric_check("calories_100g", NUTRIENT_LIMITS["calories_100g"].maximum),
-        "chk_manual_carbs_100g_valid": _manual_numeric_check("carbs_100g", NUTRIENT_LIMITS["carbs_100g"].maximum),
-        "chk_manual_sugars_100g_valid": _manual_numeric_check("sugars_100g", NUTRIENT_LIMITS["sugars_100g"].maximum),
-        "chk_manual_fats_100g_valid": _manual_numeric_check("fats_100g", NUTRIENT_LIMITS["fats_100g"].maximum),
-        "chk_manual_saturated_100g_valid": _manual_numeric_check("saturated_100g", NUTRIENT_LIMITS["saturated_100g"].maximum),
-        "chk_manual_proteins_100g_valid": _manual_numeric_check("proteins_100g", NUTRIENT_LIMITS["proteins_100g"].maximum),
-        "chk_manual_fiber_100g_valid": _manual_numeric_check("fiber_100g", NUTRIENT_LIMITS["fiber_100g"].maximum),
-        "chk_manual_caffeine_valid": _manual_numeric_check("caffeine", NUTRIENT_LIMITS["caffeine"].maximum),
-        "chk_manual_alcohol_valid": _manual_numeric_check("alcohol", NUTRIENT_LIMITS["alcohol"].maximum),
-        "chk_manual_saturated_le_fats": "CHECK (((saturated_100g IS NULL) OR (fats_100g IS NULL) OR (saturated_100g <= fats_100g))) NOT VALID",
-        # New canonical name: it is a new rule added by the catalog audit (§11.6).
-        "ck_manual_intake_sugars_le_carbs": "CHECK (((sugars_100g IS NULL) OR (carbs_100g IS NULL) OR (sugars_100g <= carbs_100g))) NOT VALID",
-    }
-
-    # Blocking pre-checks: a row that violates the new ceiling or relation is a
-    # data decision, not something the migration may rewrite (§12.7).
-    cursor.execute("SELECT count(*) AS bad FROM manual_intake WHERE alcohol > 100;")
-    if cursor.fetchone()["bad"]:
-        raise RuntimeError(
-            "manual_intake.alcohol has rows above 100; chk_manual_alcohol_valid "
-            "cannot be created (code_conventions.md 12.7)."
-        )
-    cursor.execute(
-        "SELECT count(*) AS bad FROM manual_intake WHERE sugars_100g > carbs_100g;"
-    )
-    if cursor.fetchone()["bad"]:
-        raise RuntimeError(
-            "manual_intake has rows with sugars_100g > carbs_100g; "
-            "ck_manual_intake_sugars_le_carbs cannot be created (code_conventions.md 12.7)."
-        )
-
+def _manual_intake_constraint_definition(cursor, name: str) -> str | None:
     cursor.execute(
         """
-        SELECT conname, pg_get_constraintdef(oid) AS definition
+        SELECT pg_get_constraintdef(oid) AS definition
         FROM pg_constraint
-        WHERE conrelid = 'manual_intake'::regclass
-          AND conname = ANY(%(names)s);
+        WHERE conrelid = 'manual_intake'::regclass AND conname = %(name)s;
         """,
-        {"names": list(constraints)},
+        {"name": name},
     )
-    existing = {row["conname"]: (row.get("definition") or "").strip() for row in cursor.fetchall() or []}
+    row = cursor.fetchone()
+    return (row.get("definition") or "").strip() if row else None
 
-    # The old caffeine/alcohol ceiling was 10000. Drop exactly those definitions
-    # so the loop recreates them with the shared ceiling; any other different
-    # definition still raises below.
-    old_caffeine = _manual_numeric_check("caffeine", 10000)
-    old_alcohol = _manual_numeric_check("alcohol", 10000)
-    for name, old_definition in (
-        ("chk_manual_caffeine_valid", old_caffeine),
-        ("chk_manual_alcohol_valid", old_alcohol),
-    ):
-        actual = existing.get(name)
-        if actual and actual in (old_definition, old_definition.removesuffix(" NOT VALID")):
-            cursor.execute(
-                sql.SQL("ALTER TABLE manual_intake DROP CONSTRAINT {};").format(
-                    sql.Identifier(name)
-                )
-            )
-            existing.pop(name, None)
 
-    for name, expected in constraints.items():
-        actual = existing.get(name)
-        if actual:
-            validated_expected = expected.removesuffix(" NOT VALID")
-            if actual not in (expected, validated_expected):
-                raise RuntimeError(f"Unexpected definition for {name}: {actual!r}")
-            continue
-        body = expected.removesuffix(" NOT VALID")
-        cursor.execute(
-            sql.SQL("ALTER TABLE manual_intake ADD CONSTRAINT {} {} NOT VALID;").format(
-                sql.Identifier(name), sql.SQL(body)
-            )
-        )
+def _manual_intake_count(cursor, condition: str) -> int:
+    """count(*) of manual_intake rows matching a constant condition written in
+    this module (never request data, §11.9)."""
+    cursor.execute(
+        sql.SQL("SELECT count(*) AS total FROM manual_intake WHERE {};").format(sql.SQL(condition))
+    )
+    return cursor.fetchone()["total"]
 
 
 def _ensure_manual_intake_schema(cursor):
-    """Keep the live manual_intake schema aligned with its canonical definition."""
+    """manual_intake: canonical schema rebuilt from the enums and the limits (§12.1).
+
+    Idempotent (§12.2) and fails on anything unexpected instead of correcting it
+    (§12.5, §12.7). Closes findings 4, 6, 9, 12, 13, 14 and 15 of
+    audit/audits/audit_manual_intake.md, plus the new scope of the 2026-10-09
+    decisions (code_conventions.md §11.2.3). The TIMESTAMPTZ migration is a
+    separate step (_ensure_manual_intake_timestamptz, §10.5).
+    """
+    # ---- 0. Basic columns of old installs ----
+    for column in ("deleted_at", "created_at", "updated_at"):
+        if not _has_column(cursor, "manual_intake", column):
+            cursor.execute(
+                sql.SQL("ALTER TABLE manual_intake ADD COLUMN {} TIMESTAMPTZ;").format(
+                    sql.Identifier(column)
+                )
+            )
+    # Legacy rows have no reliable creation time; the migration timestamp is only a backfill marker.
+    cursor.execute(
+        """
+        UPDATE manual_intake
+        SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP),
+            updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)
+        WHERE created_at IS NULL OR updated_at IS NULL;
+        """
+    )
+    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;")
+    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;")
+    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN created_at SET NOT NULL;")
+    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN updated_at SET NOT NULL;")
+    if _has_column(cursor, "manual_intake", "slug"):
+        cursor.execute("ALTER TABLE manual_intake DROP COLUMN slug;")
+
+    # ---- 1. Safeguards before dropping anything (§12.2) ----
+    legacy_gi = _manual_intake_constraint_definition(cursor, "manual_intake_glycemic_index_check")
+    if legacy_gi is not None:
+        literals = set(re.findall(r"'([^']+)'", legacy_gi))
+        if literals != {"high", "medium", "low"}:
+            raise RuntimeError(
+                f"manual_intake_glycemic_index_check has unexpected values: {sorted(literals)}"
+            )
+    legacy_ig = _manual_intake_constraint_definition(cursor, "manual_intake_ig_confidence_check")
+    legacy_ig_scale = legacy_ig is not None
+    if legacy_ig_scale and legacy_ig.removesuffix(" NOT VALID") != _MANUAL_INTAKE_LEGACY_IG_SCALE:
+        raise RuntimeError(f"Unexpected definition for manual_intake_ig_confidence_check: {legacy_ig!r}")
+
+    # ---- 2. amount_g -> default_portion (H9, decision 2026-10-09) ----
+    has_old = _has_column(cursor, "manual_intake", "amount_g")
+    has_new = _has_column(cursor, "manual_intake", "default_portion")
+    if has_old and has_new:
+        raise RuntimeError("manual_intake has both amount_g and default_portion: half-applied migration")
+    if has_old:
+        if _manual_intake_count(cursor, "amount_g > 3000"):
+            raise RuntimeError(
+                "manual_intake.amount_g has rows above 3000 g; they do not fit the shared "
+                "default_portion range (code_conventions.md 12.7)."
+            )
+        cursor.execute("ALTER TABLE manual_intake RENAME COLUMN amount_g TO default_portion;")
+        cursor.execute("ALTER TABLE manual_intake ALTER COLUMN default_portion DROP NOT NULL;")
+    elif not has_new:
+        cursor.execute("ALTER TABLE manual_intake ADD COLUMN default_portion REAL;")
+
+    # ---- 3. Drop the inherited CHECKs by their exact name ----
+    for legacy_name in _MANUAL_INTAKE_LEGACY_CHECKS:
+        cursor.execute(
+            sql.SQL("ALTER TABLE manual_intake DROP CONSTRAINT IF EXISTS {};").format(
+                sql.Identifier(legacy_name)
+            )
+        )
+
+    # ---- 4. New columns and the ig_confidence scale (H15, decision 2026-10-09) ----
     for column, definition in (
-        ("deleted_at", "TIMESTAMP NULL"),
-        ("created_at", "TIMESTAMP"),
-        ("updated_at", "TIMESTAMP"),
+        # Existing rows are reusable dishes: FALSE is a technical backfill.
+        ("is_quick_add", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        ("macros_confidence", "INTEGER"),
+        ("default_strictly_weighed", "BOOLEAN"),
     ):
         if not _has_column(cursor, "manual_intake", column):
             cursor.execute(
@@ -610,114 +658,180 @@ def _ensure_manual_intake_schema(cursor):
                     sql.Identifier(column), sql.SQL(definition)
                 )
             )
+    # default_macros_quality -> macros_quality: the quality is the dish's data,
+    # read live by portions (decision 2026-10-09, measurement §6.11).
+    has_old_quality = _has_column(cursor, "manual_intake", "default_macros_quality")
+    has_new_quality = _has_column(cursor, "manual_intake", "macros_quality")
+    if has_old_quality and has_new_quality:
+        raise RuntimeError(
+            "manual_intake has both default_macros_quality and macros_quality: half-applied migration"
+        )
+    if has_old_quality:
+        cursor.execute("ALTER TABLE manual_intake RENAME COLUMN default_macros_quality TO macros_quality;")
+    elif not has_new_quality:
+        cursor.execute("ALTER TABLE manual_intake ADD COLUMN macros_quality BOOLEAN;")
+    if legacy_ig_scale:
+        # Approved data correction (measurement §6.10, §12.7). It only runs while
+        # the legacy CHECK existed, dropped in step 3 of this same transaction,
+        # so an already migrated value is never converted twice.
+        cursor.execute(
+            """
+            UPDATE manual_intake
+            SET ig_confidence = CASE WHEN ig_confidence IN (1, 2) THEN 0
+                                     WHEN ig_confidence = 3 THEN 1
+                                     WHEN ig_confidence IN (4, 5) THEN 2 END
+            WHERE ig_confidence IS NOT NULL;
+            """
+        )
+        logger.info("manual_intake.ig_confidence: %s rows moved to the 0-2 scale", cursor.rowcount)
 
-    # Legacy rows have no reliable creation time; the migration timestamp is only a backfill marker.
-    cursor.execute(
-        """
-        UPDATE manual_intake
-        SET created_at = COALESCE(created_at, CURRENT_TIMESTAMP),
-            updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP);
-        """
-    )
-    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;")
-    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;")
-    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN created_at SET NOT NULL;")
-    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN updated_at SET NOT NULL;")
-    _ensure_manual_numeric_constraints(cursor)
+    # ---- 5. Nullability (H14, decision 2026-10-09), blocking pre-checks ----
+    if _manual_intake_count(cursor, "created_by IS NULL"):
+        raise RuntimeError(
+            "manual_intake has rows without created_by; created_by cannot be NOT NULL "
+            "(code_conventions.md 11.2.3, 12.7)."
+        )
+    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN created_by SET NOT NULL;")
+    if _manual_intake_count(cursor, "carbs_100g IS NULL"):
+        raise RuntimeError(
+            "manual_intake has rows without carbs_100g; carbs_100g cannot be NOT NULL "
+            "(code_conventions.md 11.2.3, 12.7)."
+        )
+    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN carbs_100g SET NOT NULL;")
+    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN subtype DROP NOT NULL;")
 
-    if _has_column(cursor, "manual_intake", "slug"):
-        cursor.execute("ALTER TABLE manual_intake DROP COLUMN slug;")
+    # ---- 6. Canonical CHECKs, validated (H6, H13, H15) ----
+    # Without NOT VALID: a row that breaks a rule aborts the bootstrap with the
+    # CHECK name (§12.5).
+    for name, expression in manual_intake_check_constraints().items():
+        cursor.execute(
+            sql.SQL("ALTER TABLE manual_intake DROP CONSTRAINT IF EXISTS {};").format(sql.Identifier(name))
+        )
+        cursor.execute(
+            sql.SQL("ALTER TABLE manual_intake ADD CONSTRAINT {} CHECK ({});").format(
+                sql.Identifier(name), sql.SQL(expression)
+            )
+        )
 
+    # ---- 7. Inherited UNIQUE constraints (replaced by the partial indexes) ----
     cursor.execute(
         """
         SELECT conname, pg_get_constraintdef(oid) AS definition
         FROM pg_constraint
-        WHERE conrelid = 'manual_intake'::regclass
-          AND contype = 'u';
+        WHERE conrelid = 'manual_intake'::regclass AND contype = 'u';
         """
     )
     for row in cursor.fetchall() or []:
         definition = (row.get("definition") or "").strip()
-        if definition == "UNIQUE (created_by, name, origin)":
+        if definition in ("UNIQUE (created_by, name)", "UNIQUE (created_by, name, origin)"):
             cursor.execute(
                 sql.SQL("ALTER TABLE manual_intake DROP CONSTRAINT {};").format(
                     sql.Identifier(row["conname"])
                 )
             )
 
-    expected_active_indexdef = (
-        "CREATE UNIQUE INDEX uq_manual_created_name_origin_norm ON public.manual_intake "
-        "USING btree (created_by, lower(TRIM(BOTH FROM name)), "
-        "lower(TRIM(BOTH FROM COALESCE(origin, ''::character varying)))) "
-        "WHERE (deleted_at IS NULL)"
-    )
-    expected_legacy_indexdef = (
-        "CREATE UNIQUE INDEX uq_manual_created_name_origin_norm ON public.manual_intake "
-        "USING btree (created_by, lower(TRIM(BOTH FROM name)), "
-        "lower(TRIM(BOTH FROM COALESCE(origin, ''::character varying))))"
-    )
+    # ---- 8. Canonical names and final safeguard (§11.6, §12.2) ----
+    for old_name, new_name in _MANUAL_INTAKE_CONSTRAINT_RENAMES.items():
+        if _constraint_exists(cursor, "manual_intake", old_name) and not _constraint_exists(
+            cursor, "manual_intake", new_name
+        ):
+            cursor.execute(
+                sql.SQL("ALTER TABLE manual_intake RENAME CONSTRAINT {} TO {};").format(
+                    sql.Identifier(old_name), sql.Identifier(new_name)
+                )
+            )
     cursor.execute(
         """
-        SELECT indexdef
-        FROM pg_indexes
-        WHERE schemaname = 'public'
-          AND tablename = 'manual_intake'
-          AND indexname = 'uq_manual_created_name_origin_norm';
+        SELECT conname, confdeltype
+        FROM pg_constraint
+        WHERE conrelid = 'manual_intake'::regclass AND contype = 'f';
         """
     )
-    index_row = cursor.fetchone()
-    if index_row:
-        actual_indexdef = (index_row.get("indexdef") or "").strip()
-        if actual_indexdef == expected_legacy_indexdef:
-            cursor.execute("DROP INDEX uq_manual_created_name_origin_norm;")
-            index_row = None
-        elif actual_indexdef != expected_active_indexdef:
+    delete_rules = {row["conname"]: row["confdeltype"] for row in cursor.fetchall() or []}
+    for name, expected_rule in (
+        ("fk_manual_intake_created_by_users", "c"),  # CASCADE
+        ("fk_manual_intake_origin_root_id_manual_intake", "n"),  # SET NULL
+    ):
+        if delete_rules.get(name) != expected_rule:
             raise RuntimeError(
-                "Unexpected definition for uq_manual_created_name_origin_norm: "
-                f"{actual_indexdef!r}"
+                f"{name} has delete rule {delete_rules.get(name)!r}, expected {expected_rule!r}"
             )
-    if not index_row:
-        cursor.execute(
-            """
-            CREATE UNIQUE INDEX uq_manual_created_name_origin_norm
-            ON manual_intake (
-                created_by,
-                lower(trim(name)),
-                lower(trim(coalesce(origin, '')))
-            )
-            WHERE deleted_at IS NULL;
-            """
+    canonical = {
+        "pk_manual_intake",
+        "fk_manual_intake_created_by_users",
+        "fk_manual_intake_origin_root_id_manual_intake",
+    } | set(manual_intake_check_constraints())
+    cursor.execute(
+        """
+        SELECT conname
+        FROM pg_constraint
+        WHERE conrelid = 'manual_intake'::regclass
+          AND contype IN ('p', 'f', 'c', 'u');
+        """
+    )
+    unexpected = sorted(
+        row["conname"] for row in cursor.fetchall() or [] if row["conname"] not in canonical
+    )
+    if unexpected:
+        raise RuntimeError(
+            f"manual_intake has constraints outside the canonical set: {unexpected}. "
+            "Add them to manual_intake_check_constraints() or remove them explicitly (§12.1)."
         )
 
+    # ---- 9. Partial unique indexes (H4, §6.1, §11.4.1, §11.5) ----
+    # lower(name) without btrim: ck_manual_intake_name_normalized and
+    # ck_manual_intake_origin_normalized guarantee the stored value already is
+    # normalize_food_text's output, so index, CHECK and Python share one
+    # normalization. A NULL origin counts as '' (decision 2026-10-09). Quick adds
+    # stay outside both: ck_manual_intake_quick_add_not_published keeps them out
+    # of the published one.
+    for index_name in (
+        "uq_manual_created_name_origin_norm",
+        "uq_manual_intake_personal_name_origin",
+        "uq_manual_intake_published_name_origin",
+    ):
+        cursor.execute(sql.SQL("DROP INDEX IF EXISTS {};").format(sql.Identifier(index_name)))
     cursor.execute(
-        """
-        SELECT indexdef
-        FROM pg_indexes
-        WHERE schemaname = 'public'
-          AND tablename = 'manual_intake'
-          AND indexname = 'idx_manual_active_created_by';
-        """
+        "CREATE UNIQUE INDEX uq_manual_intake_personal_name_origin "
+        "ON manual_intake (created_by, lower(name), lower(COALESCE(origin, ''))) "
+        "WHERE deleted_at IS NULL AND NOT is_published AND NOT is_quick_add;"
     )
-    active_owner_index = cursor.fetchone()
-    expected_owner_indexdef = (
-        "CREATE INDEX idx_manual_active_created_by ON public.manual_intake USING btree (created_by) "
-        "WHERE (deleted_at IS NULL)"
+    cursor.execute(
+        "CREATE UNIQUE INDEX uq_manual_intake_published_name_origin "
+        "ON manual_intake (lower(name), lower(COALESCE(origin, ''))) "
+        "WHERE deleted_at IS NULL AND is_published;"
     )
-    if active_owner_index:
-        actual_owner_indexdef = (active_owner_index.get("indexdef") or "").strip()
-        if actual_owner_indexdef != expected_owner_indexdef:
-            raise RuntimeError(
-                "Unexpected definition for idx_manual_active_created_by: "
-                f"{actual_owner_indexdef!r}"
+
+    # ---- 10. Auxiliary indexes (H17, §11.7) ----
+    # Overlaps idx_manual_intake_created_by (_ensure_food_filter_indexes).
+    cursor.execute("DROP INDEX IF EXISTS idx_manual_active_created_by;")
+
+
+def _ensure_manual_intake_timestamptz(cursor):
+    """manual_intake temporal columns -> TIMESTAMPTZ (H13, §10.4, §10.5). Same
+    steps as step 1 of _ensure_catalog_schema; kept apart from the functional
+    changes. Values are read as UTC (session timezone Etc/UTC)."""
+    for column in ("created_at", "updated_at", "deleted_at"):
+        data_type = (_column_data_type(cursor, "manual_intake", column) or "").lower()
+        if data_type == "timestamp without time zone":
+            if column in ("created_at", "updated_at"):
+                cursor.execute(
+                    sql.SQL("ALTER TABLE manual_intake ALTER COLUMN {} DROP DEFAULT;").format(
+                        sql.Identifier(column)
+                    )
+                )
+            cursor.execute(
+                sql.SQL(
+                    "ALTER TABLE manual_intake ALTER COLUMN {} TYPE TIMESTAMPTZ "
+                    "USING {} AT TIME ZONE 'UTC';"
+                ).format(sql.Identifier(column), sql.Identifier(column))
             )
-    else:
-        cursor.execute(
-            """
-            CREATE INDEX idx_manual_active_created_by
-            ON manual_intake (created_by)
-            WHERE deleted_at IS NULL;
-            """
-        )
+        elif data_type != "timestamp with time zone":
+            raise RuntimeError(f"Unexpected manual_intake.{column} type: {data_type!r}")
+    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;")
+    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;")
+    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN created_at SET NOT NULL;")
+    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN updated_at SET NOT NULL;")
 
 
 def _ensure_user_favorites_schema(cursor):
@@ -881,7 +995,14 @@ def _ensure_copy_origin_schema(cursor):
     ):
         cursor.execute("ALTER INDEX idx_catalog_origin_root RENAME TO idx_catalog_origin_root_id;")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_origin_root_id ON catalog (origin_root_id);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_origin_root ON manual_intake (origin_root_id);")
+    if (
+        _index_exists(cursor, "idx_manual_origin_root")
+        and not _index_exists(cursor, "idx_manual_intake_origin_root_id")
+    ):
+        cursor.execute("ALTER INDEX idx_manual_origin_root RENAME TO idx_manual_intake_origin_root_id;")
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_manual_intake_origin_root_id ON manual_intake (origin_root_id);"
+    )
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_origin_root ON recipe (origin_root_id);")
 
 
@@ -891,6 +1012,16 @@ def _index_exists(cursor, name: str) -> bool:
         {"name": name},
     )
     return cursor.fetchone() is not None
+# Columns searched with `_build_fuzzy_search` that have a trigram index.
+_FUZZY_COMPACT_INDEXED_COLUMNS = (
+    ("catalog", "name"),
+    ("manual_intake", "name"),
+    ("manual_intake", "origin"),
+    ("recipe", "name"),
+    ("food_brands", "label"),
+)
+
+
 def _ensure_trgm_search(cursor):
     # Tolerated on purpose: `_build_fuzzy_search` falls back to ILIKE + regexp
     # when `pg_trgm` is missing (`_pg_trgm_enabled`), so search keeps working
@@ -914,10 +1045,26 @@ def _ensure_trgm_search(cursor):
             "CREATE INDEX IF NOT EXISTS idx_food_brands_label_trgm "
             "ON food_brands USING gin (lower(label) gin_trgm_ops);"
         )
+        # Backs the search by origin (H7). Canonical name (§11.7), renamed once.
+        if _index_exists(cursor, "idx_manual_origin_trgm") and not _index_exists(
+            cursor, "idx_manual_intake_origin_trgm"
+        ):
+            cursor.execute("ALTER INDEX idx_manual_origin_trgm RENAME TO idx_manual_intake_origin_trgm;")
         cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_manual_origin_trgm "
+            "CREATE INDEX IF NOT EXISTS idx_manual_intake_origin_trgm "
             "ON manual_intake USING gin (lower(origin) gin_trgm_ops);"
         )
+        # Collapsed form of every searched column, so the third branch of
+        # `_build_fuzzy_search` is indexed too and the whole OR can use indexes
+        # (§11.7). Same expression as the query: `fuzzy_compact_sql`.
+        for table, column in _FUZZY_COMPACT_INDEXED_COLUMNS:
+            cursor.execute(
+                sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} USING gin ({} gin_trgm_ops);").format(
+                    sql.Identifier(f"idx_{table}_{column}_compact_trgm"),
+                    sql.Identifier(table),
+                    sql.SQL(fuzzy_compact_sql(column)),
+                )
+            )
         cursor.execute("RELEASE SAVEPOINT trgm_setup;")
     except Exception as exc:
         cursor.execute("ROLLBACK TO SAVEPOINT trgm_setup;")
@@ -931,8 +1078,16 @@ def _ensure_food_filter_indexes(cursor):
     # (0 scans) and the partial unique indexes cover the visibility filter.
     cursor.execute("DROP INDEX IF EXISTS idx_catalog_visibility;")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_deleted_at ON catalog (deleted_at);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_created_by ON manual_intake (created_by);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_visibility ON manual_intake (is_published, created_by);")
+    # idx_manual_visibility is dropped and not recreated: no query uses it; the
+    # partial unique indexes and the owner index cover the visibility filter.
+    cursor.execute("DROP INDEX IF EXISTS idx_manual_visibility;")
+    # Canonical index name (§11.7): rename the older name once, before creating.
+    if _index_exists(cursor, "idx_manual_created_by") and not _index_exists(
+        cursor, "idx_manual_intake_created_by"
+    ):
+        cursor.execute("ALTER INDEX idx_manual_created_by RENAME TO idx_manual_intake_created_by;")
+    # Backs the owner filter and the cascade from users.
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_intake_created_by ON manual_intake (created_by);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_users_id ON recipe (users_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_visibility ON recipe (is_published, users_id);")
 
@@ -951,42 +1106,6 @@ def _ensure_tags_color_schema(cursor):
     )
     cursor.execute("ALTER TABLE tags ALTER COLUMN color SET DEFAULT 'hsl(0 80% 90%)';")
     cursor.execute("ALTER TABLE tags ALTER COLUMN color SET NOT NULL;")
-
-
-def _ensure_food_name_origin_uniqueness(cursor):
-    # manual_intake only now: its audit keeps this helper (and the tolerated
-    # savepoint, §12.5) until it is rewritten. catalog's uniqueness lives in
-    # _ensure_catalog_schema with partial indexes (feedback 2, H2).
-    cursor.execute(
-        """
-        SELECT con.conname
-        FROM pg_constraint con
-        JOIN pg_class rel ON rel.oid = con.conrelid
-        WHERE rel.relname = 'manual_intake'
-          AND con.contype = 'u'
-          AND pg_get_constraintdef(con.oid) ILIKE 'UNIQUE (created_by, name)%';
-        """
-    )
-    for row in cursor.fetchall() or []:
-        name = row.get("conname")
-        if name:
-            cursor.execute(f'ALTER TABLE manual_intake DROP CONSTRAINT IF EXISTS "{name}";')
-
-    # Enforce normalized uniqueness (case-insensitive and space-trimmed).
-    cursor.execute("SAVEPOINT food_name_origin_uniqueness;")
-    try:
-        cursor.execute(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS uq_manual_created_name_origin_norm
-            ON manual_intake (created_by, lower(trim(name)), lower(trim(COALESCE(origin, ''))));
-            """
-        )
-        cursor.execute("RELEASE SAVEPOINT food_name_origin_uniqueness;")
-    except Exception as exc:
-        cursor.execute("ROLLBACK TO SAVEPOINT food_name_origin_uniqueness;")
-        cursor.execute("RELEASE SAVEPOINT food_name_origin_uniqueness;")
-        logger.warning("food uniqueness migration skipped: %s", exc)
-
 
 
 def _ensure_food_brands_schema(cursor):
@@ -1197,14 +1316,19 @@ _CANONICAL_INJECTION_CONSTRAINTS = (
 _INTAKE_EVENT_CONSTRAINT_RENAMES = {
     "intake_event_users_id_fkey": "fk_intake_event_users_id_users",
     "intake_event_amount_confidence_check": "ck_intake_event_amount_confidence",
-    "intake_event_quality_confidence_check": "ck_intake_event_quality_confidence",
-    "intake_event_carbs_uncertainty_check": "ck_intake_event_carbs_uncertainty",
-    "intake_event_sugars_uncertainty_check": "ck_intake_event_sugars_uncertainty",
-    "intake_event_fats_uncertainty_check": "ck_intake_event_fats_uncertainty",
-    "intake_event_saturated_uncertainty_check": "ck_intake_event_saturated_uncertainty",
-    "intake_event_proteins_uncertainty_check": "ck_intake_event_proteins_uncertainty",
-    "intake_event_fiber_uncertainty_check": "ck_intake_event_fiber_uncertainty",
 }
+
+
+# Event metrics that depend on the food and are computed live (§6.9.4).
+_INTAKE_EVENT_LIVE_METRIC_COLUMNS = (
+    "quality_confidence",
+    "carbs_uncertainty",
+    "sugars_uncertainty",
+    "fats_uncertainty",
+    "saturated_uncertainty",
+    "proteins_uncertainty",
+    "fiber_uncertainty",
+)
 
 
 def _constraint_exists(cursor, table: str, name: str) -> bool:
@@ -1306,6 +1430,19 @@ def _ensure_intake_event_schema(cursor):
 
     # ---- total_amount is no longer persisted: it is computed live (decision 2026-09-10) ----
     cursor.execute("ALTER TABLE intake_event DROP COLUMN IF EXISTS total_amount;")
+
+    # ---- quality_confidence and *_uncertainty are no longer persisted: they depend
+    # on the food, so they are computed live (measurement_conventions.md §6.9.4,
+    # finding 18 of audit_manual_intake.md). Destructive migration approved on
+    # 2026-10-09 (§12.4); dropping a column drops its CHECK too. Recovery: CSV
+    # export of the local values taken before dropping them and the nightly
+    # production pg_dump (infra_conventions.md). ----
+    for column in _INTAKE_EVENT_LIVE_METRIC_COLUMNS:
+        cursor.execute(
+            sql.SQL("ALTER TABLE intake_event DROP COLUMN IF EXISTS {};").format(
+                sql.Identifier(column)
+            )
+        )
 
     # ---- H32/H35: ingested_amount with sanity limits (measurement_conventions.md
     # §6.9.2, decision 2026-09-10). Verified on 2026-09-09: 0 rows negative or out
@@ -2098,7 +2235,7 @@ def init_db():
             DBSchema.auth_rate_limits,
             DBSchema.food_brands,
             DBSchema.catalog(),
-            DBSchema.manual_intake,
+            DBSchema.manual_intake(),
             DBSchema.fridge,
             DBSchema.tags,
             DBSchema.recipe,
@@ -2117,13 +2254,15 @@ def init_db():
         _ensure_food_brands_schema(cur)
         _ensure_trgm_search(cur)
         _ensure_tags_color_schema(cur)
-        _ensure_manual_intake_schema(cur)
-        _ensure_food_name_origin_uniqueness(cur)
         _ensure_user_favorites_schema(cur)
         _ensure_copy_origin_schema(cur)
         _ensure_food_publication_schema(cur)
         _ensure_food_filter_indexes(cur)
         _ensure_catalog_schema(cur)
+        # After the publication and copy-origin steps: its indexes use
+        # is_published and origin_root_id, which they create on old installs.
+        _ensure_manual_intake_schema(cur)
+        _ensure_manual_intake_timestamptz(cur)
         _ensure_users_schema(cur)
         _ensure_auth_sessions_schema(cur)
         _ensure_auth_rate_limits_schema(cur)

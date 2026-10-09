@@ -70,7 +70,7 @@ def _error_html(message: str, *, fragment: bool) -> str:
             f"{safe_message}</div>"
         )
     return (
-        '<!doctype html><html lang="es"><head><meta charset="utf-8">'
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1.0">'
         f"<title>{safe_message}</title></head><body>{_error_html(message, fragment=True)}</body></html>"
     )
@@ -194,7 +194,7 @@ async def auth_security_middleware(request: Request, call_next):
             # since yesterday" gets its own message instead of an opaque `403`
             # (finding 52 of audit/audit_intake_event.md).
             csrf_error = AuthorizationError()
-            csrf_message = "Tu sesión ha caducado. Recarga la página e inténtalo de nuevo."
+            csrf_message = "Your session has expired. Reload the page and try again."
             if _is_htmx_request(request):
                 return HTMLResponse(
                     "",

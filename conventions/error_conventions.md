@@ -20,6 +20,7 @@ Este documento complementa `conventions/code_conventions.md` y `conventions/meas
 - Los errores técnicos no se convierten silenciosamente en resultados exitosos.
 - Cada error se clasifica una sola vez y se traduce de forma uniforme en el boundary correspondiente.
 - Los códigos internos son estables y no dependen del idioma del mensaje visible.
+- Los mensajes públicos se redactan en inglés, como el resto de la interfaz (`frontend_conventions.md` §7.12).
 - Los mensajes públicos no exponen SQL, tracebacks, nombres de tablas, rutas internas, tokens ni datos de otros usuarios.
 - El usuario recibe información suficiente para corregir la petición, pero no detalles internos innecesarios.
 - Un error inesperado se registra internamente con contexto seguro y se muestra al usuario mediante un mensaje genérico.
@@ -40,7 +41,7 @@ La jerarquía base es:
 class AppError(Exception):
     code = "application_error"
     status_code = 500
-    public_message = "Ha ocurrido un error inesperado."
+    public_message = "An unexpected error occurred."
     log_level = "error"
 
     def __init__(self, internal_message=None, *, fields=None, context=None):
@@ -52,63 +53,63 @@ class AppError(Exception):
 class ValidationError(AppError):
     code = "validation_error"
     status_code = 422
-    public_message = "Los datos enviados no son válidos."
+    public_message = "The submitted data is not valid."
     log_level = "info"
 
 
 class MalformedRequestError(AppError):
     code = "malformed_request"
     status_code = 400
-    public_message = "La petición no tiene un formato válido."
+    public_message = "The request is not well formed."
     log_level = "info"
 
 
 class AuthenticationError(AppError):
     code = "authentication_required"
     status_code = 401
-    public_message = "Necesitas iniciar sesión."
+    public_message = "You need to log in."
     log_level = "info"
 
 
 class AuthorizationError(AppError):
     code = "forbidden"
     status_code = 403
-    public_message = "No tienes permiso para realizar esta operación."
+    public_message = "You are not allowed to perform this action."
     log_level = "info"
 
 
 class NotFoundError(AppError):
     code = "not_found"
     status_code = 404
-    public_message = "El recurso no existe o no está disponible."
+    public_message = "The resource does not exist or is not available."
     log_level = "info"
 
 
 class ConflictError(AppError):
     code = "conflict"
     status_code = 409
-    public_message = "La operación entra en conflicto con el estado actual."
+    public_message = "The action conflicts with the current state."
     log_level = "info"
 
 
 class RateLimitError(AppError):
     code = "rate_limited"
     status_code = 429
-    public_message = "Se han realizado demasiadas peticiones. Inténtalo más tarde."
+    public_message = "Too many requests. Please try again later."
     log_level = "warning"
 
 
 class ExternalServiceError(AppError):
     code = "external_service_error"
     status_code = 502
-    public_message = "El servicio externo no está disponible."
+    public_message = "The external service is not available."
     log_level = "error"
 
 
 class InfrastructureError(AppError):
     code = "infrastructure_error"
     status_code = 500
-    public_message = "No se ha podido completar la operación."
+    public_message = "The action could not be completed."
     log_level = "error"
 ```
 
@@ -267,10 +268,10 @@ Cuando el error afecta a campos concretos, se utiliza un mapa estable:
 {
   "error": {
     "code": "validation_error",
-    "message": "Los datos enviados no son válidos.",
+    "message": "The submitted data is not valid.",
     "fields": {
-      "amount_g": "Debe ser mayor que cero.",
-      "insulin_type": "Tipo de insulina no válido."
+      "amount_g": "It must be greater than zero.",
+      "insulin_type": "Invalid insulin type."
     }
   }
 }
@@ -293,7 +294,7 @@ Todas las respuestas JSON de error utilizan esta estructura:
 {
   "error": {
     "code": "not_found",
-    "message": "El recurso no existe o no está disponible.",
+    "message": "The resource does not exist or is not available.",
     "fields": {}
   }
 }
@@ -305,7 +306,7 @@ Además, el boundary añade un `request_id` de correlación:
 {
   "error": {
     "code": "infrastructure_error",
-    "message": "No se ha podido completar la operación.",
+    "message": "The action could not be completed.",
     "fields": {}
   },
   "request_id": "01J..."

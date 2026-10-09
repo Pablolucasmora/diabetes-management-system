@@ -164,6 +164,26 @@ class ConservationMethod(str, Enum):
     PRE_COOKED = "pre-cooked"
 
 
+@unique
+class GlycemicIndex(str, Enum):
+    """Declared absorption speed of a manual dish (measurement_conventions.md
+    §5.5). Not a measured GI. Existing codes kept (§4.2); `none` added."""
+
+    NONE = "none"  # no absorption (no carbs)
+    LOW = "low"  # slow
+    MEDIUM = "medium"
+    HIGH = "high"  # fast
+
+
+@unique
+class NutrientEntryMode(str, Enum):
+    """How the user typed the nutrients of a manual dish (measurement §5.4).
+    Transport only: never persisted."""
+
+    PER_100G = "per_100g"
+    PORTION_TOTAL = "portion_total"
+
+
 NOVA_MIN, NOVA_MAX = 1, 4
 YUKA_MIN, YUKA_MAX = 0, 100
 
