@@ -359,6 +359,7 @@ Decisión 2026-10-09. Lo que se guarda es siempre por 100 g (§5.1). Lo que camb
 - La conversión la hace el servidor, que es la autoridad. El JavaScript solo puede mostrar una vista previa (`code_conventions.md` §7.13 y §7.15).
 - Los límites de §5.3 se comprueban sobre el valor ya convertido. Si se sale del rango (por ejemplo, 80 g de hidratos en 60 g de peso dan 133 g por 100 g), se rechaza con `validation_error` (`422`). Nunca se recorta.
 - No se guardan ni el modo de entrada ni los totales originales, igual que el texto de las smart macros.
+- Por eso el formulario de edición se abre en el modo "por 100 g", con los valores guardados, igual que el de `catalog`. El usuario puede cambiar al modo "total de la porción" y el servidor convierte igual que en el alta.
 - Por ahora solo se aplica a `manual_intake`. Los formularios de `catalog` siguen pidiendo los valores por 100 g.
 
 ### 5.5 Índice glucémico declarado (`manual_intake.glycemic_index`)
@@ -640,6 +641,7 @@ Decisión 2026-10-09. `manual_intake.macros_confidence` y `manual_intake.ig_conf
 | `NULL` | no declarado |
 
 - Son enteros con `CHECK` de rango `0–2`, declarado una sola vez como constante de dominio.
+- `ig_confidence` solo puede tener valor si `glycemic_index` lo tiene: no se declara la seguridad de un dato que no existe. En la base es `ck_manual_intake_ig_confidence_requires_glycemic_index` (`ig_confidence IS NULL OR glycemic_index IS NOT NULL`). La validación de Python lo comprueba antes y rechaza con `validation_error` (`422`). Nunca se vacía `ig_confidence` sin avisar (`code_conventions.md` §7.2), tampoco al editar si se vacía el índice glucémico.
 - Pertenecen al plato, no a cada vez que se come. El usuario las actualiza cuando cambia su seguridad; por ejemplo, ajusta `ig_confidence` según cómo le afecta el plato a la glucosa.
 - No se promedian con las métricas de §6.1, no se muestran como porcentaje y no se convierten a `0–1` sin una fórmula documentada (§6.2).
 - No sustituyen a `macros_quality` (§6.5). Un plato puede tener macros de la carta (`macros_quality = TRUE`) y una confianza baja si el usuario duda de que la ración se parezca a la de la carta.

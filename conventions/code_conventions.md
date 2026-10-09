@@ -1337,7 +1337,9 @@ Decisiones 2026-10-09 (`conventions/decisions.md`). Las unidades, la entrada de 
   - Solo existe a través de su porción. No aparece en búsquedas, listados, favoritos, etiquetas, sugerencias de origen ni en el selector de ingredientes de receta.
   - No se puede publicar: `CHECK (NOT (is_quick_add AND is_published))`.
   - No entra en los índices únicos: puede haber varios "Menú del día".
-  - Pendiente (`audit/deuda_pendiente.md`, sección `manual_intake`): convertirlo después en plato reutilizable, y qué pasa con la fila cuando se borra su porción.
+  - No se puede editar por ahora. Solo se puede cambiar la cantidad de su porción en el carrito, que escala los macros como en cualquier porción. Corregir sus valores queda para el futuro historial de comidas en estadísticas (`audit/deuda_pendiente.md`, sección `manual_intake`).
+  - Si se borra su porción, la fila se queda en la base, invisible. Es un comportamiento interino: qué conviene hacer con ella está pendiente en la deuda.
+  - Pendiente (`audit/deuda_pendiente.md`, sección `manual_intake`): convertirlo después en plato reutilizable.
 - **Visibilidad y publicación**: regla común de §11.4.1, en SQL. Solo se publican platos reutilizables.
   - Se publica y despublica con la acción Publish/Unpublish de la ficha, como en `catalog`. Sustituye a la casilla "Published" de la edición, que la decisión 2026-09-25 solo admitía de forma provisional.
   - Concepto de duplicado: nombre normalizado + origen normalizado, con un origen `NULL` equivalente a la cadena vacía. Es la "marca" de §11.4.1 para esta tabla. El `409` de publicar dice que ya existe un plato publicado con ese nombre y ese origen.
@@ -1348,6 +1350,7 @@ Decisiones 2026-10-09 (`conventions/decisions.md`). Las unidades, la entrada de 
   - Sirve para buscar (el buscador encuentra por nombre o por origen) y para el análisis por origen.
   - No es una enumeración abierta de §4.5.
 - **Archivar, corregir, copiar y versionar**: el mismo contrato que `catalog` (§11.2.2), salvo lo que allí depende de la biblioteca general, que aquí no existe. Archivar es irreversible, solo lo hace el propietario, saca el plato de búsquedas y listados para todos, lo mantiene visible y utilizable para quien lo tenga en favoritos o en una receta propia, y en la misma transacción lo quita de los favoritos del propietario. Corregir no es archivar. La tabla de versiones (`portion_detail` H1) cubre también `manual_intake`.
+- **Concurrencia**: en la edición gana la última escritura (§6.7, §6.10), como en `catalog`. No hay columna `version` y se documenta en el docstring de la función de edición. Alta, copia, archivar, publicar y despublicar se comportan al repetirse como en `catalog`.
 - **Porciones de un plato manual**:
   - Se muestran cocción, conservación y estado final.
   - Nunca se muestra `Cooked weight`, porque un plato manual no tiene `cooking_factor` (`measurement_conventions.md` §5.2). Esto vale para el carrito y para la ficha.
