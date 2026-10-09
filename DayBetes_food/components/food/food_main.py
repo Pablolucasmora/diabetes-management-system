@@ -15,17 +15,17 @@ from DayBetes_food.database.queries import (
 
 
 def plate_selector_options(connection, user_id: int, event_id: int):
-    """Tandas de un evento como pares `(id, etiqueta)` para el selector (§7.7).
+    """Plates of an event as `(id, label)` pairs for the selector (§7.7).
 
-    El nombre visible de una tanda puede ser derivado de sus ingredientes
-    (measurement_conventions.md §4.6.3), así que hace falta leerlos: el
-    componente no puede resolverlo solo (§1.4).
+    A plate's visible name can be derived from its ingredients
+    (measurement_conventions.md §4.6.3), so they have to be read: the
+    component cannot resolve it on its own (§1.4).
 
-    Devuelve además la tanda a preseleccionar: la de la última porción añadida
-    y, si ninguna tiene ingredientes todavía, la creada más recientemente. Es
-    exactamente el mismo criterio que aplica `ensure_default_plate` cuando la
-    petición no trae `plate_id`, para que lo que el selector muestra sea lo que
-    de verdad ocurriría (frontend_conventions.md §6).
+    It also returns the plate to preselect: the one of the last portion added
+    and, if none has ingredients yet, the most recently created one. It is
+    exactly the same criterion `ensure_default_plate` applies when the
+    request carries no `plate_id`, so that what the selector shows is what
+    would really happen (frontend_conventions.md §6).
     """
     plates = list_intake_plates(connection, event_id)
     if not plates:
@@ -54,10 +54,9 @@ def food_main(connection):
     user_id = get_current_user_id()
     events = list_planned_intake_events(connection, int(user_id)) if user_id else []
 
-    # El navegador muestra la primera opción del selector de comida cuando
-    # ninguna lleva `selected`, así que las tandas que se listan tienen que ser
-    # las de ese mismo evento: lo que se ve y lo que se guardaría coinciden
-    # (frontend_conventions.md §6).
+    # The browser shows the meal selector's first option when none carries
+    # `selected`, so the plates listed must be that same event's: what is
+    # shown and what would be saved match (frontend_conventions.md §6).
     selected_event_id = events[0].id if events else None
     plate_options, last_used_plate = (
         plate_selector_options(connection, int(user_id), selected_event_id)

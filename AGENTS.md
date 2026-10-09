@@ -8,6 +8,13 @@
 - Si una convención del proyecto contradice una práctica general, prevalece la convención documentada del proyecto.
 - Si una convención existente es ambigua, incompleta o contradictoria, el agente debe señalarlo antes de realizar cambios que dependan de esa decisión.
 
+## Idioma
+
+- Lo que se ejecuta, en inglés: código, comentarios, docstrings, mensajes internos, archivos de infraestructura (shell, YAML, Compose, systemd, plantillas de entorno), commits y Pull Requests.
+- Lo que se lee como documentación, en español: `README.md`, `conventions/` y la memoria del TFG.
+- Las explicaciones al usuario, en español.
+- Detalle y excepciones (texto de la interfaz): `conventions/code_conventions.md` §0.
+
 ## Convenciones faltantes
 
 - Si el agente detecta que no existe una convención para una decisión nueva que sea necesaria para el trabajo, debe detener la implementación de esa parte y comunicar la carencia al usuario.

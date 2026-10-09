@@ -1,7 +1,7 @@
-"""Dataclasses de dominio para insulin_injections (conventions/code_conventions.md §3.6).
+"""Domain dataclasses for insulin_injections (conventions/code_conventions.md §3.6).
 
-Este módulo no importa psycopg, rutas ni componentes. La conversión de fila
-SQL a estas dataclasses vive en DayBetes_food/database/mappers.py, no aquí.
+This module imports no psycopg, routes or components. The conversion from a
+SQL row to these dataclasses lives in DayBetes_food/database/mappers.py, not here.
 """
 
 from dataclasses import dataclass
@@ -13,10 +13,10 @@ from DayBetes_food.errors import ValidationError
 
 @dataclass(frozen=True)
 class InsulinInjectionRead:
-    """Lectura de una inyección de insulina con todos sus campos.
+    """Read model of an insulin injection with all its fields.
 
-    shot_time, created_at, updated_at son aware en UTC (measurement_conventions.md §9.3).
-    needle_leak y skin_pinch pueden ser None = no observado (measurement_conventions.md §2).
+    shot_time, created_at, updated_at are aware in UTC (measurement_conventions.md §9.3).
+    needle_leak and skin_pinch can be None = not observed (measurement_conventions.md §2).
     """
     id: int
     user_id: int
@@ -35,10 +35,10 @@ class InsulinInjectionRead:
 
 @dataclass(frozen=True)
 class InsulinInjectionCreate:
-    """Payload para crear una inyección de insulina.
+    """Payload to create an insulin injection.
 
-    Todos los parámetros opcionales tienen defaults None.
-    El user_id viene del contexto de autenticación, no del payload.
+    Every optional parameter defaults to None.
+    The user_id comes from the authentication context, not from the payload.
     """
     user_id: int
     insulin_type: InsulinType
@@ -54,11 +54,11 @@ class InsulinInjectionCreate:
 
 @dataclass(frozen=True)
 class InsulinInjectionUpdate:
-    """Payload para actualizar una inyección de insulina.
+    """Payload to update an insulin injection.
 
-    Sustitución completa de los campos editables por el formulario de ajustes.
-    No es un update parcial: el formulario envía siempre los cuatro campos, así que
-    no aplica la distinción ausente/None/CLEAR de code_conventions.md §3.4.
+    Full replacement of the fields editable in the settings form.
+    It is not a partial update: the form always sends the four fields, so the
+    absent/None/CLEAR distinction of code_conventions.md §3.4 does not apply.
     """
     insulin_type: InsulinType
     shot_time: datetime
@@ -67,14 +67,14 @@ class InsulinInjectionUpdate:
 
 
 def validate_insulin_dose(insulin_type: InsulinType, units: float | None) -> None:
-    """Valida coherencia entre tipo de insulina y dosis.
+    """Validate the consistency between insulin type and dose.
 
-    Lanza ValidationError si la combinación no es válida (code_conventions.md §4.3).
+    Raises ValidationError if the combination is not valid (code_conventions.md §4.3).
 
-    Reglas:
-    - Basal requiere dosis (units > 0)
-    - Rápida puede no llevar dosis (units es opcional)
-    - Si hay dosis, debe ser positiva y múltiplo de 0.5 U
+    Rules:
+    - Basal requires a dose (units > 0)
+    - Rapid may have no dose (units is optional)
+    - If there is a dose, it must be positive and a multiple of 0.5 U
     """
     if insulin_type is InsulinType.BASAL and units is None:
         raise ValidationError("Basal insulin requires a dose", fields={"units": "required"})
@@ -82,6 +82,6 @@ def validate_insulin_dose(insulin_type: InsulinType, units: float | None) -> Non
     if units is not None:
         if units <= 0:
             raise ValidationError("Insulin dose must be positive", fields={"units": "positive"})
-        # Validar que sea múltiplo de 0.5: (units * 2) debe ser un entero
+        # Check it is a multiple of 0.5: (units * 2) must be an integer
         if abs((units * 2) - round(units * 2)) > 1e-8:
             raise ValidationError("Insulin dose must be a multiple of 0.5 U", fields={"units": "step"})

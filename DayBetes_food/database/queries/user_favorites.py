@@ -1,4 +1,4 @@
-"""Queries para la tabla puente `user_favorites` (catalog/manual_intake/recipe)."""
+"""Queries for the `user_favorites` bridge table (catalog/manual_intake/recipe)."""
 
 from DayBetes_food.database.queries.crud import _execute_query
 

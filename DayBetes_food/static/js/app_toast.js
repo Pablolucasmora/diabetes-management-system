@@ -1,11 +1,11 @@
 (function () {
-  // Canal único de avisos de error de la web (decisión 2026-09-10, hallazgo 37
-  // de audit/audit_intake_event.md).
+  // Single channel for the web's error notices (decision 2026-09-10, finding
+  // 37 of audit/audit_intake_event.md).
   //
-  // Las rutas HTMX conservan su status semántico y devuelven cuerpo vacío; el
-  // mensaje público viaja en cabeceras (`X-App-Error-Message`) y, cuando la
-  // respuesta es 2xx, en el evento `appError` de `HX-Trigger`. Aquí se pinta
-  // sobre #app_toast, definido una sola vez en el layout (components/ui.py).
+  // HTMX routes keep their semantic status and return an empty body; the
+  // public message travels in headers (`X-App-Error-Message`) and, when the
+  // response is 2xx, in the `appError` event of `HX-Trigger`. It is painted
+  // here over #app_toast, defined once in the layout (components/ui.py).
   if (window.__dbAppToastBootstrapped) return;
   window.__dbAppToastBootstrapped = true;
 
@@ -15,8 +15,8 @@
   var lastMessage = "";
   var lastShownAt = 0;
 
-  // Mensaje por defecto por status, para las respuestas que aún no declaran
-  // uno propio (por ejemplo el 403 de "sin header HX-Request").
+  // Default message per status, for the responses that do not declare their
+  // own yet (for example the 403 for "missing HX-Request header").
   var DEFAULT_BY_STATUS = {
     400: "La petición no tiene un formato válido.",
     401: "Necesitas iniciar sesión.",
@@ -30,8 +30,8 @@
   function showToast(message) {
     if (!message) return;
     var now = Date.now();
-    // Una misma respuesta puede llegar por cabecera y por HX-Trigger: se pinta
-    // una sola vez.
+    // The same response can arrive through a header and through HX-Trigger:
+    // it is painted only once.
     if (message === lastMessage && now - lastShownAt < DEDUPE_MS) return;
     lastMessage = message;
     lastShownAt = now;
@@ -65,8 +65,8 @@
   }
 
   function bind() {
-    // 4xx/5xx: htmx no hace swap, así que este es el único aviso que ve el
-    // usuario.
+    // 4xx/5xx: htmx does not swap, so this is the only notice the user
+    // sees.
     document.body.addEventListener("htmx:responseError", function (event) {
       var detail = event && event.detail ? event.detail : null;
       showToast(messageFromXhr(detail ? detail.xhr : null));
@@ -75,9 +75,9 @@
       showToast("No se ha podido contactar con el servidor.");
     });
 
-    // Errores señalados con HX-Trigger sobre una respuesta 2xx. `appError`
-    // lleva mensaje propio; `addError` es el evento heredado de
-    // routes/food_routes.py, que hasta ahora no escuchaba nadie.
+    // Errors signalled with HX-Trigger on a 2xx response. `appError` carries
+    // its own message; `addError` is the legacy event from
+    // routes/food_routes.py, which nobody listened to until now.
     document.body.addEventListener("appError", function (event) {
       var detail = event && event.detail ? event.detail : null;
       showToast((detail && detail.message) || DEFAULT_BY_STATUS[422]);

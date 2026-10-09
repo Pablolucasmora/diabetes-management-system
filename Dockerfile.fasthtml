@@ -1,26 +1,26 @@
-# Usa una versión ligera de Python
+# Lightweight Python base image
 FROM python:3.12-slim
 
-# Evita que Python genere archivos .pyc y permite ver logs en tiempo real
+# Do not write .pyc files and show logs in real time
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
 
-# Directorio de trabajo dentro del contenedor
+# Working directory inside the container
 WORKDIR /app
 
-# Instalamos dependencias del sistema necesarias para PostgreSQL (psycopg2)
+# System dependencies needed for PostgreSQL (psycopg)
 RUN apt-get update && apt-get install -y \
     libpq-dev \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
 
-# Copiamos e instalamos las librerías de Python
+# Copy and install the Python libraries
 COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Exponemos el puerto que usa FastHTML
+# Port used by FastHTML
 EXPOSE 8000

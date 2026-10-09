@@ -335,14 +335,13 @@ def EventHeader(event):
         Form(
             Label("Meal type", cls="text-xs text-gray-600", **{"for": meal_type_id}),
             Select(
-                # Placeholder explícito para el estado "sin elegir": si no se
-                # incluyera, un event.meal_type en None dejaría el <select>
-                # sin ningún <option selected>, y el navegador marca la
-                # primera opción como si fuera la elegida aunque la base
-                # tenga NULL — el usuario confirmaría creyendo un meal_type
-                # que nunca se guardó (§7.14 de code_conventions.md, decisión
-                # 2026-09-11). No debería llegar a mostrarse salvo huecos de
-                # franja horaria o un evento creado antes de esta corrección.
+                # Explicit placeholder for the "not chosen" state: without it,
+                # an event.meal_type of None would leave the <select> with no
+                # <option selected>, and the browser marks the first option as
+                # chosen even though the database has NULL — the user would
+                # confirm believing in a meal_type that was never saved (§7.14
+                # of code_conventions.md, decision 2026-09-11). It should never
+                # show except for time-slot gaps or an event created before this fix.
                 Option("— Select —", value="", selected=(event.meal_type is None), disabled=True),
                 *[Option(meal_type.value, value=meal_type.value, selected=(event.meal_type is meal_type)) for meal_type in MealType],
                 id=meal_type_id,
@@ -506,12 +505,12 @@ def _unit_options(default_portion_base: float | None, base_unit: str):
 
 
 def _portions_by_plate(portions):
-    """Reparte las porciones de un evento por tanda, conservando su orden.
+    """Distribute an event's portions by plate, keeping their order.
 
-    La agrupación visual de filas iguales se hace **dentro** de cada tanda
-    (§7.8): agrupar por evento colapsaría en una sola fila el mismo alimento
-    presente en dos tandas, que es justo lo que la clave única de §4.6.4
-    permite distinguir.
+    The visual grouping of equal rows happens **inside** each plate (§7.8):
+    grouping by event would collapse into a single row the same food present
+    in two plates, which is exactly what the §4.6.4 unique key allows to
+    tell apart.
     """
     by_plate = {}
     for portion in portions:
@@ -523,10 +522,10 @@ def _portions_by_plate(portions):
 
 
 def plate_display_name(plate, plate_portions) -> str:
-    """Nombre visible de una tanda: el propio, o el derivado (§4.6.3).
+    """Visible name of a plate: its own, or the derived one (§4.6.3).
 
-    El derivado se calcula aquí, en el render, porque no se guarda: depende de
-    los ingredientes que la tanda tenga en este momento.
+    The derived one is computed here, at render time, because it is not
+    stored: it depends on the ingredients the plate has right now.
     """
     if plate.name:
         return plate.name
@@ -534,19 +533,19 @@ def plate_display_name(plate, plate_portions) -> str:
 
 
 def _ApplyAllButton(plate, offset_input_id, card_target):
-    """`Apply all`: propaga un offset a toda la tanda (§4.6.2, §7.3/§7.4).
+    """`Apply all`: propagate an offset to the whole plate (§4.6.2, §7.3/§7.4).
 
-    Envía el valor que haya en ese momento en el input de offset asociado, sea
-    el de la cabecera o el de una fila: el endpoint es el mismo y la semántica
-    también (fija el offset de la tanda y lo escribe en todas sus porciones).
+    It sends the value currently in the associated offset input, whether the
+    header's or a row's: the endpoint is the same and so are the semantics
+    (it sets the plate's offset and writes it into all its portions).
 
-    `hx-sync` con el input es obligatorio, no cosmético: pulsar el botón
-    después de escribir en el input dispara su `change` por el blur, y las dos
-    peticiones refrescan la misma tarjeta. Sin sincronizar, el primer swap
-    borra del DOM el elemento de la segunda petición, su `htmx:afterRequest`
-    ya no llega al listener global y el overlay de carga se queda encendido
-    para siempre (page_loading.js cuenta peticiones pendientes). Con
-    `replace`, la del botón cancela la del input y solo hay un swap.
+    `hx-sync` with the input is required, not cosmetic: clicking the button
+    after typing in the input fires its `change` through the blur, and both
+    requests refresh the same card. Without syncing, the first swap removes
+    the second request's element from the DOM, its `htmx:afterRequest` never
+    reaches the global listener and the loading overlay stays on forever
+    (page_loading.js counts pending requests). With `replace`, the button's
+    request cancels the input's and there is only one swap.
     """
     return Button(
         "Apply all",
@@ -563,15 +562,15 @@ def _ApplyAllButton(plate, offset_input_id, card_target):
 
 
 def _MoveIngredientSelect(plate, plates, plate_labels, portion_id, item_key, ingredient_name, card_target):
-    """Selector `Move`: cambia la porción de tanda (§7.5).
+    """`Move` selector: change the portion's plate (§7.5).
 
-    La opción `+ New plate` (valor 0) crea la tanda en el acto y mueve la fila
-    a ella. La tanda actual queda fuera de la lista: moverse a sí misma no es
-    una acción.
+    The `+ New plate` option (value 0) creates the plate on the spot and
+    moves the row into it. The current plate is left out of the list: moving
+    to itself is not an action.
 
-    Las etiquetas llegan ya resueltas (`plate_labels`) porque el nombre de una
-    tanda sin nombre propio se deriva de **sus** ingredientes (§4.6.3), que
-    esta fila no tiene a mano.
+    The labels arrive already resolved (`plate_labels`) because the name of a
+    plate without its own name is derived from **its** ingredients (§4.6.3),
+    which this row does not have at hand.
     """
     move_id = f"move_select_{item_key}"
     options = [Option("Move to…", value="", selected=True)]
@@ -599,11 +598,11 @@ def _MoveIngredientSelect(plate, plates, plate_labels, portion_id, item_key, ing
 
 
 def PlateHeader(event, plate, display_name, card_target):
-    """Cabecera de una tanda (§7.3): título, offset, `Apply all` y borrar.
+    """Header of a plate (§7.3): title, offset, `Apply all` and delete.
 
-    El título se edita como el del evento (mismo control, autosave al salir).
-    Vaciarlo devuelve la tanda a su nombre derivado, que es lo que se muestra
-    como placeholder.
+    The title is edited like the event's (same control, autosave on blur).
+    Clearing it returns the plate to its derived name, which is what is shown
+    as the placeholder.
     """
     name_input_id = f"plate_name_{plate.id}"
     offset_input_id = f"plate_offset_{plate.id}"
@@ -640,8 +639,8 @@ def PlateHeader(event, plate, display_name, card_target):
                 onchange="this.blur();",
                 onclick="this.select();",
             ),
-            # min-w-0 es lo que permite que `truncate` recorte el nombre en vez
-            # de empujar los controles fuera de la tarjeta en móvil (§7.9).
+            # min-w-0 is what lets `truncate` clip the name instead of pushing
+            # the controls out of the card on mobile (§7.9).
             cls="min-w-0 flex-1",
         ),
         Div(
@@ -699,18 +698,18 @@ def PlateHeader(event, plate, display_name, card_target):
 
 
 def PlateBlock(event, plate, plate_portions, show_header: bool, plates, plate_labels):
-    """Una tanda dentro de la tarjeta del evento: cabecera (si procede) y filas.
+    """A plate inside the event card: header (when applicable) and rows.
 
-    Con una sola tanda sin nombre no se pinta cabecera y la tarjeta se ve como
-    antes de existir las tandas (§7.2); en ese caso `Apply all` baja a cada
-    fila (§7.4).
+    With a single unnamed plate no header is drawn and the card looks as it
+    did before plates existed (§7.2); in that case `Apply all` moves down to
+    each row (§7.4).
     """
     card_target = f"#cart_card_event_{event.id}"
     grouped = group_portions(plate_portions)
 
-    # Unicidad por forma de preparación (§4.6.4): cuando una tanda tiene dos o
-    # más filas del mismo alimento, cada una marca solo los valores que difieren
-    # de la otra, para que se entienda por qué están separadas (§7.8).
+    # Uniqueness by preparation (§4.6.4): when a plate has two or more rows of
+    # the same food, each one highlights only the values that differ from the
+    # other, so it is clear why they are separate (§7.8).
     by_food = {}
     for item in grouped:
         by_food.setdefault((item["origin"], item["origin_id"]), []).append(item)
@@ -752,13 +751,13 @@ def PlateBlock(event, plate, plate_portions, show_header: bool, plates, plate_la
 
 
 def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show_apply_all=False, differences=()):
-    """Fila de un ingrediente dentro de una tanda.
+    """Row of an ingredient inside a plate.
 
-    `show_apply_all` implementa la regla de frontend_conventions.md §7.4: el
-    botón `Apply all` vive en la cabecera de la tanda y solo baja a la fila
-    cuando esa cabecera no se pinta (evento de una sola tanda sin nombre).
-    Nunca aparece en los dos sitios. El selector `Move` es el caso contrario:
-    solo tiene sentido cuando hay cabeceras que distinguir (§7.5).
+    `show_apply_all` implements the rule of frontend_conventions.md §7.4: the
+    `Apply all` button lives in the plate header and only moves down to the
+    row when that header is not drawn (an event with a single unnamed plate).
+    It never appears in both places. The `Move` selector is the opposite case:
+    it only makes sense when there are headers to tell apart (§7.5).
     """
     sample = grouped_item["sample"]
     portion_id = int(sample.id)
@@ -774,7 +773,7 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
         # No serving: the selector offers grams and the amount is shown in grams.
         units_count = amount
         side_label = unit_label
-    # La clave lleva la tanda y la porción: cada fila necesita ids propios.
+    # The key carries the plate and the portion: each row needs its own ids.
     item_key = f"{plate.id}_{portion_id}"
     display_input_id = f"display_input_{item_key}"
     grams_input_id = f"grams_input_{item_key}"
@@ -889,8 +888,8 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
             _ApplyAllButton(plate, offset_input_id, card_target) if show_apply_all else None,
             cls="flex items-center gap-2 flex-wrap"
         ),
-        # `Move` aparece exactamente cuando hay cabecera de tanda, que es el
-        # caso complementario de `Apply all` en la fila (§7.4, §7.5).
+        # `Move` appears exactly when there is a plate header, which is the
+        # complementary case of the row's `Apply all` (§7.4, §7.5).
         _MoveIngredientSelect(
             plate, plates, plate_labels or {}, portion_id, item_key, ingredient_name, card_target
         )
@@ -932,12 +931,12 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
 
 def NotesSection(event):
     """
-    Nota libre del evento, justo encima de "Confirm food".
+    Free-text note of the event, right above "Confirm food".
 
-    Se guarda sola al salir del campo (`change`), igual que el nombre del
-    evento: no hay botón de guardar en el carrito. El `maxlength` es ayuda de
-    UX; el límite real lo comprueba la ruta y devuelve 422 si se excede, sin
-    truncar (§7.3, hallazgo 44 de audit/audit_intake_event.md).
+    It saves itself when leaving the field (`change`), like the event name:
+    there is no save button in the cart. The `maxlength` is a UX aid; the real
+    limit is checked by the route, which returns 422 if it is exceeded,
+    without truncating (§7.3, finding 44 of audit/audit_intake_event.md).
     """
     notes_id = f"event_notes_{event.id}"
     return Form(
@@ -965,10 +964,10 @@ def NotesSection(event):
 def ConfirmSection(event, portions):
     ingested_value_id = f"ingested_value_{event.id}"
     return Form(
-        # La unidad que emite este control sale del enum central de unidades,
-        # el mismo que valida la ruta: no se escriben aquí literales sueltos
-        # (§4.3 de code_conventions.md, §11 de measurement_conventions.md;
-        # hallazgo 47 de audit/audit_intake_event.md).
+        # The unit this control emits comes from the central units enum, the
+        # same one the route validates: no loose literals are written here
+        # (§4.3 of code_conventions.md, §11 of measurement_conventions.md;
+        # finding 47 of audit/audit_intake_event.md).
         Input(
             type="hidden",
             name="ingested_unit",
@@ -1138,12 +1137,12 @@ def InjectionZoneModal(event):
 def CartCard(event, portions, plates=()):
     plates = list(plates)
     portions_by_plate = _portions_by_plate(portions)
-    # La cabecera de tanda se pinta si hay dos o más tandas o si alguna tiene
-    # nombre propio (§7.2): sin la segunda condición, nombrar la única tanda
-    # de una comida haría desaparecer ese nombre de la pantalla.
+    # The plate header is drawn if there are two or more plates or if any of
+    # them has its own name (§7.2): without the second condition, naming the
+    # only plate of a meal would make that name disappear from the screen.
     show_plate_headers = len(plates) > 1 or any(plate.name for plate in plates)
-    # Los nombres visibles se resuelven una sola vez: cada tanda los necesita
-    # para su cabecera y todas las filas los necesitan para el selector `Move`.
+    # The visible names are resolved once: each plate needs them for its
+    # header and every row needs them for the `Move` selector.
     plate_labels = {
         plate.id: plate_display_name(plate, portions_by_plate.get(plate.id, []))
         for plate in plates

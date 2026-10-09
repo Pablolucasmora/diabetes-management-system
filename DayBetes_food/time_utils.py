@@ -15,11 +15,11 @@ def local_today():
 
 
 def to_local(value):
-    """UTC naive o aware -> hora local (APP_TIMEZONE).
+    """Naive or aware UTC -> local time (APP_TIMEZONE).
 
-    La migración de `meal_time` a TIMESTAMPTZ ya se completó: ahora todas las
-    columnas de tiempo del dominio de comidas usan TIMESTAMPTZ. La rama naive
-    se conserva por compatibilidad defensiva con cualquier lectura heredada.
+    The migration of `meal_time` to TIMESTAMPTZ is complete: every time
+    column in the meals domain now uses TIMESTAMPTZ. The naive branch is
+    kept for defensive compatibility with any legacy read.
     """
     if value is None:
         return None
@@ -31,15 +31,15 @@ def to_local(value):
 
 
 def utc_now() -> datetime:
-    """Instante actual aware en UTC (para columnas TIMESTAMPTZ)."""
+    """Current aware instant in UTC (for TIMESTAMPTZ columns)."""
     return datetime.now(UTC_TIMEZONE)
 
 
 def local_naive_to_utc_aware(value):
-    """Fecha/hora local de un formulario -> instante aware en UTC.
+    """Local date/time from a form -> aware instant in UTC.
 
-    NO descarta el tzinfo: el destino es una columna TIMESTAMPTZ y un naive se
-    reinterpretaria con el TimeZone de la sesion de PostgreSQL.
+    It does NOT drop tzinfo: the target is a TIMESTAMPTZ column, and a naive
+    value would be reinterpreted with the PostgreSQL session's TimeZone.
     """
     if value is None:
         return None

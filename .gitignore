@@ -1,31 +1,33 @@
-# Entornos virtuales
+# Virtual environments
 diabetes/
 venv/
 .venv/
 
-# Base de datos personal (Privacidad)
+# Personal database (privacy)
 *.db
 *.sqlite3
 *.dump
 
-# Archivos de datos brutos
+# Raw data files
 *.csv
 *.xlsx
 
-# Archivos temporales de Python
+# Python temporary files
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Archivos del sistema (Mac/Windows)
+# System files (Mac/Windows)
 .DS_Store
 Thumbs.db
 
-# Datos de Docker
+# Docker data
 pgdata/
 .env
+.env.prod
+.env.migrations
 
-# Archivos temporales de Python (ya los tienes, pero asegúrate)
+# Python temporary files (second block)
 __pycache__/
 *.py[cod]
 
@@ -39,3 +41,7 @@ error.txt
 
 .opencode/
 audit/
+
+# Claude Code: agents are versioned; personal and temporary files are not
+.claude/settings.local.json
+.claude/*.lock

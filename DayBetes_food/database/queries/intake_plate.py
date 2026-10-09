@@ -1,7 +1,7 @@
-"""Queries para la tabla `intake_plate` (tandas o platos de un evento).
+"""Queries for the `intake_plate` table (an event's plates or serving batches).
 
-Modelo y reglas: conventions/measurement_conventions.md §4.6
-(decisión 2026-09-19).
+Model and rules: conventions/measurement_conventions.md §4.6
+(decision 2026-09-19).
 """
 
 from dataclasses import fields as dataclass_fields
@@ -18,9 +18,9 @@ from DayBetes_food.database.queries.crud import (
 from DayBetes_food.domain.intake_plate import IntakePlateCreate, IntakePlateRead, IntakePlateUpdate
 from DayBetes_food.errors import ConflictError, InfrastructureError, NotFoundError
 
-# Columnas de lectura de la tabla. Lista explícita, nunca `SELECT *` (§3.2):
-# añadir una columna no debe cambiar el contrato de lectura sin tocar el código
-# que lo consume.
+# Read columns of the table. Explicit list, never `SELECT *` (§3.2): adding a
+# column must not change the read contract without touching the code that
+# consumes it.
 _INTAKE_PLATE_COLUMNS = """
     ip.id,
     ip.intake_event_id,
@@ -30,14 +30,14 @@ _INTAKE_PLATE_COLUMNS = """
     ip.updated_at
 """
 
-# Orden de las tandas dentro de un evento (§4.6.1): cronológico por el offset
-# de la tanda, y a igualdad de offset, por orden de creación. Se escribe aquí
-# una sola vez; ningún componente reordena por su cuenta.
+# Order of the plates inside an event (§4.6.1): chronological by the plate's
+# offset and, for equal offsets, by creation order. It is written here once;
+# no component reorders on its own.
 _INTAKE_PLATE_ORDER = "ORDER BY ip.offset_minutes NULLS LAST, ip.id"
 
 
 def create_intake_plate(connection, payload: IntakePlateCreate, *, commit: bool = True) -> int:
-    """Crea una tanda dentro de un evento y devuelve su id."""
+    """Create a plate inside an event and return its id."""
     query = """
         INSERT INTO intake_plate (intake_event_id, name, offset_minutes)
         VALUES (%(intake_event_id)s, %(name)s, %(offset_minutes)s)
@@ -59,7 +59,7 @@ def create_intake_plate(connection, payload: IntakePlateCreate, *, commit: bool 
 
 
 def list_intake_plates(connection, event_id: int) -> list[IntakePlateRead]:
-    """Tandas de un evento, en el orden de §4.6.1."""
+    """Plates of an event, in the §4.6.1 order."""
     query = f"""
         SELECT {_INTAKE_PLATE_COLUMNS}
         FROM intake_plate ip
@@ -71,10 +71,10 @@ def list_intake_plates(connection, event_id: int) -> list[IntakePlateRead]:
 
 
 def list_intake_plates_by_events(connection, event_ids: list[int]) -> list[IntakePlateRead]:
-    """Tandas de varios eventos en una sola consulta (§6.9: sin N+1 en la lista del carrito).
+    """Plates of several events in a single query (§6.9: no N+1 in the cart list).
 
-    El orden es por evento y, dentro de cada uno, el de §4.6.1. Quien la use
-    reparte las tandas por `intake_event_id` sin reordenarlas.
+    The order is by event and, inside each one, the §4.6.1 order. The caller
+    distributes the plates by `intake_event_id` without reordering them.
     """
     if not event_ids:
         return []
@@ -89,15 +89,15 @@ def list_intake_plates_by_events(connection, event_ids: list[int]) -> list[Intak
 
 
 def get_intake_plate(connection, user_id: int, plate_id: int) -> IntakePlateRead:
-    """Lee una tanda comprobando la propiedad dentro del SQL (§5.3).
+    """Read a plate, checking ownership inside the SQL (§5.3).
 
-    La pertenencia tanda -> evento -> usuario se resuelve en la consulta: una
-    ruta nunca puede fiarse del `event_id` que venga en la URL. No exige estado
-    'planned': las tandas de un evento ya consumido también se editan
-    (measurement_conventions.md §6.9.3).
+    The plate -> event -> user ownership is resolved in the query: a route
+    can never trust the `event_id` that comes in the URL. It does not require
+    the 'planned' state: the plates of an already consumed event are edited
+    too (measurement_conventions.md §6.9.3).
 
     Raises:
-        NotFoundError: no existe, no es del usuario o su evento está archivado.
+        NotFoundError: it does not exist, is not the user's or its event is archived.
     """
     query = f"""
         SELECT {_INTAKE_PLATE_COLUMNS}
@@ -122,17 +122,17 @@ def update_intake_plate(
     *,
     commit: bool = True,
 ) -> None:
-    """Actualiza campos de una tanda (§3.1).
+    """Update fields of a plate (§3.1).
 
-    Los campos en None se ignoran (comportamiento de `_build_update_query`);
-    para poner `name` a NULL —devolver la tanda a su nombre derivado— existe
-    `update_intake_plate_name`, igual que en intake_event.
+    Fields set to None are ignored (behaviour of `_build_update_query`); to
+    set `name` to NULL —returning the plate to its derived name— there is
+    `update_intake_plate_name`, as in intake_event.
 
-    El ownership no se comprueba aquí: la ruta ya ha resuelto la tanda con
-    `get_intake_plate`, que hace el JOIN al evento y al usuario (§5.3).
+    Ownership is not checked here: the route has already resolved the plate
+    with `get_intake_plate`, which JOINs the event and the user (§5.3).
 
     Raises:
-        NotFoundError: la tanda no existe.
+        NotFoundError: the plate does not exist.
     """
     payload = {
         field.name: getattr(data, field.name)
@@ -164,14 +164,14 @@ def update_intake_plate(
 def update_intake_plate_name(
     connection, plate_id: int, name: str | None, *, commit: bool = True
 ) -> None:
-    """Escribe el nombre propio de una tanda, o lo borra con `name=None`.
+    """Write the plate's own name, or clear it with `name=None`.
 
-    Función propia, igual que `update_intake_event_name` y por el mismo motivo:
-    `IntakePlateUpdate` interpreta None como "no tocar", así que borrar el
-    nombre —y volver al derivado de §4.6.3— no puede hacerse por esa vía.
+    A dedicated function, like `update_intake_event_name` and for the same
+    reason: `IntakePlateUpdate` reads None as "leave untouched", so clearing
+    the name —and going back to the §4.6.3 derived one— cannot be done that way.
 
     Raises:
-        NotFoundError: la tanda no existe.
+        NotFoundError: the plate does not exist.
     """
     query = """
         UPDATE intake_plate
@@ -201,12 +201,12 @@ def apply_plate_offset_to_portions(
     *,
     commit: bool = True,
 ) -> bool:
-    """`Apply all`: fija el offset de la tanda y lo propaga a todas sus porciones.
+    """`Apply all`: set the plate's offset and propagate it to all its portions.
 
-    Las dos escrituras son una sola operación (§2.3): si falla la propagación,
-    la tanda tampoco se queda con el valor nuevo. Es la única forma de que el
-    offset de la tanda toque las filas ya existentes; cambiarlo por separado
-    solo afecta a las porciones que se añadan después (§4.6.2).
+    Both writes are a single operation (§2.3): if the propagation fails, the
+    plate does not keep the new value either. It is the only way the plate's
+    offset touches existing rows; changing it on its own only affects the
+    portions added afterwards (§4.6.2).
     """
     try:
         with connection.cursor() as cursor:
@@ -242,15 +242,15 @@ def apply_plate_offset_to_portions(
 
 
 def delete_intake_plate(connection, plate_id: int, *, commit: bool = True) -> None:
-    """Borra una tanda vacía.
+    """Delete an empty plate.
 
-    Una tanda con porciones no se borra: la FK es `ON DELETE RESTRICT` a
-    propósito (§4.6.5), para que un click no se lleve por delante media comida.
-    La violación de integridad se traduce a ConflictError, no a un 500.
+    A plate with portions is not deleted: the FK is `ON DELETE RESTRICT` on
+    purpose (§4.6.5), so that a click does not wipe out half a meal. The
+    integrity violation is translated to ConflictError, not to a 500.
 
     Raises:
-        NotFoundError: la tanda no existe.
-        ConflictError: la tanda todavía tiene ingredientes.
+        NotFoundError: the plate does not exist.
+        ConflictError: the plate still has ingredients.
     """
     try:
         with connection.cursor() as cursor:
@@ -275,15 +275,15 @@ def delete_intake_plate(connection, plate_id: int, *, commit: bool = True) -> No
 
 
 def ensure_default_plate(connection, event_id: int, *, offset_minutes: int = None, commit: bool = True) -> int:
-    """Devuelve la tanda a la que debe ir un alimento añadido sin elegir tanda.
+    """Return the plate a food added without choosing a plate must go to.
 
-    Es la tanda de la **última porción añadida** al evento —la que el usuario
-    está montando ahora mismo— y, si ninguna tiene ingredientes todavía, la
-    creada más recientemente. Si el evento no tiene ninguna tanda, la crea
-    implícitamente con el offset dado (§4.6.1, §7.7).
+    It is the plate of the **last portion added** to the event —the one the
+    user is putting together right now— and, if none has ingredients yet, the
+    most recently created one. If the event has no plate at all, it creates
+    one implicitly with the given offset (§4.6.1, §7.7).
 
-    El selector de tanda preselecciona esta misma tanda: lo que la interfaz
-    muestra y lo que ocurre cuando no se envía `plate_id` tienen que coincidir
+    The plate selector preselects this same plate: what the interface shows
+    and what happens when no `plate_id` is sent must match
     (frontend_conventions.md §6).
     """
     row = _execute_query(

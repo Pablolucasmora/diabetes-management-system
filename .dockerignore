@@ -5,7 +5,18 @@ pgdata/
 __pycache__/
 *.pyc
 .env
+.env.prod
+.env.migrations
+.env.example
 .git
+
+*.dump
+*.db
+*.sqlite3
+
+.claude/
+scripts_claude/
+audit/
 
 .sesskey
 

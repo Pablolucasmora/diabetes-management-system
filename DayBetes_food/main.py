@@ -2,6 +2,7 @@ from fasthtml.common import *
 from datetime import datetime, timezone
 from html import escape
 import logging
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import JSONResponse
 
@@ -40,10 +41,21 @@ from DayBetes_food.routes import (
 )
 
 
+async def lifespan(app):
+    # Code before the yield runs once at startup, before serving requests;
+    # code after it runs at shutdown. Replaces on_event("startup"), removed in
+    # Starlette 1.0. FastHTML expects the bare generator, without
+    # @asynccontextmanager: it wraps it itself.
+    if DB_INIT_ON_STARTUP:
+        init_db()
+    yield
+
+
 app, rt = fast_app(
     title="DayBetes",
     htmlkw={"lang": "en"},
     static_path='DayBetes_food/static',
+    lifespan=lifespan,
 )
 
 logger = logging.getLogger(__name__)
@@ -135,14 +147,13 @@ def _response_sets_cookie(response, cookie_name: str) -> bool:
     return any(key == b"set-cookie" and value.startswith(prefix) for key, value in response.raw_headers)
 
 
-@app.middleware("http")
 async def auth_security_middleware(request: Request, call_next):
-    # Los assets estaticos son cacheables (Cache-Control: public, ver
-    # add_asset_cache_headers) y pueden servirse desde un CDN/edge. Si esta
-    # ruta escribiera una cookie CSRF aqui, esa cabecera Set-Cookie podria
-    # quedar cacheada y reenviarse a visitantes distintos, envenenando su
-    # cookie CSRF con un token ajeno a su sesion. No hay nada que autenticar
-    # ni validar por CSRF en una peticion GET a un asset publico.
+    # Static assets are cacheable (Cache-Control: public, see
+    # add_asset_cache_headers) and may be served from a CDN/edge. If this path
+    # wrote a CSRF cookie here, that Set-Cookie header could be cached and
+    # replayed to different visitors, poisoning their CSRF cookie with a token
+    # that does not belong to their session. A GET for a public asset has
+    # nothing to authenticate or CSRF-validate.
     if request.url.path.startswith(ASSET_PREFIXES):
         return await call_next(request)
 
@@ -173,15 +184,15 @@ async def auth_security_middleware(request: Request, call_next):
             supplied_token = str(form.get("csrf_token", ""))
 
         if not supplied_token or supplied_token != csrf_cookie or not is_csrf_valid(session_row, supplied_token):
-            # Un fallo CSRF es `403` con mensaje genérico (§9), pero con el
-            # formato de error del proyecto: el middleware corre por fuera del
-            # boundary global (una excepción levantada aquí no llega a
-            # `_handle_app_error`), así que construye la respuesta con el
-            # mismo canal compartido en vez de improvisar `{"detail": ...}`,
-            # que §6 prohíbe. Para HTMX el cuerpo va vacío y el aviso viaja en
-            # las cabeceras de §7.1, igual que en las rutas del carrito: así la
-            # "pestaña abierta desde ayer" recibe un mensaje propio en vez de
-            # un `403` opaco (hallazgo 52 de audit/audit_intake_event.md).
+            # A CSRF failure is a `403` with a generic message (§9), but in the
+            # project's error format: the middleware runs outside the global
+            # boundary (an exception raised here never reaches
+            # `_handle_app_error`), so it builds the response through the same
+            # shared channel instead of improvising `{"detail": ...}`, which §6
+            # forbids. For HTMX the body is empty and the notice travels in the
+            # §7.1 headers, as in the cart routes: that way the "tab left open
+            # since yesterday" gets its own message instead of an opaque `403`
+            # (finding 52 of audit/audit_intake_event.md).
             csrf_error = AuthorizationError()
             csrf_message = "Tu sesión ha caducado. Recarga la página e inténtalo de nuevo."
             if _is_htmx_request(request):
@@ -202,7 +213,7 @@ async def auth_security_middleware(request: Request, call_next):
             return HTMLResponse("", status_code=401, headers={"HX-Redirect": "/auth/login"})
         if request.method == "GET":
             return RedirectResponse(url="/auth/login", status_code=302)
-        # Mismo motivo que el `403` de arriba: formato único de §6, sin
+        # Same reason as the `403` above: the single §6 format, no
         # `{"detail": ...}`.
         auth_error = AuthenticationError()
         auth_request_id = _request_id(request)
@@ -223,11 +234,11 @@ async def auth_security_middleware(request: Request, call_next):
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 
-    # Si la propia ruta (p.ej. login/register) ya emitio su Set-Cookie de
-    # CSRF vinculado a la sesion recien creada, no lo pisamos con el token
-    # "huerfano" generado al principio de esta funcion: hacerlo dejaba al
-    # navegador con una cookie que nunca se guardo en auth_sessions, y
-    # cualquier POST posterior (incluido logout) fallaba con 403.
+    # If the route itself (e.g. login/register) already set the CSRF cookie
+    # bound to the session it just created, do not overwrite it with the
+    # "orphan" token generated at the start of this function: doing so left the
+    # browser with a cookie that was never stored in auth_sessions, and every
+    # later POST (logout included) failed with 403.
     if request.cookies.get(CSRF_COOKIE_NAME) != csrf_cookie and not _response_sets_cookie(response, CSRF_COOKIE_NAME):
         response.set_cookie(
             CSRF_COOKIE_NAME,
@@ -239,7 +250,6 @@ async def auth_security_middleware(request: Request, call_next):
         )
     return response
 
-@app.middleware("http")
 async def add_asset_cache_headers(request, call_next):
     response = await call_next(request)
     path = request.url.path
@@ -247,16 +257,14 @@ async def add_asset_cache_headers(request, call_next):
         response.headers.setdefault("Cache-Control", STATIC_CACHE_CONTROL)
     return response
 
+
+# Starlette 1.0 removed the @app.middleware decorator. Each add_middleware
+# wraps the previous ones, so the order of these lines sets the execution
+# order: add_asset_cache_headers is the outer layer and GZip the inner one.
+app.add_middleware(BaseHTTPMiddleware, dispatch=auth_security_middleware)
+app.add_middleware(BaseHTTPMiddleware, dispatch=add_asset_cache_headers)
+
 # --- COMPONENT INITIALIZATION ---
-
-def _init_db_on_startup():
-    if DB_INIT_ON_STARTUP:
-        init_db()
-
-if hasattr(app, "on_event"):
-    app.on_event("startup")(_init_db_on_startup)
-else:
-    _init_db_on_startup()
 
 setup_main_routes(rt)
 

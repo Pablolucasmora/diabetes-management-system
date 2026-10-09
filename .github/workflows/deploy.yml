@@ -1,0 +1,57 @@
+# Dependency audit and production deploy (infra_conventions §13).
+name: Deploy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # "Run workflow" button to retry a failed deploy.
+  workflow_dispatch:
+
+# Least privilege: the Action's GitHub token can only read the repository.
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: pip-audit
+    runs-on: ubuntu-latest
+    steps:
+      # Actions pinned by commit hash: a tag such as v7 can be moved to other
+      # code; a hash cannot.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet pip-audit
+      - run: pip-audit -r requirements.txt
+
+  deploy:
+    name: Deploy to the VPS
+    needs: audit
+    # Pull requests are only audited; only main is deployed.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # The secrets live in the "production" environment, which only allows main.
+    environment: production
+    # Two merges in a row never deploy at the same time: the second one waits.
+    concurrency:
+      group: production
+      cancel-in-progress: false
+    steps:
+      - name: Set up SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # The VPS host key is pinned: never StrictHostKeyChecking=no.
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        # The command is forced by authorized_keys on the VPS; none is sent here.
+        run: ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "deploy@$DEPLOY_HOST"

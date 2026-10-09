@@ -4,5 +4,5 @@ protocol: http2
 
 ingress:
   - hostname: daybetes.com
-    service: http://host.docker.internal:8000
+    service: http://web:8000
   - service: http_status:404
