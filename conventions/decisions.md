@@ -904,3 +904,13 @@ En los datos reales, `manual_intake` tiene 4 de 5 filas privadas. Los motivos re
 - Traducir solo el carrito y anotar el resto en la deuda.
 **Decisión**: todo el texto que ve el usuario va en inglés: interfaz, mensajes de validación, mensajes públicos de error, avisos del cliente, páginas de acceso y el atributo `lang` de las páginas. Lo que introduce el usuario no se traduce (nombres de alimentos, alias del parser de macros). Se traduce en un commit propio, solo de traducción (`code_conventions.md` §0). La internacionalización sigue pendiente.
 **Convención actualizada**: `frontend_conventions.md` sección 7.12; `error_conventions.md` sección 1, sección 2, sección 5 y sección 6; `code_conventions.md` sección 0
+
+## 2026-10-09 — El despliegue de la auditoría de `manual_intake` se acepta incompatible durante la ventana de despliegue
+
+**Origen**: revisión previa al merge de la PR #14 (`feat/manual-intake-audit`)
+**Contexto**: `infra_conventions.md` §14 exige que una migración sea compatible con el código anterior mientras dura el despliegue, porque `deploy.sh` migra con la versión anterior de `web` todavía sirviendo. La rama borra `intake_event.quality_confidence` y las seis `*_uncertainty`, y renombra `manual_intake.amount_g` y `default_macros_quality`. Durante unos segundos, la versión anterior fallaría al leer comidas y platos. La migración es atómica: si unos datos de producción no cumplen las reglas nuevas, aborta, se revierte entera y `web` sigue con la versión anterior.
+**Alternativas consideradas**:
+- Aceptar la incompatibilidad como excepción, con una ventana sin uso.
+- Dividirlo en dos despliegues: primero el código que ya no lee esas columnas, con columnas puente, y después el borrado y los renombrados.
+**Decisión**: se acepta la excepción, solo para este despliegue. Con un solo usuario, unos segundos de errores no compensan reescribir la migración. Condiciones previas al merge: comprobaciones de solo lectura en producción, export de las siete columnas que se borran, `pg_dump`, y un merge en un momento sin uso. Los ejecuta el usuario por SSH.
+**Convención actualizada**: `infra_conventions.md` sección 14
