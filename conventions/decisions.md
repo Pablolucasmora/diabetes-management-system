@@ -893,3 +893,14 @@ En los datos reales, `manual_intake` tiene 4 de 5 filas privadas. Los motivos re
 - Dejarla sin índice y reconocer que los índices trigram no respaldan ninguna consulta.
 **Decisión**: todas las ramas se escriben sobre `lower(col)` o sobre su forma colapsada (`fuzzy_compact_sql`). La similitud usa el operador `%` con el umbral `TRGM_SIMILARITY_THRESHOLD` fijado en la sesión, en lugar de `similarity() >=`, y en el límite da el mismo resultado. Cada columna buscada gana un índice `idx_<tabla>_<columna>_compact_trgm`. La marca de `catalog` se resuelve con `= ANY(ARRAY(SELECT ...))`. Los resultados no cambian: se comprobó con 341 términos en 5 columnas y con el listado de `catalog` para 10 usuarios.
 **Convención actualizada**: `code_conventions.md` sección 11.7
+
+## 2026-10-09 — Todo el texto de la interfaz, incluidos los mensajes públicos de error, en inglés
+
+**Origen**: hallazgo 21 de `audit/audits/audit_manual_intake.md` (segunda pasada) y los mensajes del carrito que esa auditoría dejó fuera de su alcance
+**Contexto**: `frontend_conventions.md` §7.12 fijaba la interfaz en inglés, pero solo hablaba de la funcionalidad de tandas. `error_conventions.md` daba los mensajes públicos de error en español, y en español estaban `errors.py`, el aviso CSRF de `main.py`, unos 40 mensajes de `cart_routes.py`, las páginas de acceso, los textos de estadísticas, el botón de cerrar sesión y los avisos de `app_toast.js`. Las convenciones se contradecían, y la misma interfaz mezclaba los dos idiomas.
+**Alternativas consideradas**:
+- Pasar todo al inglés y corregir `error_conventions.md`.
+- Documentar el español como excepción para los mensajes de error hasta que se decida la internacionalización.
+- Traducir solo el carrito y anotar el resto en la deuda.
+**Decisión**: todo el texto que ve el usuario va en inglés: interfaz, mensajes de validación, mensajes públicos de error, avisos del cliente, páginas de acceso y el atributo `lang` de las páginas. Lo que introduce el usuario no se traduce (nombres de alimentos, alias del parser de macros). Se traduce en un commit propio, solo de traducción (`code_conventions.md` §0). La internacionalización sigue pendiente.
+**Convención actualizada**: `frontend_conventions.md` sección 7.12; `error_conventions.md` sección 1, sección 2, sección 5 y sección 6; `code_conventions.md` sección 0

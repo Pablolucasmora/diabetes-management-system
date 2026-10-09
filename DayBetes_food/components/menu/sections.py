@@ -11,7 +11,7 @@ from DayBetes_food.time_utils import local_now
 
 def _menu_cart_summary(latest_event, portions):
     if not latest_event:
-        return P("No hay carrito", cls="text-xs md:text-sm text-gray-600 text-center")
+        return P("No cart", cls="text-xs md:text-sm text-gray-600 text-center")
 
     meal_name = latest_event.name or f"Meal #{latest_event.id}"
 

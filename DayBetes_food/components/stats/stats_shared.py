@@ -3,26 +3,26 @@ from DayBetes_food.domain.constants import MealType
 
 NUTRIENT_SPECS = [
     ("calories", "Cal", "kcal"),
-    ("carbs", "HC", "g"),
-    ("fats", "Grasas", "g"),
-    ("saturated", "Saturadas", "g"),
-    ("sugars", "Azucares", "g"),
-    ("proteins", "Proteinas", "g"),
-    ("fiber", "Fibra", "g"),
+    ("carbs", "Carbs", "g"),
+    ("fats", "Fats", "g"),
+    ("saturated", "Saturated", "g"),
+    ("sugars", "Sugars", "g"),
+    ("proteins", "Proteins", "g"),
+    ("fiber", "Fiber", "g"),
 ]
 
 MEAL_TYPE_LABELS = {
-    "breakfast": "Desayuno",
-    "brunch": "Almuerzo",
-    "lunch": "Comida",
-    "afternoon_snack": "Merienda",
-    "dinner": "Cena",
+    "breakfast": "Breakfast",
+    "brunch": "Brunch",
+    "lunch": "Lunch",
+    "afternoon_snack": "Afternoon snack",
+    "dinner": "Dinner",
     "snack": "Snack",
-    "rescue": "Rescate",
-    "sin_tipo": "Sin tipo",
+    "rescue": "Rescue",
+    "untyped": "No type",
 }
 
-MEAL_TYPE_ORDER = [meal_type.value for meal_type in MealType] + ["sin_tipo"]
+MEAL_TYPE_ORDER = [meal_type.value for meal_type in MealType] + ["untyped"]
 
 STATS_PAGE_CLS = """
     w-full mx-auto

@@ -90,7 +90,7 @@ def render_fragment(fragment, status_code: int = 200):
 
 def _base_html_shell(content_html: str) -> str:
     return f"""<!doctype html>
-<html lang="es">
+<html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">

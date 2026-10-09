@@ -34,7 +34,7 @@ from DayBetes_food.database.queries import (
 )
 
 
-GENERIC_AUTH_ERROR = "Credenciales no validas"
+GENERIC_AUTH_ERROR = "Invalid credentials"
 
 
 def _utcnow() -> datetime:

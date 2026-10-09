@@ -185,6 +185,6 @@ No basta con no tocarlo desde el código: al reemplazar la tarjeta entera con `o
 
 ### 7.12 Idioma
 
-Toda la interfaz de esta funcionalidad se escribe **en inglés**, como el resto de la web (`Plates`, `Apply all`, `Move`, `+ Add plate`, `+ New plate`). El nombre derivado de una tanda es una excepción natural: sale de los nombres de los alimentos, que están en el idioma en que se guardaron.
+Toda la interfaz de la web se escribe **en inglés** (`Plates`, `Apply all`, `Move`, `+ Add plate`, `+ New plate`): textos, etiquetas, placeholders, mensajes de validación, mensajes públicos de error (`errors.py`, `error_conventions.md` §2), avisos del cliente (`app_toast.js`) y las páginas de acceso. El atributo `lang` de las páginas es `en`. Lo que introduce el usuario no se traduce: el nombre derivado de una tanda sale de los nombres de los alimentos, que están en el idioma en que se guardaron, y los alias del parser de macros ("hidratos", "azúcar") son datos de entrada, no interfaz (decisión 2026-10-09).
 
 Queda **pendiente de decisión** la internacionalización de la web (español/inglés a elección del usuario): no existe convención de i18n, los literales están incrustados en los componentes, y la parte cara no es traducir la interfaz sino decidir qué pasa con el contenido (nombres del catálogo, métodos de cocción, tipos de comida). Escribir los literales nuevos en inglés no cierra ninguna puerta a esa decisión.

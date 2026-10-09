@@ -93,7 +93,7 @@ def _form_shell(title: str, action: str, csrf_token: str, fields_html: str, subm
     )
     html = f"""
     <!doctype html>
-    <html lang="es">
+    <html lang="en">
       <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -105,7 +105,7 @@ def _form_shell(title: str, action: str, csrf_token: str, fields_html: str, subm
         <div class="min-h-screen flex flex-col items-center justify-center gap-4 px-4">
           <div class="flex flex-col gap-1 text-center">
             <h1 class="text-2xl font-bold text-gray-800">{safe_title}</h1>
-            <p class="text-sm text-gray-600">Acceso seguro a DayBetes</p>
+            <p class="text-sm text-gray-600">Secure access to DayBetes</p>
           </div>
           <form action="{safe_action}" method="post" class="web_container p-5 rounded-3xl flex flex-col gap-3 w-full md:w-md lg:w-md">
             <input type="hidden" name="csrf_token" value="{safe_csrf}">
@@ -127,29 +127,29 @@ def _redirect_with_error(path: str, message: str):
 
 def _registration_form(request: Request, error: str = "", status_code: int = 200):
     return _form_shell(
-        title="Crear cuenta",
+        title="Create account",
         action="/auth/register/submit",
         csrf_token=getattr(request.state, "csrf_token", ""),
         fields_html=f"""
-            <input name="username" placeholder="Usuario (3-32 caracteres)" required="required"
+            <input name="username" placeholder="Username (3-32 characters)" required="required"
               maxlength="32"
               class="web_input border border-white rounded-lg px-3 py-2 text-sm">
             <input type="email" name="email" placeholder="Email" required="required"
               maxlength="{USER_EMAIL_MAX_LENGTH}"
               class="web_input border border-white rounded-lg px-3 py-2 text-sm">
             <p class="text-xs text-gray-600">
-              Usuario: 3-32 caracteres, solo letras, numeros y guion bajo (_).
+              Username: 3-32 characters, only letters, numbers and underscore (_).
             </p>
-            <input type="password" name="password" placeholder="Contrasena segura" required="required"
+            <input type="password" name="password" placeholder="Strong password" required="required"
               class="web_input border border-white rounded-lg px-3 py-2 text-sm">
-            <input type="password" name="password_confirm" placeholder="Repite contrasena" required="required"
+            <input type="password" name="password_confirm" placeholder="Repeat password" required="required"
               class="web_input border border-white rounded-lg px-3 py-2 text-sm">
             <p class="text-xs text-gray-600">
-              Minimo 12 caracteres y al menos 3 de 4: mayusculas, minusculas, numeros y simbolos.
+              At least 12 characters and 3 of 4: uppercase, lowercase, numbers and symbols.
             </p>
         """,
-        submit_text="Registrarse",
-        alt_text="Ya tienes cuenta? Inicia sesion",
+        submit_text="Sign up",
+        alt_text="Already have an account? Log in",
         alt_href="/auth/login",
         error=error,
         status_code=status_code,
@@ -214,7 +214,7 @@ def _setup_registration_routes(rt):
         # `is_valid_username` limits it to 3-32 characters, stricter than the
         # column's VARCHAR(50): rejecting by regex already covers the limit.
         if not is_valid_username(username):
-            return _redirect_with_error("/auth/register", "Usuario invalido: usa 3-32 caracteres (letras, numeros o _)")
+            return _redirect_with_error("/auth/register", "Invalid username: use 3-32 characters (letters, numbers or _)")
         # `is_valid_email` does not limit length, so the column limit is
         # checked and rejected here; it used to be silently truncated, which
         # could register an account with an email other than the one typed
@@ -222,14 +222,14 @@ def _setup_registration_routes(rt):
         if len(email) > USER_EMAIL_MAX_LENGTH:
             return _redirect_with_error(
                 "/auth/register",
-                f"Email invalido: maximo {USER_EMAIL_MAX_LENGTH} caracteres",
+                f"Invalid email: at most {USER_EMAIL_MAX_LENGTH} characters",
             )
         if not is_valid_email(email):
-            return _redirect_with_error("/auth/register", "Email invalido")
+            return _redirect_with_error("/auth/register", "Invalid email")
         if password != password_confirm or not is_strong_password(password):
             return _redirect_with_error(
                 "/auth/register",
-                "Contrasena no valida: minimo 12 caracteres y 3 de 4 tipos (mayusculas, minusculas, numeros, simbolos)",
+                "Invalid password: at least 12 characters and 3 of 4 types (uppercase, lowercase, numbers, symbols)",
             )
 
         try:
@@ -243,10 +243,10 @@ def _setup_registration_routes(rt):
                     ),
                 )
         except ConflictError:
-            return _redirect_with_error("/auth/register", "Ese email o usuario ya esta registrado")
+            return _redirect_with_error("/auth/register", "That email or username is already registered")
 
         return RedirectResponse(
-            url="/auth/login?error=Cuenta+creada.+Inicia+sesion+para+continuar",
+            url="/auth/login?error=Account+created.+Log+in+to+continue",
             status_code=303,
         )
 
@@ -259,18 +259,18 @@ def setup_auth_routes(rt):
 
         csrf_token = getattr(req.state, "csrf_token", "")
         return _form_shell(
-            title="Iniciar sesion",
+            title="Log in",
             action="/auth/login/submit",
             csrf_token=csrf_token,
             fields_html=f"""
-                <input name="identifier" placeholder="Email o usuario" required="required"
+                <input name="identifier" placeholder="Email or username" required="required"
                   maxlength="{USER_EMAIL_MAX_LENGTH}"
                   class="web_input border border-white rounded-lg px-3 py-2 text-sm">
-                <input type="password" name="password" placeholder="Contrasena" required="required"
+                <input type="password" name="password" placeholder="Password" required="required"
                   class="web_input border border-white rounded-lg px-3 py-2 text-sm">
             """,
-            submit_text="Entrar",
-            alt_text="No tienes cuenta? Registrate" if REGISTRATION_ENABLED else "",
+            submit_text="Log in",
+            alt_text="No account yet? Sign up" if REGISTRATION_ENABLED else "",
             alt_href="/auth/register" if REGISTRATION_ENABLED else "",
             error=req.query_params.get("error", ""),
         )
@@ -334,7 +334,7 @@ def setup_auth_routes(rt):
                     )
             except Exception:
                 logger.error("Login transaction failed for user_id=%s", user.id, exc_info=True)
-                return _redirect_with_error("/auth/login", "No se pudo iniciar la sesion")
+                return _redirect_with_error("/auth/login", "Could not log in")
 
         response = RedirectResponse(url="/menu", status_code=303)
         _set_auth_cookies(response, session_token=session_token, csrf_token=csrf_token)

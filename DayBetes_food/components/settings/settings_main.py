@@ -36,7 +36,7 @@ def settings_main(connection, current_user=None):
             Form(
                 Input(type="hidden", name="csrf_token", value=""),
                 Button(
-                    "Cerrar sesion",
+                    "Log out",
                     type="submit",
                     cls="web_button px-4 py-2 text-sm text-white",
                     style="background-color:#b91c1c;border-color:#b91c1c;",
