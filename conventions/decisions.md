@@ -826,3 +826,13 @@ En los datos reales, `manual_intake` tiene 4 de 5 filas privadas. Los motivos re
 - Texto libre con límite, normalización compartida y autocompletado de lo propio y lo publicado.
 **Decisión**: texto libre de 255 caracteres como máximo, normalizado con la misma función que el nombre (en Python y en los índices). El autocompletado ofrece los orígenes de los platos activos propios y de los publicados, nunca los de platos personales ajenos ni los de añadidos rápidos. El buscador encuentra por nombre o por origen. El concepto de duplicado de un plato es nombre normalizado + origen normalizado, con un origen `NULL` equivalente a la cadena vacía, tanto en el índice personal como en el de publicados. `origin` sale de la tabla de §4.5.
 **Convención actualizada**: `code_conventions.md` sección 4.5 y sección 11.2.3
+
+## 2026-10-09 — Un parámetro de ruta no puede llamarse como una cabecera HTTP
+
+**Origen**: prueba manual de `manual_intake`: un plato creado con origen "Burger King" se guardó con `origin = 'http://0.0.0.0:8000'`
+**Contexto**: FastHTML busca cada parámetro de la ruta en la ruta, las cookies, las cabeceras, la query y, por último, el cuerpo del formulario. El plan de `manual_intake` renombró el campo `source_origin` a `origin`, y FastHTML tomó la cabecera `Origin` que envía el navegador. Las pruebas no lo detectaron porque el cliente de pruebas no envía esa cabecera.
+**Alternativas consideradas**:
+- Leer el formulario explícitamente (`await request.form()`) en las rutas afectadas.
+- Prohibir que un parámetro de ruta se llame como una cabecera, una cookie o un nombre especial de FastHTML, y usar un prefijo cuando el concepto de dominio se llame así.
+**Decisión**: se prohíbe. El campo de origen de `manual_intake` se llama `source_origin` y la ruta lo traduce a `origin`. Las pruebas contra la aplicación envían las cabeceras de un navegador real.
+**Convención actualizada**: `code_conventions.md` sección 9.9 (nueva)

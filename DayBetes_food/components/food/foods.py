@@ -2452,9 +2452,12 @@ def _manual_description_input(value: str = "", textarea_id: str = "manual_descri
 
 def _manual_origin_input(origin_options: list[str] | None, value: str | None = None):
     # Free text (decision 2026-10-09): no "Add"; the suggestions only help.
+    # The field is not called "origin": FastHTML resolves a route parameter
+    # from the request headers before the form body, and every browser POST
+    # carries an `Origin` header that would replace the typed value.
     return _searchable_autocomplete_input(
         "Origin",
-        "origin",
+        "source_origin",
         origin_options or [],
         help_text="Who or where made it (e.g. grandma Geno, Burger King). Free text.",
         allow_add=False,

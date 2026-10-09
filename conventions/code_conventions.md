@@ -1141,6 +1141,15 @@ Los valores se validan, se limitan y no pueden ser negativos. Los resultados tie
 
 Los endpoints utilizan la correlación definida en la sección 8.4 y aplican el formato de respuesta de errores de `error_conventions.md`.
 
+### 9.9 Nombres de los parámetros de una ruta
+
+Decisión 2026-10-09. FastHTML resuelve cada parámetro de una ruta buscándolo, en este orden, en los parámetros de la ruta, las cookies, **las cabeceras HTTP** (con `_` convertido en `-`), la query y, por último, el cuerpo del formulario. Un campo de formulario que se llame como una cabecera toma el valor de la cabecera y no lo que escribió el usuario, sin ningún error: el campo `origin` guardó `http://0.0.0.0:8000` porque todo `POST` del navegador lleva la cabecera `Origin`.
+
+- Un parámetro de ruta que venga del formulario o de la query no puede llamarse como una cabecera que envíe el navegador o HTMX: `origin`, `referer`, `host`, `cookie`, `accept`, `user_agent`, `content_type`, `content_length`, `connection`, `cache_control`, `priority`, `hx_request`, `hx_current_url`, `hx_target`, `hx_trigger`, `hx_trigger_name`, `hx_prompt`, `hx_boosted`, `x_csrf_token` y cualquier otra cabecera estándar.
+- Tampoco puede llamarse como una cookie de la aplicación ni como un nombre especial de FastHTML (`request`, `session`, `htmx`, `data`, `body`, `app`, `state`, `auth`, `scope`).
+- Si el concepto se llama así en el dominio, el campo lleva un prefijo (`source_origin` para `manual_intake.origin`) y la ruta lo traduce al nombre de dominio al construir la Request (§7.11).
+- Las pruebas contra la aplicación envían las cabeceras de un navegador real (`Origin`, `Referer`, `HX-Current-URL`, `HX-Target`, `HX-Trigger`): sin ellas este fallo no aparece.
+
 ## 10. Tipos de datos, fechas y números
 
 Esta sección define la representación técnica de fechas y números dentro del código. El significado de cada campo, su unidad canónica, precisión de negocio y reglas de redondeo pertenecen exclusivamente a `conventions/measurement_conventions.md`.
