@@ -836,3 +836,25 @@ En los datos reales, `manual_intake` tiene 4 de 5 filas privadas. Los motivos re
 - Prohibir que un parámetro de ruta se llame como una cabecera, una cookie o un nombre especial de FastHTML, y usar un prefijo cuando el concepto de dominio se llame así.
 **Decisión**: se prohíbe. El campo de origen de `manual_intake` se llama `source_origin` y la ruta lo traduce a `origin`. Las pruebas contra la aplicación envían las cabeceras de un navegador real.
 **Convención actualizada**: `code_conventions.md` sección 9.9 (nueva)
+
+## 2026-10-09 — La calidad de los macros es un dato del alimento y la porción la lee en vivo
+
+**Origen**: prueba manual de `manual_intake` tras su auditoría; decisión previa **2026-10-09** ("Calidad y pesaje por defecto en el alimento, copiados a la porción al crearla")
+**Contexto**: la decisión previa del mismo día copiaba `default_macros_quality` a `portion_detail.macros_quality` al crear la porción, y el carrito permitía cambiarla. En la práctica no hay motivo para que la calidad de una porción difiera de la de su alimento: describe de dónde salen los macros (etiqueta, carta, estimación), no el acto de comer. Los macros de la porción ya se leen en vivo del alimento, y su historial lo resolverá el versionado (`portion_detail` H1).
+**Alternativas consideradas**:
+- Mantener la copia al crear y el ajuste en el carrito (decisión previa).
+- Copia al crear como foto histórica, sin ajuste en el carrito.
+- Leerla en vivo del alimento, como los macros, y versionarla con ellos.
+**Decisión**: `macros_quality` es un dato del alimento (`catalog.macros_quality`, `manual_intake.macros_quality`; `default_macros_quality` se renombra). La porción no guarda copia: el carrito y `quality_confidence` la leen del alimento, y con el versionado se leerá de la versión. Las comidas confirmadas conservan su `quality_confidence`, que se guarda en el evento al confirmar. El ajuste por porción del carrito y su ruta desaparecen. `portion_detail.macros_quality` se conserva sin uso, con sus valores, hasta el versionado. `strictly_weighed` sigue siendo un dato de cada porción, que nace con el `default_strictly_weighed` del alimento.
+**Convención actualizada**: `measurement_conventions.md` sección 4.6.4, sección 6.5 y sección 6.11; `code_conventions.md` sección 9.5 y sección 11.2.3; `frontend_conventions.md` sección 6
+
+## 2026-10-09 — `catalog` gana calidad de los macros, pesaje por defecto y confianza de los macros
+
+**Origen**: `audit/deuda_pendiente.md`, sección `manual_intake`, "Extender a `catalog` los campos nuevos de `manual_intake`"
+**Contexto**: la extensión estaba acordada desde las decisiones del 2026-10-09 de `manual_intake`. Los macros de un alimento de `catalog` también pueden venir de la etiqueta o de una estimación (los de un plátano varían según la fuente), y hay productos cuyo peso es siempre el del envase.
+**Alternativas consideradas**:
+- Dejarlos solo en `manual_intake`.
+- Añadirlos a `catalog` con el mismo significado, rellenando los alimentos existentes a partir del historial de porciones o del código de barras.
+- Añadirlos a `catalog` con el mismo significado y los alimentos existentes en `NULL`.
+**Decisión**: `catalog` gana `macros_quality`, `default_strictly_weighed` y `macros_confidence` (`0–2`), opcionales y con el mismo significado y comportamiento que en `manual_intake`. Los 64 alimentos existentes empiezan en `NULL`; no se infiere nada. El índice glucémico sigue sin decidir para `catalog`.
+**Convención actualizada**: `measurement_conventions.md` sección 6.10 y sección 6.11; `code_conventions.md` sección 11.2.2

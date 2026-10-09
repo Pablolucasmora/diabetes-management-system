@@ -92,6 +92,7 @@ from DayBetes_food.domain.nutrition import (
 )
 from DayBetes_food.domain.catalog import (
     CatalogItemCreate,
+    CatalogItemRead,
     CatalogItemRequest,
     CatalogItemUpdate,
     parse_barcode,
@@ -100,6 +101,7 @@ from DayBetes_food.domain.catalog import (
 )
 from DayBetes_food.domain.food import (
     INITIAL_AMOUNT_WITHOUT_SERVING_G,
+    parse_declared_confidence,
     parse_default_portion,
     parse_food_subtype,
 )
@@ -109,7 +111,6 @@ from DayBetes_food.domain.manual_intake import (
     ManualIntakeRequest,
     ManualIntakeUpdate,
     QuickAddRequest,
-    parse_declared_confidence,
     parse_manual_intake_description,
     parse_manual_intake_name,
     parse_manual_intake_origin,
@@ -308,6 +309,9 @@ def _parse_catalog_item_request(
     alcohol,
     barcode,
     cooking_factor,
+    macros_quality,
+    default_strictly_weighed,
+    macros_confidence,
     favorite=None,
     tags_json=None,
     smart_raw="",
@@ -342,6 +346,9 @@ def _parse_catalog_item_request(
         fields["alcohol"] = alcohol
         nutrients = parse_nutrients(fields)
     parsed_barcode = parse_barcode(barcode)
+    parsed_macros_quality = _parse_optional_bool(macros_quality)
+    parsed_default_strictly_weighed = _parse_optional_bool(default_strictly_weighed)
+    parsed_macros_confidence = parse_declared_confidence(macros_confidence, field="macros_confidence")
     parsed_favorite = None if favorite is None else _parse_strict_bool(favorite)
     tags = _parse_tags_json(tags_json) if tags_json is not None else None
     return CatalogItemRequest(
@@ -359,6 +366,9 @@ def _parse_catalog_item_request(
         nutrients=nutrients,
         barcode=parsed_barcode,
         cooking_factor=parsed_cooking_factor,
+        macros_quality=parsed_macros_quality,
+        default_strictly_weighed=parsed_default_strictly_weighed,
+        macros_confidence=parsed_macros_confidence,
         favorite=parsed_favorite,
         tags=tags,
     )
@@ -409,6 +419,9 @@ def _catalog_create(req: CatalogItemRequest, user_id: int, brand_id, subtype) ->
         nutrients=req.nutrients,
         barcode=req.barcode,
         cooking_factor=req.cooking_factor,
+        macros_quality=req.macros_quality,
+        default_strictly_weighed=req.default_strictly_weighed,
+        macros_confidence=req.macros_confidence,
     )
 
 
@@ -426,6 +439,9 @@ def _catalog_update(req: CatalogItemRequest, brand_id, subtype) -> CatalogItemUp
         nutrients=req.nutrients,
         barcode=req.barcode,
         cooking_factor=req.cooking_factor,
+        macros_quality=req.macros_quality,
+        default_strictly_weighed=req.default_strictly_weighed,
+        macros_confidence=req.macros_confidence,
     )
 
 
@@ -447,7 +463,7 @@ def _parse_manual_intake_request(
     glycemic_index,
     ig_confidence,
     macros_confidence,
-    default_macros_quality,
+    macros_quality,
     default_strictly_weighed,
     favorite=None,
     tags_json=None,
@@ -490,7 +506,7 @@ def _parse_manual_intake_request(
         glycemic_index=parsed_glycemic_index,
         ig_confidence=parsed_ig_confidence,
         macros_confidence=parse_declared_confidence(macros_confidence, field="macros_confidence"),
-        default_macros_quality=_parse_optional_bool(default_macros_quality),
+        macros_quality=_parse_optional_bool(macros_quality),
         default_strictly_weighed=_parse_optional_bool(default_strictly_weighed),
         favorite=None if favorite is None else _parse_strict_bool(favorite),
         tags=_parse_tags_json(tags_json) if tags_json is not None else None,
@@ -526,7 +542,7 @@ def _manual_intake_create(req: ManualIntakeRequest, user_id: int, subtype) -> Ma
         glycemic_index=req.glycemic_index,
         ig_confidence=req.ig_confidence,
         macros_confidence=req.macros_confidence,
-        default_macros_quality=req.default_macros_quality,
+        macros_quality=req.macros_quality,
         default_strictly_weighed=req.default_strictly_weighed,
     )
 
@@ -542,7 +558,7 @@ def _manual_intake_update(req: ManualIntakeRequest, subtype) -> ManualIntakeUpda
         glycemic_index=req.glycemic_index,
         ig_confidence=req.ig_confidence,
         macros_confidence=req.macros_confidence,
-        default_macros_quality=req.default_macros_quality,
+        macros_quality=req.macros_quality,
         default_strictly_weighed=req.default_strictly_weighed,
     )
 
@@ -580,20 +596,19 @@ def _quick_add_create(req: QuickAddRequest, user_id: int) -> ManualIntakeCreate:
         glycemic_index=None,
         ig_confidence=None,
         macros_confidence=None,
-        default_macros_quality=None,
+        macros_quality=None,
         default_strictly_weighed=False,
         is_quick_add=True,
     )
 
 
-def _manual_portion_defaults(item: ManualIntakeRead) -> dict:
-    """measurement_conventions.md §6.11: a new portion of a manual dish is born
-    with the dish's defaults, written when the portion is created (§7.14).
-    Every route that creates a portion from a manual dish must use it."""
-    return {
-        "strictly_weighed": item.default_strictly_weighed,
-        "macros_quality": item.default_macros_quality,
-    }
+def _portion_defaults(item: CatalogItemRead | ManualIntakeRead) -> dict:
+    """measurement_conventions.md §6.11: a new portion of a food is born with
+    the food's default_strictly_weighed, written when the portion is created
+    (§7.14). macros_quality is not copied: the portion reads the food's live.
+    Every route that creates a portion from a catalog food or a manual dish
+    must use it."""
+    return {"strictly_weighed": item.default_strictly_weighed}
 
 
 def _resolve_target_event(connection, user_id: int, intake_event_id: str) -> int:
@@ -772,6 +787,9 @@ def _catalog_detail_summary(item) -> dict:
         ("Alcohol", item.alcohol),
         ("Barcode", item.barcode),
         ("Cooking factor", item.cooking_factor),
+        ("Macros quality", MACROS_QUALITY_LABELS.get(item.macros_quality)),
+        ("Weighed by default", WEIGHED_LABELS.get(item.default_strictly_weighed)),
+        ("Macros confidence", CONFIDENCE_LABELS.get(item.macros_confidence)),
     ]
     info_rows = [(label, fmt(value)) for label, value in candidates if value is not None]
     return {
@@ -807,7 +825,7 @@ def _manual_intake_detail_summary(item: ManualIntakeRead) -> dict:
         ("Glycemic index", GLYCEMIC_INDEX_LABELS.get(item.glycemic_index)),
         ("IG confidence", CONFIDENCE_LABELS.get(item.ig_confidence)),
         ("Macros confidence", CONFIDENCE_LABELS.get(item.macros_confidence)),
-        ("Macros by default", MACROS_QUALITY_LABELS.get(item.default_macros_quality)),
+        ("Macros quality", MACROS_QUALITY_LABELS.get(item.macros_quality)),
         ("Weighed by default", WEIGHED_LABELS.get(item.default_strictly_weighed)),
         ("Caffeine", None if item.caffeine is None else f"{fmt(item.caffeine)} mg/100 g"),
         ("Alcohol", None if item.alcohol is None else f"{fmt(item.alcohol)} g/100 g"),
@@ -1463,16 +1481,13 @@ def setup_food_routes(rt):
             user_id = get_current_user_id()
             if not user_id:
                 return app_error_response(request, AuthenticationError, "Your session has expired.")
-            portion_defaults = {}
             if origin is PortionOrigin.CATALOG:
                 item = get_catalog_item(connection, int(user_id), int(origin_id))
-                if item is None:
-                    return app_error_response(request, NotFoundError, "Rescue item not found.")
             else:
                 item = get_manual_intake(connection, int(user_id), int(origin_id))
-                if item is None:
-                    return app_error_response(request, NotFoundError, "Rescue item not found.")
-                portion_defaults = _manual_portion_defaults(item)
+            if item is None:
+                return app_error_response(request, NotFoundError, "Rescue item not found.")
+            portion_defaults = _portion_defaults(item)  # measurement §6.11
             try:
                 with connection.transaction():
                     event_id = create_intake_event(
@@ -1658,7 +1673,6 @@ def setup_food_routes(rt):
             if not recipe or not _can_edit_entry("recipe", recipe, user_id):
                 return app_error_response(request, NotFoundError, "Recipe not found.")
 
-            portion_defaults = {}
             if origin is PortionOrigin.CATALOG:
                 item = get_catalog_item(connection, int(user_id), entry_id)
                 if item is None:
@@ -1679,9 +1693,9 @@ def setup_food_routes(rt):
                     if item.default_portion is not None
                     else INITIAL_AMOUNT_WITHOUT_SERVING_G
                 )
-                # measurement §6.11; a merge with an existing portion keeps the
-                # existing one (decision 2026-09-19).
-                portion_defaults = _manual_portion_defaults(item)
+            # measurement §6.11; a merge with an existing portion keeps the
+            # existing one (decision 2026-09-19).
+            portion_defaults = _portion_defaults(item)
 
             existing = list_recipe_portions_by_origin(
                 connection, int(user_id), recipe_id, origin, entry_id
@@ -1889,6 +1903,9 @@ def setup_food_routes(rt):
                             ),
                             barcode=source.barcode,
                             cooking_factor=source.cooking_factor,
+                            macros_quality=source.macros_quality,
+                            default_strictly_weighed=source.default_strictly_weighed,
+                            macros_confidence=source.macros_confidence,
                         ),
                         commit=False,
                     )
@@ -1938,7 +1955,7 @@ def setup_food_routes(rt):
                             glycemic_index=source.glycemic_index,
                             ig_confidence=source.ig_confidence,
                             macros_confidence=source.macros_confidence,
-                            default_macros_quality=source.default_macros_quality,
+                            macros_quality=source.macros_quality,
                             default_strictly_weighed=source.default_strictly_weighed,
                         ),
                         commit=False,
@@ -2007,7 +2024,6 @@ def setup_food_routes(rt):
                                 conservation=portion.conservation,
                                 final_state=portion.final_state,
                                 strictly_weighed=portion.strictly_weighed,
-                                macros_quality=portion.macros_quality,
                                 is_cooked_weight=bool(portion.is_cooked_weight),
                             ),
                             commit=False,
@@ -2296,6 +2312,7 @@ def setup_food_routes(rt):
                 serving_grams = origin_item.default_portion
                 if unit is AmountInputUnit.PORTION and serving_grams is None:
                     return _error_msg("This food has no serving. Use grams, lb or oz.")
+                portion_defaults = _portion_defaults(origin_item)
             elif entry_type == "manual_intake":
                 origin_item = get_manual_intake(connection, int(user_id), entry_id)
                 if origin_item is None:
@@ -2307,7 +2324,7 @@ def setup_food_routes(rt):
                 serving_grams = origin_item.default_portion
                 if unit is AmountInputUnit.PORTION and serving_grams is None:
                     return _error_msg("This dish has no serving. Use grams, lb or oz.")
-                portion_defaults = _manual_portion_defaults(origin_item)
+                portion_defaults = _portion_defaults(origin_item)
             else:
                 origin_item = get_recipe(connection, entry_id)
                 if not origin_item or not _can_view_entry("recipe", origin_item, user_id):
@@ -2412,9 +2429,8 @@ def setup_food_routes(rt):
                                     cooking=row.cooking,
                                     conservation=row.conservation,
                                     final_state=row.final_state,
-                                    # A portion copied from another keeps its values (measurement §6.11).
+                                    # A portion copied from another keeps it (measurement §6.11).
                                     strictly_weighed=row.strictly_weighed,
-                                    macros_quality=row.macros_quality,
                                     is_cooked_weight=bool(row.is_cooked_weight),
                                 ),
                                 commit=False,
@@ -2620,6 +2636,7 @@ def setup_food_routes(rt):
                             destination_id=event_id,
                             plate_id=target_plate_id,
                             amount=portion_amount,
+                            **_portion_defaults(catalog_item),  # measurement §6.11
                         ),
                         commit=False,
                     )
@@ -2665,7 +2682,7 @@ def setup_food_routes(rt):
                             destination_id=event_id,
                             plate_id=target_plate_id,
                             amount=portion_amount,
-                            **_manual_portion_defaults(intake_item),
+                            **_portion_defaults(intake_item),
                         ),
                         commit=False,
                     )
@@ -2748,9 +2765,8 @@ def setup_food_routes(rt):
                                     cooking=row.cooking,
                                     conservation=row.conservation,
                                     final_state=row.final_state,
-                                    # A portion copied from another keeps its values (measurement §6.11).
+                                    # A portion copied from another keeps it (measurement §6.11).
                                     strictly_weighed=row.strictly_weighed,
-                                    macros_quality=row.macros_quality,
                                     is_cooked_weight=bool(row.is_cooked_weight),
                                 ),
                                 commit=False,
@@ -2848,6 +2864,9 @@ def setup_food_routes(rt):
         alcohol: str = "",
         barcode: str = "",
         cooking_factor: str = "",
+        macros_quality: str = "",
+        default_strictly_weighed: str = "",
+        macros_confidence: str = "",
         tags_json: str | None = None,
     ):
         if request.headers.get("HX-Request") != "true":
@@ -2873,6 +2892,9 @@ def setup_food_routes(rt):
                 alcohol=alcohol,
                 barcode=barcode,
                 cooking_factor=cooking_factor,
+                macros_quality=macros_quality,
+                default_strictly_weighed=default_strictly_weighed,
+                macros_confidence=macros_confidence,
                 tags_json=tags_json,
                 calories_100g=calories_100g,
                 carbs_100g=carbs_100g,
@@ -2929,7 +2951,7 @@ def setup_food_routes(rt):
         glycemic_index: str = "",
         ig_confidence: str = "",
         macros_confidence: str = "",
-        default_macros_quality: str = "",
+        macros_quality: str = "",
         default_strictly_weighed: str = "",
         tags_json: str | None = None,
     ):
@@ -2952,7 +2974,7 @@ def setup_food_routes(rt):
                 glycemic_index=glycemic_index,
                 ig_confidence=ig_confidence,
                 macros_confidence=macros_confidence,
-                default_macros_quality=default_macros_quality,
+                macros_quality=macros_quality,
                 default_strictly_weighed=default_strictly_weighed,
                 tags_json=tags_json,
                 calories_100g=calories_100g,
@@ -3074,6 +3096,9 @@ def setup_food_routes(rt):
         alcohol: str = "",
         barcode: str = "",
         cooking_factor: str = "",
+        macros_quality: str = "",
+        default_strictly_weighed: str = "",
+        macros_confidence: str = "",
         favorite: str = "",
         tags_json: str | None = None,
         catalog_smart_macros_raw: str = "",
@@ -3101,6 +3126,9 @@ def setup_food_routes(rt):
                 alcohol=alcohol,
                 barcode=barcode,
                 cooking_factor=cooking_factor,
+                macros_quality=macros_quality,
+                default_strictly_weighed=default_strictly_weighed,
+                macros_confidence=macros_confidence,
                 favorite=favorite,
                 tags_json=tags_json,
                 smart_raw=catalog_smart_macros_raw,
@@ -3142,7 +3170,7 @@ def setup_food_routes(rt):
         glycemic_index: str = "",
         ig_confidence: str = "",
         macros_confidence: str = "",
-        default_macros_quality: str = "",
+        macros_quality: str = "",
         default_strictly_weighed: str = "",
         favorite: str = "",
         tags_json: str | None = None,
@@ -3166,7 +3194,7 @@ def setup_food_routes(rt):
                 glycemic_index=glycemic_index,
                 ig_confidence=ig_confidence,
                 macros_confidence=macros_confidence,
-                default_macros_quality=default_macros_quality,
+                macros_quality=macros_quality,
                 default_strictly_weighed=default_strictly_weighed,
                 favorite=favorite,
                 tags_json=tags_json,
@@ -3268,9 +3296,8 @@ def setup_food_routes(rt):
                             destination_id=event_id,
                             plate_id=target_plate_id,
                             amount=req.weight_g,
-                            # The dish defaults (measurement §6.11): FALSE and NULL.
+                            # The dish default (measurement §6.11): FALSE.
                             strictly_weighed=payload.default_strictly_weighed,
-                            macros_quality=payload.default_macros_quality,
                         ),
                         commit=False,
                     )

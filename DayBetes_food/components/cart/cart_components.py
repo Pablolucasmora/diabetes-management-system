@@ -89,7 +89,6 @@ def _checkbox(
 # Visible label of each tri-state flag (the interface is in English, 7.12).
 _TRI_STATE_FLAG_LABELS = {
     "strictly_weighed": "Strictly weighted",
-    "macros_quality": "Macros quality",
 }
 
 
@@ -99,7 +98,7 @@ def tri_state_flag_id(name: str, portion_id: int) -> str:
 
 
 def PortionTriStateFlag(event_id: int, portion, name: str, ingredient_name: str, oob: bool = False):
-    """Tri-state control of one portion flag (`strictly_weighed`/`macros_quality`).
+    """Tri-state control of one portion flag (`strictly_weighed`).
 
     Single builder for the row and for the route response: the route repaints
     this control out of band next to `MacrosSummary`, so the next state it
@@ -898,11 +897,6 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
         Div(
             Label("Strictly weighted", cls="text-xs text-gray-600"),
             PortionTriStateFlag(event.id, sample, "strictly_weighed", ingredient_name),
-            cls="flex items-center gap-2"
-        ),
-        Div(
-            Label("Macros quality", cls="text-xs text-gray-600"),
-            PortionTriStateFlag(event.id, sample, "macros_quality", ingredient_name),
             cls="flex items-center gap-2"
         ),
         # Catalog origins with a known factor, plus an inherited TRUE portion whose

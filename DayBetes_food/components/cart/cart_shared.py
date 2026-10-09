@@ -102,7 +102,8 @@ def calculate_macro_summary_metrics(portions) -> dict:
         # numerator, same as False, but said explicitly instead of `bool()`
         # (code_conventions.md 3.2: decide whether NULL is zero or absence).
         amount_confidence_num += amount * (1.0 if portion.strictly_weighed is True else 0.0)
-        quality_confidence_num += amount * (1.0 if portion.macros_quality is True else 0.0)
+        # The food's quality, read live (measurement §6.5, §6.11).
+        quality_confidence_num += amount * (1.0 if portion.source.macros_quality is True else 0.0)
 
     metrics = {
         "amount_confidence": (amount_confidence_num / total_amount) if total_amount > 0 else 0.0,

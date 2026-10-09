@@ -81,6 +81,10 @@ class CatalogItemRead:
     alcohol: float | None
     barcode: str | None
     cooking_factor: float | None
+    # Decision 2026-10-09 (measurement §6.10, §6.11). None = no data.
+    macros_quality: bool | None  # the food's data, read live by portions
+    default_strictly_weighed: bool | None  # copied to each new portion
+    macros_confidence: int | None  # declared, ordinal 0-2
     is_published: bool
     created_at: datetime
     updated_at: datetime
@@ -116,6 +120,10 @@ class CatalogItemCreate:
     nutrients: NutrientValues
     barcode: str | None
     cooking_factor: float | None
+    # Decision 2026-10-09 (measurement §6.10, §6.11). None = no data.
+    macros_quality: bool | None  # the food's data, read live by portions
+    default_strictly_weighed: bool | None  # copied to each new portion
+    macros_confidence: int | None  # declared, ordinal 0-2
 
 
 @dataclass(frozen=True)
@@ -138,6 +146,10 @@ class CatalogItemUpdate:
     nutrients: NutrientValues
     barcode: str | None
     cooking_factor: float | None
+    # Decision 2026-10-09 (measurement §6.10, §6.11). None = no data.
+    macros_quality: bool | None  # the food's data, read live by portions
+    default_strictly_weighed: bool | None  # copied to each new portion
+    macros_confidence: int | None  # declared, ordinal 0-2
 
 
 @dataclass(frozen=True)
@@ -159,5 +171,9 @@ class CatalogItemRequest:
     nutrients: NutrientValues
     barcode: str | None
     cooking_factor: float | None
+    # Decision 2026-10-09 (measurement §6.10, §6.11). None = no data.
+    macros_quality: bool | None  # the food's data, read live by portions
+    default_strictly_weighed: bool | None  # copied to each new portion
+    macros_confidence: int | None  # declared, ordinal 0-2
     favorite: bool | None
     tags: list[str] | None

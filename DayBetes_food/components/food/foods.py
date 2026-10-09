@@ -67,6 +67,9 @@ def catalog_entry_view(item: CatalogItemRead) -> dict:
         "alcohol": item.alcohol,
         "barcode": item.barcode,
         "cooking_factor": item.cooking_factor,
+        "macros_quality": item.macros_quality,
+        "default_strictly_weighed": item.default_strictly_weighed,
+        "macros_confidence": item.macros_confidence,
         "is_published": item.is_published,
         "created_by": item.created_by,
         "origin_root_id": item.origin_root_id,
@@ -100,7 +103,7 @@ def manual_intake_entry_view(item: ManualIntakeRead) -> dict:
         "glycemic_index": item.glycemic_index.value if item.glycemic_index else None,
         "ig_confidence": item.ig_confidence,
         "macros_confidence": item.macros_confidence,
-        "default_macros_quality": item.default_macros_quality,
+        "macros_quality": item.macros_quality,
         "default_strictly_weighed": item.default_strictly_weighed,
         "is_published": item.is_published,
         "created_by": item.created_by,
@@ -121,7 +124,7 @@ GLYCEMIC_INDEX_LABELS = {
 }
 # Declared confidence, ordinal 0-2 (measurement §6.10).
 CONFIDENCE_LABELS = {0: "Not sure", 1: "More or less", 2: "Quite sure"}
-MACROS_QUALITY_LABELS = {True: "Published (menu, website)", False: "Estimated"}
+MACROS_QUALITY_LABELS = {True: "Published (label, menu, website)", False: "Estimated"}
 WEIGHED_LABELS = {True: "Weighed", False: "Not weighed"}
 
 FILTER_ITEM_CLS = """
@@ -1699,6 +1702,37 @@ def _confidence_select(label: str, name: str, selected: int | None, help_text: s
     )
 
 
+def _macros_quality_select(selected: bool | None):
+    """The food's macros quality (measurement §6.11): portions read it live."""
+    return _tristate_select(
+        "Macros quality",
+        "macros_quality",
+        selected,
+        MACROS_QUALITY_LABELS,
+        "Where the macros come from: published by whoever makes it (label, menu, website) or estimated.",
+    )
+
+
+def _weighed_default_select(selected: bool | None):
+    """Copied to every new portion; each portion can change it (measurement §6.11)."""
+    return _tristate_select(
+        "Weighed by default",
+        "default_strictly_weighed",
+        selected,
+        WEIGHED_LABELS,
+        "Copied to every new portion: whether its weight is exact (e.g. a 60 g can).",
+    )
+
+
+def _macros_confidence_select(selected: int | None):
+    return _confidence_select(
+        "Macros confidence",
+        "macros_confidence",
+        selected,
+        "How sure you are about the macros you typed.",
+    )
+
+
 def _glycemic_index_select(selected: str | None):
     return _labeled_select(
         "Glycemic index",
@@ -2364,6 +2398,9 @@ def CreateCatalogPage(
                     input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
                 ),
                 _labeled_input("Cooking factor", "cooking_factor", "number", help_text="Cooked/raw weight ratio. Leave empty if unknown.", step="any", inputmode="decimal", min_value=0, max_value=10, value=_pv("cooking_factor")),
+                _macros_quality_select(None),
+                _weighed_default_select(None),
+                _macros_confidence_select(None),
                 id="catalog_advanced",
                 cls=advanced_cls,
             ),
@@ -2516,26 +2553,9 @@ def CreateManualPage(
                     None,
                     "How sure you are about the glycemic index. Needs a glycemic index.",
                 ),
-                _confidence_select(
-                    "Macros confidence",
-                    "macros_confidence",
-                    None,
-                    "How sure you are about the macros you typed.",
-                ),
-                _tristate_select(
-                    "Macros by default",
-                    "default_macros_quality",
-                    None,
-                    MACROS_QUALITY_LABELS,
-                    "Copied to every new portion: published by whoever makes it, or estimated.",
-                ),
-                _tristate_select(
-                    "Weighed by default",
-                    "default_strictly_weighed",
-                    None,
-                    WEIGHED_LABELS,
-                    "Copied to every new portion: whether its weight is exact.",
-                ),
+                _macros_confidence_select(None),
+                _macros_quality_select(None),
+                _weighed_default_select(None),
                 id="manual_advanced",
                 cls="hidden grid grid-cols-1 md:grid-cols-2 gap-2 col-span-1 md:col-span-2",
             ),
@@ -2790,6 +2810,9 @@ def EditCatalogPage(
                     )
                 ),
                 _edit_tile(_labeled_input("Cooking factor", "cooking_factor", "number", step="any", inputmode="decimal", min_value=0, max_value=10, value=_input_value(entry.get("cooking_factor")))),
+                _edit_tile(_macros_quality_select(entry.get("macros_quality"))),
+                _edit_tile(_weighed_default_select(entry.get("default_strictly_weighed"))),
+                _edit_tile(_macros_confidence_select(entry.get("macros_confidence"))),
                 cls="grid grid-cols-1 md:grid-cols-2 gap-2",
             ),
             cls="flex flex-col gap-2 w-full",
@@ -2901,32 +2924,9 @@ def EditManualPage(
                         "How sure you are about the glycemic index. Needs a glycemic index.",
                     )
                 ),
-                _edit_tile(
-                    _confidence_select(
-                        "Macros confidence",
-                        "macros_confidence",
-                        entry.get("macros_confidence"),
-                        "How sure you are about the macros.",
-                    )
-                ),
-                _edit_tile(
-                    _tristate_select(
-                        "Macros by default",
-                        "default_macros_quality",
-                        entry.get("default_macros_quality"),
-                        MACROS_QUALITY_LABELS,
-                        "Copied to every new portion: published by whoever makes it, or estimated.",
-                    )
-                ),
-                _edit_tile(
-                    _tristate_select(
-                        "Weighed by default",
-                        "default_strictly_weighed",
-                        entry.get("default_strictly_weighed"),
-                        WEIGHED_LABELS,
-                        "Copied to every new portion: whether its weight is exact.",
-                    )
-                ),
+                _edit_tile(_macros_confidence_select(entry.get("macros_confidence"))),
+                _edit_tile(_macros_quality_select(entry.get("macros_quality"))),
+                _edit_tile(_weighed_default_select(entry.get("default_strictly_weighed"))),
                 cls="grid grid-cols-1 md:grid-cols-2 gap-2",
             ),
             cls="flex flex-col gap-2 w-full",

@@ -238,7 +238,7 @@ WHERE plate_id IS NOT NULL
 **Qué ocurre con los campos que no están en la clave al fusionar** (decisión 2026-09-19, cierra el punto que el 2026-09-18 dejaba abierto):
 
 - `amount` **se suma**: es el sentido mismo de la fusión.
-- `strictly_weighed` y `macros_quality` **conservan el valor de la fila existente**. Gana lo que ya estaba: la fila lleva ahí desde la primera adición y su calidad de dato ya está afirmada; una adición posterior no sabe más sobre ella. `is_cooked_weight` ya no entra en esta regla: desde el 2026-09-23 es parte de la clave, así que dos filas que se fusionan lo tienen igual.
+- `strictly_weighed` **conserva el valor de la fila existente**. Gana lo que ya estaba: la fila lleva ahí desde la primera adición y su calidad de dato ya está afirmada; una adición posterior no sabe más sobre ella. (`macros_quality` estaba en esta regla hasta el 2026-10-09; desde entonces es un dato del alimento, §6.11, y la porción no lo guarda.) `is_cooked_weight` ya no entra en esta regla: desde el 2026-09-23 es parte de la clave, así que dos filas que se fusionan lo tienen igual.
 - `offset_minutes` no necesita regla: dentro de una misma tanda el offset heredado ya coincide.
 
 La misma regla se aplicó retroactivamente al histórico en la migración (§4.6.6).
@@ -460,11 +460,11 @@ El valor no indica si la información nutricional es correcta. Solo indica la co
 
 ### 6.5 `quality_confidence`
 
-`quality_confidence` indica qué proporción del peso servido tiene información nutricional marcada como fiable mediante `macros_quality = true`.
+`quality_confidence` indica qué proporción del peso servido tiene información nutricional marcada como fiable mediante `macros_quality = true`. Desde el 2026-10-09, `macros_quality` es un dato del alimento de cada porción, leído en vivo (§6.11).
 
 ```text
 quality_confidence =
-    suma de amount de porciones con macros_quality = true
+    suma de amount de porciones cuyo alimento tiene macros_quality = true
     ------------------------------------------------------------
     suma de amount de todas las porciones
 ```
@@ -646,19 +646,28 @@ Decisión 2026-10-09. `manual_intake.macros_confidence` y `manual_intake.ig_conf
 - No se promedian con las métricas de §6.1, no se muestran como porcentaje y no se convierten a `0–1` sin una fórmula documentada (§6.2).
 - No sustituyen a `macros_quality` (§6.5). Un plato puede tener macros de la carta (`macros_quality = TRUE`) y una confianza baja si el usuario duda de que la ración se parezca a la de la carta.
 - Migración de `ig_confidence`, que antes usaba `1–5`: `1` y `2` → `0`; `3` → `1`; `4` y `5` → `2`. Es una corrección de datos aprobada por el usuario (`code_conventions.md` §12.7). Si algún valor queda mal, lo corrige él a mano.
-- Por ahora solo existen en `manual_intake`. `macros_confidence` se añadirá a `catalog` con el mismo significado (`audit/deuda_pendiente.md`, sección `manual_intake`).
+- `macros_confidence` existe en `manual_intake` y en `catalog` (decisión 2026-10-09, extensión a `catalog`), con el mismo significado y la misma constante de rango. `ig_confidence` solo existe en `manual_intake`.
 
-### 6.11 Calidad y pesaje por defecto del alimento
+### 6.11 Calidad de los macros y pesaje por defecto del alimento
 
-Decisión 2026-10-09. Modifica el comportamiento interino de la decisión 2026-09-18, según el cual las porciones nacían siempre con `macros_quality` y `strictly_weighed` en `NULL`.
+Decisiones 2026-10-09. La segunda (calidad de los macros como dato del alimento) modifica la primera (calidad y pesaje por defecto copiados a la porción) en lo que se refiere a la calidad. Las dos modifican el comportamiento interino de la decisión 2026-09-18, según el cual las porciones nacían siempre con `macros_quality` y `strictly_weighed` en `NULL`.
 
-- `manual_intake.default_macros_quality` y `manual_intake.default_strictly_weighed` son `BOOLEAN` nullable, con los mismos tres estados que en la porción (`NULL` = sin dato).
-- `default_macros_quality = TRUE` significa que los macros proceden de información publicada por quien prepara el plato (la carta, la web oficial). `FALSE` significa que son una estimación (propia, con IA o de una fuente genérica).
-- `default_strictly_weighed = TRUE` encaja con alimentos cuyo peso es siempre el del envase (una lata de atún de 60 g). En un plato manual suele ser `FALSE` o `NULL`. El añadido rápido lo fija en `FALSE`.
-- Al crear una porción del plato, por cualquier camino (carrito, añadido rápido, ingrediente de receta, rescate), se copian estos dos valores a `portion_detail.macros_quality` y `portion_detail.strictly_weighed`. Se escriben en el momento de crear la porción, no en el render (`code_conventions.md` §7.14). Si el valor por defecto es `NULL`, la porción nace en `NULL`.
-- Una vez creada, la porción es independiente. Cambiar los valores por defecto del plato no reescribe las porciones existentes, y el usuario puede cambiar los de una porción concreta en el carrito.
-- Una porción que se crea copiando otra (importar o copiar una receta) conserva los valores de la porción de origen, no los valores por defecto del alimento.
-- Por ahora solo existen en `manual_intake`. En `catalog` las porciones siguen naciendo en `NULL` hasta que se le añadan las mismas dos columnas (`audit/deuda_pendiente.md`, sección `manual_intake`).
+**Calidad de los macros (`macros_quality`): dato del alimento.**
+
+- `catalog.macros_quality` y `manual_intake.macros_quality` son `BOOLEAN` nullable con tres estados: `TRUE` = los macros proceden de información publicada por quien hace el producto o prepara el plato (la etiqueta, la carta, la web oficial); `FALSE` = son una estimación (propia, con IA o de una fuente genérica); `NULL` = sin dato.
+- Describe de dónde salen los macros del alimento, no el acto de comer, así que no se ajusta por porción. Si es distinta otro día, es otro alimento u otra versión.
+- La porción **no guarda copia**: el carrito y `quality_confidence` (§6.5) la leen en vivo del alimento, como los macros. Las comidas confirmadas no pierden nada, porque `quality_confidence` se guarda en el evento al confirmar.
+- Es un campo versionable: cuando exista el versionado (`portion_detail` H1), la porción la leerá de la versión que use.
+- `portion_detail.macros_quality` se conserva sin uso (ni se lee ni se escribe) con los valores que tenía el 2026-10-09; se borrará con el versionado (`audit/deuda_pendiente.md`). El carrito ya no la muestra como ajuste.
+- Los alimentos que existían el 2026-10-09 en `catalog` empiezan en `NULL`; no se infiere nada.
+
+**Pesaje por defecto (`default_strictly_weighed`): se copia a la porción.**
+
+- `catalog.default_strictly_weighed` y `manual_intake.default_strictly_weighed` son `BOOLEAN` nullable con los mismos tres estados que `portion_detail.strictly_weighed`.
+- `TRUE` encaja con alimentos cuyo peso es siempre el del envase (una lata de atún de 60 g). En un plato manual suele ser `FALSE` o `NULL`. El añadido rápido lo fija en `FALSE`.
+- Al crear una porción del alimento, por cualquier camino (carrito, añadido rápido, ingrediente de receta, rescate), se copia a `portion_detail.strictly_weighed`. Se escribe en el momento de crear la porción, no en el render (`code_conventions.md` §7.14). Si es `NULL`, la porción nace en `NULL`.
+- Una vez creada, la porción es independiente: pesar o no es un dato de cada vez que se come, y el usuario lo cambia en el carrito. Cambiar el valor por defecto del alimento no reescribe las porciones existentes.
+- Una porción que se crea copiando otra (importar o copiar una receta) conserva el `strictly_weighed` de la porción de origen.
 
 ## 7. Factor de cocinado
 

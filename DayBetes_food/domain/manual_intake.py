@@ -20,13 +20,6 @@ MANUAL_INTAKE_ORIGIN_MAX_LENGTH = 255  # = VARCHAR(255) (decision 2026-10-09)
 # TEXT column: the limit is a domain rule (§7.3, decision 2026-10-09). It also
 # covers the quick-add notes, stored in the same column.
 MANUAL_INTAKE_DESCRIPTION_MAX_LENGTH = 500
-# Declared confidence, ordinal 0-2 (measurement §6.10). Shared by
-# macros_confidence and ig_confidence. Moves to domain/food.py the day catalog
-# gets macros_confidence.
-MANUAL_INTAKE_CONFIDENCE_MIN = 0
-MANUAL_INTAKE_CONFIDENCE_MAX = 2
-
-_CONFIDENCE_LABELS = {"ig_confidence": "IG confidence", "macros_confidence": "macros confidence"}
 
 
 def _too_long(label: str, field: str, maximum: int) -> ValidationError:
@@ -65,24 +58,6 @@ def parse_manual_intake_description(raw) -> str | None:
     if len(description) > MANUAL_INTAKE_DESCRIPTION_MAX_LENGTH:
         raise _too_long("Description", "description", MANUAL_INTAKE_DESCRIPTION_MAX_LENGTH)
     return description
-
-
-def parse_declared_confidence(raw, *, field: str) -> int | None:
-    """'' -> None; exactly '0', '1' or '2' -> int; anything else ->
-    ValidationError (measurement §6.10)."""
-    text = str(raw or "").strip()
-    if not text:
-        return None
-    allowed = {
-        str(value): value
-        for value in range(MANUAL_INTAKE_CONFIDENCE_MIN, MANUAL_INTAKE_CONFIDENCE_MAX + 1)
-    }
-    if text not in allowed:
-        raise ValidationError(
-            f"Invalid {_CONFIDENCE_LABELS.get(field, field.replace('_', ' '))}.",
-            fields={field: "invalid"},
-        )
-    return allowed[text]
 
 
 def parse_quick_add_weight(raw) -> float:
@@ -148,7 +123,7 @@ class ManualIntakeRead:
     glycemic_index: GlycemicIndex | None
     ig_confidence: int | None
     macros_confidence: int | None
-    default_macros_quality: bool | None  # None = no data (measurement §6.11)
+    macros_quality: bool | None  # the dish's data, read live by portions (measurement §6.11)
     default_strictly_weighed: bool | None
     is_quick_add: bool
     is_published: bool
@@ -179,7 +154,7 @@ class ManualIntakeCreate:
     glycemic_index: GlycemicIndex | None
     ig_confidence: int | None
     macros_confidence: int | None
-    default_macros_quality: bool | None
+    macros_quality: bool | None
     default_strictly_weighed: bool | None
     is_quick_add: bool = False
 
@@ -201,7 +176,7 @@ class ManualIntakeUpdate:
     glycemic_index: GlycemicIndex | None
     ig_confidence: int | None
     macros_confidence: int | None
-    default_macros_quality: bool | None
+    macros_quality: bool | None
     default_strictly_weighed: bool | None
 
 
@@ -220,7 +195,7 @@ class ManualIntakeRequest:
     glycemic_index: GlycemicIndex | None
     ig_confidence: int | None
     macros_confidence: int | None
-    default_macros_quality: bool | None
+    macros_quality: bool | None
     default_strictly_weighed: bool | None
     favorite: bool | None  # None = field absent (edit form)
     tags: list[str] | None  # None = field absent

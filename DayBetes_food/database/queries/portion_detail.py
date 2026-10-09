@@ -35,7 +35,9 @@ from DayBetes_food.errors import NotFoundError, ValidationError
 
 
 _PREPARATION_FIELDS = ("cooking", "conservation", "final_state")
-_FLAG_FIELDS = ("strictly_weighed", "macros_quality", "is_cooked_weight")
+# macros_quality is not a portion flag since 2026-10-09: it is the food's
+# (measurement §6.11). portion_detail.macros_quality is kept unused.
+_FLAG_FIELDS = ("strictly_weighed", "is_cooked_weight")
 
 # Enum-keyed (T2.1): dynamic column composition uses `sql.Identifier` with
 # this whitelist, never an f-string built from caller input.
@@ -65,7 +67,6 @@ _PORTION_COLUMNS = """
     pd.conservation,
     pd.final_state,
     pd.strictly_weighed,
-    pd.macros_quality,
     pd.is_cooked_weight,
     pd.offset_minutes,
     pd.created_at,
@@ -75,6 +76,7 @@ _PORTION_COLUMNS = """
     c.category AS source_category,
     im.subtype AS source_subtype,
     c.cooking_factor AS source_cooking_factor,
+    COALESCE(c.macros_quality, im.macros_quality) AS source_macros_quality,
     COALESCE(c.calories_100g, im.calories_100g) AS source_calories_100g,
     COALESCE(c.carbs_100g, im.carbs_100g) AS source_carbs_100g,
     COALESCE(c.sugars_100g, im.sugars_100g) AS source_sugars_100g,
@@ -198,7 +200,6 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
         "conservation": conservation.value if conservation is not None else None,
         "final_state": final_state.value if final_state is not None else None,
         "strictly_weighed": payload.strictly_weighed,
-        "macros_quality": payload.macros_quality,
         "is_cooked_weight": bool(payload.is_cooked_weight),
         "offset_minutes": offset_minutes,
     }
@@ -211,14 +212,14 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
             amount, catalog_id, manual_intake_id,
             intake_event_id, recipe_id, fridge_id, plate_id,
             cooking, conservation, final_state,
-            strictly_weighed, macros_quality,
+            strictly_weighed,
             is_cooked_weight, offset_minutes
         )
         VALUES (
             %(amount)s, %(catalog_id)s, %(manual_intake_id)s,
             %(intake_event_id)s, %(recipe_id)s, %(fridge_id)s, %(plate_id)s,
             %(cooking)s, %(conservation)s, %(final_state)s,
-            %(strictly_weighed)s, %(macros_quality)s,
+            %(strictly_weighed)s,
             %(is_cooked_weight)s, %(offset_minutes)s
         )
         ON CONFLICT (plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state, is_cooked_weight)

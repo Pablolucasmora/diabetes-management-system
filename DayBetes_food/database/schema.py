@@ -26,10 +26,10 @@ from DayBetes_food.domain.constants import (
     Nutriscore,
     sql_in_list,
 )
-from DayBetes_food.domain.food import FOOD_DEFAULT_PORTION_RANGE
-from DayBetes_food.domain.manual_intake import (
-    MANUAL_INTAKE_CONFIDENCE_MAX,
-    MANUAL_INTAKE_CONFIDENCE_MIN,
+from DayBetes_food.domain.food import (
+    FOOD_CONFIDENCE_MAX,
+    FOOD_CONFIDENCE_MIN,
+    FOOD_DEFAULT_PORTION_RANGE,
 )
 from DayBetes_food.domain.meal_type_schedule import AUTO_ASSIGNABLE_MEAL_TYPES
 from DayBetes_food.domain.nutrition import NUTRIENT_LIMITS, NumericRange
@@ -78,6 +78,9 @@ def catalog_check_constraints() -> dict[str, str]:
         ),
         "ck_catalog_name_normalized": r"name <> '' AND name = regexp_replace(btrim(name), '\s+', ' ', 'g')",
         "ck_catalog_library_published": "created_by IS NOT NULL OR is_published",
+        "ck_catalog_macros_confidence_range": (
+            f"macros_confidence IS NULL OR macros_confidence BETWEEN {FOOD_CONFIDENCE_MIN} AND {FOOD_CONFIDENCE_MAX}"
+        ),
     }
     for field, limits in NUTRIENT_LIMITS.items():
         checks[f"ck_catalog_{field}_range"] = _range_check(field, limits)
@@ -89,7 +92,7 @@ def manual_intake_check_constraints() -> dict[str, str]:
     the limits (§4.4, §12.1). The same list feeds the CREATE TABLE and
     db_init._ensure_manual_intake_schema. NaN/Infinity are rejected by the
     ranges (in `real`, NaN is greater than any number), as in catalog."""
-    confidence = f"BETWEEN {MANUAL_INTAKE_CONFIDENCE_MIN} AND {MANUAL_INTAKE_CONFIDENCE_MAX}"
+    confidence = f"BETWEEN {FOOD_CONFIDENCE_MIN} AND {FOOD_CONFIDENCE_MAX}"
     checks = {
         "ck_manual_intake_glycemic_index": (
             f"glycemic_index IS NULL OR glycemic_index IN ({sql_in_list(GlycemicIndex)})"
@@ -323,6 +326,9 @@ class DBSchema:
         alcohol REAL,
         barcode VARCHAR(48),
         cooking_factor REAL,
+        macros_quality BOOLEAN, -- the food's data, read live by portions (measurement §6.11)
+        default_strictly_weighed BOOLEAN, -- copied to each new portion (measurement §6.11)
+        macros_confidence INTEGER, -- declared 0-2 (measurement §6.10)
         is_published BOOLEAN NOT NULL DEFAULT FALSE,
         deleted_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -377,7 +383,7 @@ class DBSchema:
         glycemic_index VARCHAR(20), -- declared absorption speed (measurement §5.5)
         ig_confidence INTEGER, -- declared 0-2 (measurement §6.10)
         macros_confidence INTEGER, -- declared 0-2 (measurement §6.10)
-        default_macros_quality BOOLEAN, -- copied to each new portion (measurement §6.11)
+        macros_quality BOOLEAN, -- the dish's data, read live by portions (measurement §6.11)
         default_strictly_weighed BOOLEAN, -- copied to each new portion (measurement §6.11)
         is_quick_add BOOLEAN NOT NULL DEFAULT FALSE,
         is_published BOOLEAN NOT NULL DEFAULT FALSE,
@@ -590,7 +596,7 @@ class DBSchema:
             CONSTRAINT ck_portion_detail_final_state
             CHECK (final_state IS NULL OR final_state IN ({_PORTION_PREPARATION_LISTS['final_state']})), -- Final state, in case the state changed from the initial one
         strictly_weighed BOOLEAN, -- Whether or not the food was weighed before consumption. NULL means "no data" and is a state of its own, not FALSE (decision 2026-09-18)
-        macros_quality BOOLEAN, -- Whether the macros were estimated or read from the product label. NULL means "no data" and is a state of its own, not FALSE (decision 2026-09-18)
+        macros_quality BOOLEAN, -- UNUSED since 2026-10-09: the quality is the food's (catalog/manual_intake.macros_quality, read live, measurement §6.11). Kept with its values until versioning (portion_detail H1)
         
         is_cooked_weight BOOLEAN DEFAULT FALSE, -- If the food was weighed already cooked, catalog.cooking_factor back-calculates the raw weight ONLY inside the macro calculation; `amount` always keeps what the user weighed and is never overwritten (measurement_conventions.md 5.2, decision 2026-09-18). Only for catalog origins.
         offset_minutes INTEGER

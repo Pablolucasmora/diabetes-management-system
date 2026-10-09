@@ -255,7 +255,7 @@ def _parse_strict_bool(raw_value: str) -> bool:
 
 
 def _parse_tristate_bool(raw_value: str):
-    """Strict parser of the `strictly_weighed`/`macros_quality` tri-state (§7.4/§7.6).
+    """Strict parser of the `strictly_weighed` tri-state (§7.4/§7.6).
 
     Different from `_parse_strict_bool` on purpose: in a checkbox, absence is
     `False`, but in a three-state control, absence is "no data" (`None`).
@@ -785,14 +785,15 @@ def setup_cart_routes(rt):
 
     def _portion_flag_route(request: Request, portion_id: int, field_name: str, raw_value: str, label: str, *, tristate: bool = False):
         """
-        Common body of the three portion booleans (strictly_weighed,
-        macros_quality, is_cooked_weight): same HTMX contract
+        Common body of the two portion booleans (strictly_weighed,
+        is_cooked_weight; macros_quality is the food's since 2026-10-09,
+        measurement §6.11): same HTMX contract
         (target #macros_summary_event_{id}, swap outerHTML) and same error
         mapping, as §9.5 requires ("equivalent actions must use the same
         pattern").
 
-        `tristate=True` for the two data quality fields, which accept "no
-        data" (`None`, decision 2026-09-18); `is_cooked_weight` has two states.
+        `tristate=True` for strictly_weighed, which accepts "no data" (`None`,
+        decision 2026-09-18); `is_cooked_weight` has two states.
 
         Unlike its sibling amount/offset routes, it also accepts a `consumed`
         event: the portions of a confirmed event are editable (decision
@@ -888,10 +889,6 @@ def setup_cart_routes(rt):
     @rt("/cart/portion/{portion_id}/strictly_weighed")
     def post(request: Request, portion_id: int, value: str = ""):
         return _portion_flag_route(request, portion_id, "strictly_weighed", value, "Strictly weighted", tristate=True)
-
-    @rt("/cart/portion/{portion_id}/macros_quality")
-    def post(request: Request, portion_id: int, value: str = ""):
-        return _portion_flag_route(request, portion_id, "macros_quality", value, "Macros quality", tristate=True)
 
     @rt("/cart/portion/{portion_id}/is_cooked_weight")
     def post(request: Request, portion_id: int, is_cooked_weight: str = ""):

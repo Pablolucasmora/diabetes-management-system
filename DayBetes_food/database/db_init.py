@@ -391,6 +391,20 @@ def _ensure_catalog_schema(cursor):
             f"ALTER TABLE catalog ALTER COLUMN barcode TYPE VARCHAR({CATALOG_BARCODE_MAX_LENGTH});"
         )
 
+    # ---- 5b. Declared quality, weighing and confidence (decision 2026-10-09) ----
+    # Existing rows start as NULL ("no data"): nothing is inferred.
+    for column, definition in (
+        ("macros_quality", "BOOLEAN"),
+        ("default_strictly_weighed", "BOOLEAN"),
+        ("macros_confidence", "INTEGER"),
+    ):
+        if not _has_column(cursor, "catalog", column):
+            cursor.execute(
+                sql.SQL("ALTER TABLE catalog ADD COLUMN {} {};").format(
+                    sql.Identifier(column), sql.SQL(definition)
+                )
+            )
+
     # ---- 6. CHECKs (H1, H3, H6, H12, H13, H26) ----
     # 6a. Category safeguard before dropping: fail on divergence, never correct.
     cursor.execute(
@@ -635,7 +649,6 @@ def _ensure_manual_intake_schema(cursor):
         # Existing rows are reusable dishes: FALSE is a technical backfill.
         ("is_quick_add", "BOOLEAN NOT NULL DEFAULT FALSE"),
         ("macros_confidence", "INTEGER"),
-        ("default_macros_quality", "BOOLEAN"),
         ("default_strictly_weighed", "BOOLEAN"),
     ):
         if not _has_column(cursor, "manual_intake", column):
@@ -644,6 +657,18 @@ def _ensure_manual_intake_schema(cursor):
                     sql.Identifier(column), sql.SQL(definition)
                 )
             )
+    # default_macros_quality -> macros_quality: the quality is the dish's data,
+    # read live by portions (decision 2026-10-09, measurement §6.11).
+    has_old_quality = _has_column(cursor, "manual_intake", "default_macros_quality")
+    has_new_quality = _has_column(cursor, "manual_intake", "macros_quality")
+    if has_old_quality and has_new_quality:
+        raise RuntimeError(
+            "manual_intake has both default_macros_quality and macros_quality: half-applied migration"
+        )
+    if has_old_quality:
+        cursor.execute("ALTER TABLE manual_intake RENAME COLUMN default_macros_quality TO macros_quality;")
+    elif not has_new_quality:
+        cursor.execute("ALTER TABLE manual_intake ADD COLUMN macros_quality BOOLEAN;")
     if legacy_ig_scale:
         # Approved data correction (measurement §6.10, §12.7). It only runs while
         # the legacy CHECK existed, dropped in step 3 of this same transaction,
