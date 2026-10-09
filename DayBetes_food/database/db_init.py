@@ -566,8 +566,8 @@ def _ensure_manual_intake_schema(cursor):
     Idempotent (§12.2) and fails on anything unexpected instead of correcting it
     (§12.5, §12.7). Closes findings 4, 6, 9, 12, 13, 14 and 15 of
     audit/audits/audit_manual_intake.md, plus the new scope of the 2026-10-09
-    decisions (code_conventions.md §11.2.3). The TIMESTAMPTZ migration goes in
-    a separate step (§10.5).
+    decisions (code_conventions.md §11.2.3). The TIMESTAMPTZ migration is a
+    separate step (_ensure_manual_intake_timestamptz, §10.5).
     """
     # ---- 0. Basic columns of old installs ----
     for column in ("deleted_at", "created_at", "updated_at"):
@@ -779,6 +779,33 @@ def _ensure_manual_intake_schema(cursor):
     # ---- 10. Auxiliary indexes (H17, §11.7) ----
     # Overlaps idx_manual_intake_created_by (_ensure_food_filter_indexes).
     cursor.execute("DROP INDEX IF EXISTS idx_manual_active_created_by;")
+
+
+def _ensure_manual_intake_timestamptz(cursor):
+    """manual_intake temporal columns -> TIMESTAMPTZ (H13, §10.4, §10.5). Same
+    steps as step 1 of _ensure_catalog_schema; kept apart from the functional
+    changes. Values are read as UTC (session timezone Etc/UTC)."""
+    for column in ("created_at", "updated_at", "deleted_at"):
+        data_type = (_column_data_type(cursor, "manual_intake", column) or "").lower()
+        if data_type == "timestamp without time zone":
+            if column in ("created_at", "updated_at"):
+                cursor.execute(
+                    sql.SQL("ALTER TABLE manual_intake ALTER COLUMN {} DROP DEFAULT;").format(
+                        sql.Identifier(column)
+                    )
+                )
+            cursor.execute(
+                sql.SQL(
+                    "ALTER TABLE manual_intake ALTER COLUMN {} TYPE TIMESTAMPTZ "
+                    "USING {} AT TIME ZONE 'UTC';"
+                ).format(sql.Identifier(column), sql.Identifier(column))
+            )
+        elif data_type != "timestamp with time zone":
+            raise RuntimeError(f"Unexpected manual_intake.{column} type: {data_type!r}")
+    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;")
+    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN updated_at SET DEFAULT CURRENT_TIMESTAMP;")
+    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN created_at SET NOT NULL;")
+    cursor.execute("ALTER TABLE manual_intake ALTER COLUMN updated_at SET NOT NULL;")
 
 
 def _ensure_user_favorites_schema(cursor):
@@ -2170,6 +2197,7 @@ def init_db():
         # After the publication and copy-origin steps: its indexes use
         # is_published and origin_root_id, which they create on old installs.
         _ensure_manual_intake_schema(cur)
+        _ensure_manual_intake_timestamptz(cur)
         _ensure_users_schema(cur)
         _ensure_auth_sessions_schema(cur)
         _ensure_auth_rate_limits_schema(cur)
