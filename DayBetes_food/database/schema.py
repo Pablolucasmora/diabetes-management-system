@@ -8,7 +8,6 @@ from DayBetes_food.domain.catalog import (
     CATALOG_BARCODE_MAX_LENGTH,
     CATALOG_BARCODE_MIN_LENGTH,
     CATALOG_COOKING_FACTOR_RANGE,
-    CATALOG_DEFAULT_PORTION_RANGE,
 )
 from DayBetes_food.domain.constants import (
     NOVA_MAX,
@@ -26,6 +25,7 @@ from DayBetes_food.domain.constants import (
     Nutriscore,
     sql_in_list,
 )
+from DayBetes_food.domain.food import FOOD_DEFAULT_PORTION_RANGE
 from DayBetes_food.domain.meal_type_schedule import AUTO_ASSIGNABLE_MEAL_TYPES
 from DayBetes_food.domain.nutrition import NUTRIENT_LIMITS, NumericRange
 
@@ -64,7 +64,7 @@ def catalog_check_constraints() -> dict[str, str]:
         ),
         "ck_catalog_nova_range": f"nova IS NULL OR (nova >= {NOVA_MIN} AND nova <= {NOVA_MAX})",
         "ck_catalog_yuka_range": f"yuka IS NULL OR (yuka >= {YUKA_MIN} AND yuka <= {YUKA_MAX})",
-        "ck_catalog_default_portion_range": _range_check("default_portion", CATALOG_DEFAULT_PORTION_RANGE),
+        "ck_catalog_default_portion_range": _range_check("default_portion", FOOD_DEFAULT_PORTION_RANGE),
         "ck_catalog_cooking_factor_range": _range_check("cooking_factor", CATALOG_COOKING_FACTOR_RANGE),
         "ck_catalog_sugars_le_carbs": "sugars_100g IS NULL OR carbs_100g IS NULL OR sugars_100g <= carbs_100g",
         "ck_catalog_saturated_le_fats": "saturated_100g IS NULL OR fats_100g IS NULL OR saturated_100g <= fats_100g",

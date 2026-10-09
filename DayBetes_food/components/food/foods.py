@@ -6,10 +6,9 @@ from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.domain.catalog import (
     CATALOG_BARCODE_MAX_LENGTH,
     CATALOG_NAME_MAX_LENGTH,
-    CATALOG_SUBTYPE_MAX_LENGTH,
-    INITIAL_AMOUNT_WITHOUT_SERVING_G,
     CatalogItemRead,
 )
+from DayBetes_food.domain.food import FOOD_SUBTYPE_MAX_LENGTH, INITIAL_AMOUNT_WITHOUT_SERVING_G
 from DayBetes_food.domain.constants import (
     NOVA_MAX,
     NOVA_MIN,
@@ -2180,7 +2179,7 @@ def CreateCatalogPage(
                 help_text="Specific subtype, e.g. yogurt, pasta, soda. Required.",
                 allow_add=True,
                 value=_pv("subtype"),
-                maxlength=CATALOG_SUBTYPE_MAX_LENGTH,
+                maxlength=FOOD_SUBTYPE_MAX_LENGTH,
             ),
             _smart_macros_block("catalog", prefill=data),
             _labeled_input(
@@ -2467,7 +2466,7 @@ def EditCatalogPage(
             H2("Details", cls="font-semibold text-gray-900"),
             Div(
                 _edit_tile(_searchable_autocomplete_input("Category*", "category", [c.value for c in FoodCategory], allow_add=False, value=_input_value(entry.get("category")))),
-                _edit_tile(_searchable_autocomplete_input("Subtype*", "subtype", subtype_options or [], allow_add=True, value=_input_value(entry.get("subtype")), maxlength=CATALOG_SUBTYPE_MAX_LENGTH)),
+                _edit_tile(_searchable_autocomplete_input("Subtype*", "subtype", subtype_options or [], allow_add=True, value=_input_value(entry.get("subtype")), maxlength=FOOD_SUBTYPE_MAX_LENGTH)),
                 _edit_tile(_labeled_input("Default serving size", "default_portion", "number", step="any", inputmode="decimal", min_value=0, max_value=3000, value=_input_value(entry.get("default_portion")))),
                 _edit_tile(_searchable_autocomplete_input("Initial state", "initial_state", [s.value for s in FoodPhysicalState], allow_add=False, value=_input_value(entry.get("initial_state")))),
                 _edit_tile(_searchable_autocomplete_input("Nutriscore", "nutriscore", [n.value for n in Nutriscore], allow_add=False, value=_input_value(entry.get("nutriscore")))),

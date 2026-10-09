@@ -22,8 +22,8 @@ from DayBetes_food.domain.catalog import (
     CATALOG_NAME_MAX_LENGTH,
     CatalogItemCreate,
     CatalogItemUpdate,
-    normalize_catalog_name,
 )
+from DayBetes_food.domain.food import normalize_food_text
 from DayBetes_food.errors import ConflictError, NotFoundError
 
 _CATALOG_COLUMNS = """
@@ -381,7 +381,7 @@ def next_catalog_copy_name(connection, user_id: int, base_name: str, brand_id: i
     name, the partial unique index returns 409. The base is normalized with the
     single normalization of `catalog` (H2).
     """
-    base = normalize_catalog_name(base_name) or "Food"
+    base = normalize_food_text(base_name) or "Food"
     candidate = _fit_copy_name(base, " (copy)")
     if not _catalog_name_taken(connection, user_id, candidate, brand_id):
         return candidate

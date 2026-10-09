@@ -2,8 +2,9 @@
 
 This module imports no psycopg, routes or components. The SQL-row-to-dataclass
 conversion lives in DayBetes_food/database/mappers.py, not here. Numeric limits
-of nutrients and the smart-macros parser live in domain/nutrition.py because
-`catalog` and `manual_intake` share them.
+of nutrients and the smart-macros parser live in domain/nutrition.py, and the
+name normalization, subtype limit and default serving in domain/food.py,
+because `catalog` and `manual_intake` share them.
 """
 
 import re
@@ -11,34 +12,22 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from DayBetes_food.domain.constants import FoodCategory, FoodPhysicalState, Nutriscore
+from DayBetes_food.domain.food import normalize_food_text
 from DayBetes_food.domain.nutrition import NutrientValues, NumericRange, parse_number
 from DayBetes_food.errors import ValidationError
 
 CATALOG_NAME_MAX_LENGTH = 255  # = VARCHAR(255)
-CATALOG_SUBTYPE_MAX_LENGTH = 100  # = VARCHAR(100)
 CATALOG_BARCODE_MIN_LENGTH = 8
 CATALOG_BARCODE_MAX_LENGTH = 48  # = VARCHAR(48)
 
-CATALOG_DEFAULT_PORTION_RANGE = NumericRange(0, 3000, minimum_exclusive=True)
 CATALOG_COOKING_FACTOR_RANGE = NumericRange(0, 10, minimum_exclusive=True)
-
-# Decision 2026-09-25 (R3): initial amount of a one-click add when the food has
-# no serving. It is NOT a serving nor a §4.3 equivalence.
-INITIAL_AMOUNT_WITHOUT_SERVING_G = 100.0
 
 _BARCODE_RE = re.compile(rf"[0-9]{{{CATALOG_BARCODE_MIN_LENGTH},{CATALOG_BARCODE_MAX_LENGTH}}}")
 
 
-def normalize_catalog_name(raw) -> str:
-    """The single name normalization (H2): strip + collapse any whitespace run
-    (newlines and tabs included) into one space. Case is kept; the unique
-    indexes and the copy-name query compare lower(name) in SQL."""
-    return " ".join(str(raw or "").split())
-
-
 def parse_catalog_name(raw) -> str:
     """Required name, <= CATALOG_NAME_MAX_LENGTH after normalizing."""
-    name = normalize_catalog_name(raw)
+    name = normalize_food_text(raw)
     if not name:
         raise ValidationError("Name is required.", fields={"name": "required"})
     if len(name) > CATALOG_NAME_MAX_LENGTH:
@@ -47,19 +36,6 @@ def parse_catalog_name(raw) -> str:
             fields={"name": "too_long"},
         )
     return name
-
-
-def parse_catalog_subtype(raw) -> str:
-    """Required subtype, <= CATALOG_SUBTYPE_MAX_LENGTH."""
-    subtype = str(raw or "").strip()
-    if not subtype:
-        raise ValidationError("Subtype is required.", fields={"subtype": "required"})
-    if len(subtype) > CATALOG_SUBTYPE_MAX_LENGTH:
-        raise ValidationError(
-            f"Subtype must be {CATALOG_SUBTYPE_MAX_LENGTH} characters or fewer.",
-            fields={"subtype": "too_long"},
-        )
-    return subtype
 
 
 def parse_barcode(raw) -> str | None:
@@ -73,10 +49,6 @@ def parse_barcode(raw) -> str | None:
             fields={"barcode": "format"},
         )
     return barcode
-
-
-def parse_default_portion(raw) -> float | None:
-    return parse_number(raw, "default_portion", CATALOG_DEFAULT_PORTION_RANGE)
 
 
 def parse_cooking_factor(raw) -> float | None:

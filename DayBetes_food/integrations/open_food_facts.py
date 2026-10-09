@@ -14,12 +14,11 @@ from urllib import request as urlrequest
 from urllib.error import HTTPError
 
 from DayBetes_food.config import OPEN_FOOD_FACTS_BASE_URL, OPEN_FOOD_FACTS_TIMEOUT_SECONDS
-from DayBetes_food.domain.catalog import (
-    CATALOG_DEFAULT_PORTION_RANGE,
-    CATALOG_NAME_MAX_LENGTH,
-    CATALOG_SUBTYPE_MAX_LENGTH,
-    normalize_catalog_name,
-    parse_barcode,
+from DayBetes_food.domain.catalog import CATALOG_NAME_MAX_LENGTH, parse_barcode
+from DayBetes_food.domain.food import (
+    FOOD_DEFAULT_PORTION_RANGE,
+    FOOD_SUBTYPE_MAX_LENGTH,
+    normalize_food_text,
 )
 from DayBetes_food.domain.constants import (
     NOVA_MAX,
@@ -90,7 +89,7 @@ def _off_pick_name(product: dict) -> str | None:
     )
     if name is None:
         return None
-    name = normalize_catalog_name(name)
+    name = normalize_food_text(name)
     if not name or len(name) > CATALOG_NAME_MAX_LENGTH:
         return None
     return name
@@ -114,7 +113,7 @@ def _off_pick_subtype(product: dict) -> str | None:
     if not parts:
         return None
     subtype = parts[-1].lower()
-    if len(subtype) > CATALOG_SUBTYPE_MAX_LENGTH:
+    if len(subtype) > FOOD_SUBTYPE_MAX_LENGTH:
         return None
     return subtype
 
@@ -237,7 +236,7 @@ def _prefill_from_product(barcode: str, product: dict) -> OffProductPrefill:
         default_portion_g = _safe_check(
             _off_number(product.get("serving_quantity")),
             "default_portion",
-            CATALOG_DEFAULT_PORTION_RANGE,
+            FOOD_DEFAULT_PORTION_RANGE,
         )
 
     return OffProductPrefill(

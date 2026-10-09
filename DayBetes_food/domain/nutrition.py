@@ -13,6 +13,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Mapping
 
+from DayBetes_food.domain.constants import NutrientEntryMode
 from DayBetes_food.errors import ValidationError
 
 # Physical sanity ceilings, not clinical limits (measurement_conventions.md
@@ -267,3 +268,112 @@ def nutrients_from_smart_text(text: str, caffeine_raw, alcohol_raw) -> NutrientV
     result = NutrientValues(**values)
     validate_nutrient_relations(result)
     return result
+
+
+# ============================================
+# NUTRIENTS TYPED AS THE TOTAL OF ONE SERVING (manual_intake)
+# ============================================
+
+# Human labels of the totals (English, latin-1, error §7.1).
+_TOTAL_LABELS = {
+    "calories_100g": "Total calories",
+    "carbs_100g": "Total carbs",
+    "sugars_100g": "Total sugars",
+    "fats_100g": "Total fats",
+    "saturated_100g": "Total saturated fat",
+    "proteins_100g": "Total proteins",
+    "fiber_100g": "Total fiber",
+    "caffeine": "Total caffeine",
+    "alcohol": "Total alcohol",
+}
+_NON_NEGATIVE_DECIMAL = re.compile(r"(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)")
+
+
+def _per_100g_label(field: str) -> str:
+    label = _label(field)
+    return label if label.endswith("per 100 g") else f"{label} per 100 g"
+
+
+def _display_number(value: float) -> str:
+    """Two decimals at most, only for messages; stored values are never rounded."""
+    return f"{value:.2f}".rstrip("0").rstrip(".")
+
+
+def parse_nutrient_total(raw, field: str) -> float | None:
+    """'' -> None; non-negative finite decimal ('12,5' ok); anything else
+    (text, '-1', '1e3', 'NaN') -> ValidationError. No upper bound here: the
+    limit is checked on the converted per-100 g value (measurement §5.4)."""
+    if raw is None:
+        return None
+    text = str(raw).strip().replace(",", ".")
+    if not text:
+        return None
+    if not _NON_NEGATIVE_DECIMAL.fullmatch(text):
+        raise ValidationError(
+            f"{_TOTAL_LABELS[field]} must be a number of 0 or more.", fields={field: "invalid"}
+        )
+    return float(text)
+
+
+def nutrients_from_totals(totals: Mapping[str, float | None], weight_g: float) -> NutrientValues:
+    """nutrient_100g = total * 100 / weight_g, unrounded (measurement §3, §5.4).
+
+    Each converted value is checked against NUTRIENT_LIMITS; out of range ->
+    ValidationError naming the converted value, the total and the weight. It is
+    never clipped. Then validate_nutrient_relations."""
+    values: dict[str, float | None] = {}
+    for field in NUTRIENT_FIELDS:
+        total = totals.get(field)
+        if total is None:
+            values[field] = None
+            continue
+        converted = total * 100 / weight_g
+        limits = NUTRIENT_LIMITS[field]
+        if not math.isfinite(converted) or converted > limits.maximum:
+            raise ValidationError(
+                f"{_per_100g_label(field)} would be {_display_number(converted)} "
+                f"({_display_number(total)} in {_display_number(weight_g)} g), above the limit of "
+                f"{_format_number(limits.maximum)}. Check the total or the weight.",
+                fields={field: "out_of_range"},
+            )
+        values[field] = check_number(converted, field, limits)
+    result = NutrientValues(**values)
+    validate_nutrient_relations(result)
+    return result
+
+
+def parse_nutrient_input(
+    mode: NutrientEntryMode,
+    *,
+    weight_g: float | None,
+    fields: Mapping[str, str | None],
+    smart_text: str | None = None,
+) -> NutrientValues:
+    """Single entry point for the nutrients of a manual dish (measurement §5.4).
+
+    - smart_text is not None: the seven macros come from the smart-macros text
+      (§7.15) and `fields` only carries caffeine/alcohol; otherwise the nine
+      come from `fields` (visible inputs).
+    - PER_100G: values are per 100 g (nutrients_from_smart_text / parse_nutrients).
+    - PORTION_TOTAL: weight_g is required; the totals are converted with
+      nutrients_from_totals.
+    The entry mode and the original totals are not returned: they are not
+    stored."""
+    if mode is NutrientEntryMode.PER_100G:
+        if smart_text is not None:
+            return nutrients_from_smart_text(smart_text, fields.get("caffeine"), fields.get("alcohol"))
+        return parse_nutrients(fields)
+
+    if weight_g is None:
+        raise ValidationError(
+            "Enter the serving weight to type totals.", fields={"default_portion": "required"}
+        )
+    totals: dict[str, float | None] = {}
+    if smart_text is not None:
+        totals.update(parse_smart_macros(smart_text))
+        for field in ("caffeine", "alcohol"):
+            totals[field] = parse_nutrient_total(fields.get(field), field)
+    else:
+        for field in NUTRIENT_FIELDS:
+            totals[field] = parse_nutrient_total(fields.get(field), field)
+    return nutrients_from_totals(totals, weight_g)

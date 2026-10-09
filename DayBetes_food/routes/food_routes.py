@@ -88,15 +88,17 @@ from DayBetes_food.domain.nutrition import (
     parse_nutrients,
 )
 from DayBetes_food.domain.catalog import (
-    INITIAL_AMOUNT_WITHOUT_SERVING_G,
     CatalogItemCreate,
     CatalogItemRequest,
     CatalogItemUpdate,
     parse_barcode,
     parse_catalog_name,
-    parse_catalog_subtype,
     parse_cooking_factor,
+)
+from DayBetes_food.domain.food import (
+    INITIAL_AMOUNT_WITHOUT_SERVING_G,
     parse_default_portion,
+    parse_food_subtype,
 )
 from DayBetes_food.domain.portion_detail import (
     PortionDetailCreate,
@@ -361,7 +363,7 @@ def _parse_catalog_item_request(
     parsed_category = parse_enum(FoodCategory, category, field="category")
     if parsed_category is None:
         raise ValidationError("Category is required.", fields={"category": "required"})
-    parsed_subtype = parse_catalog_subtype(subtype)
+    parsed_subtype = parse_food_subtype(subtype, required=True)
     subtype_is_new = _parse_strict_bool(subtype__added)
     parsed_initial_state = parse_enum(FoodPhysicalState, initial_state, field="initial_state")
     parsed_nutriscore = parse_enum(
