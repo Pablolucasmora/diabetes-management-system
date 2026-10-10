@@ -19,6 +19,7 @@ from DayBetes_food.database.queries import (
     move_portion_to_plate,
     scale_event_portion_amounts,
     update_portion_amount,
+    update_portion_detail_fields,
     update_portion_flag,
     update_portion_offset,
     apply_plate_offset_to_portions,
@@ -43,12 +44,17 @@ from DayBetes_food.database.queries import (
     update_intake_event,
 )
 from DayBetes_food.domain.constants import (
+    CLEAR,
     AmountInputUnit,
+    ConservationMethod,
+    CookingMethod,
+    FoodPhysicalState,
     InjectionZone,
     IntakeEventState,
     MealType,
     PortionDestination,
     PortionOrigin,
+    parse_enum,
 )
 from DayBetes_food.domain.intake_event import (
     INTAKE_EVENT_INGESTED_AMOUNT_MAX_G,
@@ -64,7 +70,7 @@ from DayBetes_food.domain.intake_plate import (
     IntakePlateCreate,
     IntakePlateUpdate,
 )
-from DayBetes_food.domain.portion_detail import amount_to_grams
+from DayBetes_food.domain.portion_detail import PortionDetailUpdate, amount_to_grams
 from DayBetes_food.http_errors import app_error_response
 from DayBetes_food.errors import (
     AuthenticationError,
@@ -896,6 +902,48 @@ def setup_cart_routes(rt):
     @rt("/cart/portion/{portion_id}/is_cooked_weight")
     def post(request: Request, portion_id: int, is_cooked_weight: str = ""):
         return _portion_flag_route(request, portion_id, "is_cooked_weight", is_cooked_weight, "Cooked weight")
+
+    @rt("/cart/portion/{portion_id}/preparation")
+    def post(request: Request, portion_id: int, cooking: str = "", final_state: str = "", conservation: str = ""):
+        """Correct how an ingredient was prepared from the cart.
+
+        The three fields are always sent together: an empty one means "no
+        data" and is written as NULL. They are part of the unique key
+        (measurement_conventions.md §4.6.4), so the change can merge the row
+        into a sibling of the same plate: the whole card is repainted.
+        """
+        if request.headers.get("HX-Request") != "true":
+            return _error(request, AuthorizationError, _NOT_HTMX)
+        user_id = get_current_user_id()
+        if not user_id:
+            return _error(request, AuthenticationError, _NO_SESSION)
+        try:
+            parsed_cooking = parse_enum(CookingMethod, cooking, field="cooking")
+            parsed_final_state = parse_enum(FoodPhysicalState, final_state, field="final_state")
+            parsed_conservation = parse_enum(ConservationMethod, conservation, field="conservation")
+        except ValidationError as error:
+            return _error(request, ValidationError, str(error))
+        with get_connection() as connection:
+            try:
+                portion = get_portion_detail(connection, int(user_id), portion_id)
+                event_id = _portion_event_id(connection, int(user_id), portion)
+                with connection.transaction():
+                    update_portion_detail_fields(
+                        connection,
+                        int(user_id),
+                        portion_id,
+                        PortionDetailUpdate(
+                            cooking=(CLEAR if parsed_cooking is None else parsed_cooking),
+                            final_state=(CLEAR if parsed_final_state is None else parsed_final_state),
+                            conservation=(CLEAR if parsed_conservation is None else parsed_conservation),
+                        ),
+                        commit=False,
+                    )
+            except NotFoundError:
+                return _error(request, NotFoundError, _INGREDIENT_GONE)
+            except ConflictError:
+                return _error(request, ConflictError, _EVENT_NOT_PLANNED)
+            return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/plate")
     def post(request: Request, event_id: int):

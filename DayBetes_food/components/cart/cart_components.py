@@ -23,7 +23,15 @@ from DayBetes_food.components.injection_zone import (
     injection_zone_label,
     asset_busted,
 )
-from DayBetes_food.domain.constants import AmountInputUnit, InjectionZone, MealType, PortionOrigin
+from DayBetes_food.domain.constants import (
+    AmountInputUnit,
+    ConservationMethod,
+    CookingMethod,
+    FoodPhysicalState,
+    InjectionZone,
+    MealType,
+    PortionOrigin,
+)
 from DayBetes_food.domain.intake_event import (
     INTAKE_EVENT_NAME_MAX_LENGTH,
     INTAKE_EVENT_NOTES_MAX_LENGTH,
@@ -31,6 +39,14 @@ from DayBetes_food.domain.intake_event import (
 from DayBetes_food.domain.intake_plate import (
     INTAKE_PLATE_NAME_MAX_LENGTH,
     derive_plate_name,
+)
+from DayBetes_food.components.modal import (
+    close_modal_js,
+    ConfirmActionModal,
+    modal_confirm_button,
+    modal_secondary_button,
+    ModalLayer,
+    open_modal_js,
 )
 from DayBetes_food.time_utils import local_now, to_local
 
@@ -163,22 +179,6 @@ def _TriStateFlag(
     )
 
 
-def _close_modal_js(modal_id: str) -> str:
-    return (
-        f"const m=document.getElementById('{modal_id}');"
-        "m.classList.remove('opacity-100');"
-        "m.classList.add('opacity-0','invisible','pointer-events-none');"
-    )
-
-
-def _open_modal_js(modal_id: str) -> str:
-    return (
-        f"const m=document.getElementById('{modal_id}');"
-        "m.classList.remove('invisible','opacity-0','pointer-events-none');"
-        "m.classList.add('opacity-100');"
-    )
-
-
 def _open_injection_modal_js(modal_id: str) -> str:
     return (
         f"const m=document.getElementById('{modal_id}');"
@@ -202,48 +202,44 @@ def _open_injection_modal_js(modal_id: str) -> str:
         "};"
         "img.src=target;"
         "}"
-        "m.classList.remove('invisible','opacity-0','pointer-events-none');"
-        "m.classList.add('opacity-100');"
+        + open_modal_js(modal_id)
     )
 
 
-def ConfirmActionModal(modal_id: str, title: str, question: str, yes_button):
-    return Div(
-        Div(
-            Div(
-                Div(
-                    P(title, cls="text-lg font-semibold"),
-                    P(question, cls="text-sm md:text-base text-gray-700"),
-                    cls="flex flex-col gap-1",
-                ),
-                Div(
-                    yes_button,
-                    Button(
-                        "No",
-                        type="button",
-                        cls="web_button px-4 py-2 text-sm",
-                        onclick=_close_modal_js(modal_id),
-                    ),
-                    cls="flex items-center gap-2 justify-end",
-                ),
-                onclick="event.stopPropagation()",
-                cls="web_container p-5 md:p-6 rounded-3xl w-[92vw] max-w-md flex flex-col gap-4",
-            ),
-            id=modal_id,
-            onclick=_close_modal_js(modal_id),
-            cls="""
-                fixed inset-0 z-[70]
-                flex items-center justify-center
-                bg-black/35 backdrop-blur-xl
-                px-4
-                opacity-0 invisible pointer-events-none
-                transition-opacity duration-200
-            """,
-        ),
+# Controls inside the glass card are solid: no glass inside glass
+# (frontend_conventions.md §8).
+_SOFT_BUTTON_CLS = (
+    "bg-white border border-line rounded-xl text-stone-900 cursor-pointer "
+    "hover:bg-control transition-colors"
+)
+_FIELD_CLS = "web_input border border-line rounded-xl px-3 py-2 text-sm"
+_PILL_FIELD_CLS = "web_input border border-line rounded-full px-3 py-1.5 text-sm"
+_SR_ONLY_STYLE = (
+    "position:absolute;width:1px;height:1px;padding:0;margin:-1px;"
+    "overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;"
+)
+
+
+def _trash_button(label: str, onclick: str):
+    return Button(
+        Img(src="/images/content/delete.svg", alt=label, cls="w-4 h-4"),
+        type="button",
+        aria_label=label,
+        title=label,
+        cls="""
+            w-9 h-9 shrink-0 rounded-xl
+            flex items-center justify-center
+            bg-transparent hover:bg-red-50 cursor-pointer transition-colors
+        """,
+        style="color:#b91c1c;",
+        onclick=onclick,
     )
+
 
 
 def EventHeader(event):
+    """Name of the meal with its delete button, then when and what kind of
+    meal it is, as small pills."""
     meal_time = to_local(event.meal_time) or local_now()
     event_name_id = f"event_name_{event.id}"
     meal_hour_id = f"meal_hour_{event.id}"
@@ -253,11 +249,7 @@ def EventHeader(event):
     return Div(
         Div(
             Form(
-                Label(
-                    "Event name",
-                    **{"for": event_name_id},
-                    style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;",
-                ),
+                Label("Event name", **{"for": event_name_id}, style=_SR_ONLY_STYLE),
                 Input(
                     type="text",
                     id=event_name_id,
@@ -267,7 +259,7 @@ def EventHeader(event):
                     placeholder=f"Intake event #{event.id}",
                     aria_label="Event name",
                     cls="""
-                        w-full font-bold text-lg text-black
+                        w-full font-bold text-xl text-black
                         px-0 py-0 border-0 rounded-none
                         bg-transparent shadow-none
                         focus:outline-none
@@ -281,33 +273,32 @@ def EventHeader(event):
                     onchange="this.blur();",
                     onclick="this.select();",
                 ),
-                cls="w-full",
+                cls="min-w-0 flex-1",
             ),
+            _trash_button("Delete meal", open_modal_js(f"delete_meal_confirm_{event.id}")),
+            cls="flex items-center gap-2",
+        ),
+        Div(
             Form(
-                Div(
-                    Input(
-                        type="time",
-                        id=meal_hour_id,
-                        value=meal_time.strftime("%H:%M"),
-                        name="meal_hour",
-                        aria_label="Meal time",
-                        cls="web_input border border-white rounded-lg px-2 py-1 text-sm",
-                        hx_post=f"/cart/event/{event.id}/meal_hour",
-                        hx_trigger="blur",
-                        hx_include="closest form",
-                        hx_target="#cart_events_list",
-                        hx_swap="outerHTML",
-                    ),
-                    Button(
-                        "Date",
-                        type="button",
-                        cls="web_button px-2 py-1 text-xs",
-                        onclick=(
-                            f"const el=document.getElementById('meal_date_wrap_{event.id}');"
-                            "el.classList.toggle('hidden');"
-                        ),
-                    ),
-                    cls="flex items-center justify-end gap-2 w-full"
+                Input(
+                    type="time",
+                    id=meal_hour_id,
+                    value=meal_time.strftime("%H:%M"),
+                    name="meal_hour",
+                    aria_label="Meal time",
+                    cls=_PILL_FIELD_CLS,
+                    hx_post=f"/cart/event/{event.id}/meal_hour",
+                    hx_trigger="blur",
+                    hx_include="closest form",
+                    hx_target="#cart_events_list",
+                    hx_swap="outerHTML",
+                ),
+                Button(
+                    meal_time.strftime("%b %d"),
+                    type="button",
+                    aria_label="Change the meal date",
+                    cls=f"{_SOFT_BUTTON_CLS} rounded-full px-3 py-1.5",
+                    onclick=f"document.getElementById('meal_date_wrap_{event.id}').classList.toggle('hidden');",
                 ),
                 Div(
                     Label("Meal date", cls="text-xs text-gray-600", **{"for": meal_date_id}),
@@ -317,7 +308,7 @@ def EventHeader(event):
                         value=meal_time.strftime("%Y-%m-%d"),
                         name="meal_date",
                         aria_label="Meal date",
-                        cls="web_input border border-white rounded-lg px-2 py-1 text-sm self-end",
+                        cls=_PILL_FIELD_CLS,
                         hx_post=f"/cart/event/{event.id}/meal_hour",
                         hx_trigger="change",
                         hx_include="closest form",
@@ -325,37 +316,36 @@ def EventHeader(event):
                         hx_swap="outerHTML",
                     ),
                     id=f"meal_date_wrap_{event.id}",
-                    cls="hidden flex-col gap-1 w-auto self-end items-end text-right"
+                    cls="hidden w-full flex items-center gap-2",
                 ),
-                cls="flex flex-col gap-2 w-full items-end ml-auto",
+                cls="flex flex-wrap items-center gap-2",
             ),
-            cls="flex items-start justify-between gap-3 w-full"
-        ),
-        Form(
-            Label("Meal type", cls="text-xs text-gray-600", **{"for": meal_type_id}),
-            Select(
-                # Explicit placeholder for the "not chosen" state: without it,
-                # an event.meal_type of None would leave the <select> with no
-                # <option selected>, and the browser marks the first option as
-                # chosen even though the database has NULL — the user would
-                # confirm believing in a meal_type that was never saved (§7.14
-                # of code_conventions.md, decision 2026-09-11). It should never
-                # show except for time-slot gaps or an event created before this fix.
-                Option("— Select —", value="", selected=(event.meal_type is None), disabled=True),
-                *[Option(meal_type.value, value=meal_type.value, selected=(event.meal_type is meal_type)) for meal_type in MealType],
-                id=meal_type_id,
-                name="meal_type",
-                aria_label="Meal type",
-                cls="web_input border border-white rounded-lg px-2 py-1 text-sm",
-                hx_post=f"/cart/event/{event.id}/meal_type",
-                hx_trigger="change",
-                hx_target=card_target,
-                hx_swap="outerHTML",
-                onchange="this.blur();",
+            Form(
+                Label("Meal type", **{"for": meal_type_id}, style=_SR_ONLY_STYLE),
+                Select(
+                    # Explicit placeholder for the "not chosen" state: without it,
+                    # an event.meal_type of None would leave the <select> with no
+                    # <option selected>, and the browser marks the first option as
+                    # chosen even though the database has NULL — the user would
+                    # confirm believing in a meal_type that was never saved (§7.14
+                    # of code_conventions.md, decision 2026-09-11). It should never
+                    # show except for time-slot gaps or an event created before this fix.
+                    Option("— Meal type —", value="", selected=(event.meal_type is None), disabled=True),
+                    *[Option(meal_type.value, value=meal_type.value, selected=(event.meal_type is meal_type)) for meal_type in MealType],
+                    id=meal_type_id,
+                    name="meal_type",
+                    aria_label="Meal type",
+                    cls=_PILL_FIELD_CLS,
+                    hx_post=f"/cart/event/{event.id}/meal_type",
+                    hx_trigger="change",
+                    hx_target=card_target,
+                    hx_swap="outerHTML",
+                    onchange="this.blur();",
+                ),
             ),
-            cls="flex gap-3 items-center justify-end"
+            cls="flex flex-wrap items-center gap-2",
         ),
-        cls="flex flex-col gap-3"
+        cls="flex flex-col gap-2",
     )
 
 
@@ -405,12 +395,11 @@ def MacrosSummary(event, portions, compact: bool = False):
                     title=f"Uncertainty: {uncertainty * 100:.1f}%",
                     onclick=f"alert('Uncertainty: {uncertainty * 100:.1f}%');",
                     cls="""
-                        web_button rounded-full border-[1px] border-black/50
+                        rounded-full border border-current/50 bg-white/40
                         h-4 w-4 md:h-5 md:w-5
                         text-[10px] md:text-xs
-                        p-0 leading-none
+                        p-0 leading-none cursor-pointer
                         flex items-center justify-center
-                        shadow-none
                     """,
                 ),
                 cls="flex items-center gap-1"
@@ -546,7 +535,7 @@ def _ApplyAllButton(plate, offset_input_id, card_target):
         "Apply all",
         type="button",
         aria_label="Apply this offset to the whole plate",
-        cls="web_button px-2 py-1 text-xs text-white shrink-0",
+        cls="px-3 py-2 rounded-xl text-xs font-semibold text-white shrink-0 cursor-pointer",
         style="background-color:#1d4ed8;border-color:#1d4ed8;",
         hx_post=f"/cart/plate/{plate.id}/apply_offset",
         hx_target=card_target,
@@ -576,13 +565,13 @@ def _MoveIngredientSelect(plate, plates, plate_labels, portion_id, item_key, ing
     options.append(Option("+ New plate", value="0"))
 
     return Div(
-        Label("Move", cls="text-xs text-gray-600", **{"for": move_id}),
+        Label("Plate", cls="text-xs text-gray-600 w-24 shrink-0", **{"for": move_id}),
         Select(
             *options,
             id=move_id,
             name="target_plate_id",
             aria_label=f"Move {ingredient_name} to another plate",
-            cls="web_input border border-white rounded-lg px-2 py-1 text-xs md:text-sm",
+            cls=f"{_FIELD_CLS} flex-1 min-w-0",
             hx_post=f"/cart/portion/{portion_id}/move",
             hx_trigger="change",
             hx_target=card_target,
@@ -605,41 +594,45 @@ def PlateHeader(event, plate, display_name, card_target):
     offset_value = plate.offset_minutes if plate.offset_minutes is not None else 0
 
     return Div(
-        Form(
-            Label(
-                "Plate name",
-                **{"for": name_input_id},
-                style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;",
+        Div(
+            Form(
+                Label(
+                    "Plate name",
+                    **{"for": name_input_id},
+                    style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;",
+                ),
+                Input(
+                    type="text",
+                    id=name_input_id,
+                    name="name",
+                    value=plate.name or "",
+                    maxlength=str(INTAKE_PLATE_NAME_MAX_LENGTH),
+                    placeholder=display_name,
+                    aria_label="Plate name",
+                    cls="""
+                        w-full font-semibold text-black truncate
+                        px-0 py-0 border-0 rounded-none
+                        bg-transparent shadow-none
+                        focus:outline-none
+                    """,
+                    style="background:transparent;border-color:transparent;box-shadow:none;",
+                    hx_post=f"/cart/plate/{plate.id}/name",
+                    hx_trigger="change",
+                    hx_target=card_target,
+                    hx_swap="outerHTML",
+                    onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}",
+                    onchange="this.blur();",
+                    onclick="this.select();",
+                ),
+                # min-w-0 is what lets `truncate` clip the name instead of pushing
+                # the controls out of the card on mobile (§7.9).
+                cls="min-w-0 flex-1",
             ),
-            Input(
-                type="text",
-                id=name_input_id,
-                name="name",
-                value=plate.name or "",
-                maxlength=str(INTAKE_PLATE_NAME_MAX_LENGTH),
-                placeholder=display_name,
-                aria_label="Plate name",
-                cls="""
-                    w-full font-semibold text-black truncate
-                    px-0 py-0 border-0 rounded-none
-                    bg-transparent shadow-none
-                    focus:outline-none
-                """,
-                style="background:transparent;border-color:transparent;box-shadow:none;",
-                hx_post=f"/cart/plate/{plate.id}/name",
-                hx_trigger="change",
-                hx_target=card_target,
-                hx_swap="outerHTML",
-                onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}",
-                onchange="this.blur();",
-                onclick="this.select();",
-            ),
-            # min-w-0 is what lets `truncate` clip the name instead of pushing
-            # the controls out of the card on mobile (§7.9).
-            cls="min-w-0 flex-1",
+            _trash_button("Delete plate", open_modal_js(confirm_id)),
+            cls="flex items-center gap-2",
         ),
         Div(
-            Label("Offset (min)", cls="text-xs text-gray-600", **{"for": offset_input_id}),
+            Label("Offset", cls="text-xs text-gray-600", **{"for": offset_input_id}),
             Input(
                 type="text",
                 id=offset_input_id,
@@ -648,56 +641,39 @@ def PlateHeader(event, plate, display_name, card_target):
                 pattern="-?[0-9]*",
                 value=str(offset_value),
                 aria_label="Plate offset minutes",
-                cls="web_input border border-white rounded-lg px-2 py-1 w-16 text-base",
+                cls="web_input border border-line rounded-xl px-2 py-1.5 w-16 text-sm",
                 hx_post=f"/cart/plate/{plate.id}/offset",
                 hx_trigger="change",
                 hx_target=card_target,
                 hx_swap="outerHTML",
                 onclick="this.select()",
             ),
+            Span("min", cls="text-xs text-gray-600"),
             _ApplyAllButton(plate, offset_input_id, card_target),
-            Button(
-                Img(src="/images/content/delete.svg", alt="Delete plate", cls="w-5 h-5"),
-                type="button",
-                aria_label="Delete plate",
-                title="Delete plate",
-                cls="""
-                    web_button p-2 shrink-0
-                    border-red-600/40 shadow-none
-                    w-9 h-9
-                    flex items-center justify-center
-                    hover:bg-red-50
-                """,
-                style="color:#b91c1c;",
-                onclick=_open_modal_js(confirm_id),
-            ),
-            cls="flex items-center gap-2 shrink-0 flex-wrap justify-end"
+            cls="flex items-center gap-2 flex-wrap",
         ),
         ConfirmActionModal(
             modal_id=confirm_id,
             title="Delete plate",
             question="Are you sure you want to delete this plate?",
-            yes_button=Button(
+            yes_button=modal_confirm_button(
                 "Yes",
-                type="button",
-                cls="web_button px-4 py-2 text-sm text-white",
-                style="background-color:#b91c1c;border-color:#b91c1c;",
+                danger=True,
                 hx_post=f"/cart/plate/{plate.id}/delete",
                 hx_target=card_target,
                 hx_swap="outerHTML",
-                onclick=_close_modal_js(confirm_id),
+                onclick=close_modal_js(confirm_id),
             ),
         ),
-        cls="flex items-center justify-between gap-2 flex-wrap"
+        cls="flex flex-col gap-1.5"
     )
 
 
-def PlateBlock(event, plate, plate_portions, show_header: bool, plates, plate_labels):
-    """A plate inside the event card: header (when applicable) and rows.
+def PlateBlock(event, plate, plate_portions, plates, plate_labels):
+    """A plate inside the event card: its header and its rows.
 
-    With a single unnamed plate no header is drawn and the card looks as it
-    did before plates existed (§7.2); in that case `Apply all` moves down to
-    each row (§7.4).
+    The header is always drawn, also for a single unnamed plate (§7.2,
+    decision 2026-10-10): the plate's offset and `Apply all` live there.
     """
     card_target = f"#cart_card_event_{event.id}"
     grouped = group_portions(plate_portions)
@@ -724,7 +700,7 @@ def PlateBlock(event, plate, plate_portions, show_header: bool, plates, plate_la
         return result
 
     return Div(
-        PlateHeader(event, plate, plate_labels[plate.id], card_target) if show_header else None,
+        PlateHeader(event, plate, plate_labels[plate.id], card_target),
         *[
             IngredientRow(
                 event,
@@ -732,35 +708,157 @@ def PlateBlock(event, plate, plate_portions, show_header: bool, plates, plate_la
                 item,
                 plates=plates,
                 plate_labels=plate_labels,
-                show_apply_all=not show_header,
                 differences=_differences(item),
             )
             for item in grouped
         ],
-        cls=(
-            "flex flex-col gap-3 border border-gray-300 rounded-2xl p-3"
-            if show_header
-            else "flex flex-col gap-3"
-        ),
+        cls="flex flex-col gap-2 border border-line rounded-2xl p-2.5 bg-white/30",
     )
 
 
-def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show_apply_all=False, differences=()):
-    """Row of an ingredient inside a plate.
+def _preparation_summary(sample) -> str:
+    """One short line with how the ingredient was prepared and weighed."""
+    parts = [
+        value.value
+        for value in (sample.cooking, sample.final_state, sample.conservation)
+        if value is not None
+    ]
+    if sample.is_cooked_weight:
+        parts.append("weighed cooked")
+    if sample.offset_minutes:
+        parts.append(f"{int(sample.offset_minutes):+d} min")
+    return " · ".join(parts)
 
-    `show_apply_all` implements the rule of frontend_conventions.md §7.4: the
-    `Apply all` button lives in the plate header and only moves down to the
-    row when that header is not drawn (an event with a single unnamed plate).
-    It never appears in both places. The `Move` selector is the opposite case:
-    it only makes sense when there are headers to tell apart (§7.5).
+
+def _preparation_select(label: str, name: str, enum_cls, current, item_key: str):
+    select_id = f"{name}_{item_key}"
+    return Div(
+        Label(label, cls="text-xs text-gray-600", **{"for": select_id}),
+        Select(
+            # NULL is "no data", shown as such and never as the first value of
+            # the enum (frontend_conventions.md §6).
+            Option("Not set", value="", selected=current is None),
+            *[Option(option.value, value=option.value, selected=current is option) for option in enum_cls],
+            id=select_id,
+            name=name,
+            cls=f"{_FIELD_CLS} w-full",
+        ),
+        cls="flex flex-col gap-1 min-w-0",
+    )
+
+
+def _settings_group(title: str, *content):
+    return Div(
+        P(title, cls="web_section_label"),
+        *content,
+        cls="flex flex-col gap-2 pt-3 border-t border-line-soft",
+    )
+
+
+def IngredientSettingsModal(event, plate, sample, item_key, ingredient_name, plates, plate_labels, card_target):
+    """Everything about an ingredient that is not its amount, in a pop-up:
+    how it was prepared, how it was weighed, when it was eaten and its plate.
+
+    It keeps the row short, and it is where a wrong or forgotten preparation
+    is corrected from the cart. The ingredient's own offset is here; the
+    plate's, with `Apply all`, is in the plate header (§7.4).
+    """
+    portion_id = int(sample.id)
+    modal_id = f"ingredient_settings_{item_key}"
+    offset_input_id = f"offset_input_{item_key}"
+    offset_value = int(sample.offset_minutes) if sample.offset_minutes is not None else 0
+    shows_cooked_weight = sample.origin is PortionOrigin.CATALOG and (
+        sample.source.cooking_factor is not None or sample.is_cooked_weight
+    )
+    return ModalLayer(
+        Div(
+            P(ingredient_name, cls="text-lg font-semibold leading-snug"),
+            P("Fix anything that was set wrong.", cls="text-sm text-gray-600"),
+            cls="flex flex-col gap-0.5",
+        ),
+        _settings_group(
+            "Preparation",
+            Form(
+                Div(
+                    _preparation_select("Cooking", "cooking", CookingMethod, sample.cooking, item_key),
+                    _preparation_select("Final state", "final_state", FoodPhysicalState, sample.final_state, item_key),
+                    _preparation_select("Conservation", "conservation", ConservationMethod, sample.conservation, item_key),
+                    cls="grid grid-cols-2 gap-2",
+                ),
+                modal_confirm_button(
+                    "Save preparation",
+                    cls="w-full py-2.5",
+                    hx_post=f"/cart/portion/{portion_id}/preparation",
+                    hx_include="closest form",
+                    hx_target=card_target,
+                    hx_swap="outerHTML",
+                    onclick=close_modal_js(modal_id),
+                ),
+                cls="flex flex-col gap-2",
+            ),
+        ),
+        _settings_group(
+            "Weighing",
+            # Catalog origins with a known factor, plus an inherited TRUE portion whose
+            # food has lost its factor: it is shown so it can be unmarked (decisions
+            # 2026-09-24 / 2026-09-25).
+            Div(
+                Label("Weighed cooked", cls="text-sm text-gray-700"),
+                _checkbox(
+                    name="is_cooked_weight",
+                    checked=bool(sample.is_cooked_weight),
+                    hx_post=f"/cart/portion/{portion_id}/is_cooked_weight",
+                    aria_label=f"Cooked weight for {ingredient_name}",
+                    hx_swap="outerHTML",
+                    # Whole card, not only the summary: the flag is part of the
+                    # uniqueness key (4.6.4), so toggling it can merge two rows.
+                    hx_target=card_target,
+                ),
+                cls="flex items-center justify-between gap-2",
+            ),
+        ) if shows_cooked_weight else None,
+        _settings_group(
+            "Timing and plate",
+            Div(
+                Label("Offset", cls="text-xs text-gray-600 w-24 shrink-0", **{"for": offset_input_id}),
+                Input(
+                    type="text",
+                    id=offset_input_id,
+                    name="offset_minutes",
+                    inputmode="numeric",
+                    pattern="-?[0-9]*",
+                    value=str(offset_value),
+                    aria_label=f"Offset minutes for {ingredient_name}",
+                    cls=f"{_FIELD_CLS} w-20",
+                    hx_post=f"/cart/portion/{portion_id}/offset",
+                    hx_trigger="change",
+                    hx_target=card_target,
+                    hx_swap="outerHTML",
+                    onclick="this.select()",
+                ),
+                Span("min", cls="text-xs text-gray-600"),
+                cls="flex items-center gap-2 flex-wrap",
+            ),
+            _MoveIngredientSelect(
+                plate, plates, plate_labels or {}, portion_id, item_key, ingredient_name, card_target
+            ),
+        ),
+        modal_secondary_button("Done", cls="w-full py-2.5", onclick=close_modal_js(modal_id)),
+        modal_id=modal_id,
+        card_cls="gap-3 max-h-[85vh] overflow-y-auto",
+    )
+
+
+def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, differences=()):
+    """Row of an ingredient inside a plate: its name, how it was prepared, its
+    amount and `Strictly weighted`. The rest lives in
+    `IngredientSettingsModal`, behind `Adjust` (frontend_conventions.md §7.1).
     """
     sample = grouped_item["sample"]
     portion_id = int(sample.id)
     unit_g = unit_amount(sample)
     unit_label = display_unit(sample)
     amount = float(grouped_item["total_amount_g"] or 0.0)
-    offset = sample.offset_minutes
-    offset_value = int(offset) if offset is not None else 0
     if unit_g is not None:
         units_count = amount / unit_g if unit_g > 0 else 0.0
         side_label = "serving"
@@ -778,150 +876,95 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, show
     confirm_id = f"delete_food_confirm_{item_key}"
     ingredient_name = portion_name(sample)
     card_target = f"#cart_card_event_{event.id}"
-    offset_input_id = f"offset_input_{item_key}"
+    summary = _preparation_summary(sample)
 
     return Div(
         Div(
             Div(
-                Div(ingredient_name, cls="font-semibold"),
+                Div(ingredient_name, cls="font-semibold leading-snug"),
                 Span(
                     " · ".join(f"{label}: {value or '—'}" for label, value in differences),
-                    cls="text-[10px] text-gray-500",
+                    cls="text-[11px] text-amber-700",
                 ) if differences else None,
-                cls="flex flex-col min-w-0",
-            ),
-            Form(
-                Button(
-                    Img(src="/images/content/delete.svg", alt="Delete food", cls="w-5 h-5"),
-                    type="button",
-                    aria_label="Delete food",
-                    title="Delete food",
-                    cls="""
-                        web_button p-2
-                        border-red-600/40 shadow-none
-                        w-9 h-9
-                        flex items-center justify-center
-                        hover:bg-red-50
-                    """,
-                    style="color:#b91c1c;",
-                    onclick=_open_modal_js(confirm_id),
+                Span(
+                    summary or "Preparation not set",
+                    cls=f"text-xs {'text-gray-600' if summary else 'text-gray-400'}",
                 ),
-                cls="flex flex-col items-end gap-2"
+                cls="flex flex-col min-w-0 flex-1",
             ),
-            cls="flex items-center justify-between gap-2"
+            Button(
+                "Adjust",
+                type="button",
+                aria_label=f"Adjust {ingredient_name}",
+                cls=f"{_SOFT_BUTTON_CLS} px-3 py-1.5 text-xs font-medium shrink-0",
+                onclick=open_modal_js(f"ingredient_settings_{item_key}"),
+            ),
+            _trash_button("Delete food", open_modal_js(confirm_id)),
+            cls="flex items-start gap-1.5",
+        ),
+        Form(
+            Input(
+                type="text",
+                inputmode="decimal",
+                id=display_input_id,
+                name="amount_value",
+                value=default_display,
+                aria_label=f"Amount for {ingredient_name}",
+                cls=f"{_FIELD_CLS} w-20",
+                hx_post=f"/cart/portion/{portion_id}/amount",
+                hx_trigger="change",
+                hx_include="closest form",
+                hx_target=card_target,
+                hx_swap="outerHTML",
+                oninput=f"dbRecalcGrams('{display_input_id}','{unit_select_id}','{grams_input_id}')",
+                onclick="this.select()",
+            ),
+            Span(side_label, id=side_unit_id, cls="text-xs text-gray-600"),
+            # Presentation-only helper: it is not submitted (no name); the
+            # server converts `amount_value` + `amount_unit` itself (§7.13).
+            Input(type="hidden", id=grams_input_id, value=f"{amount:.6f}"),
+            Select(
+                *_unit_options(unit_g, unit_label),
+                id=unit_select_id,
+                name="amount_unit",
+                data_display_id=display_input_id,
+                data_grams_id=grams_input_id,
+                data_side_unit_id=side_unit_id,
+                data_persist_key=f"cart_unit_{item_key}",
+                aria_label=f"Unit selector for {ingredient_name}",
+                cls=f"{_FIELD_CLS} ml-auto min-w-0",
+                onchange=f"dbRecalcDisplayFromGrams('{display_input_id}','{unit_select_id}','{grams_input_id}','{side_unit_id}')",
+            ),
+            cls="flex items-center gap-2",
+        ),
+        Div(
+            Label("Strictly weighted", cls="text-xs text-gray-600"),
+            PortionTriStateFlag(event.id, sample, "strictly_weighed", ingredient_name),
+            cls="flex items-center gap-2",
         ),
         ConfirmActionModal(
             modal_id=confirm_id,
             title="Delete food",
             question="Are you sure you want to delete this food?",
-            yes_button=Button(
+            yes_button=modal_confirm_button(
                 "Yes",
-                type="button",
-                cls="web_button px-4 py-2 text-sm text-white",
-                style="background-color:#b91c1c;border-color:#b91c1c;",
+                danger=True,
                 hx_post=f"/cart/portion/{portion_id}/delete",
                 hx_target=card_target,
                 hx_swap="outerHTML",
-                onclick=_close_modal_js(confirm_id),
+                onclick=close_modal_js(confirm_id),
             ),
         ),
-        Form(
-            Div(
-                Input(
-                    type="text",
-                    inputmode="decimal",
-                    id=display_input_id,
-                    name="amount_value",
-                    value=default_display,
-                    aria_label=f"Amount for {ingredient_name}",
-                    cls="web_input border border-white rounded-lg px-2 py-1 w-24 text-base",
-                    hx_post=f"/cart/portion/{portion_id}/amount",
-                    hx_trigger="change",
-                    hx_include="closest form",
-                    hx_target=card_target,
-                    hx_swap="outerHTML",
-                    oninput=f"dbRecalcGrams('{display_input_id}','{unit_select_id}','{grams_input_id}')",
-                    onclick="this.select()",
-                ),
-                Span(side_label, id=side_unit_id, cls="text-xs text-gray-600"),
-                # Presentation-only helper: it is not submitted (no name); the
-                # server converts `amount_value` + `amount_unit` itself (§7.13).
-                Input(type="hidden", id=grams_input_id, value=f"{amount:.6f}"),
-                Select(
-                    *_unit_options(unit_g, unit_label),
-                    id=unit_select_id,
-                    name="amount_unit",
-                    data_display_id=display_input_id,
-                    data_grams_id=grams_input_id,
-                    data_side_unit_id=side_unit_id,
-                    data_persist_key=f"cart_unit_{item_key}",
-                    aria_label=f"Unit selector for {ingredient_name}",
-                    cls="web_input border border-white rounded-lg px-2 py-1 text-xs md:text-sm justify-self-end",
-                    onchange=f"dbRecalcDisplayFromGrams('{display_input_id}','{unit_select_id}','{grams_input_id}','{side_unit_id}')",
-                ),
-                cls="flex items-center gap-2"
-            ),
-            cls="flex flex-col gap-2"
+        IngredientSettingsModal(
+            event, plate, sample, item_key, ingredient_name, plates, plate_labels, card_target
         ),
-        Div(
-            Label("Offset (min)", cls="text-xs text-gray-600", **{"for": offset_input_id}),
-            Input(
-                type="text",
-                id=offset_input_id,
-                name="offset_minutes",
-                inputmode="numeric",
-                pattern="-?[0-9]*",
-                value=str(offset_value),
-                aria_label=f"Offset minutes for {ingredient_name}",
-                cls="web_input border border-white rounded-lg px-2 py-1 w-24 text-base",
-                hx_post=f"/cart/portion/{portion_id}/offset",
-                hx_trigger="change",
-                hx_target=card_target,
-                hx_swap="outerHTML",
-                onclick= "this.select()",
-            ),
-            _ApplyAllButton(plate, offset_input_id, card_target) if show_apply_all else None,
-            cls="flex items-center gap-2 flex-wrap"
-        ),
-        # `Move` appears exactly when there is a plate header, which is the
-        # complementary case of the row's `Apply all` (§7.4, §7.5).
-        _MoveIngredientSelect(
-            plate, plates, plate_labels or {}, portion_id, item_key, ingredient_name, card_target
-        )
-        if not show_apply_all
-        else None,
-        Div(
-            Label("Strictly weighted", cls="text-xs text-gray-600"),
-            PortionTriStateFlag(event.id, sample, "strictly_weighed", ingredient_name),
-            cls="flex items-center gap-2"
-        ),
-        # Catalog origins with a known factor, plus an inherited TRUE portion whose
-        # food has lost its factor: it is shown so it can be unmarked (decisions
-        # 2026-09-24 / 2026-09-25).
-        Div(
-            Label("Cooked weight", cls="text-xs text-gray-600"),
-            _checkbox(
-                name="is_cooked_weight",
-                checked=bool(sample.is_cooked_weight),
-                hx_post=f"/cart/portion/{portion_id}/is_cooked_weight",
-                aria_label=f"Cooked weight for {ingredient_name}",
-                hx_swap="outerHTML",
-                # Whole card, not only the summary: the flag is part of the
-                # uniqueness key (4.6.4), so toggling it can merge two rows.
-                hx_target=card_target,
-            ),
-            cls="flex items-center gap-2"
-        ) if (
-            sample.origin is PortionOrigin.CATALOG
-            and (sample.source.cooking_factor is not None or sample.is_cooked_weight)
-        ) else None,
-        cls="web_container p-4 rounded-2xl flex flex-col gap-3 "
+        cls="bg-white/70 border border-line-soft rounded-2xl p-3 flex flex-col gap-2",
     )
 
 
 def NotesSection(event):
     """
-    Free-text note of the event, right above "Confirm food".
+    Free-text note of the event, right above "Confirm meal".
 
     It saves itself when leaving the field (`change`), like the event name:
     there is no save button in the cart. The `maxlength` is a UX aid; the real
@@ -930,7 +973,7 @@ def NotesSection(event):
     """
     notes_id = f"event_notes_{event.id}"
     return Form(
-        Label("Notes", cls="text-sm text-gray-600", **{"for": notes_id}),
+        Label("Notes", cls="text-xs text-gray-600", **{"for": notes_id}),
         Input(
             type="text",
             id=notes_id,
@@ -939,7 +982,7 @@ def NotesSection(event):
             maxlength=str(INTAKE_EVENT_NOTES_MAX_LENGTH),
             placeholder="Add a note for this meal",
             aria_label="Meal notes",
-            cls="web_input border border-white rounded-lg px-2 py-1 text-sm w-full",
+            cls=f"{_FIELD_CLS} w-full",
             hx_post=f"/cart/event/{event.id}/notes",
             hx_trigger="change",
             hx_target=f"#cart_card_event_{event.id}",
@@ -964,52 +1007,45 @@ def ConfirmSection(event, portions):
             value=AmountInputUnit.GRAMS.value,
             id=f"ingested_unit_{event.id}",
         ),
-        Input(
-            type="number",
-            id=ingested_value_id,
-            inputmode="number",
-            step="0.1",
-            min="0",
-            pattern="[0-9]*",
-            name="ingested_value",
-            value=f"{float(event.ingested_amount or 0.0):.1f}" if event.ingested_amount is not None else "",
-            aria_label="Ingested amount",
-            placeholder="All of it (100%)",
-            cls="""
-                web_input border border-white rounded-lg
-                px-2 py-1 w-24 text-base
-                md:px-3 md:py-2 md:w-36 md:text-sm
-            """
-        ),
-        Button(
-            AmountInputUnit.GRAMS.value,
-            type="button",
-            onclick=(
-                f"const hidden=document.getElementById('ingested_unit_{event.id}');"
-                f"hidden.value = hidden.value === '{AmountInputUnit.GRAMS.value}'"
-                f" ? '{AmountInputUnit.PERCENT.value}'"
-                f" : '{AmountInputUnit.GRAMS.value}';"
-                "this.innerText = hidden.value;"
+        Div(
+            Label("Eaten", cls="text-xs text-gray-600 shrink-0", **{"for": ingested_value_id}),
+            Input(
+                type="number",
+                id=ingested_value_id,
+                inputmode="decimal",
+                step="0.1",
+                min="0",
+                name="ingested_value",
+                value=f"{float(event.ingested_amount or 0.0):.1f}" if event.ingested_amount is not None else "",
+                aria_label="Ingested amount",
+                placeholder="All of it",
+                cls=f"{_FIELD_CLS} flex-1 min-w-0",
             ),
-            aria_label="Toggle ingested amount unit",
-            cls="""
-                web_button px-2 py-1 text-base min-w-10
-                md:px-2 md:py-2 md:text-sm md:min-w-12
-            """
+            Button(
+                AmountInputUnit.GRAMS.value,
+                type="button",
+                onclick=(
+                    f"const hidden=document.getElementById('ingested_unit_{event.id}');"
+                    f"hidden.value = hidden.value === '{AmountInputUnit.GRAMS.value}'"
+                    f" ? '{AmountInputUnit.PERCENT.value}'"
+                    f" : '{AmountInputUnit.GRAMS.value}';"
+                    "this.innerText = hidden.value;"
+                ),
+                aria_label="Toggle ingested amount unit",
+                cls=f"{_SOFT_BUTTON_CLS} px-3 py-2 min-w-12",
+            ),
+            cls="flex items-center gap-2",
         ),
         Button(
-            "Confirm food",
+            "Confirm meal",
             type="button",
-            cls="""
-                web_button px-2 py-1 text-base
-                md:px-4 md:py-2 md:text-sm
-            """,
+            cls="web_button web_button_primary w-full px-4 py-3 rounded-2xl",
             hx_post=f"/cart/event/{event.id}/confirm",
             hx_include="closest form",
             hx_target=f"#cart_card_event_{event.id}",
             hx_swap="outerHTML",
         ),
-        cls="flex items-center gap-1 md:gap-2 justify-end"
+        cls="flex flex-col gap-3",
     )
 
 
@@ -1019,15 +1055,13 @@ def DeleteMealModal(event):
         modal_id=confirm_id,
         title="Delete meal",
         question="Are you sure you want to delete this meal?",
-        yes_button=Button(
+        yes_button=modal_confirm_button(
             "Yes",
-            type="button",
-            cls="web_button px-4 py-2 text-sm text-white",
-            style="background-color:#b91c1c;border-color:#b91c1c;",
+            danger=True,
             hx_post=f"/cart/event/{event.id}/delete",
             hx_target=f"#cart_card_event_{event.id}",
             hx_swap="outerHTML",
-            onclick=_close_modal_js(confirm_id),
+            onclick=close_modal_js(confirm_id),
         ),
     )
 
@@ -1068,84 +1102,110 @@ def InjectionZoneModal(event):
         for zone in InjectionZone
     ]
 
+    return ModalLayer(
+        P("Injection zone", cls="text-lg font-semibold"),
+        Div(
+            Img(
+                src=image,
+                alt="Injection zones map",
+                cls="w-full max-h-[38vh] md:max-h-[46vh] object-contain rounded-2xl border border-gray-200 bg-white",
+                data_injection_image="true",
+                data_base_img=base_image,
+            ),
+            cls="w-full",
+        ),
+        Div(*zone_buttons, cls="flex flex-wrap gap-2"),
+        Form(
+            Input(
+                type="hidden",
+                name="zone",
+                value=(selected_zone.value if selected_zone else ""),
+                data_injection_zone_input="true",
+            ),
+            modal_confirm_button(
+                "OK",
+                cls="ml-auto",
+                hx_post=f"/cart/event/{event.id}/injection_zone",
+                hx_include="closest form",
+                hx_target=f"#cart_card_event_{event.id}",
+                hx_swap="outerHTML",
+                onclick=(
+                    "const z=this.form?this.form.querySelector('[data-injection-zone-input]'):null;"
+                    "if(!z||!z.value){alert('Select a zone first.');return false;}"
+                    + close_modal_js(modal_id)
+                ),
+            ),
+            cls="w-full flex items-center",
+        ),
+        modal_id=modal_id,
+        card_cls="gap-3",
+    )
+
+
+def _toggle_row(label: str, hint: str, control, extra=None):
     return Div(
         Div(
-            Div(
-                P("Injection zone", cls="text-lg font-semibold"),
-                Div(
-                    Img(
-                        src=image,
-                        alt="Injection zones map",
-                        cls="w-full max-h-[38vh] md:max-h-[46vh] object-contain rounded-2xl border border-gray-200 bg-white",
-                        data_injection_image="true",
-                        data_base_img=base_image,
-                    ),
-                    cls="w-full",
-                ),
-                Div(*zone_buttons, cls="flex flex-wrap gap-2"),
-                Form(
-                    Input(
-                        type="hidden",
-                        name="zone",
-                        value=(selected_zone.value if selected_zone else ""),
-                        data_injection_zone_input="true",
-                    ),
-                    Button(
-                        "OK",
-                        type="button",
-                        cls="web_button px-4 py-2 text-sm text-white ml-auto",
-                        style="background-color:#111111;border-color:#111111;",
-                        hx_post=f"/cart/event/{event.id}/injection_zone",
-                        hx_include="closest form",
-                        hx_target=f"#cart_card_event_{event.id}",
-                        hx_swap="outerHTML",
-                        onclick=(
-                            "const z=this.form?this.form.querySelector('[data-injection-zone-input]'):null;"
-                            "if(!z||!z.value){alert('Select a zone first.');return false;}"
-                            + _close_modal_js(modal_id)
-                        ),
-                    ),
-                    cls="w-full flex items-center",
-                ),
-                onclick="event.stopPropagation()",
-                cls="web_container p-4 md:p-5 rounded-3xl w-[92vw] md:w-[88vw] max-w-md flex flex-col gap-3",
-            ),
-            id=modal_id,
-            onclick=_close_modal_js(modal_id),
-            cls="""
-                fixed inset-0 z-[70]
-                flex items-center justify-center
-                bg-slate-800/30 backdrop-blur-lg
-                px-4
-                opacity-0 invisible pointer-events-none
-                transition-opacity duration-200
-            """,
-        )
+            P(label, cls="text-sm font-medium text-gray-800"),
+            P(hint, cls="text-xs text-gray-500"),
+            cls="flex flex-col min-w-0 flex-1",
+        ),
+        extra,
+        control,
+        cls="flex items-center gap-3",
     )
 
 
 def CartCard(event, portions, plates=()):
+    """One planned meal, read from top to bottom in the order it is used:
+    what it is, what it has, the details that matter before eating, and the
+    confirmation (frontend_conventions.md §7.1)."""
     plates = list(plates)
     portions_by_plate = _portions_by_plate(portions)
-    # The plate header is drawn if there are two or more plates or if any of
-    # them has its own name (§7.2): without the second condition, naming the
-    # only plate of a meal would make that name disappear from the screen.
-    show_plate_headers = len(plates) > 1 or any(plate.name for plate in plates)
     # The visible names are resolved once: each plate needs them for its
     # header and every row needs them for the `Move` selector.
     plate_labels = {
         plate.id: plate_display_name(plate, portions_by_plate.get(plate.id, []))
         for plate in plates
     }
-    confirm_id = f"delete_meal_confirm_{event.id}"
     eating_out_id = f"eating_out_{event.id}"
     insulin_dose_id = f"insulin_dose_{event.id}"
     card_target = f"#cart_card_event_{event.id}"
+    zone_label = injection_zone_label(event.injection_zone) if event.injection_zone else "Choose zone"
     return Div(
         EventHeader(event),
+        DeleteMealModal(event),
         Div(
-            Div(
-                Label("Eating out", cls="text-xs text-gray-600", **{"for": eating_out_id}),
+            MacrosSummary(event, portions),
+            id=f"macros_summary_event_{event.id}",
+        ),
+        Div(
+            P("Plates", cls="web_section_label"),
+            *[
+                PlateBlock(
+                    event,
+                    plate,
+                    portions_by_plate.get(plate.id, []),
+                    plates,
+                    plate_labels,
+                )
+                for plate in plates
+            ],
+            Button(
+                "+ Add plate",
+                type="button",
+                aria_label="Add plate to this meal",
+                cls=f"{_SOFT_BUTTON_CLS} w-full px-2 py-2 text-sm border-dashed",
+                hx_post=f"/cart/event/{event.id}/plate",
+                hx_target=card_target,
+                hx_swap="outerHTML",
+            ),
+            cls="flex flex-col gap-2",
+        ),
+        Div(
+            P("Before you confirm", cls="web_section_label"),
+            _toggle_row(
+                "Eating out",
+                "Restaurant or someone else's kitchen",
                 _checkbox(
                     name="eating_out",
                     checked=event.eating_out,
@@ -1155,10 +1215,10 @@ def CartCard(event, portions, plates=()):
                     hx_target=card_target,
                     hx_swap="outerHTML",
                 ),
-                cls="flex items-center gap-2"
             ),
-            Div(
-                Label("Insulin", cls="text-xs text-gray-600", **{"for": insulin_dose_id}),
+            _toggle_row(
+                "Insulin",
+                "You injected for this meal",
                 _checkbox(
                     name="insulin_dose",
                     checked=event.insulin_dose,
@@ -1168,67 +1228,23 @@ def CartCard(event, portions, plates=()):
                     hx_target=card_target,
                     hx_swap="outerHTML",
                 ),
-                cls="flex items-center gap-2"
-            ),
-            Div(
-                Button(
-                    Img(src="/images/content/injection.svg", alt="Injection", cls="w-5 h-5"),
+                extra=Button(
+                    Img(src="/images/content/injection.svg", alt="", cls="w-4 h-4"),
+                    Span(zone_label),
                     type="button",
-                    cls="web_button px-2 py-1",
+                    aria_label="Injection zone",
+                    cls=f"{_SOFT_BUTTON_CLS} px-3 py-1.5 text-xs flex items-center gap-1.5 shrink-0",
                     onclick=_open_injection_modal_js(f"injection_zone_modal_{event.id}"),
-                ),
-                P("zone", cls="text-[10px] text-gray-600 text-center"),
-                cls=f"flex flex-col items-center gap-1 {'hidden' if not event.insulin_dose else ''}",
+                ) if event.insulin_dose else None,
             ),
-            Button(
-                Img(src="/images/content/delete.svg", alt="Delete meal", cls="w-5 h-5"),
-                type="button",
-                aria_label="Delete meal",
-                title="Delete meal",
-                cls="""
-                    web_button p-2
-                    border-red-600/40 shadow-none
-                    w-9 h-9
-                    flex items-center justify-center
-                    hover:bg-red-50
-                """,
-                style="color:#b91c1c;",
-                onclick=_open_modal_js(confirm_id),
-            ),
-            cls="flex items-center justify-between gap-2"
+            NotesSection(event),
+            cls="flex flex-col gap-3 pt-4 border-t border-line-soft",
         ),
         InjectionZoneModal(event),
-        DeleteMealModal(event),
         Div(
-            MacrosSummary(event, portions),
-            id=f"macros_summary_event_{event.id}",
+            ConfirmSection(event, portions),
+            cls="pt-4 border-t border-line-soft",
         ),
-        Div(
-            H3("Plates", cls="font-semibold"),
-            *[
-                PlateBlock(
-                    event,
-                    plate,
-                    portions_by_plate.get(plate.id, []),
-                    show_plate_headers,
-                    plates,
-                    plate_labels,
-                )
-                for plate in plates
-            ],
-            cls="flex flex-col gap-3"
-        ),
-        Button(
-            "+ Add plate",
-            type="button",
-            aria_label="Add plate to this meal",
-            cls="web_button w-full px-2 py-2 text-sm",
-            hx_post=f"/cart/event/{event.id}/plate",
-            hx_target=card_target,
-            hx_swap="outerHTML",
-        ),
-        NotesSection(event),
-        ConfirmSection(event, portions),
         id=f"cart_card_event_{event.id}",
         cls="""
             web_container p-4 rounded-3xl
@@ -1238,3 +1254,5 @@ def CartCard(event, portions, plates=()):
             transition-[width,margin,padding] duration-150
         """,
     )
+
+

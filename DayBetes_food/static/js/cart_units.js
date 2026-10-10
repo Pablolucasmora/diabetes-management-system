@@ -149,6 +149,34 @@
   window.__dbCartScrollGuard = true;
 
   var savedScrollY = null;
+  // A pop-up that is open inside the card (an ingredient's settings) is
+  // reopened after the card is repainted, so changing one setting does not
+  // close it. A pop-up that is fading out is closing on purpose and stays
+  // closed; if its row is gone (merged, moved) there is nothing to reopen.
+  var openModalId = null;
+
+  function findOpenModal(target) {
+    var dialogs = target.querySelectorAll("dialog[open]");
+    for (var i = 0; i < dialogs.length; i++) {
+      var layer = dialogs[i].firstElementChild;
+      if (layer && layer.id && layer.classList.contains("opacity-100")) return layer.id;
+    }
+    return null;
+  }
+
+  // Called after the swap and again after the settle: htmx settles the
+  // classes of nodes that keep their id, so the new layer's opacity-0 comes
+  // back once the swap is done and has to be lifted a second time.
+  function reopenModal(clear) {
+    if (!openModalId) return;
+    var layer = document.getElementById(openModalId);
+    if (clear) openModalId = null;
+    if (!layer) return;
+    var dialog = layer.closest("dialog");
+    if (dialog && !dialog.open) dialog.showModal();
+    layer.classList.remove("opacity-0");
+    layer.classList.add("opacity-100");
+  }
 
   function isCartTarget(target) {
     if (!target || !target.id) return false;
@@ -172,15 +200,18 @@
       var detail = event && event.detail ? event.detail : null;
       if (!detail || !isCartTarget(detail.target)) return;
       savedScrollY = window.scrollY;
+      openModalId = findOpenModal(detail.target);
     });
 
     // It is restored at both moments: afterSwap sets the right position right
     // away and afterSettle keeps it if the browser moves it while settling the
     // new content.
     document.body.addEventListener("htmx:afterSwap", function () {
+      reopenModal(false);
       restore(false);
     });
     document.body.addEventListener("htmx:afterSettle", function () {
+      reopenModal(true);
       restore(true);
     });
   }
