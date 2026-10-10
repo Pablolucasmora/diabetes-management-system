@@ -16,6 +16,7 @@ Este documento complementa `conventions/code_conventions.md`.
 - Todo `Input` de texto (incluye `type="text"`, `type="number"`, `type="email"`, etc., y los `textarea`) usa `text-sm` como tamaño de fuente. No se reduce a `text-xs` en móvil ni se amplía en `md:`/`lg:` salvo que exista una razón documentada para ese input concreto.
 - Esta regla es independiente de los breakpoints de la sección 1: el tamaño de fuente de un input de texto no cambia entre móvil y ordenador.
 - La sección 3 documenta la excepción para controles nativos del navegador (`time`, `date`, `number` con spinner), que no siguen esta regla porque su render no depende de `text-sm`.
+- **Ningún campo amplía la pantalla al enfocarlo** (decisión 2026-10-10). iOS hace zoom al enfocar un campo con letra menor de 16 px (`text-sm` son 14 px) y no lo deshace. En vez de subir todos los campos a 16 px, `static/js/browser_tweaks.js` añade `maximum-scale=1` al viewport solo en iOS. iOS sigue dejando hacer zoom con dos dedos, porque ignora ese límite para el gesto del usuario. En Android no se añade: allí no hay zoom al enfocar, y el límite sí bloquearía el zoom con dos dedos. Toda página con su propio `<head>` carga ese script, también las de acceso.
 
 ## 3. Excepción: controles nativos del navegador (`time`, `date`, `number` con spinner)
 
@@ -46,6 +47,12 @@ Los inputs cuyo control visual lo dibuja el navegador (`type="time"`, `type="dat
 
   Se usa `behavior: 'auto'` (salto inmediato, sin animación): el scroll se reposiciona antes de que llegue el contenido nuevo, y una animación suave aquí solo se percibe como un rebote.
 - La regla también cubre los botones de vuelta ("Back", "Back to recipe", "Cancel"), no solo los de ida: volver a una página es cambiar de página.
+- **Qué hace un botón de vuelta** (decisión 2026-10-10). "Back" significa "la página de la que vengo", así que **retrocede en el historial** y nunca abre la página como una entrada nueva. Abrir el detalle como entrada nueva desde la edición hacía que las dos páginas se devolvieran la una a la otra (editar → Back → detalle → Back → editar).
+  - Todos los botones de vuelta usan `back_js(<página padre>)` (`components/navigation.py`), que llama a `dbBack` (`static/js/navigation.js`). No se escribe `history.back()` ni un `hx_get` con `hx_push_url` en un botón de vuelta.
+  - Si no hay una página de la web detrás, `dbBack` abre la **página padre** y sustituye la entrada actual, para que no se pueda volver a ella. Pasa cuando la página se abrió directamente o tras una recarga completa, como el `HX-Redirect` después de guardar. Padres: el detalle de un alimento para su edición, `Food` para el detalle, la creación y el escáner, y `Settings` para sus subpáginas.
+  - Para saber si hay página de la web detrás, cada entrada que añade htmx guarda en `history.state` cuántas hay (`dbDepth`). `history.length` no sirve, porque cuenta también otros sitios y las páginas de delante.
+  - `#main_content` lleva `hx-history-elt`. La copia que htmx guarda al salir de una página y la petición que hace si al volver no la encuentra usan ese elemento, así que una página restaurada es el mismo fragmento que devuelven las rutas.
+  - `dbBack` también pone el scroll arriba, como pide esta sección.
 - **Excepción**: una navegación concreta puede conservar la posición de scroll (o aterrizar en otro punto) **solo si el usuario lo pide explícitamente para ese caso**. Cuando eso ocurra, se documenta aquí el caso y el motivo, siguiendo el procedimiento de "Convenciones faltantes" de `CLAUDE.md`. No es una excepción que pueda decidirse componente a componente.
 - No se consideran cambio de página, y por tanto **no** resetean el scroll, los refrescos parciales que reemplazan solo un bloque de la página actual sin cambiar de pantalla (por ejemplo `hx_target="#food-list"` al escribir en un buscador, o el re-render de una fila tras editarla).
 
@@ -66,40 +73,49 @@ Consecuencias:
 
 Esta sección describe cómo se presenta en la interfaz la subdivisión de un evento en tandas (platos). El modelo de datos, la herencia del offset y la regla del nombre derivado están en `measurement_conventions.md` §4.6; aquí solo se fija lo visual y el flujo.
 
-Principio rector: **la funcionalidad no debe notarse cuando no se usa**. Una comida de un solo plato tiene que verse y manejarse exactamente igual que antes de existir las tandas, sin un click de más.
+Principio rector: **la funcionalidad no debe notarse cuando no se usa**. Una comida de un solo plato tiene que verse y manejarse exactamente igual que antes de existir las tandas, sin un click de más. Excepción: desde el 2026-10-10 la cabecera de tanda se muestra también con un solo plato (§7.2), para que el offset común esté siempre en el mismo sitio.
 
 ### 7.1 La sección se llama `Plates`
 
 Dentro de la tarjeta del evento, el bloque que antes se titulaba `Ingredients` pasa a titularse **`Plates`**, y en vez de una lista plana de filas contiene un bloque por tanda. Orden de la tarjeta, de arriba abajo:
 
 ```text
-EventHeader (nombre, meal_time, tipo de comida...)
-Eating out | Insulin | zone | Delete meal
+EventHeader (nombre + borrar; hora, fecha y tipo de comida en píldoras)
 MacrosSummary
 Plates
   ┌ cabecera de tanda ──────────────────────────┐
-  │ Arroz, Pechuga      [ +0 ] [Apply all]  ✎ 🗑 │
+  │ Arroz, Pechuga                            🗑 │
+  │ Offset [ +0 ] min [Apply all]                │
   │   IngredientRow                              │
   │   IngredientRow                              │
   └──────────────────────────────────────────────┘
   ┌──────────────────────────────────────────────┐
-  │ Yogur              [ +45 ] [Apply all]  ✎ 🗑 │
+  │ Yogur                                     🗑 │
+  │ Offset [ +45 ] min [Apply all]               │
   │   IngredientRow                              │
   └──────────────────────────────────────────────┘
 [ + Add plate ]
-NotesSection
-ConfirmSection (Confirm food)
+Before you confirm: Eating out | Insulin (+ zona) | NotesSection
+ConfirmSection (Eaten + Confirm meal)
 ```
 
-Cada tanda es un bloque visualmente separado, no un simple texto entre filas: al leer la tarjeta tiene que verse de un vistazo dónde empieza y acaba cada plato. Las `IngredientRow` conservan el diseño que ya tienen.
+Cada tanda es un bloque visualmente separado, no un simple texto entre filas: al leer la tarjeta tiene que verse de un vistazo dónde empieza y acaba cada plato.
+
+**Orden y fila de ingrediente** (decisión 2026-10-10, rediseño del carrito). La tarjeta se lee de arriba abajo en el orden en que se usa: qué comida es, qué lleva, lo que importa antes de comer y la confirmación. Por eso `Eating out` e `Insulin` bajan de la cabecera a un bloque *Before you confirm*, junto a las notas, y borrar la comida pasa a la cabecera, al lado del nombre.
+
+Cada `IngredientRow` muestra el nombre, una línea con la preparación (`raw · fridge · +15 min`, o `Preparation not set` si no hay ninguna), la cantidad con su unidad y la casilla `Strictly weighted`, que se cambia a menudo y por eso queda a la vista. Todo lo demás está en el pop-up **`Adjust`** de esa fila (`IngredientSettingsModal`): la preparación (`cooking`, `final_state`, `conservation`), `Weighed cooked`, el offset propio del ingrediente y el selector `Move` (§7.5). El pop-up es el sitio para corregir desde el carrito una preparación mal puesta u olvidada.
+
+- La preparación se guarda con un botón (`Save preparation`), con los tres campos juntos. Un campo en `Not set` se guarda como `NULL` (§6). Los tres son parte de la clave única, así que guardar puede fusionar la fila con otra de la misma tanda (`measurement_conventions.md` §4.6.4), y por eso se repinta la tarjeta entera.
+- Al abrirse, el pop-up pone el foco en su propia tarjeta y no en el primer campo: en el móvil, un selector con el foco abre su lista solo (`components/modal.py`).
+- Los demás controles del pop-up se guardan solos al cambiar, como antes. Cuando el cambio repinta la tarjeta, el pop-up se vuelve a abrir (`static/js/cart_units.js`). No se reabre si se estaba cerrando, ni si su fila ha desaparecido por una fusión o un movimiento.
 
 Las tandas se pintan en el orden que fija `measurement_conventions.md` §4.6.1 (`offset_minutes NULLS LAST, id`), no en orden de creación.
 
 ### 7.2 Cabecera de tanda: cuándo se muestra
 
-La cabecera se muestra si **hay dos o más tandas en el evento** o si **la tanda tiene nombre propio** (`name` no nulo). La segunda condición es necesaria: sin ella, nombrar la única tanda de un evento haría desaparecer ese nombre de la pantalla.
+La cabecera se muestra **siempre**, también con una sola tanda sin nombre (decisión 2026-10-10; sustituye al criterio del 2026-09-19). Así el offset común de la tanda y su `Apply all` están siempre en el mismo sitio, y la comida de un solo plato se maneja igual que la de varios.
 
-Cuando no se cumple ninguna de las dos —un evento con una sola tanda sin nombrar— **no se pintan ni la cabecera ni el botón de mover**, y `Apply all` baja a cada fila (§7.4). Las filas de ingrediente se ven como se veían antes de existir las tandas.
+Hasta el 2026-10-10 la cabecera solo se mostraba con dos o más tandas o con una tanda con nombre propio; con una sola tanda sin nombre se ocultaba y `Apply all` bajaba a cada fila. Se cambió al rediseñar el carrito: tener `Apply all` en dos sitios distintos según el caso confundía más que el espacio que ahorraba.
 
 **Lo que sí se pinta siempre** es el marco de la sección: el título `Plates` y el botón `+ Add plate` (decisión 2026-09-19, confirmada al probarlo). La versión inicial de esta sección decía que con una sola tanda no se pintaría "nada de tandas"; al verlo en uso se prefirió mantener el marco visible, porque deja el acceso a crear una segunda tanda siempre a mano y no estorba. Lo condicional es la cabecera, no la sección.
 
@@ -112,26 +128,17 @@ De izquierda a derecha: **título**, **offset de la tanda**, **`Apply all`**, y 
 - **`Apply all`** propaga ese offset a **todas las porciones de la tanda**. Existe porque cambiar el offset de la tanda no reescribe sus filas (§4.6.2): es la acción explícita para decir "esta tanda entera se comió 15 minutos más tarde". Va destacado con color, junto al input de offset.
 - **Borrar tanda** está bloqueado mientras tenga ingredientes (§4.6.5); la interfaz pide moverlos o borrarlos antes, no los arrastra a otra tanda por su cuenta.
 
-### 7.4 `Apply all` cuando no hay cabecera
+### 7.4 `Apply all`
 
-`Apply all` está **en un solo sitio a la vez**, según si la cabecera se está mostrando:
-
-| Situación | Dónde está `Apply all` |
-|---|---|
-| Cabecera visible | En la cabecera, junto al offset de la tanda |
-| Cabecera oculta (una sola tanda sin nombre) | En cada `IngredientRow`, junto a su input de offset |
-
-Nunca en los dos sitios, para no duplicar el mismo control en la misma pantalla. Se eligió la cabecera como sitio principal —y no una copia en cada fila— porque con muchos ingredientes un botón por fila satura la interfaz haciendo exactamente lo mismo.
-
-Pulsado **desde una fila**, `Apply all` hace las dos cosas a la vez: escribe el offset de esa fila como `offset_minutes` de la tanda (para que lo hereden los alimentos que se añadan después) y lo propaga a todas las porciones de la tanda. Así el comportamiento es el mismo se pulse donde se pulse, y el caso de una sola tanda no necesita una excepción en el modelo: la tanda guarda su offset igual que las demás, simplemente no se ve.
+`Apply all` está **solo en la cabecera de la tanda**, junto a su offset, y nunca en las filas: con muchos ingredientes, un botón por fila satura la interfaz haciendo exactamente lo mismo. Como la cabecera se muestra siempre (§7.2), no hay ningún caso en que tenga que bajar a las filas. Cada ingrediente conserva su propio offset en el pop-up `Adjust` (§7.1), sin `Apply all`.
 
 ### 7.5 Mover un ingrediente de tanda
 
-Cada `IngredientRow` lleva un control **`Move`** cuando la cabecera está visible: un selector con las tandas del evento más la opción `+ New plate`. Al elegir una tanda, la fila se mueve (`UPDATE plate_id`); al elegir `+ New plate`, se crea la tanda y la fila se mueve a ella. Mover no cambia el `offset_minutes` de la fila (§4.6.5).
+Cada `IngredientRow` lleva un control **`Move`** en su pop-up `Adjust` (§7.1): un selector con las tandas del evento más la opción `+ New plate`. Al elegir una tanda, la fila se mueve (`UPDATE plate_id`); al elegir `+ New plate`, se crea la tanda y la fila se mueve a ella. Mover no cambia el `offset_minutes` de la fila (§4.6.5).
 
 ### 7.6 `+ Add plate`
 
-Botón **debajo de la última tanda y encima de `NotesSection`/`Confirm food`**, a ancho completo, para que se lea como acción del evento y no de una tanda concreta.
+Botón **debajo de la última tanda y encima del bloque *Before you confirm* (`NotesSection`) y de `Confirm meal`**, a ancho completo, para que se lea como acción del evento y no de una tanda concreta.
 
 ### 7.7 Selector de tanda al añadir un alimento
 
@@ -188,3 +195,87 @@ No basta con no tocarlo desde el código: al reemplazar la tarjeta entera con `o
 Toda la interfaz de la web se escribe **en inglés** (`Plates`, `Apply all`, `Move`, `+ Add plate`, `+ New plate`): textos, etiquetas, placeholders, mensajes de validación, mensajes públicos de error (`errors.py`, `error_conventions.md` §2), avisos del cliente (`app_toast.js`) y las páginas de acceso. El atributo `lang` de las páginas es `en`. Lo que introduce el usuario no se traduce: el nombre derivado de una tanda sale de los nombres de los alimentos, que están en el idioma en que se guardaron, y los alias del parser de macros ("hidratos", "azúcar") son datos de entrada, no interfaz (decisión 2026-10-09).
 
 Queda **pendiente de decisión** la internacionalización de la web (español/inglés a elección del usuario): no existe convención de i18n, los literales están incrustados en los componentes, y la parte cara no es traducir la interfaz sino decidir qué pasa con el contenido (nombres del catálogo, métodos de cocción, tipos de comida). Escribir los literales nuevos en inglés no cierra ninguna puerta a esa decisión.
+
+## 8. Superficies, contraste y colores
+
+Decisión 2026-10-10 (rediseño de la interfaz, rama `feat/ui-refresh`). La web conserva su identidad: tonos cálidos, esquinas redondeadas, el logo y la isla de navegación inferior. Las superficies son de **cristal líquido** (vidrio esmerilado translúcido, como en iOS) sobre un fondo beige muy claro con manchas de color suaves. Todo se define una sola vez en `static/css/input.css`.
+
+**Colores del tema**
+
+| Token | Uso |
+|---|---|
+| `page` (`#fbf8f3`) | fondo base de la página (beige muy claro) |
+| `wash-peach`, `wash-blue`, `wash-green`, `wash-sun` | manchas de color del fondo (`body::before`) |
+| `surface` (`#ffffff`) | superficies sólidas: paneles desplegables y modales |
+| `control` (`#f7f2ea`) | fondo suave de elementos no acristalados (etiquetas, hover) |
+| `line` (`#e9e0d2`) | borde de los campos, filtros y separadores |
+| `line-soft` (`#efe8dd`) | borde suave y elemento activo de la navegación |
+| `muted` (`#8a7d6b`) | etiquetas de sección (`web_section_label`) |
+| `ink` (`#2b2622`) | acción principal (`web_button_primary`) y botón de confirmar de los pop-ups |
+| `danger` (`#b91c1c`) | botón de confirmar de los pop-ups que borran o archivan |
+
+**Clases**
+
+- `web_glass` (utilidad): fondo blanco translúcido, desenfoque y saturación del fondo (`backdrop-filter`), borde blanco, brillo interior y reflejo diagonal. La usan `web_container` (tarjetas), `web_button` (botones), la barra inferior, el logo, el botón del carrito y la cabecera de Food.
+- `web_glass_strong` (utilidad): el mismo cristal, más opaco y con más desenfoque. Es para barras con controles que quedan encima de contenido que se desplaza, como la cabecera de Food, para que lo que pasa por debajo no dificulte la lectura de los campos.
+- `web_button_primary`: acción principal, sólida en `ink` y sin cristal. Como mucho hay una por pantalla.
+- Los campos de texto (`web_input`) son blancos y sólidos, para que se lean bien.
+
+**Reglas**
+
+- Un componente usa los tokens y las clases, nunca el hexadecimal. Para añadir un color hay que acordarlo antes.
+- Los paneles desplegables y los modales son sólidos (`surface`) y no contienen elementos acristalados, porque dentro de un panel blanco el cristal no se distingue. Sus opciones usan `control` con borde `line`.
+- **No se usa `filter` (`blur()`, etc.) en ningún elemento** (decisión 2026-10-10). Safari en móvil y en ordenador, y a veces Chrome, pintan costuras de color (una línea fucsia) en los bordes de las capas desenfocadas que están dentro del cristal. Para desenfocar lo que hay detrás de algo abierto se usa **una sola capa fija con `backdrop-filter`** entre el contenido y lo abierto. Por ejemplo, detrás de los menús de la cabecera de Food está `#food_menu_scrim` (`food_main.py`, `food_quick_create.js`). Mientras esa capa está visible, la cabecera desactiva su propio cristal, para que no haya un `backdrop-filter` dentro de otro y para que la capa fija cubra la pantalla y no solo la cabecera. Tampoco se usan trucos de capa (`translateZ(0)`, `backface-visibility`, `isolation`) para tapar costuras: no las arreglan y esconden la causa.
+- No se anida cristal dentro de cristal: los botones que van dentro de una superficie acristalada, como los del rayo y el "+" de la cabecera de Food, son sólidos (`surface`). Safari pinta costuras de color con un `backdrop-filter` dentro de otro.
+- Cada superficie de cristal crea su propio contexto de apilamiento, así que una lista desplegable dentro de ella queda por debajo de la superficie siguiente aunque tenga un `z-index` alto. Mientras la lista está abierta, `static/js/dropdown_layer.js` sube todos los antepasados que crean contexto de apilamiento. No hace falta marcar nada en el componente. Los que ya tienen un `z-index` propio, como la cabecera fija o la isla de navegación, no se tocan.
+- Por el mismo motivo, un elemento `fixed` dentro de una superficie de cristal se coloca respecto a esa superficie y no respecto a la pantalla. Por eso los pop-ups son un `<dialog>` abierto con `showModal()`, que el navegador pinta por encima de toda la página. El fondo oscurecido y desenfocado cubre así la pantalla entera. Se construyen siempre con `ModalLayer` / `ConfirmActionModal` y se abren y cierran con `open_modal_js` / `close_modal_js` desde Python, o con `dbOpenModal` / `dbCloseModal` desde JavaScript (`components/modal.py`, `static/js/modal.js`). Todos los pop-ups tienen el mismo diseño: el mismo fondo oscurecido y desenfocado, la misma tarjeta sólida y los mismos botones. Solo cambia el color del botón de confirmar: `modal_confirm_button(danger=True)` es rojo (`danger`) en los que borran o archivan, y en el resto es `ink`. La acción secundaria (No, Done) es `modal_secondary_button`. No se escriben colores ni clases de botón a mano dentro de un pop-up.
+- Un elemento acristalado no lleva utilidades `shadow-*`, `bg-*` ni `border-*` que pisen el cristal.
+- El fondo de color está en una capa fija (`body::before`), no en `background-attachment: fixed`, que Safari de iOS ignora. Por eso `body` es transparente y el color base va en `html`.
+- El color de fiabilidad de los macros (`macro_color`, de verde a rojo) es un dato, no decoración, y no se sustituye por los colores de la paleta.
+- Rendimiento: el desenfoque es caro. Si una lista larga va lenta en móvil, la primera medida es quitar el cristal de sus tarjetas, no de los elementos flotantes.
+
+## 9. Estructura de las páginas
+
+Decisión 2026-10-10 (rediseño de la interfaz, rama `feat/ui-refresh`). Cómo se montan las páginas, para que todas se lean igual. Los colores y superficies están en §8 y el movimiento en §10.
+
+### 9.1 Páginas de crear y editar (alimento, plato, receta, añadido rápido)
+
+Se construyen con los bloques de `components/food/foods.py`. No se monta un formulario a mano.
+
+- **Cabecera** (`_form_header`). A la izquierda, "‹ Back" (§5). A la derecha, qué se hace, como etiqueta de sección (`NEW FOOD`, `EDIT DISH`…). Debajo, el título. La cabecera no es una tarjeta.
+- **El nombre es el título** (`_name_title_input`). Se escribe y se edita en el propio título, en negrita y sin recuadro: parece texto y se edita al pulsarlo. Vacío, muestra en gris qué se espera (`Name of the food`). No hay un campo "Name" aparte.
+- **Secciones** (`_form_section`). Cada una es una tarjeta con un título y sus campos en rejilla, en vez de una tarjeta por campo. En las páginas de crear, las secciones obligatorias van numeradas (`① What is it?`, `② Nutrition`). Así el usuario ve cuántos pasos tiene el formulario.
+- **Lo que casi nunca hace falta va plegado** (`_optional_section`, un `<details>`): *More details*, con subgrupos (`_form_subgroup`) y una línea que resume qué hay dentro. Empieza cerrado. Se abre solo cuando ya trae datos, por ejemplo los que rellena el escáner. Es lo que evita que un formulario abrume.
+- **Al final**, `Favorite` en su propia fila (`_favorite_row`) y una única acción principal a todo el ancho (`_form_submit`, `web_button_primary`: `Create food`, `Save`, `Add to meal`…).
+- Las páginas de editar siguen el mismo esquema, con las secciones del alimento en vez de pasos numerados.
+
+### 9.2 Inicio
+
+Arriba, el saludo con el nombre de usuario (`Hi <usuario>`). Debajo, en este orden: la comida en curso (*Current meal*, que abre el carrito), las formas de añadir comida y la inyección.
+
+### 9.3 Food
+
+- La cabecera es fija arriba (`sticky`) y usa `web_glass_strong` (§8). Lleva el menú del rayo y el menú "+", el buscador, los filtros y el selector de comida (*Add to*). Mientras uno de sus menús está abierto, la capa `#food_menu_scrim` desenfoca el resto de la página (§8).
+- Cada alimento de la lista es una tarjeta con el nombre, la marca u origen debajo y los carbohidratos por 100 g. Los propios llevan la etiqueta `Mine` y los archivados, `Archived`. Las listas van agrupadas bajo etiquetas de sección (`web_section_label`).
+
+### 9.4 Detalle de un alimento, plato o receta
+
+De arriba abajo: el nombre y sus datos, *Add to*, la cantidad (con *Advanced* para la preparación), `Strictly weighted` (§7.1, `measurement_conventions.md` §6.11), *Macros Summary* y *Details*. Entra bloque a bloque (§10).
+
+### 9.5 Carrito
+
+La página empieza con la etiqueta `CART`, el título *Planned meals* y una línea que explica qué hacer. Cada comida es una tarjeta con la estructura de §7.1.
+
+## 10. Movimiento
+
+Decisión 2026-10-10. Animaciones pequeñas para que los cambios se perciban continuos y no a saltos. Están todas en `static/css/input.css`, al final.
+
+- Solo se animan `transform` y `opacity`, con duraciones de 150 a 260 ms. Ninguna animación retrasa una acción ni oculta información.
+- Todo va dentro de `@media (prefers-reduced-motion: no-preference)`: si el sistema pide reducir movimiento, no hay animaciones.
+- Una página nueva sube y aparece (`#main_content > *`). La animación usa `backwards`, así que al acabar no deja ningún `transform` puesto: un `transform` permanente convertiría el elemento en contenedor de sus hijos `fixed` (§8).
+- La lista de alimentos entra tarjeta a tarjeta, con un retraso corto y con tope a partir de la sexta.
+- La página de detalle de un alimento, un plato o una receta entra bloque a bloque, de arriba abajo, y las tarjetas de macros también (`data-stagger="true"`). Cada bloque se retrasa 40 ms respecto al anterior, con tope a partir del séptimo. El atributo sirve para cualquier página o rejilla que deba entrar así.
+- Lo que muestra una sección plegable (`<details>`) aparece al abrirse.
+- La tarjeta de un pop-up crece mientras aparece su fondo (`data-modal-card`, `components/modal.py`).
+- Los botones (`web_button`) se hunden un poco al pulsarlos (`active:scale-95`). En móvil se quita el resaltado azul del toque.
+- Los repintados parciales (una tarjeta del carrito tras cambiar un valor) **no** se animan: pasan a cada cambio y un parpadeo ahí molesta más de lo que ayuda.

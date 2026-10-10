@@ -79,7 +79,12 @@ def cart_main(events, portions_by_event, plates_by_event=None, oob: bool = False
         )
 
     return Div(
-        H1("Food cart", cls="text-xl font-bold"),
+        Div(
+            P("Cart", cls="web_section_label"),
+            H1("Planned meals", cls="text-2xl font-bold text-gray-900"),
+            P("Check what you are about to eat, then confirm it.", cls="text-sm text-gray-600"),
+            cls="w-full px-1 flex flex-col gap-0.5",
+        ),
         cart_events_list(events, portions_by_event, plates_by_event),
         # With cache busting: /js/ is served with a one-week max-age
         # (main.py), so without the ?v= the browser would keep running the

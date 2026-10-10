@@ -3,6 +3,13 @@ from fasthtml.common import *
 
 from DayBetes_food.components.cart.cart_shared import CHECKBOX_CLS
 from DayBetes_food.components.injection_zone import asset_busted
+from DayBetes_food.components.navigation import back_js
+from DayBetes_food.components.modal import (
+    close_modal_js,
+    ConfirmActionModal,
+    modal_confirm_button,
+    open_modal_js,
+)
 from DayBetes_food.domain.catalog import (
     CATALOG_BARCODE_MAX_LENGTH,
     CATALOG_NAME_MAX_LENGTH,
@@ -127,15 +134,18 @@ CONFIDENCE_LABELS = {0: "Not sure", 1: "More or less", 2: "Quite sure"}
 MACROS_QUALITY_LABELS = {True: "Published (label, menu, website)", False: "Estimated"}
 WEIGHED_LABELS = {True: "Weighed", False: "Not weighed"}
 
+# One style for every field of the create and edit forms: full width, a
+# comfortable touch height and text-sm (frontend_conventions.md §2, §8).
+FORM_FIELD_CLS = "web_input w-full rounded-lg border border-line px-3 py-2 text-sm"
+
 FILTER_ITEM_CLS = """
-    px-3 py-1.5
+    px-3 py-2
     w-full
-    text-[11px] md:text-xs
+    text-xs font-medium
     rounded-full
     transition-all duration-200
     cursor-pointer
-    border border-white/80
-    shadow-sm
+    border border-line
 """
 
 
@@ -184,66 +194,12 @@ def on_after(target="this", reload_page=True):
 """}
 
 
-def _close_modal_js(modal_id: str) -> str:
-    return (
-        f"const m=document.getElementById('{modal_id}');"
-        "if(!m) return;"
-        "m.classList.remove('opacity-100');"
-        "m.classList.add('opacity-0','invisible','pointer-events-none');"
-    )
-
-
-def _open_modal_js(modal_id: str) -> str:
-    return (
-        f"const m=document.getElementById('{modal_id}');"
-        "if(!m) return;"
-        "m.classList.remove('invisible','opacity-0','pointer-events-none');"
-        "m.classList.add('opacity-100');"
-    )
-
-
 def _food_back_button(label: str = "Back"):
     return Button(
         label,
         type="button",
         cls="web_button self-start px-3 py-1.5 text-sm",
-        onclick="if(window.history.length>1){window.history.back();}else{window.location.href='/food';}",
-    )
-
-
-def ConfirmActionModal(modal_id: str, title: str, question: str, yes_button):
-    return Div(
-        Div(
-            Div(
-                Div(
-                    P(title, cls="text-lg font-semibold"),
-                    P(question, cls="text-sm md:text-base text-gray-700"),
-                    cls="flex flex-col gap-1",
-                ),
-                Div(
-                    yes_button,
-                    Button(
-                        "No",
-                        type="button",
-                        cls="web_button px-4 py-2 text-sm",
-                        onclick=_close_modal_js(modal_id),
-                    ),
-                    cls="flex items-center gap-2 justify-end",
-                ),
-                onclick="event.stopPropagation()",
-                cls="web_container p-5 md:p-6 rounded-3xl w-[92vw] max-w-md flex flex-col gap-4",
-            ),
-            id=modal_id,
-            onclick=_close_modal_js(modal_id),
-            cls="""
-                fixed inset-0 z-[70]
-                flex items-center justify-center
-                bg-black/35 backdrop-blur-xl
-                px-4
-                opacity-0 invisible pointer-events-none
-                transition-opacity duration-200
-            """,
-        ),
+        onclick=back_js("/food"),
     )
 
 
@@ -268,7 +224,7 @@ def MealSelector(events: list, selected_id: int = None, plate_options: list = No
     options.append(Option("New Meal", value="0", selected=(selected_id == 0)))
 
     return Div(
-        Label("Meal selector", cls="text-xs text-gray-600", **{"for": "meal_selector"}),
+        Label("Add to", cls="web_section_label shrink-0", **{"for": "meal_selector"}),
         Select(
             *options,
             id="meal_selector",
@@ -298,11 +254,11 @@ def MealSelector(events: list, selected_id: int = None, plate_options: list = No
             },
             style="color: gray" if not events else "",
             cls="""
-            border-[1px] px-2 py-1
+            bg-white border border-line px-2 py-1.5
             md:text-sm lg:text-sm text-xs
-            shadow-sm rounded-md focus:outline-none
+            rounded-lg focus:outline-none
             lg:w-40 md:w-40 w-32
-            border-white cursor-pointer
+            cursor-pointer
             """,
         ),
         Div(
@@ -354,7 +310,7 @@ def MealSelector(events: list, selected_id: int = None, plate_options: list = No
             PlateSelector(plate_options or [], selected_id=selected_plate_id),
             id="plate_selector_box",
         ),
-        cls="flex items-center justify-center gap-2  md:w-md lg:w-md w-xs mb-3",
+        cls="flex items-center justify-center gap-2  md:w-xl lg:w-xl w-xs mb-3",
     )
 
 
@@ -386,11 +342,11 @@ def PlateSelector(plate_options: list, selected_id: int = None):
             data_skip_page_loading="true",
             aria_label="Plate selector",
             cls="""
-            border-[1px] px-2 py-1
+            bg-white border border-line px-2 py-1.5
             md:text-sm lg:text-sm text-xs
-            shadow-sm rounded-md focus:outline-none
+            rounded-lg focus:outline-none
             lg:w-40 md:w-40 w-32
-            border-white cursor-pointer
+            cursor-pointer
             """,
         ),
         cls="flex flex-col",
@@ -482,7 +438,7 @@ def Filters():
                     data_skip_page_loading="true",
                     data_search_mode_btn="true",
                     data_search_mode_value="recommended",
-                    cls="inline-flex px-0 pb-2 text-lg font-bold text-black text-left transition-colors duration-150 cursor-pointer",
+                    cls="inline-flex px-0 pb-1.5 text-sm font-bold text-black text-left transition-colors duration-150 cursor-pointer",
                     style="transform: translateX(0); border-bottom: 2px solid #111827;",
                     hx_get="/food/list",
                     hx_target="#food-list",
@@ -514,7 +470,7 @@ def Filters():
                     data_skip_page_loading="true",
                     data_search_mode_btn="true",
                     data_search_mode_value="global",
-                    cls="inline-flex px-0 pb-2 text-lg font-medium text-gray-400 text-right transition-colors duration-150 cursor-pointer",
+                    cls="inline-flex px-0 pb-1.5 text-sm font-medium text-gray-400 text-right transition-colors duration-150 cursor-pointer",
                     style="transform: translateX(0); border-bottom: 2px solid transparent;",
                     hx_get="/food/list",
                     hx_target="#food-list",
@@ -540,7 +496,7 @@ def Filters():
                 cls="w-1/2 flex items-end justify-center",
             ),
             id="food_search_tabs",
-            cls="w-full flex items-end justify-between mt-4",
+            cls="w-full flex items-end justify-between mt-2",
         ),
         Div(
             Div(
@@ -550,7 +506,7 @@ def Filters():
                     data_skip_page_loading="true",
                     data_food_mode_btn="true",
                     data_food_mode_value="catalog",
-                    cls="inline-flex px-0 pb-2 text-lg font-bold text-black text-left transition-colors duration-150 cursor-pointer",
+                    cls="inline-flex px-0 pb-1.5 text-sm font-bold text-black text-left transition-colors duration-150 cursor-pointer",
                     style="transform: translateX(0); border-bottom: 2px solid #111827;",
                     hx_get="/food/list",
                     hx_target="#food-list",
@@ -582,7 +538,7 @@ def Filters():
                     data_skip_page_loading="true",
                     data_food_mode_btn="true",
                     data_food_mode_value="manual",
-                    cls="inline-flex px-0 pb-2 text-lg font-medium text-gray-400 text-right transition-colors duration-150 cursor-pointer",
+                    cls="inline-flex px-0 pb-1.5 text-sm font-medium text-gray-400 text-right transition-colors duration-150 cursor-pointer",
                     style="transform: translateX(0); border-bottom: 2px solid transparent;",
                     hx_get="/food/list",
                     hx_target="#food-list",
@@ -608,7 +564,7 @@ def Filters():
                 cls="w-1/2 flex items-end justify-center",
             ),
             id="food_food_tabs",
-            cls="hidden w-full flex items-end justify-between mt-4",
+            cls="hidden w-full flex items-end justify-between mt-2",
         ),
         Div(
             Div(
@@ -618,7 +574,7 @@ def Filters():
                     data_skip_page_loading="true",
                     data_recipes_mode_btn="true",
                     data_recipes_mode_value="mine",
-                    cls="inline-flex px-0 pb-2 text-lg font-bold text-black text-left transition-colors duration-150 cursor-pointer",
+                    cls="inline-flex px-0 pb-1.5 text-sm font-bold text-black text-left transition-colors duration-150 cursor-pointer",
                     style="transform: translateX(0); border-bottom: 2px solid #111827;",
                     hx_get="/food/list",
                     hx_target="#food-list",
@@ -650,7 +606,7 @@ def Filters():
                     data_skip_page_loading="true",
                     data_recipes_mode_btn="true",
                     data_recipes_mode_value="discover",
-                    cls="inline-flex px-0 pb-2 text-lg font-medium text-gray-400 text-right transition-colors duration-150 cursor-pointer",
+                    cls="inline-flex px-0 pb-1.5 text-sm font-medium text-gray-400 text-right transition-colors duration-150 cursor-pointer",
                     style="transform: translateX(0); border-bottom: 2px solid transparent;",
                     hx_get="/food/list",
                     hx_target="#food-list",
@@ -676,7 +632,7 @@ def Filters():
                 cls="w-1/2 flex items-end justify-center",
             ),
             id="food_recipes_tabs",
-            cls="hidden w-full flex items-end justify-between mt-4",
+            cls="hidden w-full flex items-end justify-between mt-2",
         ),
         Div(
             Div(
@@ -686,7 +642,7 @@ def Filters():
                     data_skip_page_loading="true",
                     data_favs_mode_btn="true",
                     data_favs_mode_value="catalog",
-                    cls="inline-flex px-0 pb-2 text-lg font-bold text-black text-left transition-colors duration-150 cursor-pointer",
+                    cls="inline-flex px-0 pb-1.5 text-sm font-bold text-black text-left transition-colors duration-150 cursor-pointer",
                     style="transform: translateX(0); border-bottom: 2px solid #111827;",
                     hx_get="/food/list",
                     hx_target="#food-list",
@@ -718,7 +674,7 @@ def Filters():
                     data_skip_page_loading="true",
                     data_favs_mode_btn="true",
                     data_favs_mode_value="manual",
-                    cls="inline-flex px-0 pb-2 text-lg font-medium text-gray-400 text-center transition-colors duration-150 cursor-pointer",
+                    cls="inline-flex px-0 pb-1.5 text-sm font-medium text-gray-400 text-center transition-colors duration-150 cursor-pointer",
                     style="transform: translateX(0); border-bottom: 2px solid transparent;",
                     hx_get="/food/list",
                     hx_target="#food-list",
@@ -750,7 +706,7 @@ def Filters():
                     data_skip_page_loading="true",
                     data_favs_mode_btn="true",
                     data_favs_mode_value="recipes",
-                    cls="inline-flex px-0 pb-2 text-lg font-medium text-gray-400 text-right transition-colors duration-150 cursor-pointer",
+                    cls="inline-flex px-0 pb-1.5 text-sm font-medium text-gray-400 text-right transition-colors duration-150 cursor-pointer",
                     style="transform: translateX(0); border-bottom: 2px solid transparent;",
                     hx_get="/food/list",
                     hx_target="#food-list",
@@ -776,9 +732,9 @@ def Filters():
                 cls="w-1/3 flex items-end justify-center",
             ),
             id="food_favs_tabs",
-            cls="hidden w-full flex items-end justify-between mt-4",
+            cls="hidden w-full flex items-end justify-between mt-2",
         ),
-        cls="md:w-md lg:w-md w-xs transition-all",
+        cls="md:w-xl lg:w-xl w-xs transition-all",
     )
 
 
@@ -791,13 +747,12 @@ def SearchInput():
         data_skip_page_loading="true",
         cls="""
             web_input
-            border-[0.6px] border-white inset-shadow-none
+            border border-line inset-shadow-none
             rounded-2xl
-            bg-gray-200/50
-            md:w-md lg:w-md
+            md:w-xl lg:w-xl
             w-xs
             transition-all
-            p-4
+            px-4 py-3 text-sm
         """,
         hx_get="/food/list",
         hx_target="#food-list",
@@ -816,13 +771,12 @@ def RecipeIngredientSearchInput(recipe_id: int):
         data_skip_page_loading="true",
         cls="""
             web_input
-            border-[0.6px] border-white inset-shadow-none
+            border border-line inset-shadow-none
             rounded-2xl
-            bg-gray-200/50
-            md:w-md lg:w-md
+            md:w-xl lg:w-xl
             w-xs
             transition-all
-            p-4
+            px-4 py-3 text-sm
         """,
         hx_get=f"/food/recipe/{recipe_id}/ingredients/list",
         hx_target="#recipe-ingredient-list",
@@ -876,7 +830,7 @@ def _labeled_input(
             id=input_id,
             name=name,
             placeholder=placeholder,
-            cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-sm mr-1",
+            cls=FORM_FIELD_CLS,
             style=input_style,
             **attrs,
         ),
@@ -987,7 +941,7 @@ def _searchable_autocomplete_input(
                 data_searchable_input="true",
                 placeholder=placeholder_value,
                 autocomplete="off",
-                cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-sm mr-1",
+                cls=FORM_FIELD_CLS,
                 onclick="this.select()",
                 **({"value": value} if value is not None else {}),
                 **({"maxlength": str(maxlength)} if maxlength is not None else {}),
@@ -1030,7 +984,7 @@ def _searchable_compact_input(
             data_searchable_input="true",
             placeholder=placeholder or "Search",
             autocomplete="off",
-            cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-sm w-full min-w-0",
+            cls=f"{FORM_FIELD_CLS} min-w-0",
             **(
                 {
                     "oninput": (
@@ -1123,6 +1077,11 @@ def _searchable_autocomplete_bootstrap_script():
             var box = root.querySelector("[data-searchable-suggestions='true']");
             var addedFlag = root.querySelector("[data-searchable-added-flag='true']");
             if (!input || !box) return;
+            // The open list has to rise above the cards below it, which
+            // means raising its glass ancestors too (dropdown_layer.js).
+            function raise(on) {
+              if (window.dbRaiseDropdown) window.dbRaiseDropdown(root, on);
+            }
 
             var options = [];
             try { options = JSON.parse(root.dataset.searchableOptions || "[]"); }
@@ -1149,7 +1108,7 @@ def _searchable_autocomplete_bootstrap_script():
             function closeBox() {
               box.style.display = "none";
               box.innerHTML = "";
-              root.style.zIndex = "";
+              raise(false);
             }
 
             function setAddedFlag(value) {
@@ -1229,10 +1188,10 @@ def _searchable_autocomplete_bootstrap_script():
                   scrollArea.addEventListener("wheel", function (ev) { ev.stopPropagation(); }, { passive: true });
                   scrollArea.addEventListener("touchmove", function (ev) { ev.stopPropagation(); }, { passive: true });
                 }
-                root.style.zIndex = "80";
+                raise(true);
               } else {
                 box.innerHTML = "";
-                root.style.zIndex = "";
+                raise(false);
               }
               box.style.display = rows.length ? "block" : "none";
             }
@@ -1380,6 +1339,11 @@ def _tags_multiselect_bootstrap_script():
             var hidden = root.querySelector("[data-tags-hidden='true']");
             var chips = root.querySelector("[data-tags-chips='true']");
             if (!input || !box || !hidden || !chips) return;
+            // The open list has to rise above the cards below it, which
+            // means raising its glass ancestors too (dropdown_layer.js).
+            function raise(on) {
+              if (window.dbRaiseDropdown) window.dbRaiseDropdown(root, on);
+            }
             var options = [];
             try { options = JSON.parse(root.dataset.tagsOptions || "[]"); } catch (_) { options = []; }
             options = options.concat(readKnown());
@@ -1434,7 +1398,7 @@ def _tags_multiselect_bootstrap_script():
               writeHidden(hidden, selected);
               writeKnown(options.concat(selected));
             }
-            function closeBox() { box.style.display = "none"; box.innerHTML = ""; root.style.zIndex = ""; }
+            function closeBox() { box.style.display = "none"; box.innerHTML = ""; raise(false); }
             function render() {
               var qRaw = norm(input.value);
               var q = fold(qRaw);
@@ -1457,7 +1421,7 @@ def _tags_multiselect_bootstrap_script():
               if (!rows.length) { closeBox(); return; }
               box.innerHTML = "<div class='p-0 max-h-44 overflow-y-auto'><ul>" + rows.join("") + "</ul></div>";
               box.style.display = "block";
-              root.style.zIndex = "80";
+              raise(true);
             }
             box.addEventListener("click", function (ev) {
               var t = ev.target;
@@ -1666,7 +1630,7 @@ def _labeled_select(
             ],
             id=select_id,
             name=name,
-            cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-xs mr-1",
+            cls=FORM_FIELD_CLS,
         ),
         cls="flex flex-col gap-1",
     )
@@ -1684,7 +1648,7 @@ def _tristate_select(label: str, name: str, selected: bool | None, labels: dict,
             Option(labels[False], value="false", selected=selected is False),
             id=select_id,
             name=name,
-            cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-xs mr-1",
+            cls=FORM_FIELD_CLS,
         ),
         cls="flex flex-col gap-1",
     )
@@ -1761,7 +1725,7 @@ def _nutrient_mode_select(prefix: str):
             name="nutrient_mode",
             data_manual_mode="true",
             onchange="dbManualModeChange(this)",
-            cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-xs mr-1",
+            cls=FORM_FIELD_CLS,
         ),
         P("", data_manual_mode_hint="true", cls="text-[11px] text-amber-700 min-h-0"),
         cls="flex flex-col gap-1",
@@ -1928,7 +1892,7 @@ def _smart_macros_block(
             data_smart_macros_prefix=prefix,
             oninput="dbSmartMacrosSync(this)",
             onchange="dbSmartMacrosSync(this)",
-            cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-sm",
+            cls=FORM_FIELD_CLS,
             value=_smart_prefill_text(),
         ),
         Div(
@@ -1940,60 +1904,46 @@ def _smart_macros_block(
     )
 
 
-def _advanced_toggle(section_id: str):
-    return Div(
-        Button(
-            "Advanced",
-            type="button",
-            cls="web_button px-2 py-1 text-xs w-fit",
-            onclick=(
-                f"const el=document.getElementById('{section_id}');"
-                "if(!el) return;"
-                "el.classList.toggle('hidden');"
-            ),
-        ),
-        cls="col-span-1 md:col-span-2",
-    )
-
-
 def QuickCreateButtons():
+    # Solid, not glass: they sit inside the glass header, and Safari paints
+    # coloured seams with a backdrop-filter nested in another one
+    # (frontend_conventions.md §8).
     menu_button_cls = """
-        web_button
+        bg-surface border border-line-soft cursor-pointer
+        shadow-[0_4px_14px_rgba(80,60,40,0.14)]
         h-12 w-12 md:h-14 md:w-14 p-3 md:p-4
         rounded-3xl md:rounded-4xl
-        bg-[#f6f2eb]/50 backdrop-blur-lg
-        border border-white/80
-        shadow-md
         flex items-center justify-center
         transition-transform duration-150
-        hover:scale-[1.04] z-[130]
+        hover:scale-[1.04]
         active:scale-95
     """
     menu_panel_cls = """
-        absolute top-full right-0 z-[9999] mt-3
+        absolute top-full right-0 z-10 mt-3 bg-surface
         w-[min(52vw,calc(100vw-1.5rem))]
         min-w-[24rem]
         rounded-3xl
-        border border-white/80
-        shadow-lg
-        ring-1 ring-inset ring-white/20
+        border border-line-soft
+        shadow-[0_12px_40px_rgba(80,60,40,0.18)]
         p-3
         grid grid-cols-2 gap-2
         auto-rows-fr
     """
+    # Solid options: no glass inside a panel (frontend_conventions.md §8).
     option_button_cls = """
-        web_button w-full h-full min-h-0 px-3 py-3 rounded-[1.1rem]
-        text-left shadow-none z-[130]
+        w-full h-full min-h-0 px-3 py-3 rounded-2xl
+        text-left cursor-pointer
+        bg-control border border-line hover:bg-line-soft
+        transition-colors duration-150
         flex flex-col items-start justify-between gap-1
     """
     power_panel_cls = """
-        absolute top-full left-0 z-[9999] mt-3
+        absolute top-full left-0 z-10 mt-3 bg-surface
         w-[min(24rem,calc(100vw-1.5rem))]
         min-w-[18rem]
         rounded-3xl
-        border border-white/80
-        shadow-lg
-        ring-1 ring-inset ring-white/20
+        border border-line-soft
+        shadow-[0_12px_40px_rgba(80,60,40,0.18)]
         p-3
     """
     return Div(
@@ -2023,7 +1973,7 @@ def QuickCreateButtons():
                                 type="text",
                                 placeholder="Search rescue",
                                 autocomplete="off",
-                                cls="web_input bg-white/70 rounded-lg border border-gray-300 px-2 py-1 text-sm",
+                                cls="web_input rounded-lg border border-line px-2 py-1 text-sm",
                             ),
                             Div(
                                 id="rescue_selected_label",
@@ -2035,7 +1985,7 @@ def QuickCreateButtons():
                                 hx_trigger="load, keyup changed delay:220ms from:#rescue_search_input",
                                 hx_include="#rescue_search_input",
                                 hx_swap="innerHTML",
-                                cls="max-h-32 overflow-y-auto rounded-xl border border-gray-200 bg-white/80 p-1",
+                                cls="max-h-32 overflow-y-auto rounded-xl border border-line-soft bg-white p-1",
                             ),
                             cls="flex flex-col gap-1",
                         ),
@@ -2046,7 +1996,7 @@ def QuickCreateButtons():
                                     type="time",
                                     name="meal_hour",
                                     id="rescue_meal_hour",
-                                    cls="web_input bg-white/70 rounded-lg border border-gray-300 px-2 py-1 text-sm",
+                                    cls="web_input rounded-lg border border-line px-2 py-1 text-sm",
                                 ),
                                 cls="flex flex-col gap-1",
                             ),
@@ -2056,7 +2006,7 @@ def QuickCreateButtons():
                                     Option("grams", value="grams"),
                                     Option("servings", value="servings"),
                                     id="rescue_unit",
-                                    cls="web_input bg-white/70 rounded-lg border border-gray-300 px-2 py-1 text-sm",
+                                    cls="web_input rounded-lg border border-line px-2 py-1 text-sm",
                                 ),
                                 cls="flex flex-col gap-1",
                             ),
@@ -2071,7 +2021,7 @@ def QuickCreateButtons():
                                     step="any",
                                     min="0",
                                     value="0",
-                                    cls="web_input bg-white/70 rounded-lg border border-gray-300 px-2 py-1 text-sm",
+                                    cls="web_input rounded-lg border border-line px-2 py-1 text-sm",
                                 ),
                                 cls="flex flex-col gap-1",
                             ),
@@ -2084,7 +2034,7 @@ def QuickCreateButtons():
                                     min="0",
                                     max="100",
                                     value="100",
-                                    cls="web_input bg-white/70 rounded-lg border border-gray-300 px-2 py-1 text-sm",
+                                    cls="web_input rounded-lg border border-line px-2 py-1 text-sm",
                                 ),
                                 cls="flex flex-col gap-1",
                             ),
@@ -2100,7 +2050,7 @@ def QuickCreateButtons():
                         Button(
                             "OK",
                             type="submit",
-                            cls="web_button w-full px-3 py-2 text-sm bg-black text-white border-black",
+                            cls="web_button web_button_primary w-full px-3 py-2.5 text-sm",
                         ),
                         Div(id="rescue_action_result", cls="text-[11px] min-h-[1rem]"),
                         hx_post="/food/rescue/log",
@@ -2114,9 +2064,7 @@ def QuickCreateButtons():
                     aria_label="Power menu",
                     cls=power_panel_cls,
                     style=(
-                        "z-index:10010;"
                         "width:min(22rem,calc(100vw - 1.5rem));min-width:10rem;"
-                        "background:#f6f2eb;backdrop-filter:none;-webkit-backdrop-filter:none;filter:none;"
                         "visibility:hidden; opacity:0; transform:translateY(-8px) scale(0.97);"
                         "pointer-events:none;"
                         "transition: opacity 180ms ease, transform 180ms ease;"
@@ -2137,8 +2085,8 @@ def QuickCreateButtons():
                 Div(
                     Button(
                         Div(
-                            Span("Add catalog", cls="font-semibold text-gray-900"),
-                            Span("Create a new food item", cls="text-[11px] text-gray-500"),
+                            Span("New food", cls="font-semibold text-gray-900"),
+                            Span("Packaged, with its label", cls="text-[11px] text-gray-500"),
                             cls="flex flex-col items-start gap-0.5",
                         ),
                         type="button",
@@ -2151,7 +2099,7 @@ def QuickCreateButtons():
                     Button(
                         Div(
                             Span("Quick add", cls="font-semibold text-gray-900"),
-                            Span("Log a one-off meal", cls="text-[11px] text-gray-500"),
+                            Span("Only carbs, one-off", cls="text-[11px] text-gray-500"),
                             cls="flex flex-col items-start gap-0.5",
                         ),
                         type="button",
@@ -2164,8 +2112,8 @@ def QuickCreateButtons():
                     ),
                     Button(
                         Div(
-                            Span("Add manual", cls="font-semibold text-gray-900"),
-                            Span("Create a reusable dish", cls="text-[11px] text-gray-500"),
+                            Span("New dish", cls="font-semibold text-gray-900"),
+                            Span("Homemade or eaten out", cls="text-[11px] text-gray-500"),
                             cls="flex flex-col items-start gap-0.5",
                         ),
                         type="button",
@@ -2177,8 +2125,8 @@ def QuickCreateButtons():
                     ),
                     Button(
                         Div(
-                            Span("Add recipe", cls="font-semibold text-gray-900"),
-                            Span("Create a recipe entry", cls="text-[11px] text-gray-500"),
+                            Span("New recipe", cls="font-semibold text-gray-900"),
+                            Span("Several foods together", cls="text-[11px] text-gray-500"),
                             cls="flex flex-col items-start gap-0.5",
                         ),
                         type="button",
@@ -2209,9 +2157,7 @@ def QuickCreateButtons():
                     aria_label="Create food menu",
                     cls=menu_panel_cls,
                     style=(
-                        "z-index:10010;"
                         "width:min(22rem,calc(100vw - 1.5rem));min-width:10rem;"
-                        "background:#f6f2eb;backdrop-filter:none;-webkit-backdrop-filter:none;filter:none;"
                         "visibility:hidden; opacity:0; transform:translateY(-8px) scale(0.97);"
                         "pointer-events:none;"
                         "transition: opacity 180ms ease, transform 180ms ease;"
@@ -2220,9 +2166,10 @@ def QuickCreateButtons():
                 cls="relative flex justify-end",
             ),
             cls="relative w-full flex items-center justify-between",
-            style="isolation:isolate; z-index:9998;",
         ),
-        cls="w-full flex justify-end px-3 md:px-0 z-[130] mb-2 md:mb-3",
+        # Above the menu scrim of the header (food_main.py), so the buttons
+        # and their panels stay sharp while everything else is blurred.
+        cls="relative z-[2] w-full flex justify-end px-3 md:px-5 lg:px-5 mb-2 md:mb-0",
         data_quick_create_root="true",
     )
 
@@ -2264,28 +2211,139 @@ def CreateRecipePanel():
     )
 
 
-def _create_page_shell(title: str, form, result_id: str):
+def _form_page_shell(content, result_id: str, *scripts):
+    """Shared shell of the create and edit pages: one column of sections."""
     return Div(
-        Div(_food_back_button(), cls="w-full flex justify-start"),
-        Div(
-            H1(title, cls="text-xl font-bold"),
-            cls="flex items-center justify-center gap-3 w-full",
-        ),
-        Div(form, cls="w-full"),
-        Div(id=result_id, cls="text-xs w-full"),
+        Div(content, cls="w-full"),
+        Div(id=result_id, cls="text-sm w-full"),
         _form_draft_bootstrap_script(),
         _searchable_autocomplete_bootstrap_script(),
         _tags_multiselect_bootstrap_script() if TAGS_UI_ENABLED else "",
-        Script(src=asset_busted("/js/smart_macros.js"), defer="defer"),
+        *scripts,
         data_hide_cart="true",
         cls="""
             flex flex-col items-center
             gap-4
             md:mt-7 lg:mt-7 mt-2
-            md:w-md lg:w-md w-xs
+            md:w-xl lg:w-xl w-xs
             w-full mx-auto
-            md:mb-28 lg:mb-28 mb-24
+            md:mb-32 lg:mb-32 mb-28
         """,
+    )
+
+
+def _form_back_button(back_path: str | None = None):
+    """Back to the previous page; `back_path` is the parent opened when there
+    is none (the food's page when editing, Food when creating)."""
+    return Button(
+        "‹ Back",
+        type="button",
+        cls="text-sm font-medium text-gray-700 cursor-pointer px-1 py-1",
+        onclick=back_js(back_path or "/food"),
+    )
+
+
+def _name_title_input(value: str, placeholder: str, maxlength: int | None = None):
+    """The name reads as the page title and is edited in place, with no box."""
+    return Div(
+        Label("Name", cls="sr-only", **{"for": "field_name"}),
+        Input(
+            type="text",
+            id="field_name",
+            name="name",
+            value=value,
+            placeholder=placeholder,
+            autocomplete="off",
+            **({"maxlength": str(maxlength)} if maxlength is not None else {}),
+            cls="""
+                w-full text-2xl font-bold text-gray-900 placeholder:text-gray-400
+                px-0 py-0.5 border-0 rounded-none
+                bg-transparent shadow-none
+                focus:outline-none
+            """,
+            style="background:transparent;border-color:transparent;box-shadow:none;",
+        ),
+    )
+
+
+def _form_header(kind: str, title, back_path: str | None = None):
+    """Back link and what is being created or edited, over the name as title."""
+    return Div(
+        Div(
+            _form_back_button(back_path),
+            Span(kind, cls="web_section_label"),
+            cls="flex items-center justify-between",
+        ),
+        title,
+        cls="w-full px-1 flex flex-col gap-1",
+    )
+
+
+def _form_grid_cls(cols: int) -> str:
+    if cols == 3:
+        return "grid grid-cols-2 md:grid-cols-3 gap-3"
+    if cols == 2:
+        return "grid grid-cols-1 md:grid-cols-2 gap-3"
+    return "flex flex-col gap-3"
+
+
+def _form_section(title: str, *fields, cols: int = 2, hint: str = "", step: int | None = None):
+    """A group of related fields under one title, instead of one card per field."""
+    return Div(
+        Div(
+            Span(
+                str(step),
+                cls="w-5 h-5 rounded-full bg-ink text-white text-[11px] font-semibold flex items-center justify-center",
+            ) if step else "",
+            P(title, cls="web_section_label"),
+            cls="flex items-center gap-2",
+        ),
+        P(hint, cls="text-xs text-gray-500 -mt-1") if hint else "",
+        Div(*[field for field in fields if field], cls=_form_grid_cls(cols)),
+        cls="web_container relative w-full p-4 flex flex-col gap-3",
+    )
+
+
+def _form_subgroup(title: str, *fields, cols: int = 2):
+    """A smaller group inside a section, for the folded optional fields."""
+    return Div(
+        P(title, cls="text-xs font-semibold text-gray-700"),
+        Div(*[field for field in fields if field], cls=_form_grid_cls(cols)),
+        cls="flex flex-col gap-2",
+    )
+
+
+def _optional_section(title: str, summary: str, *groups, open_: bool = False):
+    """Fields that are rarely needed, folded so they do not overwhelm the form."""
+    return Details(
+        Summary(
+            Div(
+                P(title, cls="text-sm font-semibold text-gray-900"),
+                P(summary, cls="text-xs text-gray-500"),
+                cls="flex flex-col gap-0.5",
+            ),
+            Span("›", cls="text-2xl leading-none text-gray-500 transition-transform group-open:rotate-90"),
+            cls="flex items-center justify-between gap-3 cursor-pointer list-none [&::-webkit-details-marker]:hidden",
+        ),
+        Div(
+            *[group for group in groups if group],
+            cls="flex flex-col gap-4 mt-4 pt-4 border-t border-line-soft",
+        ),
+        open=open_,
+        cls="group web_container relative w-full p-4",
+    )
+
+
+def _favorite_row(checked: bool = True):
+    return Div(_favorite_checkbox(checked=checked, centered=True), cls="web_container w-full px-4 py-3")
+
+
+def _form_submit(label: str, **attrs):
+    return Button(
+        label,
+        type="submit",
+        cls="web_button web_button_primary w-full px-4 py-3 text-sm md:text-base rounded-2xl",
+        **attrs,
     )
 
 
@@ -2299,6 +2357,8 @@ def CreateCatalogPage(
     barcode_notice: str | None = None,
     alcohol_source_note: str | None = None,
 ):
+    """Name, what it is and its macros come first; the rest is folded under
+    "More details" and opens by itself when the scanner prefilled any of it."""
     result_id = "create_catalog_result_page"
     data = prefill or {}
     def _pv(key: str, fallback: str = ""):
@@ -2309,10 +2369,9 @@ def CreateCatalogPage(
 
     initial_barcode = _pv("barcode", "").strip()
     draft_suffix = initial_barcode if initial_barcode else "no_barcode"
-    advanced_cls = (
-        "grid grid-cols-1 md:grid-cols-2 gap-2 col-span-1 md:col-span-2"
-        if any(_pv(k, "").strip() for k in ("initial_state", "nutriscore", "nova", "yuka", "caffeine", "alcohol", "barcode", "cooking_factor"))
-        else "hidden grid grid-cols-1 md:grid-cols-2 gap-2 col-span-1 md:col-span-2"
+    details_open = any(
+        _pv(k, "").strip()
+        for k in ("initial_state", "nutriscore", "nova", "yuka", "caffeine", "alcohol", "barcode", "cooking_factor")
     )
     notices = Div(
         *(
@@ -2321,12 +2380,30 @@ def CreateCatalogPage(
         *(
             [P(barcode_notice, cls="text-xs text-amber-700")] if barcode_notice else []
         ),
-        cls="flex flex-col gap-1",
+        cls="web_container w-full px-4 py-3 flex flex-col gap-1",
     ) if (off_notice or barcode_notice) else None
-    form = Form(
-        notices,
+    existing_notice = (
         Div(
-            _labeled_input("Name*", "name", help_text="Product name. Required.", value=_pv("name"), maxlength=CATALOG_NAME_MAX_LENGTH),
+            P("A food with this barcode already exists.", cls="text-sm text-gray-700"),
+            A(
+                "Open it",
+                hx_get=f"/food/item/catalog/{int(existing_item_id)}",
+                hx_target="#main_content",
+                hx_push_url="true",
+                **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
+                cls="web_button web_button_primary px-3 py-1.5 text-xs w-fit shrink-0",
+            ),
+            cls="web_container w-full px-4 py-3 flex items-center justify-between gap-2",
+        )
+        if existing_item_id
+        else None
+    )
+    form = Form(
+        _form_header("New food", _name_title_input(_pv("name"), "Name of the food", CATALOG_NAME_MAX_LENGTH)),
+        notices,
+        existing_notice,
+        _form_section(
+            "What is it?",
             _brand_autocomplete_input(brand_options=brand_options, value=_pv("brand")),
             _searchable_autocomplete_input(
                 "Category*",
@@ -2345,9 +2422,13 @@ def CreateCatalogPage(
                 value=_pv("subtype"),
                 maxlength=FOOD_SUBTYPE_MAX_LENGTH,
             ),
-            _smart_macros_block("catalog", prefill=data),
+            step=1,
+        ),
+        _form_section(
+            "Nutrition",
+            _smart_macros_block("catalog", prefill=data, label="Macros per 100 g"),
             _labeled_input(
-                "Default serving size",
+                "Default serving (g)",
                 "default_portion",
                 "number",
                 help_text="Default serving size in g. Leave empty if the food has no serving.",
@@ -2357,35 +2438,13 @@ def CreateCatalogPage(
                 max_value=3000,
                 value=_pv("default_portion"),
             ),
-            _create_flags_row(favorite_checked=True),
-            _tags_multiselect_input(
-                tag_options=tag_options,
-                selected_tags=[],
-                input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
-            ),
-            _advanced_toggle("catalog_advanced"),
-            Div(
-                _searchable_autocomplete_input(
-                    "Initial state",
-                    "initial_state",
-                    [s.value for s in FoodPhysicalState],
-                    help_text="Physical state before preparation.",
-                    allow_add=False,
-                    value=_pv("initial_state"),
-                ),
-                _searchable_autocomplete_input(
-                    "Nutriscore",
-                    "nutriscore",
-                    [n.value for n in Nutriscore],
-                    help_text="Nutrition quality score from A to E.",
-                    allow_add=False,
-                    value=_pv("nutriscore"),
-                ),
-                _labeled_input("NOVA (1-4)", "nova", "number", help_text="Food processing level from 1 to 4.", step="1", inputmode="numeric", min_value=NOVA_MIN, max_value=NOVA_MAX, value=_pv("nova")),
-                _labeled_input("Yuka (0-100)", "yuka", "number", help_text="Optional Yuka-style score from 0 to 100.", step="1", inputmode="numeric", min_value=YUKA_MIN, max_value=YUKA_MAX, value=_pv("yuka")),
-                _labeled_input("Caffeine", "caffeine", "number", help_text="Caffeine in mg per 100 g.", step="any", inputmode="decimal", min_value=NUTRIENT_LIMITS["caffeine"].minimum, max_value=NUTRIENT_LIMITS["caffeine"].maximum, value=_pv("caffeine")),
-                _labeled_input("Alcohol", "alcohol", "number", help_text="Alcohol in g per 100 g.", step="any", inputmode="decimal", min_value=NUTRIENT_LIMITS["alcohol"].minimum, max_value=NUTRIENT_LIMITS["alcohol"].maximum, value=_pv("alcohol")),
-                *([P(alcohol_source_note, cls="text-xs text-gray-600")] if alcohol_source_note else []),
+            step=2,
+        ),
+        _optional_section(
+            "More details",
+            "Barcode, health scores, caffeine, data quality",
+            _form_subgroup(
+                "Product",
                 _labeled_input(
                     "Barcode",
                     "barcode",
@@ -2397,40 +2456,59 @@ def CreateCatalogPage(
                     maxlength=CATALOG_BARCODE_MAX_LENGTH,
                     input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
                 ),
-                _labeled_input("Cooking factor", "cooking_factor", "number", help_text="Cooked/raw weight ratio. Leave empty if unknown.", step="any", inputmode="decimal", min_value=0, max_value=10, value=_pv("cooking_factor")),
-                _macros_quality_select(None),
-                _weighed_default_select(None),
-                _macros_confidence_select(None),
-                id="catalog_advanced",
-                cls=advanced_cls,
-            ),
-            cls="grid grid-cols-1 md:grid-cols-2 gap-2",
-        ),
-        (
-            Div(
-                P("A catalog item with this barcode already exists.", cls="text-sm text-gray-700"),
-                A(
-                    "Open existing item",
-                    hx_get=f"/food/item/catalog/{int(existing_item_id)}",
-                    hx_target="#main_content",
-                    hx_push_url="true",
-                    **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
-                    cls="web_button px-3 py-1.5 text-xs w-fit bg-black text-white border-black",
+                _searchable_autocomplete_input(
+                    "Initial state",
+                    "initial_state",
+                    [s.value for s in FoodPhysicalState],
+                    help_text="Physical state before preparation.",
+                    allow_add=False,
+                    value=_pv("initial_state"),
                 ),
-                cls="web_container rounded-xl p-2 flex items-center justify-between gap-2",
-            )
-            if existing_item_id
-            else None
+                _labeled_input("Cooking factor", "cooking_factor", "number", help_text="Cooked/raw weight ratio. Leave empty if unknown.", step="any", inputmode="decimal", min_value=0, max_value=10, value=_pv("cooking_factor")),
+            ),
+            _form_subgroup(
+                "Other nutrients per 100 g",
+                _labeled_input("Caffeine (mg)", "caffeine", "number", help_text="Caffeine in mg per 100 g.", step="any", inputmode="decimal", min_value=NUTRIENT_LIMITS["caffeine"].minimum, max_value=NUTRIENT_LIMITS["caffeine"].maximum, value=_pv("caffeine")),
+                _labeled_input("Alcohol (g)", "alcohol", "number", help_text="Alcohol in g per 100 g.", step="any", inputmode="decimal", min_value=NUTRIENT_LIMITS["alcohol"].minimum, max_value=NUTRIENT_LIMITS["alcohol"].maximum, value=_pv("alcohol")),
+                *([P(alcohol_source_note, cls="text-xs text-gray-600 md:col-span-2")] if alcohol_source_note else []),
+            ),
+            _form_subgroup(
+                "Health scores",
+                _searchable_autocomplete_input(
+                    "Nutriscore",
+                    "nutriscore",
+                    [n.value for n in Nutriscore],
+                    help_text="Nutrition quality score from A to E.",
+                    allow_add=False,
+                    value=_pv("nutriscore"),
+                ),
+                _labeled_input("NOVA (1-4)", "nova", "number", help_text="Food processing level from 1 to 4.", step="1", inputmode="numeric", min_value=NOVA_MIN, max_value=NOVA_MAX, value=_pv("nova")),
+                _labeled_input("Yuka (0-100)", "yuka", "number", help_text="Optional Yuka-style score from 0 to 100.", step="1", inputmode="numeric", min_value=YUKA_MIN, max_value=YUKA_MAX, value=_pv("yuka")),
+                cols=3,
+            ),
+            _form_subgroup(
+                "Data quality",
+                _macros_quality_select(None),
+                _macros_confidence_select(None),
+                _weighed_default_select(None),
+            ),
+            open_=details_open,
         ),
-        Button("Create catalog item", type="submit", cls="web_button px-3 py-2 text-xs"),
+        _tags_multiselect_input(
+            tag_options=tag_options,
+            selected_tags=[],
+            input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
+        ),
+        _favorite_row(),
+        _form_submit("Create food"),
         hx_post="/food/create/catalog",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
         hx_push_url="false",
         data_draft_key=f"food_form_create_catalog_page::{draft_suffix}",
-        cls="web_container p-3 rounded-2xl flex flex-col gap-3 w-full",
+        cls="flex flex-col gap-4 w-full",
     )
-    return _create_page_shell("Create Catalog", form, result_id)
+    return _form_page_shell(form, result_id, Script(src=asset_busted("/js/smart_macros.js"), defer="defer"))
 
 
 def _manual_nutrient_input(label_per100: str, label_total: str, name: str, value: str | None = None):
@@ -2481,7 +2559,7 @@ def _manual_description_input(value: str = "", textarea_id: str = "manual_descri
             name="description",
             rows="3",
             maxlength=str(MANUAL_INTAKE_DESCRIPTION_MAX_LENGTH),
-            cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-sm mr-1 w-full",
+            cls=FORM_FIELD_CLS,
         ),
         cls="flex flex-col gap-1 col-span-1 md:col-span-2",
     )
@@ -2511,13 +2589,9 @@ def CreateManualPage(
     """Reusable dish (code_conventions.md §11.2.3): name and carbs required."""
     result_id = "create_manual_result_page"
     form = Form(
-        Div(
-            _labeled_input(
-                "Name*",
-                "name",
-                help_text="Dish name. Required.",
-                maxlength=MANUAL_INTAKE_NAME_MAX_LENGTH,
-            ),
+        _form_header("New dish", _name_title_input("", "Name of the dish", MANUAL_INTAKE_NAME_MAX_LENGTH)),
+        _form_section(
+            "About the dish",
             _manual_origin_input(origin_options),
             _searchable_autocomplete_input(
                 "Subtype",
@@ -2527,25 +2601,26 @@ def CreateManualPage(
                 allow_add=True,
                 maxlength=FOOD_SUBTYPE_MAX_LENGTH,
             ),
+            step=1,
+        ),
+        _form_section(
+            "Nutrition",
             _nutrient_mode_select("manual"),
             _manual_portion_input(),
             _smart_macros_block(
                 "manual",
-                label="Smart macros (per 100 g)",
-                label_total="Smart macros (total of one serving)",
+                label="Macros per 100 g",
+                label_total="Macros of one serving",
             ),
-            P("Carbs are required: write 0hc if the dish has no carbs.", cls="text-[11px] text-gray-600 col-span-1 md:col-span-2"),
-            _manual_description_input(),
-            _create_flags_row(),
-            _tags_multiselect_input(
-                tag_options=tag_options,
-                selected_tags=[],
-                input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
-            ),
-            _advanced_toggle("manual_advanced"),
-            Div(
-                _manual_nutrient_input("Caffeine (mg/100 g)", "Caffeine (mg in total)", "caffeine"),
-                _manual_nutrient_input("Alcohol (g/100 g)", "Alcohol (g in total)", "alcohol"),
+            P("Carbs are required: write 0hc if the dish has no carbs.", cls="text-xs text-gray-500 md:col-span-2 -mt-1"),
+            step=2,
+        ),
+        _optional_section(
+            "More details",
+            "Description, glycemic response, caffeine, data quality",
+            _form_subgroup("Description", _manual_description_input(), cols=1),
+            _form_subgroup(
+                "Glycemic response",
                 _glycemic_index_select(None),
                 _confidence_select(
                     "IG confidence",
@@ -2553,24 +2628,35 @@ def CreateManualPage(
                     None,
                     "How sure you are about the glycemic index. Needs a glycemic index.",
                 ),
-                _macros_confidence_select(None),
-                _macros_quality_select(None),
-                _weighed_default_select(None),
-                id="manual_advanced",
-                cls="hidden grid grid-cols-1 md:grid-cols-2 gap-2 col-span-1 md:col-span-2",
             ),
-            cls="grid grid-cols-1 md:grid-cols-2 gap-2",
+            _form_subgroup(
+                "Other nutrients",
+                _manual_nutrient_input("Caffeine (mg/100 g)", "Caffeine (mg in total)", "caffeine"),
+                _manual_nutrient_input("Alcohol (g/100 g)", "Alcohol (g in total)", "alcohol"),
+            ),
+            _form_subgroup(
+                "Data quality",
+                _macros_quality_select(None),
+                _macros_confidence_select(None),
+                _weighed_default_select(None),
+            ),
         ),
-        Button("Create dish", type="submit", cls="web_button px-3 py-2 text-xs"),
+        _tags_multiselect_input(
+            tag_options=tag_options,
+            selected_tags=[],
+            input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
+        ),
+        _favorite_row(),
+        _form_submit("Create dish"),
         Script(src=asset_busted("/js/manual_intake_form.js"), defer="defer"),
         hx_post="/food/create/manual_intake",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
         hx_push_url="false",
         data_draft_key="food_form_create_manual_page",
-        cls="web_container p-3 rounded-2xl flex flex-col gap-3 w-full",
+        cls="flex flex-col gap-4 w-full",
     )
-    return _create_page_shell("Create Manual Intake", form, result_id)
+    return _form_page_shell(form, result_id, Script(src=asset_busted("/js/smart_macros.js"), defer="defer"))
 
 
 def QuickAddPage(events: list, plate_options: list, selected_plate_id: int | None):
@@ -2583,7 +2669,8 @@ def QuickAddPage(events: list, plate_options: list, selected_plate_id: int | Non
     travel with hx_include, as in AddButton (frontend §7.7)."""
     result_id = "quick_add_result"
     form = Form(
-        Div(
+        _form_section(
+            "What did you eat?",
             _labeled_input(
                 "Name*",
                 "name",
@@ -2600,88 +2687,85 @@ def QuickAddPage(events: list, plate_options: list, selected_plate_id: int | Non
                 min_value=FOOD_DEFAULT_PORTION_RANGE.minimum,
                 max_value=FOOD_DEFAULT_PORTION_RANGE.maximum,
             ),
-            _smart_macros_block("quick", label="Smart macros (total of what you ate)"),
-            P("Carbs are required: write 0hc if there were none.", cls="text-[11px] text-gray-600 col-span-1 md:col-span-2"),
+            _smart_macros_block("quick", label="Macros of everything you ate"),
+            P("Carbs are required: write 0hc if there were none.", cls="text-xs text-gray-500 md:col-span-2 -mt-1"),
+        ),
+        _optional_section(
+            "Notes",
+            "Anything worth remembering about it",
             Div(
-                _label_with_help("Notes", "Optional notes about what you ate.", for_id="quick_add_notes"),
+                Label("Notes", cls="sr-only", **{"for": "quick_add_notes"}),
                 Textarea(
                     "",
                     id="quick_add_notes",
                     name="description",
                     rows="3",
                     maxlength=str(MANUAL_INTAKE_DESCRIPTION_MAX_LENGTH),
-                    cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-sm mr-1 w-full",
+                    cls=FORM_FIELD_CLS,
                 ),
-                cls="flex flex-col gap-1 col-span-1 md:col-span-2",
             ),
-            cls="grid grid-cols-1 md:grid-cols-2 gap-2",
         ),
-        Button(
-            "Add to meal",
-            type="submit",
-            cls="web_button px-3 py-2 text-xs",
-            **{"hx-disabled-elt": "this"},
-        ),
+        _form_submit("Add to meal", **{"hx-disabled-elt": "this"}),
         hx_post="/food/quick_add",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
         hx_push_url="false",
         hx_include="#meal_selector, #plate_selector",
         data_draft_key="food_form_quick_add",
-        cls="web_container p-3 rounded-2xl flex flex-col gap-3 w-full",
+        cls="flex flex-col gap-4 w-full",
     )
     content = Div(
-        MealSelector(
-            events or [],
-            selected_id=(events[0].id if events else None),
-            plate_options=plate_options,
-            selected_plate_id=selected_plate_id,
+        _form_header("Quick add", H1("Log it once", cls="text-2xl font-bold text-gray-900")),
+        Div(
+            MealSelector(
+                events or [],
+                selected_id=(events[0].id if events else None),
+                plate_options=plate_options,
+                selected_plate_id=selected_plate_id,
+            ),
+                cls="web_container relative w-full px-4 py-3",
         ),
         form,
-        cls="flex flex-col gap-3 w-full",
+        cls="flex flex-col gap-4 w-full",
     )
-    return _create_page_shell("Quick add", content, result_id)
+    return _form_page_shell(content, result_id, Script(src=asset_busted("/js/smart_macros.js"), defer="defer"))
 
 
 def CreateRecipePage(tag_options: list[str] | None = None):
     result_id = "create_recipe_result_page"
     form = Form(
-        Div(
-            _labeled_input("Name*", "name", help_text="Recipe name. Required."),
+        _form_header("New recipe", _name_title_input("", "Name of the recipe")),
+        _form_section(
+            "About the recipe",
             _labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in MealType], help_text="When this recipe is usually eaten."),
-            _create_flags_row(),
-            _tags_multiselect_input(
-                tag_options=tag_options,
-                selected_tags=[],
-                input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
-            ),
-            _advanced_toggle("recipe_advanced"),
             Div(
-                Div(
-                    _label_with_help("Notes", "Optional instructions, comments, or context about this recipe.", for_id="create_recipe_notes"),
-                    Textarea(
-                        "",
-                        id="create_recipe_notes",
-                        name="notes",
-                        rows="3",
-                        cls="web_input border border-white rounded-lg px-2 py-1 text-xs",
-                    ),
-                    cls="flex flex-col gap-1 col-span-1 md:col-span-2",
+                _label_with_help("Notes", "Optional instructions, comments, or context about this recipe.", for_id="create_recipe_notes"),
+                Textarea(
+                    "",
+                    id="create_recipe_notes",
+                    name="notes",
+                    rows="3",
+                    cls=FORM_FIELD_CLS,
                 ),
-                id="recipe_advanced",
-                cls="hidden grid grid-cols-1 md:grid-cols-2 gap-2 col-span-1 md:col-span-2",
+                cls="flex flex-col gap-1 md:col-span-2",
             ),
-            cls="grid grid-cols-1 md:grid-cols-2 gap-2",
+            hint="You add the ingredients on the next screen.",
         ),
-        Button("Create recipe", type="submit", cls="web_button px-3 py-2 text-xs"),
+        _tags_multiselect_input(
+            tag_options=tag_options,
+            selected_tags=[],
+            input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
+        ),
+        _favorite_row(),
+        _form_submit("Create recipe"),
         hx_post="/food/create/recipe",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
         hx_push_url="false",
         data_draft_key="food_form_create_recipe_page",
-        cls="web_container p-3 rounded-2xl flex flex-col gap-3 w-full",
+        cls="flex flex-col gap-4 w-full",
     )
-    return _create_page_shell("Create Recipe", form, result_id)
+    return _form_page_shell(form, result_id)
 
 
 def _input_value(value) -> str:
@@ -2690,52 +2774,43 @@ def _input_value(value) -> str:
     return str(value)
 
 
-def _edit_page_shell(form, result_id: str):
+def _edit_header(kind: str, name: str, back_path: str, maxlength: int):
+    return _form_header(f"Edit {kind}", _name_title_input(name, "Name", maxlength), back_path)
+
+
+def _edit_actions(back_path: str):
     return Div(
-        Div(form, cls="w-full"),
-        Div(id=result_id, cls="text-xs w-full"),
-        _form_draft_bootstrap_script(),
-        _searchable_autocomplete_bootstrap_script(),
-        _tags_multiselect_bootstrap_script() if TAGS_UI_ENABLED else "",
-        data_hide_cart="true",
-        cls="""
-            flex flex-col items-center
-            gap-4
-            md:mt-7 lg:mt-7 mt-2
-            md:w-md lg:w-md w-xs
-            w-full mx-auto
-            md:mb-28 lg:mb-28 mb-24
-        """,
+        Button(
+            "Cancel",
+            type="button",
+            cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl",
+            hx_get=back_path,
+            hx_target="#main_content",
+            hx_swap="innerHTML",
+            hx_push_url="true",
+            **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
+        ),
+        Button(
+            "Save changes",
+            type="submit",
+            cls="web_button web_button_primary w-full px-4 py-3 text-sm md:text-base rounded-2xl",
+        ),
+        cls="grid grid-cols-2 gap-3 w-full",
     )
 
 
-def _edit_tile(content, cls: str = ""):
-    extra = f" {cls.strip()}" if cls and cls.strip() else ""
-    return Div(content, cls=f"web_container p-3 rounded-xl flex flex-col gap-1{extra}")
-
-
-def _edit_name_input(value: str, maxlength: int = CATALOG_NAME_MAX_LENGTH):
-    name_id = "edit_name"
-    return Div(
-        Label(
-            "Name",
-            **{"for": name_id},
-            style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;",
+def _edit_tags(tag_options, selected_tags):
+    # The tags UI is switched off for now; no empty card is drawn.
+    if not TAGS_UI_ENABLED:
+        return ""
+    return _form_section(
+        "Tags",
+        _tags_multiselect_input(
+            tag_options=tag_options,
+            selected_tags=selected_tags or [],
+            input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
         ),
-        Input(
-            type="text",
-            value=value,
-            id=name_id,
-            name="name",
-            maxlength=maxlength,
-            cls="""
-                w-full text-2xl font-bold text-black text-center
-                px-0 py-0 border-0 rounded-none
-                bg-transparent shadow-none
-                focus:outline-none mr-1
-            """,
-            style="background:transparent;border-color:transparent;box-shadow:none;",
-        ),
+        cols=1,
     )
 
 
@@ -2747,8 +2822,9 @@ def EditCatalogPage(
     selected_tags: list[str] | None = None,
 ):
     result_id = f"edit_catalog_result_{entry['id']}"
+    back_path = f"/food/item/catalog/{entry['id']}"
 
-    def _num(label, name, limits, value):
+    def _num(label, name, limits):
         return _labeled_input(
             label,
             name,
@@ -2757,92 +2833,70 @@ def EditCatalogPage(
             inputmode="decimal",
             min_value=limits.minimum,
             max_value=limits.maximum,
-            value=value,
+            value=_input_value(entry.get(name)),
         )
 
     form = Form(
-        _edit_name_input(_input_value(entry.get("name"))),
-        _edit_tile(_brand_autocomplete_input(brand_options=brand_options, value=_input_value(entry.get("brand")))),
-        _edit_tile(
-            _tags_multiselect_input(
-                tag_options=tag_options,
-                selected_tags=selected_tags or [],
+        _edit_header("food", _input_value(entry.get("name")), back_path, CATALOG_NAME_MAX_LENGTH),
+        _form_section(
+            "Basics",
+            _brand_autocomplete_input(brand_options=brand_options, value=_input_value(entry.get("brand"))),
+            _labeled_input(
+                "Barcode",
+                "barcode",
+                value=_input_value(entry.get("barcode")),
+                select_on_click=False,
+                inputmode="numeric",
+                pattern="[0-9]*",
+                maxlength=CATALOG_BARCODE_MAX_LENGTH,
                 input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
             ),
-            cls="w-full",
+            _labeled_input("Default serving (g)", "default_portion", "number", step="any", inputmode="decimal", min_value=0, max_value=3000, value=_input_value(entry.get("default_portion"))),
         ),
-        Div(
-            H2("Macros Summary", cls="font-semibold text-gray-900"),
-            Div(
-                _edit_tile(_num("Calories/100g", "calories_100g", NUTRIENT_LIMITS["calories_100g"], _input_value(entry.get("calories_100g")))),
-                _edit_tile(_num("Carbs/100g", "carbs_100g", NUTRIENT_LIMITS["carbs_100g"], _input_value(entry.get("carbs_100g")))),
-                _edit_tile(_num("Sugars/100g", "sugars_100g", NUTRIENT_LIMITS["sugars_100g"], _input_value(entry.get("sugars_100g")))),
-                _edit_tile(_num("Fats/100g", "fats_100g", NUTRIENT_LIMITS["fats_100g"], _input_value(entry.get("fats_100g")))),
-                _edit_tile(_num("Saturated/100g", "saturated_100g", NUTRIENT_LIMITS["saturated_100g"], _input_value(entry.get("saturated_100g")))),
-                _edit_tile(_num("Proteins/100g", "proteins_100g", NUTRIENT_LIMITS["proteins_100g"], _input_value(entry.get("proteins_100g")))),
-                _edit_tile(_num("Fiber/100g", "fiber_100g", NUTRIENT_LIMITS["fiber_100g"], _input_value(entry.get("fiber_100g")))),
-                cls="grid grid-cols-2 md:grid-cols-3 gap-2",
-            ),
-            cls="flex flex-col gap-2 w-full",
+        _form_section(
+            "Nutrition per 100 g",
+            _num("Calories (kcal)", "calories_100g", NUTRIENT_LIMITS["calories_100g"]),
+            _num("Carbs (g)", "carbs_100g", NUTRIENT_LIMITS["carbs_100g"]),
+            _num("Sugars (g)", "sugars_100g", NUTRIENT_LIMITS["sugars_100g"]),
+            _num("Fats (g)", "fats_100g", NUTRIENT_LIMITS["fats_100g"]),
+            _num("Saturated (g)", "saturated_100g", NUTRIENT_LIMITS["saturated_100g"]),
+            _num("Proteins (g)", "proteins_100g", NUTRIENT_LIMITS["proteins_100g"]),
+            _num("Fiber (g)", "fiber_100g", NUTRIENT_LIMITS["fiber_100g"]),
+            _num("Caffeine (mg)", "caffeine", NUTRIENT_LIMITS["caffeine"]),
+            _num("Alcohol (g)", "alcohol", NUTRIENT_LIMITS["alcohol"]),
+            cols=3,
         ),
-        Div(
-            H2("Details", cls="font-semibold text-gray-900"),
-            Div(
-                _edit_tile(_searchable_autocomplete_input("Category*", "category", [c.value for c in FoodCategory], allow_add=False, value=_input_value(entry.get("category")))),
-                _edit_tile(_searchable_autocomplete_input("Subtype*", "subtype", subtype_options or [], allow_add=True, value=_input_value(entry.get("subtype")), maxlength=FOOD_SUBTYPE_MAX_LENGTH)),
-                _edit_tile(_labeled_input("Default serving size", "default_portion", "number", step="any", inputmode="decimal", min_value=0, max_value=3000, value=_input_value(entry.get("default_portion")))),
-                _edit_tile(_searchable_autocomplete_input("Initial state", "initial_state", [s.value for s in FoodPhysicalState], allow_add=False, value=_input_value(entry.get("initial_state")))),
-                _edit_tile(_searchable_autocomplete_input("Nutriscore", "nutriscore", [n.value for n in Nutriscore], allow_add=False, value=_input_value(entry.get("nutriscore")))),
-                _edit_tile(_labeled_input("NOVA (1-4)", "nova", "number", step="1", inputmode="numeric", min_value=NOVA_MIN, max_value=NOVA_MAX, value=_input_value(entry.get("nova")))),
-                _edit_tile(_labeled_input("Yuka (0-100)", "yuka", "number", step="1", inputmode="numeric", min_value=YUKA_MIN, max_value=YUKA_MAX, value=_input_value(entry.get("yuka")))),
-                _edit_tile(_num("Caffeine", "caffeine", NUTRIENT_LIMITS["caffeine"], _input_value(entry.get("caffeine")))),
-                _edit_tile(_num("Alcohol", "alcohol", NUTRIENT_LIMITS["alcohol"], _input_value(entry.get("alcohol")))),
-                _edit_tile(
-                    _labeled_input(
-                        "Barcode",
-                        "barcode",
-                        value=_input_value(entry.get("barcode")),
-                        select_on_click=False,
-                        inputmode="numeric",
-                        pattern="[0-9]*",
-                        maxlength=CATALOG_BARCODE_MAX_LENGTH,
-                        input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
-                    )
-                ),
-                _edit_tile(_labeled_input("Cooking factor", "cooking_factor", "number", step="any", inputmode="decimal", min_value=0, max_value=10, value=_input_value(entry.get("cooking_factor")))),
-                _edit_tile(_macros_quality_select(entry.get("macros_quality"))),
-                _edit_tile(_weighed_default_select(entry.get("default_strictly_weighed"))),
-                _edit_tile(_macros_confidence_select(entry.get("macros_confidence"))),
-                cls="grid grid-cols-1 md:grid-cols-2 gap-2",
-            ),
-            cls="flex flex-col gap-2 w-full",
+        _form_section(
+            "Classification",
+            _searchable_autocomplete_input("Category*", "category", [c.value for c in FoodCategory], allow_add=False, value=_input_value(entry.get("category"))),
+            _searchable_autocomplete_input("Subtype*", "subtype", subtype_options or [], allow_add=True, value=_input_value(entry.get("subtype")), maxlength=FOOD_SUBTYPE_MAX_LENGTH),
+            _searchable_autocomplete_input("Initial state", "initial_state", [s.value for s in FoodPhysicalState], allow_add=False, value=_input_value(entry.get("initial_state"))),
+            _labeled_input("Cooking factor", "cooking_factor", "number", step="any", inputmode="decimal", min_value=0, max_value=10, value=_input_value(entry.get("cooking_factor"))),
         ),
-        Div(
-            Button(
-                "Back",
-                type="button",
-                cls="""
-                    web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl
-                    bg-white/85 text-gray-800 border border-gray-300
-                    shadow-[0_6px_20px_rgba(17,24,39,0.08)]
-                """,
-                hx_get=f"/food/item/catalog/{entry['id']}",
-                hx_target="#main_content",
-                hx_swap="innerHTML",
-                hx_push_url="true",
-                **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
-            ),
-            Button("Save changes", type="submit", cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-black text-white border-black"),
-            cls="grid grid-cols-2 gap-3",
+        _form_section(
+            "Data quality",
+            _macros_quality_select(entry.get("macros_quality")),
+            _macros_confidence_select(entry.get("macros_confidence")),
+            _weighed_default_select(entry.get("default_strictly_weighed")),
+            hint="Where the macros come from and how sure you are about them.",
         ),
+        _form_section(
+            "Health scores",
+            _searchable_autocomplete_input("Nutriscore", "nutriscore", [n.value for n in Nutriscore], allow_add=False, value=_input_value(entry.get("nutriscore"))),
+            _labeled_input("NOVA (1-4)", "nova", "number", step="1", inputmode="numeric", min_value=NOVA_MIN, max_value=NOVA_MAX, value=_input_value(entry.get("nova"))),
+            _labeled_input("Yuka (0-100)", "yuka", "number", step="1", inputmode="numeric", min_value=YUKA_MIN, max_value=YUKA_MAX, value=_input_value(entry.get("yuka"))),
+            cols=3,
+        ),
+        _edit_tags(tag_options, selected_tags),
+        _edit_actions(back_path),
         hx_post=f"/food/edit/catalog/{entry['id']}",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
         hx_push_url="false",
         data_draft_key=f"food_form_edit_catalog_{entry['id']}",
-        cls="flex flex-col gap-3 w-full",
+        cls="flex flex-col gap-4 w-full",
     )
-    return _edit_page_shell(form, result_id)
+    return _form_page_shell(form, result_id)
 
 
 def EditManualPage(
@@ -2857,6 +2911,7 @@ def EditManualPage(
     action (decision 2026-10-09), and favorite is not part of the edit, as in
     catalog."""
     result_id = f"edit_manual_result_{entry['id']}"
+    back_path = f"/food/item/manual_intake/{entry['id']}"
     nutrient_specs = (
         ("Calories/100g", "Calories (total)", "calories_100g"),
         ("Carbs/100g*", "Carbs (total)*", "carbs_100g"),
@@ -2867,88 +2922,60 @@ def EditManualPage(
         ("Fiber/100g", "Fiber (total)", "fiber_100g"),
     )
     form = Form(
-        _edit_name_input(_input_value(entry.get("name")), maxlength=MANUAL_INTAKE_NAME_MAX_LENGTH),
-        _edit_tile(_manual_origin_input(origin_options, value=_input_value(entry.get("origin")))),
-        _edit_tile(
-            _tags_multiselect_input(
-                tag_options=tag_options,
-                selected_tags=selected_tags or [],
-                input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
-            ),
-            cls="w-full",
-        ),
-        Div(
-            H2("Macros Summary", cls="font-semibold text-gray-900"),
-            Div(
-                _edit_tile(_nutrient_mode_select(f"edit_manual_{entry['id']}")),
-                _edit_tile(_manual_portion_input(value=_input_value(entry.get("default_portion")))),
-                cls="grid grid-cols-1 md:grid-cols-2 gap-2",
+        _edit_header("dish", _input_value(entry.get("name")), back_path, MANUAL_INTAKE_NAME_MAX_LENGTH),
+        _form_section(
+            "Basics",
+            _manual_origin_input(origin_options, value=_input_value(entry.get("origin"))),
+            _searchable_autocomplete_input(
+                "Subtype",
+                "subtype",
+                subtype_options or [],
+                allow_add=True,
+                value=_input_value(entry.get("subtype")),
+                maxlength=FOOD_SUBTYPE_MAX_LENGTH,
             ),
             Div(
-                *[
-                    _edit_tile(_manual_nutrient_input(per100, total, name, _input_value(entry.get(name))))
-                    for per100, total, name in nutrient_specs
-                ],
-                cls="grid grid-cols-2 md:grid-cols-3 gap-2",
-            ),
-            cls="flex flex-col gap-2 w-full",
-        ),
-        Div(
-            H2("Details", cls="font-semibold text-gray-900"),
-            Div(
-                _edit_tile(
-                    _manual_description_input(
-                        _input_value(entry.get("description")),
-                        textarea_id="edit_manual_description",
-                    ),
-                    cls="col-span-1 md:col-span-2",
+                _manual_description_input(
+                    _input_value(entry.get("description")),
+                    textarea_id="edit_manual_description",
                 ),
-                _edit_tile(
-                    _searchable_autocomplete_input(
-                        "Subtype",
-                        "subtype",
-                        subtype_options or [],
-                        allow_add=True,
-                        value=_input_value(entry.get("subtype")),
-                        maxlength=FOOD_SUBTYPE_MAX_LENGTH,
-                    )
-                ),
-                _edit_tile(_manual_nutrient_input("Caffeine (mg/100 g)", "Caffeine (mg in total)", "caffeine", _input_value(entry.get("caffeine")))),
-                _edit_tile(_manual_nutrient_input("Alcohol (g/100 g)", "Alcohol (g in total)", "alcohol", _input_value(entry.get("alcohol")))),
-                _edit_tile(_glycemic_index_select(entry.get("glycemic_index"))),
-                _edit_tile(
-                    _confidence_select(
-                        "IG confidence",
-                        "ig_confidence",
-                        entry.get("ig_confidence"),
-                        "How sure you are about the glycemic index. Needs a glycemic index.",
-                    )
-                ),
-                _edit_tile(_macros_confidence_select(entry.get("macros_confidence"))),
-                _edit_tile(_macros_quality_select(entry.get("macros_quality"))),
-                _edit_tile(_weighed_default_select(entry.get("default_strictly_weighed"))),
-                cls="grid grid-cols-1 md:grid-cols-2 gap-2",
+                cls="md:col-span-2",
             ),
-            cls="flex flex-col gap-2 w-full",
         ),
-        Div(
-            Button(
-                "Back",
-                type="button",
-                cls="""
-                    web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl
-                    bg-white/85 text-gray-800 border border-gray-300
-                    shadow-[0_6px_20px_rgba(17,24,39,0.08)]
-                """,
-                hx_get=f"/food/item/manual_intake/{entry['id']}",
-                hx_target="#main_content",
-                hx_swap="innerHTML",
-                hx_push_url="true",
-                **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
+        _form_section(
+            "Nutrition",
+            _nutrient_mode_select(f"edit_manual_{entry['id']}"),
+            _manual_portion_input(value=_input_value(entry.get("default_portion"))),
+        ),
+        _form_section(
+            "Macros",
+            *[
+                _manual_nutrient_input(per100, total, name, _input_value(entry.get(name)))
+                for per100, total, name in nutrient_specs
+            ],
+            _manual_nutrient_input("Caffeine (mg/100 g)", "Caffeine (mg in total)", "caffeine", _input_value(entry.get("caffeine"))),
+            _manual_nutrient_input("Alcohol (g/100 g)", "Alcohol (g in total)", "alcohol", _input_value(entry.get("alcohol"))),
+            cols=3,
+        ),
+        _form_section(
+            "Glycemic response",
+            _glycemic_index_select(entry.get("glycemic_index")),
+            _confidence_select(
+                "IG confidence",
+                "ig_confidence",
+                entry.get("ig_confidence"),
+                "How sure you are about the glycemic index. Needs a glycemic index.",
             ),
-            Button("Save changes", type="submit", cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-black text-white border-black"),
-            cls="grid grid-cols-2 gap-3",
         ),
+        _form_section(
+            "Data quality",
+            _macros_quality_select(entry.get("macros_quality")),
+            _macros_confidence_select(entry.get("macros_confidence")),
+            _weighed_default_select(entry.get("default_strictly_weighed")),
+            hint="Where the macros come from and how sure you are about them.",
+        ),
+        _edit_tags(tag_options, selected_tags),
+        _edit_actions(back_path),
         Script(src=asset_busted("/js/manual_intake_form.js"), defer="defer"),
         hx_post=f"/food/edit/manual_intake/{entry['id']}",
         hx_target=f"#{result_id}",
@@ -2956,9 +2983,9 @@ def EditManualPage(
         hx_push_url="false",
         data_draft_key=f"food_form_edit_manual_{entry['id']}",
         data_manual_convert="true",
-        cls="flex flex-col gap-3 w-full",
+        cls="flex flex-col gap-4 w-full",
     )
-    return _edit_page_shell(form, result_id)
+    return _form_page_shell(form, result_id)
 
 
 def EditRecipePage(
@@ -2968,64 +2995,36 @@ def EditRecipePage(
     selected_tags: list[str] | None = None,
 ):
     result_id = f"edit_recipe_result_{entry['id']}"
+    back_path = f"/food/item/recipe/{entry['id']}"
     form = Form(
-        _edit_name_input(_input_value(entry.get("name"))),
-        _edit_tile(
-            _tags_multiselect_input(
-                tag_options=tag_options,
-                selected_tags=selected_tags or [],
-                input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
-            ),
-            cls="w-full",
-        ),
-        Div(
-            H2("Details", cls="font-semibold text-gray-900"),
+        _edit_header("recipe", _input_value(entry.get("name")), back_path, CATALOG_NAME_MAX_LENGTH),
+        _form_section(
+            "Basics",
+            _labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in MealType], selected_value=_input_value(entry.get("meal_type"))),
             Div(
-                _edit_tile(_labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in MealType], selected_value=_input_value(entry.get("meal_type")))),
-                _edit_tile(
-                    Div(
-                        _label_with_help("Notes", "Optional instructions, comments, or context about this recipe.", for_id="edit_recipe_notes"),
-                        Textarea(
-                            _input_value(entry.get("notes")),
-                            id="edit_recipe_notes",
-                            name="notes",
-                            rows="3",
-                            onclick="this.select()",
-                            cls="web_input border border-white rounded-lg px-2 py-1 text-xs mr-1",
-                        ),
-                        cls="flex flex-col gap-1",
-                    )
+                _label_with_help("Notes", "Optional instructions, comments, or context about this recipe.", for_id="edit_recipe_notes"),
+                Textarea(
+                    _input_value(entry.get("notes")),
+                    id="edit_recipe_notes",
+                    name="notes",
+                    rows="3",
+                    onclick="this.select()",
+                    cls=FORM_FIELD_CLS,
                 ),
-                cls="grid grid-cols-1 md:grid-cols-2 gap-2",
+                cls="flex flex-col gap-1 md:col-span-2",
             ),
-            cls="flex flex-col gap-2 w-full",
+            _published_checkbox(checked=bool(entry.get("is_published"))) if show_published else "",
         ),
-        *([_published_checkbox(checked=bool(entry.get("is_published")), centered=True)] if show_published else []),
-        Div(
-            Button(
-                "Back",
-                type="button",
-                cls="""
-                    web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl
-                    bg-white/85 text-gray-800 border border-gray-300
-                    shadow-[0_6px_20px_rgba(17,24,39,0.08)]
-                """,
-                hx_get=f"/food/item/recipe/{entry['id']}",
-                hx_target="#main_content",
-                hx_swap="innerHTML",
-                hx_push_url="true",
-            ),
-            Button("Save changes", type="submit", cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-black text-white border-black"),
-            cls="grid grid-cols-2 gap-3",
-        ),
+        _edit_tags(tag_options, selected_tags),
+        _edit_actions(back_path),
         hx_post=f"/food/edit/recipe/{entry['id']}",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
         hx_push_url="false",
         data_draft_key=f"food_form_edit_recipe_{entry['id']}",
-        cls="flex flex-col gap-3 w-full",
+        cls="flex flex-col gap-4 w-full",
     )
-    return _edit_page_shell(form, result_id)
+    return _form_page_shell(form, result_id)
 
 
 def FavoriteButton(entry_type: str, entry_id: int, favorite: bool):
@@ -3036,11 +3035,11 @@ def FavoriteButton(entry_type: str, entry_id: int, favorite: bool):
         aria_label="Toggle favorite",
         title="Toggle favorite",
         cls="""
-            web_button p-1.5
-            border-gray-500/30 shadow-none
-            w-8 h-8
+            web_button p-2
+            bg-transparent border-transparent shadow-none
+            w-9 h-9
             flex items-center justify-center
-            hover:bg-gray-500/20
+            hover:bg-control
         """,
         hx_post=f"/food/favorite/{entry_type}/{entry_id}",
         hx_target="this",
@@ -3071,14 +3070,12 @@ def AddButton(label: str = "+", include_meal_selector: bool = True, **attrs):
     button_cls = attrs.pop(
         "cls",
         """
-            web_button
-            rounded-lg
-            border-gray-500/30 shadow-none
-            hover:bg-gray-500/50
-            w-8 h-8
+            web_button web_button_primary
+            rounded-xl
+            w-9 h-9
             flex items-center justify-center
             transition-colors duration-300
-            text-base
+            text-lg leading-none
         """,
     )
     return Button(
@@ -3091,12 +3088,9 @@ def AddButton(label: str = "+", include_meal_selector: bool = True, **attrs):
 
 
 def _entry_meta(food):
-    if food["entry_type"] == "catalog":
+    if food["entry_type"] in ("catalog", "manual_intake"):
         carbs = food.get("carbs_100g")
-        return f"Food · {carbs if carbs is not None else '-'} CH"
-    if food["entry_type"] == "manual_intake":
-        carbs = food.get("carbs_100g")
-        return f"Manual · {carbs if carbs is not None else '-'} CH"
+        return f"{carbs if carbs is not None else '-'} g carbs / 100 g"
     return "Recipe"
 
 
@@ -3439,6 +3433,50 @@ def RecipeIngredientsBlock(recipe_id: int, portions: list[dict]):
     )
 
 
+# Look of each state of a tri-state check, the same as the cart's
+# (`_TriStateFlag` in components/cart/cart_components.py). static/js/food_detail.js
+# repaints it with the same table when the user cycles it.
+_TRISTATE_LOOK = {
+    "true": ("✓", "background-color:#111827;border-color:#111827;color:#ffffff;"),
+    "false": ("", "background-color:#ffffff;border-color:#9ca3af;color:#111827;"),
+    "": ("", "background-color:#ffffff;border-color:#d1d5db;color:#111827;"),
+}
+
+
+def _weighed_tristate_field(root_id: str, value):
+    """`Strictly weighted` of the food page, set before adding the food.
+
+    It starts on the food's `default_strictly_weighed` and is what the new
+    portion is born with (measurement_conventions.md §6.11). Three states,
+    like in the cart: NULL is "no data", marked with a small dash (§6). The
+    value travels in a hidden field included by the `Log food` button.
+    """
+    field_id = f"{root_id}_weighed"
+    encoded = {True: "true", False: "false"}.get(value, "")
+    glyph, style = _TRISTATE_LOOK[encoded]
+    return Div(
+        Div(
+            P("Strictly weighted", cls="text-sm font-medium text-gray-800"),
+            P("Whether you weigh it exactly this time.", cls="text-xs text-gray-500"),
+            cls="flex flex-col min-w-0 flex-1",
+        ),
+        Input(type="hidden", id=field_id, name="strictly_weighed", value=encoded),
+        Div(
+            Button(
+                glyph,
+                type="button",
+                aria_label="Strictly weighted",
+                cls="w-5 h-5 rounded border flex items-center justify-center text-xs leading-none p-0 cursor-pointer",
+                style=style,
+                onclick=f"dbCycleTriState(this, '{field_id}')",
+            ),
+            Span("–", data_tristate_dash="true", cls=f"text-xs text-gray-500 {'' if encoded == '' else 'hidden'}"),
+            cls="flex items-center gap-1",
+        ),
+        cls="web_container w-full px-4 py-3 flex items-center gap-3",
+    )
+
+
 def FoodDetailPage(
     user_id: int,
     entry_type: str,
@@ -3554,7 +3592,11 @@ def FoodDetailPage(
         hx_target=f"#{msg_id}",
         hx_swap="innerHTML",
         hx_push_url="false",
-        hx_include=f"{'#meal_selector, #plate_selector, ' if not recipe_mode else ''}#{form_id}",
+        hx_include=(
+            f"#{form_id}"
+            if recipe_mode
+            else f"#meal_selector, #plate_selector, #{form_id}, #{root_id}_weighed"
+        ),
         data_skip_page_loading="true",
     )
 
@@ -3608,7 +3650,7 @@ def FoodDetailPage(
                             hover:bg-red-50
                         """,
                         style="color:#b91c1c;",
-                        onclick=_open_modal_js(delete_confirm_id),
+                        onclick=open_modal_js(delete_confirm_id),
                     )
                     if can_remove
                     else ""
@@ -3798,12 +3840,18 @@ def FoodDetailPage(
             ),
             cls="w-full",
         ),
+        _weighed_tristate_field(root_id, entry.get("default_strictly_weighed")) if not recipe_mode else "",
         Div(
             H2("Macros Summary", cls="font-semibold text-gray-900"),
             (
                 RecipeMacrosGrid(int(entry.get("id") or 0), per100, default_amount)
                 if recipe_mode
-                else Div(*_detail_macro_tiles(per100, default_amount), id=f"{root_id}_macros", cls="grid grid-cols-2 md:grid-cols-3 gap-2")
+                else Div(
+                    *_detail_macro_tiles(per100, default_amount),
+                    id=f"{root_id}_macros",
+                    data_stagger="true",
+                    cls="grid grid-cols-2 md:grid-cols-3 gap-2",
+                )
             ),
             cls="flex flex-col gap-2 w-full",
         ),
@@ -3833,7 +3881,7 @@ def FoodDetailPage(
                     if can_edit
                     else
                     {
-                        "onclick": _open_modal_js(copy_confirm_id),
+                        "onclick": open_modal_js(copy_confirm_id),
                     }
                 ),
             ),
@@ -3863,15 +3911,14 @@ def FoodDetailPage(
                 modal_id=copy_confirm_id,
                 title="Create editable copy",
                 question="A personal copy will be created and opened for editing. Continue?",
-                yes_button=Button(
+                yes_button=modal_confirm_button(
                     "Yes",
-                    type="button",
-                    cls="web_button px-4 py-2 text-sm text-white border-black bg-black",
+                    danger=False,
                     hx_post=f"/food/copy/{entry_type}/{entry['id']}",
                     hx_swap="none",
                     hx_push_url="false",
                     data_skip_page_loading="true",
-                    onclick=_close_modal_js(copy_confirm_id),
+                    onclick=close_modal_js(copy_confirm_id),
                 ),
             )
             if not can_edit
@@ -3882,11 +3929,9 @@ def FoodDetailPage(
                 modal_id=delete_confirm_id,
                 title=delete_title,
                 question=delete_question,
-                yes_button=Button(
+                yes_button=modal_confirm_button(
                     "Yes",
-                    type="button",
-                    cls="web_button px-4 py-2 text-sm text-white",
-                    style="background-color:#b91c1c;border-color:#b91c1c;",
+                    danger=True,
                     hx_post=(
                         f"/food/archive/{entry_type}/{entry['id']}"
                         if archivable
@@ -3895,7 +3940,7 @@ def FoodDetailPage(
                     hx_swap="none",
                     hx_push_url="false",
                     data_skip_page_loading="true",
-                    onclick=_close_modal_js(delete_confirm_id),
+                    onclick=close_modal_js(delete_confirm_id),
                 ),
             )
             if can_remove
@@ -3924,6 +3969,8 @@ def FoodDetailPage(
         ),
         data_detail_persist_key=persist_key,
         data_hide_cart="true",
+        # Its blocks come in one after another (frontend_conventions.md §10).
+        data_stagger="true",
         id=root_id,
         cls="""
             flex flex-col items-center
@@ -4004,11 +4051,7 @@ def RecipeIngredientPickerPage(recipe_entry: dict, foods: list[dict]):
                 "Back to recipe",
                 type="button",
                 cls="web_button self-start px-3 py-1.5 text-sm",
-                hx_get=f"/food/item/recipe/{recipe_id}",
-                hx_target="#main_content",
-                hx_swap="innerHTML",
-                hx_push_url="true",
-                **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
+                onclick=back_js(f"/food/item/recipe/{recipe_id}"),
             ),
             cls="w-full flex justify-start",
         ),
@@ -4043,11 +4086,14 @@ def FoodCard(food):
     if food["entry_type"] == "recipe":
         add_path = f"/add_recipe/{food['id']}"
 
-    owner_suffix = " *" if food.get("is_owned") else ""
-    name_text = f"{food['name']}{owner_suffix}"
     archived_badge = (
         Span("Archived", cls="text-[10px] font-semibold text-amber-700")
         if food.get("entry_type") in ("catalog", "manual_intake") and food.get("deleted_at") is not None
+        else ""
+    )
+    owned_badge = (
+        Span("Mine", cls="text-[10px] font-semibold text-muted bg-control rounded-full px-1.5 py-0.5")
+        if food.get("is_owned")
         else ""
     )
     subtitle = ""
@@ -4057,17 +4103,26 @@ def FoodCard(food):
         subtitle = (food.get("origin") or "").strip()
 
     title_node = H1(
-        Span(name_text),
-        Span(f"({subtitle})", cls="text-xs text-gray-500 font-medium") if subtitle else "",
+        Span(food["name"]),
         archived_badge,
-        cls="text-left font-semibold hover:underline flex flex-wrap items-baseline gap-1",
+        cls="text-left text-[15px] font-semibold leading-snug flex flex-wrap items-center gap-1.5",
+    )
+    subtitle_node = (
+        Div(
+            Span(subtitle, cls="truncate") if subtitle else "",
+            owned_badge,
+            cls="flex items-center gap-1.5 text-xs text-gray-500 min-w-0",
+        )
+        if subtitle or owned_badge
+        else ""
     )
 
     return Div(
         Div(
             title_node,
-            Div(_entry_meta(food), cls="text-sm text-gray-700"),
-            cls="flex flex-col gap-0.5 min-w-0",
+            subtitle_node,
+            P(_entry_meta(food), cls="text-xs text-gray-700 mt-0.5"),
+            cls="flex flex-col min-w-0",
         ),
         Div(
             # Shown on archived foods too: they appear because they are favorites
@@ -4082,7 +4137,7 @@ def FoodCard(food):
         hx_push_url="true",
         hx_trigger="click[!event.target.closest('[data-no-open]')]",
         **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
-        cls="web_button food_entry flex items-center justify-between cursor-pointer",
+        cls="web_container food_entry rounded-2xl flex items-center justify-between cursor-pointer",
     )
 
 
@@ -4097,12 +4152,12 @@ def FoodSectionsContent(foods):
     for entry_type, title in (
         ("catalog", "Food"),
         ("recipe", "Recipes"),
-        ("manual_intake", "Manual intake"),
+        ("manual_intake", "Manual"),
     ):
         items = grouped[entry_type]
         if not items:
             continue
-        sections.append(H2(title, cls="text-gray-700"))
+        sections.append(H2(title, cls="web_section_label md:w-md lg:w-md w-xs mt-2"))
         sections.extend(FoodCard(item) for item in items)
     return sections
 

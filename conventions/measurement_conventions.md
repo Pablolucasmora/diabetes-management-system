@@ -675,6 +675,7 @@ Decisiones 2026-10-09. La segunda (calidad de los macros como dato del alimento)
 - `catalog.default_strictly_weighed` y `manual_intake.default_strictly_weighed` son `BOOLEAN` nullable con los mismos tres estados que `portion_detail.strictly_weighed`.
 - `TRUE` encaja con alimentos cuyo peso es siempre el del envase (una lata de atún de 60 g). En un plato manual suele ser `FALSE` o `NULL`. El añadido rápido lo fija en `FALSE`.
 - Al crear una porción del alimento, por cualquier camino (carrito, añadido rápido, ingrediente de receta, rescate), se copia a `portion_detail.strictly_weighed`. Se escribe en el momento de crear la porción, no en el render (`code_conventions.md` §7.14). Si es `NULL`, la porción nace en `NULL`.
+- En la ficha del alimento, el usuario puede cambiarlo antes de añadirlo (decisión 2026-10-10). La casilla de tres estados de encima de *Macros Summary* empieza en el valor por defecto del alimento, y la porción nace con lo que marque. Si la petición no trae la casilla, se usa el valor por defecto, como en los demás caminos. Si la porción se fusiona con una fila que ya existía, se queda el valor de esa fila (§4.6.4).
 - Una vez creada, la porción es independiente: pesar o no es un dato de cada vez que se come, y el usuario lo cambia en el carrito. Cambiar el valor por defecto del alimento no reescribe las porciones existentes.
 - Una porción que se crea copiando otra (importar o copiar una receta) conserva el `strictly_weighed` de la porción de origen.
 

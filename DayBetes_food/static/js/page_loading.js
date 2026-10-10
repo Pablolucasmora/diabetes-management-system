@@ -26,19 +26,6 @@
     list.classList.remove("opacity-55", "scale-[0.995]", "pointer-events-none");
   }
 
-  function syncFoodTopSpacing(force) {
-    var topBar = byId("food_top_bar");
-    var wrapper = byId("food_list_wrapper");
-    if (!topBar || !wrapper) return;
-    var rect = topBar.getBoundingClientRect();
-    var safeGap = 12;
-    var requiredTop = Math.max(180, Math.ceil(rect.bottom + safeGap));
-    var currentTop = parseFloat(window.getComputedStyle(wrapper).paddingTop || "0") || 0;
-    // Avoid visual jump on initial load: don't reduce spacing unless explicitly forced (e.g. resize).
-    if (!force && requiredTop < currentTop) return;
-    wrapper.style.paddingTop = requiredTop + "px";
-  }
-
   function canHideOverlay() {
     return pendingRequests === 0;
   }
@@ -84,40 +71,6 @@
     if (canHideOverlay()) hideOverlay();
   }
 
-  function waitForImages(container, timeoutMs) {
-    var root = container || byId("main_content");
-    if (!root) return Promise.resolve();
-    var imgs = Array.prototype.slice.call(root.querySelectorAll("img")).filter(function (img) {
-      return !img.complete;
-    });
-    if (!imgs.length) return Promise.resolve();
-
-    return new Promise(function (resolve) {
-      var done = false;
-      var pending = imgs.length;
-      var timer = window.setTimeout(function () {
-        if (done) return;
-        done = true;
-        resolve();
-      }, timeoutMs || 550);
-
-      function completeOne() {
-        if (done) return;
-        pending -= 1;
-        if (pending <= 0) {
-          done = true;
-          window.clearTimeout(timer);
-          resolve();
-        }
-      }
-
-      imgs.forEach(function (img) {
-        img.addEventListener("load", completeOne, { once: true });
-        img.addEventListener("error", completeOne, { once: true });
-      });
-    });
-  }
-
   function bindListeners() {
     document.body.addEventListener("htmx:beforeRequest", function (event) {
       var elt = event && event.detail ? event.detail.elt : null;
@@ -149,16 +102,7 @@
         target.style.removeProperty("opacity");
       }
       if (isFoodListTarget(target)) setFoodListLoading(false);
-      syncFoodTopSpacing(false);
       if (canHideOverlay()) setLoading(false);
-    });
-
-    document.body.addEventListener("htmx:afterSettle", function (event) {
-      var target = event && event.detail ? event.detail.target : null;
-      if (!isMainTarget(target)) return;
-      waitForImages(target, 550).then(function () {
-        syncFoodTopSpacing(false);
-      });
     });
 
     document.body.addEventListener("htmx:responseError", function (event) {
@@ -178,10 +122,6 @@
       setLoading(false);
     });
 
-    window.addEventListener("resize", function () {
-      syncFoodTopSpacing(true);
-    });
-
     // Safari BFCache can restore the page with overlay visible.
     window.addEventListener("pageshow", function () {
       pendingRequests = 0;
@@ -199,10 +139,8 @@
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", function () {
       bindListeners();
-      syncFoodTopSpacing(false);
     });
   } else {
     bindListeners();
-    syncFoodTopSpacing(false);
   }
 })();

@@ -504,7 +504,7 @@ class DBSchema:
         -- the food's macros and macros_quality, so they are computed live from the
         -- portions (measurement_conventions.md §6.9.4).
 
-        notes TEXT, -- Free-text note about the meal, edited from the cart card (input above "Confirm food"). No physical limit: the 500-character cap is a domain rule (INTAKE_EVENT_NOTES_MAX_LENGTH in domain/intake_event.py), enforced at the boundary with 422 and never truncated (decision 2026-09-10, §7.3)
+        notes TEXT, -- Free-text note about the meal, edited from the cart card (input above "Confirm meal"). No physical limit: the 500-character cap is a domain rule (INTAKE_EVENT_NOTES_MAX_LENGTH in domain/intake_event.py), enforced at the boundary with 422 and never truncated (decision 2026-09-10, §7.3)
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         deleted_at TIMESTAMPTZ  -- soft delete; only used in state='consumed' (decision 2026-09-08)

@@ -4,35 +4,195 @@
 
 @layer theme, base, components, utilities;
 
+/* Palette (frontend_conventions.md §8): a very light beige page under a soft
+   colour wash, liquid glass surfaces and dark ink for the main action. */
+@theme {
+    --color-page: #fbf8f3;       /* page background */
+    --color-surface: #ffffff;    /* cards, islands, panels */
+    --color-control: #f7f2ea;    /* buttons inside a card */
+    --color-line: #e9e0d2;       /* control borders, dividers */
+    --color-line-soft: #efe8dd;  /* card borders, active nav item */
+    --color-muted: #8a7d6b;      /* section labels */
+    --color-ink: #2b2622;        /* main action */
+    --color-danger: #b91c1c;     /* destructive action (delete, archive) */
+    --color-wash-peach: rgb(247 206 178 / 0.75);    /* background wash */
+    --color-wash-blue: rgb(176 214 226 / 0.7);
+    --color-wash-green: rgb(190 224 198 / 0.6);
+    --color-wash-sun: rgb(246 222 170 / 0.6);
+}
+
+@layer base {
+    /* Soft colour wash behind the glass surfaces (frontend_conventions.md §8).
+       A fixed layer instead of background-attachment: fixed, which Safari on
+       iOS ignores. */
+    body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        pointer-events: none;
+        background:
+            radial-gradient(circle at 12% 8%, var(--color-wash-peach) 0, transparent 38%),
+            radial-gradient(circle at 92% 28%, var(--color-wash-blue) 0, transparent 40%),
+            radial-gradient(circle at 20% 70%, var(--color-wash-green) 0, transparent 42%),
+            radial-gradient(circle at 85% 92%, var(--color-wash-sun) 0, transparent 40%),
+            var(--color-page);
+    }
+}
+
+/* Liquid glass: frosted, translucent surface with a bright rim and a
+   diagonal highlight. */
+@utility web_glass {
+    background:
+        linear-gradient(135deg, rgb(255 255 255 / 0.6) 0%, rgb(255 255 255 / 0) 38%, rgb(255 255 255 / 0) 70%, rgb(255 255 255 / 0.28) 100%),
+        rgb(255 255 255 / 0.4);
+    -webkit-backdrop-filter: blur(18px) saturate(180%);
+    backdrop-filter: blur(18px) saturate(180%);
+    border: 1px solid rgb(255 255 255 / 0.7);
+    box-shadow:
+        inset 0 1px 0 rgb(255 255 255 / 0.95),
+        inset 0 -1px 0 rgb(255 255 255 / 0.3),
+        0 10px 30px rgb(80 60 40 / 0.14),
+        0 1px 3px rgb(80 60 40 / 0.08);
+}
+
+
+/* Stronger glass for bars with controls on top of scrolling content: more
+   blur and more white, so what passes underneath does not compete with the
+   fields. */
+@utility web_glass_strong {
+    @apply web_glass;
+    background:
+        linear-gradient(135deg, rgb(255 255 255 / 0.6) 0%, rgb(255 255 255 / 0) 38%, rgb(255 255 255 / 0) 70%, rgb(255 255 255 / 0.28) 100%),
+        rgb(255 255 255 / 0.55);
+    -webkit-backdrop-filter: blur(28px) saturate(170%);
+    backdrop-filter: blur(28px) saturate(170%);
+}
+
 @layer components {
     .web_container {
-        @apply bg-[#f6f2eb]/50
-         rounded-3xl
-         inset-shadow-[0_0_10px_0_rgba(0,0,0,0.1)]
-         ;
+        @apply web_glass rounded-3xl;
     }
     .web_button {
-        @apply 
-                border-[1px] border-white
+        @apply web_glass text-stone-900
                 rounded-lg md:rounded-xl lg:rounded-xl
                 cursor-pointer
-                shadow-md hover:scale-105
+                hover:scale-105 active:scale-95
                 justify-self-center
-                transition-all
+                transition-all duration-150
         ;
+        background:
+            linear-gradient(135deg, rgb(255 255 255 / 0.7) 0%, rgb(255 255 255 / 0) 45%),
+            rgb(255 255 255 / 0.5);
+        box-shadow:
+            inset 0 1px 0 rgb(255 255 255 / 0.95),
+            0 2px 8px rgb(80 60 40 / 0.1);
+    }
+    .web_button_primary {
+        @apply text-white font-semibold;
+        background: var(--color-ink);
+        border-color: transparent;
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+        box-shadow: 0 4px 12px rgb(43 38 34 / 0.25);
+    }
+    .web_section_label {
+        @apply text-[11px] uppercase tracking-wide font-semibold text-muted;
     }
     .food_entry {
-        @apply border-[0.6px] border-gray-600/50
+        @apply border border-line-soft
         md:w-md lg:w-md
-        rounded-lg
+        rounded-2xl
         w-xs
         transition-all
         px-4 py-3
         hover:scale-[101%]
-        shadow-sm
+    }
+    /* Pop-up layer (components/modal.py): a <dialog> in the top layer that
+       fills the screen; the dimmed, blurred overlay is its child. */
+    dialog.db_modal {
+        width: 100%;
+        height: 100%;
+        max-width: none;
+        max-height: none;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        overflow: visible;
+    }
+    dialog.db_modal::backdrop {
+        background: transparent;
+    }
+    /* The card is solid, so its buttons are too (§8): no glass inside it,
+       and no backdrop-filter nested in the blurred overlay. */
+    .db_modal .web_button:not(.web_button_primary) {
+        background: var(--color-control);
+        border-color: var(--color-line);
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+        box-shadow: none;
     }
     .web_input {
-        @apply focus:shadow-lg focus:inset-shadow-none focus:outline-none focus:scale-[101%]
+        @apply bg-white
+        focus:shadow-lg focus:inset-shadow-none focus:outline-none focus:scale-[101%]
         ;
+    }
+}
+
+/* Motion (frontend_conventions.md §10): short, small movements that make
+   changes feel continuous instead of abrupt. Only transform and opacity, and
+   only when the user has not asked the system to reduce motion. */
+@keyframes db-rise-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+}
+
+@layer components {
+    button {
+        -webkit-tap-highlight-color: transparent;
+    }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    /* A new page rises in. `backwards` drops the animation once it ends, so
+       no transform is left on the page (it would trap fixed children). */
+    #main_content > * {
+        animation: db-rise-in 240ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+    }
+
+    /* The food list comes in one card after another. */
+    #food-list > .food_entry {
+        animation: db-rise-in 260ms ease-out backwards;
+    }
+    #food-list > .food_entry:nth-child(2) { animation-delay: 25ms; }
+    #food-list > .food_entry:nth-child(3) { animation-delay: 50ms; }
+    #food-list > .food_entry:nth-child(4) { animation-delay: 75ms; }
+    #food-list > .food_entry:nth-child(5) { animation-delay: 100ms; }
+    #food-list > .food_entry:nth-child(n+6) { animation-delay: 120ms; }
+
+    /* A page whose blocks come in one after another, top to bottom (the
+       detail page of a food, a dish or a recipe, and its macro tiles). */
+    [data-stagger="true"] > * {
+        animation: db-rise-in 320ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+    }
+    [data-stagger="true"] > :nth-child(2) { animation-delay: 40ms; }
+    [data-stagger="true"] > :nth-child(3) { animation-delay: 80ms; }
+    [data-stagger="true"] > :nth-child(4) { animation-delay: 120ms; }
+    [data-stagger="true"] > :nth-child(5) { animation-delay: 160ms; }
+    [data-stagger="true"] > :nth-child(6) { animation-delay: 200ms; }
+    [data-stagger="true"] > :nth-child(n+7) { animation-delay: 240ms; }
+
+    /* What a folded section shows when it opens. */
+    details[open] > :not(summary) {
+        animation: db-rise-in 200ms ease-out backwards;
+    }
+
+    /* The pop-up card grows in with its dimmed layer (components/modal.py). */
+    .db_modal [data-modal-card] {
+        transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+    .db_modal .opacity-0 > [data-modal-card] {
+        transform: translateY(10px) scale(0.97);
     }
 }

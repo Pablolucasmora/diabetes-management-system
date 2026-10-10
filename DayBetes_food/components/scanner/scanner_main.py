@@ -1,4 +1,6 @@
 from fasthtml.common import *
+from DayBetes_food.components.navigation import back_js
+from DayBetes_food.components.modal import ConfirmActionModal, modal_confirm_button, modal_secondary_button
 
 
 def scanner_main():
@@ -8,10 +10,7 @@ def scanner_main():
                 "Back",
                 type="button",
                 cls="web_button self-start px-3 py-1.5 text-sm",
-                hx_get="/food",
-                hx_target="#main_content",
-                hx_push_url="true",
-                **{"hx-on:click": "if(window.__dbStopScanner){window.__dbStopScanner();}"},
+                onclick="if(window.__dbStopScanner){window.__dbStopScanner();}" + back_js("/food"),
             ),
             Div(
                 Video(
@@ -44,8 +43,7 @@ def scanner_main():
                         placeholder="Enter barcode",
                         inputmode="numeric",
                         autocomplete="off",
-                        cls="web_input w-full text-base blur-none focus:shadow-none focus:scale-100",
-                        style="backdrop-filter:none;-webkit-backdrop-filter:none;",
+                        cls="web_input w-full text-base focus:shadow-none focus:scale-100",
                     ),
                     Button("Use", id="scanner_manual_use_btn", type="button", cls="web_button px-3 py-1.5 text-sm shrink-0"),
                     cls="w-full flex items-center gap-2.5",
@@ -60,42 +58,17 @@ def scanner_main():
                 hx_swap="innerHTML",
             ),
             Div(id="scanner_confirm_feedback", cls="hidden"),
-            Div(
-                Div(
-                    P("Confirm barcode", cls="text-lg font-semibold text-gray-900"),
-                    P(
-                        "Are you sure this is the correct code: ",
-                        Span("", id="scanner_confirm_code", cls="font-semibold"),
-                        "?",
-                        cls="text-sm text-gray-700",
-                    ),
-                    Div(
-                        Button(
-                            "Yes",
-                            id="scanner_confirm_yes",
-                            type="button",
-                            cls="web_button px-4 py-2 text-sm bg-black text-white border-black",
-                        ),
-                        Button(
-                            "No",
-                            id="scanner_confirm_no",
-                            type="button",
-                            cls="web_button px-4 py-2 text-sm border-black text-black",
-                        ),
-                        cls="flex items-center justify-end gap-2",
-                    ),
-                    cls="web_container p-5 rounded-3xl w-[92vw] max-w-md flex flex-col gap-4",
+            # The buttons are wired in static/js/scanner.js, by id.
+            ConfirmActionModal(
+                modal_id="scanner_confirm_modal",
+                title="Confirm barcode",
+                question=Span(
+                    "Are you sure this is the correct code: ",
+                    Span("", id="scanner_confirm_code", cls="font-semibold"),
+                    "?",
                 ),
-                id="scanner_confirm_modal",
-                cls="""
-                    fixed inset-0 z-50
-                    flex items-center justify-center
-                    bg-black/35 backdrop-blur-xl
-                    px-4
-                    opacity-0 invisible pointer-events-none
-                    transition-opacity duration-100
-                """,
-                style="z-index: 9999;",
+                yes_button=modal_confirm_button("Yes", id="scanner_confirm_yes"),
+                no_button=modal_secondary_button("No", id="scanner_confirm_no"),
             ),
             cls="""
                 min-h-screen

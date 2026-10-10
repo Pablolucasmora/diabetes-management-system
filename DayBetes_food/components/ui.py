@@ -24,7 +24,7 @@ def PageLoadingOverlay():
         cls="""
             fixed inset-0 z-40
             flex items-center justify-center
-            bg-[#f6f2eb]/35 backdrop-blur-[1px]
+            bg-page/35 backdrop-blur-[1px]
             pointer-events-none opacity-0 invisible
             transition-opacity duration-200
         """
@@ -108,15 +108,21 @@ def _base_html_shell(content_html: str) -> str:
     <script src="{asset_busted("/js/app_toast.js")}" defer></script>
     <script src="{asset_busted("/js/island_indicator.js")}" defer></script>
     <script src="{asset_busted("/js/browser_tweaks.js")}" defer></script>
+    <script src="{asset_busted("/js/dropdown_layer.js")}" defer></script>
+    <script src="{asset_busted("/js/modal.js")}" defer></script>
+    <script src="{asset_busted("/js/navigation.js")}" defer></script>
     <script src="{asset_busted("/js/food_quick_create.js")}" defer></script>
     <script src="{asset_busted("/js/rescue_power_panel.js")}" defer></script>
     <script src="{asset_busted("/js/cart_units.js")}" defer></script>
     <script src="{asset_busted("/js/food_detail.js")}" defer></script>
     <script src="{asset_busted("/js/scanner.js")}" defer></script>
     <style>
-      body, html {{
-        background-color: #f6f2eb;
+      html {{
+        background-color: var(--color-page);
         scrollbar-gutter: stable;
+      }}
+      body {{
+        background-color: transparent;
       }}
       @keyframes dbspin {{
         to {{ transform: rotate(360deg); }}
@@ -141,6 +147,10 @@ def render_page(request, content_fn, show_cart=True):
             Main(
                 content_fn(connection),
                 id="main_content",
+                # The history snapshot and a restore that misses the cache
+                # both use this element, so a page comes back as the same
+                # fragment the routes return to htmx (navigation.js).
+                hx_history_elt="true",
                 style="transition: opacity 220ms ease;",
             ),
             FloatingIsland(),
