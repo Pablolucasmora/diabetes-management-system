@@ -32,6 +32,7 @@ def BlockIsland(text, icon="/images/ui/menu.svg", name="nav", value="home", **hx
         """),
 
         cls="""
+            relative z-10
             flex flex-col items-center justify-center
             p-2 md:p-3 
             rounded-full
@@ -66,7 +67,7 @@ def FloatingIsland():
                 id="island_active_indicator",
                 cls="""
                     absolute left-0 top-0 z-0
-                    rounded-full bg-gray-300/40
+                    rounded-full bg-line-soft
                     ring-1 ring-white/50 shadow-inner
                     transition-all duration-300 ease-in-out
                     pointer-events-none
@@ -83,11 +84,7 @@ def FloatingIsland():
                 gap-2 md:gap-3
                 p-2
                 overflow-hidden
-
-                bg-white/5 backdrop-blur-xl
-                border border-white/80
-                shadow-lg
-                ring-1 ring-inset ring-white/20
+                web_glass
                 rounded-full
             """
         ),
@@ -101,17 +98,16 @@ def IslandLogo():
     return Div(
         Img(id="logo", src="/images/ui/Logo_DayBetes_food.svg", alt="DayBetes logo",
             cls="""
-                lg:w-64 md:w-64
-                w-48 
+                lg:w-52 md:w-52
+                w-36 
                 transition-all 
             """
         ),
         cls="""
-            bg-[#f6f2eb]/50 backdrop-blur-lg
-            border-[1px] border-white/80
-            rounded-4xl shadow-lg
-            px-16 py-5 md:mt-2 lg:mt-2 mt-0 m-8 z-50
-            fixed top-5
+            web_glass
+            rounded-4xl
+            px-10 py-3 md:mt-2 lg:mt-2 mt-0 m-6 z-50
+            fixed top-3
         """
     )
 
@@ -122,7 +118,7 @@ def Cart(display=True):
         lg:translate-x-29 translate-x-20
         transition-opacity duration-[100ms] ease-out
         web_button
-        md:p-4 lg:p-4 p-3 bg-[#f6f2eb]/50 backdrop-blur-lg
+        md:p-4 lg:p-4 p-3
         rounded-3xl md:rounded-4xl lg:rounded-4xl md:w-22 lg:w-22
         opacity-100
     """

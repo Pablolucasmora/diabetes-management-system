@@ -1,4 +1,5 @@
 from fasthtml.common import *
+from DayBetes_food.components.navigation import back_js
 from DayBetes_food.database.queries import get_all_tags, get_meal_type_schedule
 from DayBetes_food.components.injection_zone import (
     BASE_INJECTION_ZONE_IMAGE,
@@ -15,6 +16,13 @@ from DayBetes_food.domain.meal_type_schedule import (
 )
 from DayBetes_food.time_utils import to_local
 from DayBetes_food.config import CSRF_COOKIE_NAME
+from DayBetes_food.components.modal import (
+    ConfirmActionModal,
+    close_modal_js,
+    modal_confirm_button,
+    ModalLayer,
+    open_modal_js,
+)
 import re
 
 
@@ -134,10 +142,7 @@ def tags_settings_page(connection):
                 "Back",
                 type="button",
                 cls="web_button self-start px-3 py-1.5 text-sm",
-                hx_get="/settings",
-                hx_target="#main_content",
-                hx_swap="innerHTML",
-                hx_push_url="true",
+                onclick=back_js("/settings"),
             ),
             cls="w-full flex justify-start",
         ),
@@ -362,10 +367,7 @@ def meal_type_schedule_settings_page(connection, user_id: int):
                 "Back",
                 type="button",
                 cls="web_button self-start px-3 py-1.5 text-sm",
-                hx_get="/settings",
-                hx_target="#main_content",
-                hx_swap="innerHTML",
-                hx_push_url="true",
+                onclick=back_js("/settings"),
             ),
             cls="w-full flex justify-start",
         ),
@@ -389,66 +391,21 @@ def _format_injection_hour(dt):
     return dt.strftime("%H:%M")
 
 
-def _open_modal_js(modal_id: str):
-    return (
-        f"const m=document.getElementById('{modal_id}');"
-        "if(!m) return;"
-        "m.classList.remove('invisible','opacity-0','pointer-events-none');"
-        "m.classList.add('opacity-100');"
-    )
-
-
-def _close_modal_js(modal_id: str):
-    return (
-        f"const m=document.getElementById('{modal_id}');"
-        "if(!m) return;"
-        "m.classList.remove('opacity-100');"
-        "m.classList.add('opacity-0','invisible','pointer-events-none');"
-    )
-
-
 def _injection_delete_modal(injection):
     modal_id = f"settings_injection_delete_{injection.id}"
     refresh_js = "htmx.ajax('GET','/settings/injections',{target:'#main_content',swap:'innerHTML'});"
-    return Div(
-        Div(
-            Div(
-                P("Delete injection", cls="text-lg font-semibold"),
-                P("Are you sure you want to delete this injection log?", cls="text-sm md:text-base text-gray-700"),
-                cls="flex flex-col gap-1",
-            ),
-            Div(
-                Button(
-                    "Yes",
-                    type="button",
-                    cls="web_button px-4 py-2 text-sm text-white",
-                    style="background-color:#b91c1c;border-color:#b91c1c;",
-                    hx_post=f"/settings/injections/{injection.id}/delete",
-                    hx_swap="none",
-                    **{"hx-on:htmx:after-request": refresh_js},
-                    onclick=_close_modal_js(modal_id),
-                ),
-                Button(
-                    "No",
-                    type="button",
-                    cls="web_button px-4 py-2 text-sm",
-                    onclick=_close_modal_js(modal_id),
-                ),
-                cls="flex items-center gap-2 justify-end",
-            ),
-            onclick="event.stopPropagation()",
-            cls="web_container p-5 md:p-6 rounded-3xl w-[92vw] max-w-md flex flex-col gap-4",
+    return ConfirmActionModal(
+        modal_id=modal_id,
+        title="Delete injection",
+        question="Are you sure you want to delete this injection log?",
+        yes_button=modal_confirm_button(
+            "Yes",
+            danger=True,
+            hx_post=f"/settings/injections/{injection.id}/delete",
+            hx_swap="none",
+            **{"hx-on:htmx:after-request": refresh_js},
+            onclick=close_modal_js(modal_id),
         ),
-        id=modal_id,
-        onclick=_close_modal_js(modal_id),
-        cls="""
-            fixed inset-0 z-[70]
-            flex items-center justify-center
-            bg-slate-800/30 backdrop-blur-lg
-            px-4
-            opacity-0 invisible pointer-events-none
-            transition-opacity duration-200
-        """,
     )
 
 
@@ -501,124 +458,110 @@ def _injection_edit_modal(injection):
         for zone in InjectionZone
     ]
     refresh_js = "htmx.ajax('GET','/settings/injections',{target:'#main_content',swap:'innerHTML'});"
-    return Div(
-        Div(
-            P("Insulin injection", cls="text-lg font-semibold"),
-            Form(
-                Input(type="hidden", name="injection_id", value=str(injection.id)),
+    return ModalLayer(
+        P("Insulin injection", cls="text-lg font-semibold"),
+        Form(
+            Input(type="hidden", name="injection_id", value=str(injection.id)),
+            Div(
                 Div(
-                    Div(
-                        Label("Type", cls="text-xs text-gray-600"),
-                        Select(
-                            Option("Rapid", value="rapid", selected=injection.insulin_type is not InsulinType.BASAL),
-                            Option("Basal", value="basal", selected=injection.insulin_type is InsulinType.BASAL),
-                            name="insulin_type",
-                            cls="web_input border border-white rounded-lg px-2 py-1 text-base",
-                            data_settings_insulin_type="true",
-                            onchange=switch_type_js,
-                        ),
-                        cls="flex flex-col gap-1 flex-1 min-w-0",
-                    ),
-                    Div(
-                        Label("Injection hour", cls="text-xs text-gray-600"),
-                        Div(
-                            Input(
-                                type="time",
-                                name="shot_hour",
-                                value=shot_hour,
-                                aria_label="Injection hour",
-                                cls="web_input border border-white rounded-lg px-2 py-1 text-base",
-                            ),
-                            Button(
-                                "Date",
-                                type="button",
-                                cls="web_button px-2 py-1 text-xs",
-                                onclick=(
-                                    f"const el=document.getElementById('settings_shot_date_wrap_{injection.id}');"
-                                    "if(el){el.classList.toggle('hidden');}"
-                                ),
-                            ),
-                            cls="flex items-center gap-2",
-                        ),
-                        Div(
-                            Label("Injection date", cls="text-xs text-gray-600"),
-                            Input(
-                                type="date",
-                                name="shot_date",
-                                value=shot_date,
-                                aria_label="Injection date",
-                                cls="web_input border border-white rounded-lg px-2 py-1 text-base",
-                            ),
-                            id=f"settings_shot_date_wrap_{injection.id}",
-                            cls="hidden flex-col gap-1 mt-1",
-                        ),
-                        cls="flex flex-col gap-1 flex-1 min-w-0",
-                    ),
-                    cls="grid grid-cols-2 gap-3",
-                ),
-                Div(
-                    Label("Basal dose", cls="text-xs text-gray-600"),
-                    Input(
-                        type="number",
-                        name="units",
-                        step="0.5",
-                        min="0.5",
-                        inputmode="decimal",
-                        pattern="[0-9]+([\\.,][0-9]+)?",
-                        placeholder="e.g. 8.5",
-                        value=(f"{float(units):g}" if units is not None else ""),
+                    Label("Type", cls="text-xs text-gray-600"),
+                    Select(
+                        Option("Rapid", value="rapid", selected=injection.insulin_type is not InsulinType.BASAL),
+                        Option("Basal", value="basal", selected=injection.insulin_type is InsulinType.BASAL),
+                        name="insulin_type",
                         cls="web_input border border-white rounded-lg px-2 py-1 text-base",
+                        data_settings_insulin_type="true",
+                        onchange=switch_type_js,
                     ),
-                    data_settings_basal_wrap="true",
-                    cls=f"{'hidden ' if injection.insulin_type is not InsulinType.BASAL else ''}flex flex-col gap-1",
+                    cls="flex flex-col gap-1 flex-1 min-w-0",
                 ),
                 Div(
-                    Img(
-                        src=image,
-                        alt="Injection zones map",
-                        cls="w-full max-h-[38vh] md:max-h-[46vh] object-contain rounded-2xl border border-gray-200 bg-white",
-                        data_settings_injection_image="true",
-                    ),
-                    cls="w-full",
-                ),
-                Div(*zone_buttons, cls="flex flex-wrap gap-2"),
-                Input(type="hidden", name="zone", value=(selected_zone.value if selected_zone else ""), data_settings_injection_zone_input="true"),
-                Div(
-                    Button(
-                        "OK",
-                        type="button",
-                        cls="web_button px-4 py-2 text-sm text-white ml-auto",
-                        style="background-color:#111111;border-color:#111111;",
-                        hx_post=f"/settings/injections/{injection.id}/update",
-                        hx_include="closest form",
-                        hx_swap="none",
-                        **{"hx-on:htmx:after-request": refresh_js},
-                        onclick=(
-                            "const form=this.form;"
-                            "const z=form?form.querySelector('[data-settings-injection-zone-input]'):null;"
-                            "if(!z||!z.value){alert('Select a zone first.');return false;}"
-                            "const t=form?form.querySelector('[data-settings-insulin-type]'):null;"
-                            "const b=form?form.querySelector('input[name=units]'):null;"
-                            "if(t&&t.value==='basal'&&(!b||!b.value)){alert('Enter basal dose.');return false;}"
-                            + _close_modal_js(modal_id)
+                    Label("Injection hour", cls="text-xs text-gray-600"),
+                    Div(
+                        Input(
+                            type="time",
+                            name="shot_hour",
+                            value=shot_hour,
+                            aria_label="Injection hour",
+                            cls="web_input border border-white rounded-lg px-2 py-1 text-base",
                         ),
+                        Button(
+                            "Date",
+                            type="button",
+                            cls="web_button px-2 py-1 text-xs",
+                            onclick=(
+                                f"const el=document.getElementById('settings_shot_date_wrap_{injection.id}');"
+                                "if(el){el.classList.toggle('hidden');}"
+                            ),
+                        ),
+                        cls="flex items-center gap-2",
+                    ),
+                    Div(
+                        Label("Injection date", cls="text-xs text-gray-600"),
+                        Input(
+                            type="date",
+                            name="shot_date",
+                            value=shot_date,
+                            aria_label="Injection date",
+                            cls="web_input border border-white rounded-lg px-2 py-1 text-base",
+                        ),
+                        id=f"settings_shot_date_wrap_{injection.id}",
+                        cls="hidden flex-col gap-1 mt-1",
+                    ),
+                    cls="flex flex-col gap-1 flex-1 min-w-0",
+                ),
+                cls="grid grid-cols-2 gap-3",
+            ),
+            Div(
+                Label("Basal dose", cls="text-xs text-gray-600"),
+                Input(
+                    type="number",
+                    name="units",
+                    step="0.5",
+                    min="0.5",
+                    inputmode="decimal",
+                    pattern="[0-9]+([\\.,][0-9]+)?",
+                    placeholder="e.g. 8.5",
+                    value=(f"{float(units):g}" if units is not None else ""),
+                    cls="web_input border border-white rounded-lg px-2 py-1 text-base",
+                ),
+                data_settings_basal_wrap="true",
+                cls=f"{'hidden ' if injection.insulin_type is not InsulinType.BASAL else ''}flex flex-col gap-1",
+            ),
+            Div(
+                Img(
+                    src=image,
+                    alt="Injection zones map",
+                    cls="w-full max-h-[38vh] md:max-h-[46vh] object-contain rounded-2xl border border-gray-200 bg-white",
+                    data_settings_injection_image="true",
+                ),
+                cls="w-full",
+            ),
+            Div(*zone_buttons, cls="flex flex-wrap gap-2"),
+            Input(type="hidden", name="zone", value=(selected_zone.value if selected_zone else ""), data_settings_injection_zone_input="true"),
+            Div(
+                modal_confirm_button(
+                    "OK",
+                    cls="ml-auto",
+                    hx_post=f"/settings/injections/{injection.id}/update",
+                    hx_include="closest form",
+                    hx_swap="none",
+                    **{"hx-on:htmx:after-request": refresh_js},
+                    onclick=(
+                        "const form=this.form;"
+                        "const z=form?form.querySelector('[data-settings-injection-zone-input]'):null;"
+                        "if(!z||!z.value){alert('Select a zone first.');return false;}"
+                        "const t=form?form.querySelector('[data-settings-insulin-type]'):null;"
+                        "const b=form?form.querySelector('input[name=units]'):null;"
+                        "if(t&&t.value==='basal'&&(!b||!b.value)){alert('Enter basal dose.');return false;}"
+                        + close_modal_js(modal_id)
                     ),
                 ),
-                cls="flex flex-col gap-3",
             ),
-            onclick="event.stopPropagation()",
-            cls="web_container p-4 md:p-5 rounded-3xl w-72 md:w-[88vw] max-w-md flex flex-col gap-3",
+            cls="flex flex-col gap-3",
         ),
-        id=modal_id,
-        onclick=_close_modal_js(modal_id),
-        cls="""
-            fixed inset-0 z-[70]
-            flex items-center justify-center
-            bg-slate-800/30 backdrop-blur-lg
-            px-4
-            opacity-0 invisible pointer-events-none
-            transition-opacity duration-200
-        """,
+        modal_id=modal_id,
+        card_cls="gap-3",
     )
 
 
@@ -655,14 +598,14 @@ def _injection_row(injection):
                 "Edit",
                 type="button",
                 cls="web_button px-3 py-1 text-xs",
-                onclick=f"event.stopPropagation();{_open_modal_js(f'settings_injection_edit_{injection.id}')}",
+                onclick=f"event.stopPropagation();{open_modal_js(f'settings_injection_edit_{injection.id}')}",
             ),
             Button(
                 "Delete",
                 type="button",
                 cls="web_button px-3 py-1 text-xs text-white",
                 style="background-color:#b91c1c;border-color:#b91c1c;",
-                onclick=f"event.stopPropagation();{_open_modal_js(f'settings_injection_delete_{injection.id}')}",
+                onclick=f"event.stopPropagation();{open_modal_js(f'settings_injection_delete_{injection.id}')}",
             ),
             id=actions_id,
             cls="hidden flex items-center justify-end gap-2 pt-2",
@@ -739,10 +682,7 @@ def injections_settings_page(first_chunk):
                 "Back",
                 type="button",
                 cls="web_button self-start px-3 py-1.5 text-sm",
-                hx_get="/settings",
-                hx_target="#main_content",
-                hx_swap="innerHTML",
-                hx_push_url="true",
+                onclick=back_js("/settings"),
             ),
             cls="w-full flex justify-start",
         ),
