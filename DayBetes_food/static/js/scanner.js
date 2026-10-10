@@ -53,9 +53,8 @@
       scannerState.zxingReader.reset();
       scannerState.zxingReader = null;
     }
-    if (scannerState.modal) {
-      scannerState.modal.classList.remove("opacity-100");
-      scannerState.modal.classList.add("opacity-0", "invisible", "pointer-events-none");
+    if (scannerState.modal && window.dbCloseModal) {
+      window.dbCloseModal(scannerState.modal.id);
     }
     scannerState = null;
   }
@@ -158,15 +157,13 @@
     function showModal(code) {
       state.pendingConfirmCode = code;
       state.modalCode.textContent = code;
-      state.modal.classList.remove("invisible", "opacity-0", "pointer-events-none");
-      state.modal.classList.add("opacity-100");
+      window.dbOpenModal(state.modal.id);
       state.modalYes.disabled = false;
       state.modalNo.disabled = false;
     }
 
     function hideModal() {
-      state.modal.classList.remove("opacity-100");
-      state.modal.classList.add("opacity-0", "invisible", "pointer-events-none");
+      window.dbCloseModal(state.modal.id);
     }
 
     function requestConfirmation(code) {

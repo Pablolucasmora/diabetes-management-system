@@ -1442,7 +1442,7 @@ def setup_food_routes(rt):
                         cls="flex flex-col items-start",
                     ),
                     type="button",
-                    cls="w-full text-left px-2.5 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50",
+                    cls="w-full text-left px-2.5 py-2 rounded-xl border border-line-soft bg-white hover:bg-control",
                     data_rescue_pick="true",
                     data_entry_type=str(row.get("entry_type") or ""),
                     data_entry_id=str(int(row.get("entry_id") or 0)),
@@ -2256,6 +2256,7 @@ def setup_food_routes(rt):
         final_state: str = "",
         conservation: str = "",
         is_cooked_weight: str = "",
+        strictly_weighed: str | None = None,
     ):
         """Add a food or a recipe from its page to a planned event.
 
@@ -2266,6 +2267,11 @@ def setup_food_routes(rt):
         (`%` of the total or `g`). Only the plated amount is persisted; the
         cooked total is used to bound it and is not stored (decision
         2026-09-18). The JavaScript only repaints the numbers.
+
+        `strictly_weighed` is the tri-state control of the page, which starts
+        on the food's default (measurement_conventions.md §6.11): what it
+        sends is what the portion is born with. Absent (a request without the
+        control), the food's default applies as on every other path.
         """
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -2276,6 +2282,10 @@ def setup_food_routes(rt):
             cooked_weight = _parse_strict_bool(is_cooked_weight)
         except ValidationError:
             return app_error_response(request, ValidationError, "The 'Cooked weight' checkbox could not be read.")
+        try:
+            chosen_weighed = _parse_optional_bool(strictly_weighed)
+        except ValidationError:
+            return app_error_response(request, ValidationError, "The 'Strictly weighted' value could not be read.")
         try:
             unit = AmountInputUnit((amount_unit or "").strip())
             plated_unit = AmountInputUnit((plate_unit or "").strip())
@@ -2374,6 +2384,8 @@ def setup_food_routes(rt):
                     offset_minutes = _event_auto_offset_minutes(event_data)
 
                     if entry_type != "recipe":
+                        if strictly_weighed is not None:
+                            portion_defaults["strictly_weighed"] = chosen_weighed
                         target_plate_id = _resolve_event_plate(
                             connection, int(user_id), event_id, plate_id, offset_minutes
                         )

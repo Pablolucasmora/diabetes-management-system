@@ -65,6 +65,15 @@ def food_main(connection):
     )
 
     return Div(
+        # Blurs the whole page behind an open menu of the header
+        # (static/js/food_quick_create.js). It is a single fixed layer with
+        # backdrop-filter, instead of `filter: blur()` on each element: Safari
+        # and Chrome paint coloured seams on blurred layers inside the glass
+        # header (frontend_conventions.md §8).
+        Div(
+            id="food_menu_scrim",
+            cls="fixed inset-0 z-[1] backdrop-blur-[1px] opacity-0 invisible transition-opacity duration-200",
+        ),
         QuickCreateButtons(),
         SearchInput(),
         Filters(),
@@ -77,18 +86,12 @@ def food_main(connection):
         id="food_top_bar",
         cls="""
             flex flex-col items-center
-            justify-between lg:gap-4 md:gap-4 gap-3 md:w-lg lg:w-lg w-sm
-            fixed inset-x-0 mx-auto
-            top-0 pt-2 md:pt-7 lg:pt-7
+            justify-between lg:gap-3 md:gap-3 gap-2.5 md:w-2xl lg:w-2xl w-full
+            sticky mx-auto
+            top-0 pt-2 md:pt-7 lg:pt-7 pb-2
             z-[600]
-            bg-[#f6f2eb] border-b-[1px] border-white
+            web_glass_strong rounded-b-3xl
         """,
-        style=(
-            "transform: translateZ(0);"
-            "-webkit-transform: translateZ(0);"
-            "backface-visibility: hidden;"
-            "-webkit-backface-visibility: hidden;"
-        ),
     ), Div(
         Div(
             "Loading...",
@@ -100,8 +103,5 @@ def food_main(connection):
             cls="flex flex-col items-center md:gap-3 lg:gap-3 gap-2 mt-4 transition-all duration-150 ease-out",
         ),
         id="food_list_wrapper",
-        cls="""md:pt-[240px] lg:pt-[240px]
-               pt-[170px]
-               md:mb-50 lg:mb-50 mb-36
-        """,
+        cls="""md:mb-50 lg:mb-50 mb-36""",
     )

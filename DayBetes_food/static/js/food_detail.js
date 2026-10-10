@@ -436,3 +436,25 @@
     persist(root, refs);
   });
 })();
+
+// Tri-state check of the food page (`_weighed_tristate_field` in
+// components/food/foods.py): no data -> true -> false -> no data, the same
+// cycle as the cart. Only the hidden field and the look change here; the
+// value is saved when the food is added.
+window.dbCycleTriState = function (button, fieldId) {
+  var field = document.getElementById(fieldId);
+  if (!field) return;
+  var next = { "": "true", "true": "false", "false": "" }[field.value || ""];
+  var look = {
+    "true": ["✓", "#111827", "#111827", "#ffffff"],
+    "false": ["", "#ffffff", "#9ca3af", "#111827"],
+    "": ["", "#ffffff", "#d1d5db", "#111827"]
+  }[next];
+  field.value = next;
+  button.textContent = look[0];
+  button.style.backgroundColor = look[1];
+  button.style.borderColor = look[2];
+  button.style.color = look[3];
+  var dash = button.parentElement.querySelector("[data-tristate-dash]");
+  if (dash) dash.classList.toggle("hidden", next !== "");
+};

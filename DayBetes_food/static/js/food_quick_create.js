@@ -10,59 +10,21 @@
     return document.getElementById(id);
   }
 
+  // Blurs the page behind an open menu with the header's scrim, a single
+  // fixed layer with backdrop-filter (food_main.py); nothing gets `filter`.
+  // The header switches its own glass off meanwhile: a backdrop-filter
+  // inside another one paints seams in Safari, and while the header has it
+  // the fixed scrim would only cover the header (frontend_conventions.md §8).
   function setBackgroundBlur(open) {
-    var wrapper = byId("food_list_wrapper");
     var topBar = byId("food_top_bar");
-    var cart = byId("cart_button");
-    var blurValue = open ? "blur(1px)" : "";
-
-    if (open) {
-      if (wrapper) {
-        wrapper.style.filter = blurValue;
-        wrapper.style.transition = "filter 180ms ease";
-        wrapper.style.pointerEvents = "none";
-      }
-      if (topBar) {
-        var children = topBar.children || [];
-        for (var i = 0; i < children.length; i += 1) {
-          var child = children[i];
-          if (child && child.getAttribute && child.getAttribute("data-quick-create-root") === "true") continue;
-          if (child) {
-            child.style.filter = blurValue;
-            child.style.transition = "filter 180ms ease";
-            child.style.pointerEvents = "none";
-          }
-        }
-      }
-      if (cart) {
-        cart.style.filter = blurValue;
-        cart.style.transition = "filter 180ms ease";
-        cart.style.pointerEvents = "none";
-      }
-      return;
-    }
-
-    if (wrapper) {
-      wrapper.style.filter = "";
-      wrapper.style.transition = "";
-      wrapper.style.pointerEvents = "";
-    }
+    var scrim = byId("food_menu_scrim");
     if (topBar) {
-      var topChildren = topBar.children || [];
-      for (var j = 0; j < topChildren.length; j += 1) {
-        var topChild = topChildren[j];
-        if (topChild && topChild.getAttribute && topChild.getAttribute("data-quick-create-root") === "true") continue;
-        if (topChild) {
-          topChild.style.filter = "";
-          topChild.style.transition = "";
-          topChild.style.pointerEvents = "";
-        }
-      }
+      topBar.style.backdropFilter = open ? "none" : "";
+      topBar.style.webkitBackdropFilter = open ? "none" : "";
     }
-    if (cart) {
-      cart.style.filter = "";
-      cart.style.transition = "";
-      cart.style.pointerEvents = "";
+    if (scrim) {
+      scrim.classList.toggle("opacity-0", !open);
+      scrim.classList.toggle("invisible", !open);
     }
   }
 
