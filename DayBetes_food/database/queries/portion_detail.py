@@ -16,8 +16,6 @@ from psycopg import sql
 
 from DayBetes_food.database.mappers import portion_detail_read_from_row
 from DayBetes_food.database.queries.crud import (
-    RawSQL,
-    _build_update_query,
     _execute_query,
     _execute_query_many,
 )
@@ -521,7 +519,6 @@ def update_portion_detail_fields(
     nothing to update", never for an error (3.4).
     """
     params = {"id": portion_id}
-    null_fields = set()
     resolved = {}
     for field in _PREPARATION_FIELDS:
         value = getattr(data, field)
@@ -529,7 +526,6 @@ def update_portion_detail_fields(
             continue
         if value is CLEAR:
             params[field] = None
-            null_fields.add(field)
             resolved[field] = None
         else:
             validated = validate_preparation_choice(field, value)
@@ -554,15 +550,24 @@ def update_portion_detail_fields(
             _merge_into_sibling(connection, user_id, portion_id, sibling_id, commit)
             return True
 
-    query = _build_update_query(
-        "portion_detail",
-        params,
-        null_fields=null_fields,
-        raw_fields={"updated_at": RawSQL.NOW},
-        extra_where=sql.SQL(_PORTION_OWNED_BY_USER),
+    # Written out instead of `_build_update_query`: the ownership clause
+    # starts with its own AND and uses the `pd` alias, which the generic
+    # builder neither expects nor declares (same shape as update_portion_flag).
+    query = sql.SQL(
+        """
+        UPDATE portion_detail pd
+        SET {assignments}, updated_at = NOW()
+        WHERE pd.id = %(id)s
+        {owned}
+        RETURNING pd.id;
+        """
+    ).format(
+        assignments=sql.SQL(", ").join(
+            sql.SQL("{} = {}").format(sql.Identifier(field), sql.Placeholder(field))
+            for field in resolved
+        ),
+        owned=sql.SQL(_PORTION_OWNED_BY_USER),
     )
-    if query is None:
-        return False
     params["user_id"] = user_id
     result = _execute_query(connection, query, params, commit=commit)
     if not result:
