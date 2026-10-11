@@ -11,6 +11,7 @@ from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.food.food_main import food_main, plate_selector_options
 from DayBetes_food.components.ui import render_fragment, render_page
 from DayBetes_food.http_errors import app_error_response, request_id
+from DayBetes_food.services.intake_event import confirm_planned_event
 from DayBetes_food.database.queries import (
     create_catalog_item,
     list_catalog_items,
@@ -52,6 +53,10 @@ from DayBetes_food.database.queries import (
     set_entry_tags,
     get_consumed_food_usage_rankings,
     get_rescue_entries_suggestions,
+    add_entry_tag,
+    remove_entry_tag,
+    entry_has_tag,
+    update_intake_event,
     update_portion_amount,
     update_portion_detail_fields,
     delete_portion_detail,
@@ -126,6 +131,13 @@ from DayBetes_food.domain.portion_detail import (
 )
 from DayBetes_food.integrations.open_food_facts import fetch_product_prefill
 from DayBetes_food.components.food.foods import FoodSectionsContent, FoodCard, FavoriteButton, on_after
+from DayBetes_food.components.food.rescue import (
+    RescueForm,
+    RescueFormError,
+    RescueLine,
+    RescueMarkButton,
+    RescueOptions,
+)
 from DayBetes_food.components.food.foods import catalog_entry_view, manual_intake_entry_view
 from DayBetes_food.components.food.foods import (
     CONFIDENCE_LABELS,
@@ -148,11 +160,11 @@ from DayBetes_food.components.food.foods import (
     PlateSelector,
 )
 from DayBetes_food.database.connection import get_connection
-from DayBetes_food.domain.constants import IntakeEventState, MealType
-from DayBetes_food.domain.intake_event import INTAKE_EVENT_NAME_MAX_LENGTH, IntakeEventCreate
+from DayBetes_food.domain.constants import RESCUE_TAG_NAME, IntakeEventState, MealType
+from DayBetes_food.domain.intake_event import INTAKE_EVENT_NAME_MAX_LENGTH, IntakeEventCreate, IntakeEventUpdate
 from DayBetes_food.domain.intake_plate import IntakePlateCreate
 from DayBetes_food.domain.meal_type_schedule import resolve_meal_type_for_time
-from DayBetes_food.time_utils import local_naive_to_utc_aware, local_now, local_today, utc_now
+from DayBetes_food.time_utils import local_naive_to_utc_aware, local_now, utc_now
 from DayBetes_food.errors import (
     AuthenticationError,
     AuthorizationError,
@@ -599,6 +611,28 @@ def _quick_add_create(req: QuickAddRequest, user_id: int) -> ManualIntakeCreate:
         macros_quality=None,
         default_strictly_weighed=False,
         is_quick_add=True,
+    )
+
+
+def _get_rescue_food(connection, user_id: int, origin: PortionOrigin, entry_id: int):
+    """A food or dish of the rescue pop-up, read with the SQL visibility rule.
+    None if the user cannot see it."""
+    if origin is PortionOrigin.CATALOG:
+        return get_catalog_item(connection, user_id, entry_id)
+    return get_manual_intake(connection, user_id, entry_id)
+
+
+def _rescue_error(message: str):
+    """Validation error of the rescue pop-up: 200 + message inside the form (§9.5)."""
+    return render_fragment(RescueFormError(message))
+
+
+def _has_rescue_tag(tags) -> bool:
+    """Whether the detail's tags include the rescue one (§9.6)."""
+    wanted = RESCUE_TAG_NAME.lower()
+    return any(
+        str((tag.get("name") if isinstance(tag, dict) else tag) or "").strip().lower() == wanted
+        for tag in (tags or [])
     )
 
 
@@ -1417,123 +1451,190 @@ def setup_food_routes(rt):
             tags = get_tag_suggestions(connection, search=(q or "").strip(), limit=500)
         return JSONResponse({"tags": tags})
 
+    # Rescue pop-up and provisional Rescue button (frontend_conventions.md §9.6).
+
+    @rt("/food/rescue/form")
+    def get(request: Request):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        # The initial food list travels with the form: a single response,
+        # so the pop-up opens complete instead of growing twice (§9.6).
+        with get_connection() as connection:
+            rows = get_rescue_entries_suggestions(connection, user_id=int(user_id), search="", limit=30)
+        now = local_now()
+        return render_fragment(RescueForm(now.strftime("%Y-%m-%d"), now.strftime("%H:%M"), rows))
+
     @rt("/food/rescue/options")
     def get(request: Request, q: str = ""):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
         with get_connection() as connection:
-            user_id = get_current_user_id()
-            if not user_id:
-                return render_fragment(P("No user.", cls="text-xs text-red-700"))
             rows = get_rescue_entries_suggestions(connection, user_id=int(user_id), search=(q or "").strip(), limit=30)
-        if not rows:
-            return render_fragment(P("No rescue items found.", cls="text-xs text-gray-600 px-1 py-1"))
-        nodes = []
-        for row in rows:
-            name = str(row.get("name") or "").strip() or "Unnamed"
-            subtitle = str(row.get("subtitle") or "").strip()
-            available_g = row.get("available_g")
-            serving_g = row.get("serving_g")
-            nodes.append(
-                Button(
-                    Div(
-                        Span(name, cls="font-semibold text-gray-900 text-sm"),
-                        Span(subtitle or row.get("entry_type") or "", cls="text-[11px] text-gray-500"),
-                        cls="flex flex-col items-start",
-                    ),
-                    type="button",
-                    cls="w-full text-left px-2.5 py-2 rounded-xl border border-line-soft bg-white hover:bg-control",
-                    data_rescue_pick="true",
-                    data_entry_type=str(row.get("entry_type") or ""),
-                    data_entry_id=str(int(row.get("entry_id") or 0)),
-                    data_entry_name=name,
-                    data_serving_g=("" if serving_g is None else f"{float(serving_g):.3f}"),
-                    data_available_g=("" if available_g is None else f"{float(available_g):.3f}"),
-                )
-            )
-        return render_fragment(Div(*nodes, cls="flex flex-col gap-1"))
+        return render_fragment(RescueOptions(rows, searching=bool((q or "").strip())))
 
-    @rt("/food/rescue/log")
-    def post(
-        request: Request,
-        entry_type: str = "",
-        entry_id: str = "",
-        meal_hour: str = "",
-        consumed_g: str = "",
-    ):
+    @rt("/food/rescue/line/{entry_type}/{entry_id}")
+    def get(request: Request, entry_type: str, entry_id: int):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
-        origin_id = _to_int(entry_id)
-        meal_t = _parse_hhmm(meal_hour)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
         try:
-            origin = PortionOrigin((entry_type or "").strip())
+            origin = PortionOrigin(entry_type)
         except ValueError:
-            origin = None
-        if origin is None or not origin_id:
-            return render_fragment(P("Choose a rescue item.", cls="text-xs text-red-700"))
-        try:
-            # Finite, > 0 and <= 100000 g (decision 2026-09-22), validated here
-            # so the form gets its own message instead of a CHECK violation.
-            grams = parse_amount_grams(_to_float(consumed_g))
-        except ValidationError:
-            return render_fragment(
-                P("Consumed amount must be greater than 0 g and at most 100000 g.", cls="text-xs text-red-700")
-            )
-        if not meal_t:
-            return render_fragment(P("Choose a valid time.", cls="text-xs text-red-700"))
-
-        local_dt = datetime.combine(local_today(), meal_t)
-        utc_dt = local_naive_to_utc_aware(local_dt)
+            return app_error_response(request, NotFoundError, "Food not found.")
         with get_connection() as connection:
-            user_id = get_current_user_id()
-            if not user_id:
-                return app_error_response(request, AuthenticationError, "Your session has expired.")
-            if origin is PortionOrigin.CATALOG:
-                item = get_catalog_item(connection, int(user_id), int(origin_id))
-            else:
-                item = get_manual_intake(connection, int(user_id), int(origin_id))
-            if item is None:
-                return app_error_response(request, NotFoundError, "Rescue item not found.")
-            portion_defaults = _portion_defaults(item)  # measurement §6.11
+            item = _get_rescue_food(connection, int(user_id), origin, entry_id)
+        if item is None:
+            return app_error_response(request, NotFoundError, "Food not found.")
+        return render_fragment(
+            RescueLine(origin.value, int(item.id), item.name, item.default_portion)
+        )
+
+    @rt("/food/rescue/log")
+    async def post(request: Request):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        form = await request.form()
+        entry_types = form.getlist("entry_type")
+        entry_ids = form.getlist("entry_id")
+        amount_values = form.getlist("amount_value")
+        amount_units = form.getlist("amount_unit")
+        if not entry_types:
+            return _rescue_error("Choose at least one food.")
+        if not (len(entry_types) == len(entry_ids) == len(amount_values) == len(amount_units)):
+            return _rescue_error("The rescue lines are incomplete.")
+
+        meal_t = _parse_hhmm(str(form.get("meal_hour") or ""))
+        try:
+            meal_d = date.fromisoformat(str(form.get("meal_date") or "").strip())
+        except ValueError:
+            meal_d = None
+        if meal_t is None or meal_d is None:
+            return _rescue_error("Choose a valid date and time.")
+        # Any moment is accepted, also a future one (§9.6, decision 2026-09-06).
+        meal_time = local_naive_to_utc_aware(datetime.combine(meal_d, meal_t))
+
+        # HTTP payload validation that does not depend on the database (§7.1).
+        lines = []
+        for raw_type, raw_id, raw_value, raw_unit in zip(entry_types, entry_ids, amount_values, amount_units):
+            try:
+                origin = PortionOrigin(str(raw_type).strip())
+                unit = AmountInputUnit(str(raw_unit).strip())
+            except ValueError:
+                return _rescue_error("A rescue line is not valid.")
+            origin_id = _to_int(str(raw_id))
+            value = _to_float(str(raw_value))
+            if not origin_id:
+                return _rescue_error("A rescue line is not valid.")
+            if unit is AmountInputUnit.PERCENT:
+                return _rescue_error("Use grams, servings, lb or oz.")
+            if value is None:
+                return _rescue_error("Enter an amount for every food.")
+            lines.append((origin, int(origin_id), value, unit))
+
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        with get_connection() as connection:
+            # The foods are read with the SQL visibility rule, and the serving
+            # comes from the database, never from the form (§7.13).
+            portions = []
+            for origin, origin_id, value, unit in lines:
+                item = _get_rescue_food(connection, int(user_id), origin, origin_id)
+                if item is None:
+                    return app_error_response(request, NotFoundError, "Rescue food not found.")
+                try:
+                    grams = parse_amount_grams(amount_to_grams(value, unit, item.default_portion))
+                except ValidationError:
+                    if unit is AmountInputUnit.PORTION and item.default_portion is None:
+                        return _rescue_error(f"{item.name} has no serving. Use grams, lb or oz.")
+                    return _rescue_error("Each amount must be greater than 0 g and at most 100000 g.")
+                portions.append((origin, origin_id, grams, _portion_defaults(item)))
+
             try:
                 with connection.transaction():
                     event_id = create_intake_event(
                         connection,
                         IntakeEventCreate(
                             user_id=int(user_id),
-                            state=IntakeEventState.CONSUMED,
+                            state=IntakeEventState.PLANNED,
                             meal_type=MealType.RESCUE,
-                            meal_time=utc_dt,
+                            meal_time=meal_time,
                         ),
                         commit=False,
                     )
-                    # A rescue is a single intake: it is born with its own plate
-                    # and offset 0, the same the portion already had (§4.6.1).
+                    # A rescue never carries insulin (§9.6): without this the
+                    # column DEFAULT TRUE would create an automatic injection.
+                    update_intake_event(
+                        connection,
+                        user_id=int(user_id),
+                        event_id=int(event_id),
+                        data=IntakeEventUpdate(insulin_dose=False),
+                        commit=False,
+                    )
+                    # A single plate with offset 0 (measurement_conventions.md §4.6.1).
                     plate_id = create_intake_plate(
                         connection,
                         IntakePlateCreate(intake_event_id=int(event_id), offset_minutes=0),
                         commit=False,
                     )
-                    create_portion_detail(
-                        connection,
-                        int(user_id),
-                        PortionDetailCreate(
-                            origin=origin,
-                            origin_id=int(origin_id),
-                            destination=PortionDestination.INTAKE_EVENT,
-                            destination_id=int(event_id),
-                            amount=grams,
-                            offset_minutes=0,
-                            plate_id=plate_id,
-                            **portion_defaults,
-                        ),
-                        commit=False,
-                    )
+                    for origin, origin_id, grams, defaults in portions:
+                        # A repeated food with the same preparation is merged (§4.6.4).
+                        create_portion_detail(
+                            connection,
+                            int(user_id),
+                            PortionDetailCreate(
+                                origin=origin,
+                                origin_id=origin_id,
+                                destination=PortionDestination.INTAKE_EVENT,
+                                destination_id=int(event_id),
+                                amount=grams,
+                                offset_minutes=0,
+                                plate_id=plate_id,
+                                **defaults,
+                            ),
+                            commit=False,
+                        )
+                    # Same confirm as the cart, at 100 % (§6.9.1).
+                    confirm_planned_event(connection, int(user_id), int(event_id))
             except NotFoundError:
-                return app_error_response(request, NotFoundError, "Meal event not found.")
+                return app_error_response(request, NotFoundError, "Rescue food not found.")
             except ConflictError:
-                return app_error_response(request, ConflictError, "That meal has already been confirmed.")
-        return render_fragment(P("Rescue registered.", cls="text-xs text-green-700"))
+                return app_error_response(request, ConflictError, "The rescue could not be registered.")
+            except ValidationError:
+                return _rescue_error("The total amount must be at most 100000 g.")
+        return HTMLResponse("", headers={"HX-Trigger": "rescueRegistered"})
+
+    @rt("/food/rescue/mark/{entry_type}/{entry_id}")
+    def post(request: Request, entry_type: str, entry_id: int, rescue: str = ""):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        try:
+            origin = PortionOrigin(entry_type)
+            marked = _parse_strict_bool(rescue)
+        except (ValueError, ValidationError):
+            return app_error_response(request, ValidationError, "The request is not valid.")
+        with get_connection() as connection:
+            item = _get_rescue_food(connection, int(user_id), origin, entry_id)
+            # Only the owner of an active food changes its tags (§9.6).
+            if item is None or not item.can_edit:
+                return app_error_response(request, NotFoundError, "Food not found.")
+            if marked:
+                add_entry_tag(connection, origin.value, entry_id, RESCUE_TAG_NAME)
+            else:
+                remove_entry_tag(connection, origin.value, entry_id, RESCUE_TAG_NAME)
+            is_rescue = entry_has_tag(connection, origin.value, entry_id, RESCUE_TAG_NAME)
+        return render_fragment(RescueMarkButton(origin.value, entry_id, is_rescue))
 
     @rt("/food/item/{entry_type}/{entry_id}")
     def get(request: Request, entry_type: str, entry_id: int):
@@ -1569,6 +1670,7 @@ def setup_food_routes(rt):
                         is_library=item.is_library,
                         has_serving=item.default_portion is not None,
                         cooking_factor=item.cooking_factor,
+                        is_rescue=_has_rescue_tag(tags),
                     ),
                     show_cart=False,
                 )
@@ -1602,6 +1704,7 @@ def setup_food_routes(rt):
                         is_archived=manual_item.is_archived,
                         has_serving=manual_item.default_portion is not None,
                         cooking_factor=None,
+                        is_rescue=_has_rescue_tag(tags),
                     ),
                     show_cart=False,
                 )

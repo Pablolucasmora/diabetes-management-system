@@ -251,20 +251,79 @@ Se construyen con los bloques de `components/food/foods.py`. No se monta un form
 
 ### 9.2 Inicio
 
-Arriba, el saludo con el nombre de usuario (`Hi <usuario>`). Debajo, en este orden: la comida en curso (*Current meal*, que abre el carrito), las formas de añadir comida y la inyección.
+Arriba, el saludo con el nombre de usuario (`Hi <usuario>`). Debajo, en este orden: la comida en curso (*Current meal*, que abre el carrito), las formas de añadir comida, la inyección y el rescate (`Log rescue`, §9.6).
 
 ### 9.3 Food
 
-- La cabecera es fija arriba (`sticky`) y usa `web_glass_strong` (§8). Lleva el menú del rayo y el menú "+", el buscador, los filtros y el selector de comida (*Add to*). Mientras uno de sus menús está abierto, la capa `#food_menu_scrim` desenfoca el resto de la página (§8).
+- La cabecera es fija arriba (`sticky`) y usa `web_glass_strong` (§8). Lleva el botón del rayo, que abre el pop-up de rescate (§9.6), el menú "+", el buscador, los filtros y el selector de comida (*Add to*). Mientras el menú "+" está abierto, la capa `#food_menu_scrim` desenfoca el resto de la página (§8).
 - Cada alimento de la lista es una tarjeta con el nombre, la marca u origen debajo y los carbohidratos por 100 g. Los propios llevan la etiqueta `Mine` y los archivados, `Archived`. Las listas van agrupadas bajo etiquetas de sección (`web_section_label`).
 
 ### 9.4 Detalle de un alimento, plato o receta
 
-De arriba abajo: el nombre y sus datos, *Add to*, la cantidad (con *Advanced* para la preparación), `Strictly weighted` (§7.1, `measurement_conventions.md` §6.11), *Macros Summary* y *Details*. Entra bloque a bloque (§10).
+De arriba abajo: el nombre y sus datos, *Add to*, la cantidad (con *Advanced* para la preparación), `Strictly weighted` (§7.1, `measurement_conventions.md` §6.11), *Macros Summary* y *Details*. Entra bloque a bloque (§10). En un alimento o plato propio y activo aparece además el botón `Rescue` (§9.6).
 
 ### 9.5 Carrito
 
 La página empieza con la etiqueta `CART`, el título *Planned meals* y una línea que explica qué hacer. Cada comida es una tarjeta con la estructura de §7.1.
+
+### 9.6 Rescate
+
+Decisión 2026-10-11. Un rescate es lo que se toma para tratar una hipoglucemia. Se registra desde un pop-up y crea directamente una comida ya consumida.
+
+**Dónde está**
+
+- El botón del rayo de la cabecera de Food (§9.3) y el botón `Log rescue` de Inicio (§9.2) abren el mismo pop-up (`ModalLayer`, §8, id `rescue_modal`). No hay panel desplegable.
+- El contenido del pop-up se pide al servidor cada vez que se abre (`GET /food/rescue/form`). Así la fecha y la hora son las de ese momento y el formulario sale vacío. La respuesta trae ya la lista inicial de alimentos, y `static/js/rescue.js` abre el pop-up cuando llega: se pinta completo, con una sola animación de entrada (§10), en vez de abrirse vacío y crecer por partes.
+
+**Qué alimentos se ofrecen**
+
+- Con el buscador vacío salen los alimentos de rescate: los que tienen la etiqueta de rescate y los que este usuario ya ha usado en comidas `rescue`, primero los usados más recientemente.
+- Al escribir, se busca en todos los alimentos (`catalog`) y platos (`manual_intake`) que el usuario puede ver, con la misma regla de visibilidad que el resto de búsquedas, incluidos los archivados que conserva (`code_conventions.md` §11.2). Los de rescate van primero.
+- Cada opción es una fila `control` compacta (§8) con el nombre y, debajo, la marca u origen y los hidratos del alimento (por ración si la tiene, si no por 100 g). La lista tiene una altura máxima con scroll propio. Sin alimentos de rescate, una línea explica que basta con buscar cualquiera y que los registrados aparecerán ahí.
+- La etiqueta se identifica por la constante `RESCUE_TAG_NAME` de `domain/constants.py`, con el valor `rescate` que ya está guardado (un valor persistido no se renombra, `code_conventions.md` §4.2). Su nombre no se escribe a mano en el SQL.
+
+**Líneas**
+
+- Al elegir un alimento se añade su línea (nombre, cantidad, unidad y un botón para quitarla) y el buscador se oculta. `+ Add another food` lo vuelve a mostrar para añadir otra línea. Si se quitan todas, el buscador vuelve a aparecer.
+- La línea la pinta el servidor (`GET /food/rescue/line/{entry_type}/{entry_id}`): el nombre con un botón para quitarla y, debajo, la cantidad con botones − y + y la unidad. Los botones − y + solo mueven el número en el navegador (1 ración, 10 g, 1 oz, 0,25 lb) y nunca lo bajan a 0. La unidad es un `<select>` de `AmountInputUnit` sin `%`: `portion` solo aparece si el alimento tiene ración, y entonces la línea nace con `1 portion`. Sin ración, nace en `g` y con la cantidad vacía.
+- Se envían `amount_value` y `amount_unit` por línea. El servidor convierte a gramos con `amount_to_grams` y lee la ración del alimento en la base, nunca de un campo oculto (decisión 2026-09-22, `code_conventions.md` §7.13).
+- No hay "% comido" ni "sobrante": no se guardan en ningún sitio (§6).
+- **Elegir un alimento que ya está en la lista no añade otra línea: suma a la existente**, como el carrito. Si la línea está en raciones, suma 1 ración; si está en gramos y el alimento tiene ración, suma su peso en gramos. En oz, lb o sin ración no hay una cantidad fiable que sumar, y la línea solo se resalta para que el usuario la ajuste. Al guardar, el servidor fusiona igualmente las porciones repetidas (§4.6.4).
+- **Ningún campo se enfoca solo** (ni al elegir un alimento, ni al quitarlo, ni al abrir el pop-up): en el móvil abriría el teclado sin que el usuario lo pida.
+- No se guarda estado del pop-up en `localStorage`.
+
+**Diseño**
+
+- Compacto, para que quepa en la pantalla de un móvil: el título `Rescue` con una × para cerrar, el buscador, la lista, las líneas, la fecha y la hora en una fila sin etiqueta, y *Cancel* / *Log rescue* a todo el ancho. Sin textos de ayuda fijos.
+- Nada sobresale de la tarjeta en el móvil. Un nombre de alimento largo ocupa como mucho dos líneas y después se corta con "…" (`line-clamp-2`, `break-words` para una palabra sin espacios). La fecha y la hora van en columnas `minmax(0, 1fr)` con `appearance-none` y el texto centrado, porque iOS da a esos controles nativos un ancho propio mayor que la columna (§3).
+
+**Fecha y hora**
+
+- Dos campos, `date` y `time`, rellenos con el momento de abrir el pop-up y editables. Se admite cualquier momento, también futuro, con el mismo criterio que las inyecciones (decisión 2026-09-06).
+
+**Qué se guarda** (`POST /food/rescue/log`)
+
+- Cada envío crea un evento nuevo, aunque haya un rescate reciente: `meal_type = rescue`, `insulin_dose = FALSE` (un rescate no lleva insulina y nunca crea una inyección automática), una sola tanda con offset 0 y una porción por línea. Si un alimento se repite con la misma preparación, se suman sus cantidades (`measurement_conventions.md` §4.6.4).
+- El evento se crea en `planned` y se confirma al 100 % en la misma transacción, con la misma confirmación que usa el carrito (`services/intake_event.py`). Así calcula `ingested_amount` y `amount_confidence` con las mismas reglas que cualquier comida (`measurement_conventions.md` §6.9.1).
+- Todo va en una transacción. Si una línea no es válida, no se guarda nada.
+
+**Respuestas HTMX**
+
+| Acción | `hx-target` | `hx-swap` | Éxito | Error |
+|---|---|---|---|---|
+| `GET /food/rescue/form` | `#rescue_modal_body` | `innerHTML` | el formulario, con la lista inicial de alimentos dentro | sin sesión: `401` por el canal de errores |
+| `GET /food/rescue/options?q=` (solo al escribir en el buscador) | `#rescue_picker_results` | `innerHTML` | la lista de alimentos | — |
+| `GET /food/rescue/line/{entry_type}/{entry_id}` | `#rescue_lines` | `beforeend` | una línea | `404` por el canal de errores (`error_conventions.md` §7.1) |
+| `POST /food/rescue/log` | `#rescue_form_error` | `innerHTML` | cuerpo vacío y el evento `rescueRegistered` (`HX-Trigger`). `static/js/rescue.js` cierra el pop-up y muestra el aviso de éxito `Rescue registered` (`dbShowAppNotice`, `error_conventions.md` §7.1) | validación: `200` y el mensaje en `#rescue_form_error` (`code_conventions.md` §9.5). Sesión, alimento inexistente o conflicto: su status por el canal de errores |
+
+Todas exigen el header `HX-Request` (`403` si falta).
+
+**Marcar un alimento como rescate (provisional)**
+
+- Mientras la interfaz de etiquetas siga oculta (`TAGS_UI_ENABLED = False`), el detalle de un alimento o plato (§9.4) muestra un botón `Rescue` de dos estados (`POST /food/rescue/mark/{entry_type}/{entry_id}`, `rescue=true|false`). Pone o quita **solo** la etiqueta `RESCUE_TAG_NAME` en `linked_tags` y no toca las demás. La respuesta vuelve a pintar el botón con lo que ha quedado guardado (§6).
+- Solo aparece si el usuario puede editar el alimento: es suyo y no está archivado. Es el mismo permiso que hoy permite cambiar sus etiquetas. Solo existe para `catalog` y `manual_intake`, no para recetas. Un alimento de la biblioteca general o de otro usuario se usa una vez buscándolo, y desde entonces sale por el historial.
+- La etiqueta es global: si se marca un alimento publicado, también aparece como rescate a los demás usuarios. Se acepta mientras dure la medida provisional.
+- Cuando vuelva la interfaz de etiquetas, el botón se quita y la etiqueta se gestiona con el selector normal (`audit/deuda_pendiente.md`).
 
 ## 10. Movimiento
 
@@ -277,5 +336,7 @@ Decisión 2026-10-10. Animaciones pequeñas para que los cambios se perciban con
 - La página de detalle de un alimento, un plato o una receta entra bloque a bloque, de arriba abajo, y las tarjetas de macros también (`data-stagger="true"`). Cada bloque se retrasa 40 ms respecto al anterior, con tope a partir del séptimo. El atributo sirve para cualquier página o rejilla que deba entrar así.
 - Lo que muestra una sección plegable (`<details>`) aparece al abrirse.
 - La tarjeta de un pop-up crece mientras aparece su fondo (`data-modal-card`, `components/modal.py`).
+- En el pop-up de rescate (§9.6), al elegir un alimento las opciones se desvanecen y la línea nueva entra cuando ya han desaparecido, para que no se pisen. Al quitar una línea se desvanece, y las opciones y `+ Add another food` aparecen suavemente.
+- **Excepción: la altura de la tarjeta del pop-up de rescate** (decisión 2026-10-11, pedida expresamente por el usuario para este caso). Cuando cambia su contenido (al elegir, sumar o quitar un alimento, al pulsar `+ Add another food`, con resultados nuevos de búsqueda o con un error de validación), la tarjeta pasa de su altura anterior a la nueva en 220 ms en vez de saltar (`static/js/rescue.js`, `animateCardHeight`). Mide la altura antes y después del cambio, anima `height` entre las dos y luego la deja libre. Una línea nueva no ocupa espacio hasta que las opciones se han desvanecido, de modo que la tarjeta cambia de tamaño una sola vez y no crece para luego encoger. Animar `height` obliga a recalcular el layout en cada frame, por eso esta excepción no se extiende a otros componentes sin acordarlo.
 - Los botones (`web_button`) se hunden un poco al pulsarlos (`active:scale-95`). En móvil se quita el resaltado azul del toque.
 - Los repintados parciales (una tarjeta del carrito tras cambiar un valor) **no** se animan: pasan a cada cambio y un parpadeo ahí molesta más de lo que ayuda.

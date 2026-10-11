@@ -165,3 +165,78 @@ class PortionDetailUpdate:
     cooking: CookingMethod | None | Clear = None
     conservation: ConservationMethod | None | Clear = None
     final_state: FoodPhysicalState | None | Clear = None
+
+
+# ============================================
+# Amounts and event metrics over portions
+# ============================================
+
+# Macro of the food and the event uncertainty column it feeds (measurement_conventions.md §6.6).
+MACRO_UNCERTAINTY_KEYS = (
+    ("carbs", "carbs_uncertainty"),
+    ("sugars", "sugars_uncertainty"),
+    ("fats", "fats_uncertainty"),
+    ("saturated", "saturated_uncertainty"),
+    ("proteins", "proteins_uncertainty"),
+    ("fiber", "fiber_uncertainty"),
+)
+
+
+def parse_source_macro(portion, macro_key: str):
+    return getattr(portion.source, f"{macro_key}_100g")
+
+
+def portion_intake_amount(portion) -> float:
+    """Amount of a portion in grams (measurement_conventions.md 4.4).
+
+    `portion_detail` has a single amount column since decision 2026-09-18.
+    """
+    return float(portion.amount)
+
+
+def portion_macro_amount(portion) -> float:
+    """Amount used to compute macros (measurement_conventions.md 5.2).
+
+    catalog macros are expressed per 100 g of RAW food, so a weight taken
+    already cooked is converted back with cooking_factor = cooked/raw. The
+    conversion is never persisted: `amount` keeps what the user weighed
+    (decision 2026-09-18). Only catalog origins; manual_intake has no factor.
+    """
+    amount = float(portion.amount)
+    if not portion.is_cooked_weight or portion.origin is not PortionOrigin.CATALOG:
+        return amount
+    factor = portion.source.cooking_factor
+    if factor is None:
+        # Defence of the calculation for inherited portions (decisions
+        # 2026-09-24 / 2026-09-25), not a default value.
+        return amount
+    return amount / factor if factor > 0 else amount
+
+
+def calculate_macro_summary_metrics(portions) -> dict:
+    total_amount = sum(portion_intake_amount(p) for p in portions)
+    amount_confidence_num = 0.0
+    quality_confidence_num = 0.0
+    for portion in portions:
+        amount = portion_intake_amount(portion)
+        # NULL means "no data" (decision 2026-09-18): it does not add to the
+        # numerator, same as False, but said explicitly instead of `bool()`
+        # (code_conventions.md 3.2: decide whether NULL is zero or absence).
+        amount_confidence_num += amount * (1.0 if portion.strictly_weighed is True else 0.0)
+        # The food's quality, read live (measurement §6.5, §6.11).
+        quality_confidence_num += amount * (1.0 if portion.source.macros_quality is True else 0.0)
+
+    metrics = {
+        "amount_confidence": (amount_confidence_num / total_amount) if total_amount > 0 else 0.0,
+        "quality_confidence": (quality_confidence_num / total_amount) if total_amount > 0 else 0.0,
+    }
+
+    for macro_key, uncertainty_key in MACRO_UNCERTAINTY_KEYS:
+        unknown_amount = 0.0
+        for portion in portions:
+            amount = portion_intake_amount(portion)
+            if parse_source_macro(portion, macro_key) is None:
+                unknown_amount += amount
+        metrics[uncertainty_key] = (unknown_amount / total_amount) if total_amount > 0 else 0.0
+
+    return metrics

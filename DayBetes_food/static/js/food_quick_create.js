@@ -1,7 +1,6 @@
 (function () {
   var MENUS = [
-    { buttonId: "food_quick_create_toggle", menuId: "food_quick_create_menu" },
-    { buttonId: "food_power_toggle", menuId: "food_power_menu" }
+    { buttonId: "food_quick_create_toggle", menuId: "food_quick_create_menu" }
   ];
   var menuOpenId = "";
   var hideTimer = null;

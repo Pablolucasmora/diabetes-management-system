@@ -27,7 +27,9 @@
     429: "Too many requests. Please try again later.",
   };
 
-  function showToast(message) {
+  // `tone` is "error" (default) or "success" (error_conventions.md §7.1):
+  // the same container, painted by its data-tone in static/css/input.css.
+  function showToast(message, tone) {
     if (!message) return;
     var now = Date.now();
     // The same response can arrive through a header and through HX-Trigger:
@@ -41,6 +43,7 @@
     if (!box || !slot) return;
 
     slot.textContent = message;
+    box.setAttribute("data-tone", tone === "success" ? "success" : "error");
     box.classList.remove("opacity-0", "invisible", "pointer-events-none");
     box.classList.add("opacity-100");
 
@@ -50,7 +53,14 @@
       box.classList.add("opacity-0", "invisible", "pointer-events-none");
     }, HIDE_MS);
   }
-  window.dbShowAppToast = showToast;
+  window.dbShowAppToast = function (message) {
+    showToast(message, "error");
+  };
+  // Success notice, only for an action whose result the page does not show
+  // by itself (for example a pop-up that closes).
+  window.dbShowAppNotice = function (message) {
+    showToast(message, "success");
+  };
 
   function messageFromXhr(xhr) {
     if (!xhr) return "";

@@ -63,6 +63,9 @@ from DayBetes_food.database.queries.tags import (
 from DayBetes_food.database.queries.linked_tags import (
     get_entry_tags,
     set_entry_tags,
+    entry_has_tag,
+    add_entry_tag,
+    remove_entry_tag,
 )
 from DayBetes_food.database.queries.user_favorites import (
     toggle_user_favorite,
@@ -182,6 +185,9 @@ __all__ = [
     "update_tag",
     "get_entry_tags",
     "set_entry_tags",
+    "entry_has_tag",
+    "add_entry_tag",
+    "remove_entry_tag",
     "toggle_user_favorite",
     "set_user_favorite",
     "get_subtype_suggestions",

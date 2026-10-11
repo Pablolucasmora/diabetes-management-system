@@ -369,6 +369,17 @@ El aviso se pinta en un contenedor único del layout (`#app_toast`,
 canal de aviso global: no se crean toasts, `alert()` ni contenedores de error
 por página o por componente.
 
+**Tono de éxito** (decisión 2026-10-11). El mismo contenedor admite un segundo
+tono, de éxito, para confirmar una acción cuyo resultado la página no muestra
+por sí sola, como un pop-up que se cierra al guardar (el rescate,
+`frontend_conventions.md` §9.6). No se crea otro contenedor: `#app_toast`
+lleva `data-tone="error"` (por defecto, en rojo) o `data-tone="success"`
+(tarjeta sólida `surface`, texto `ink` y una marca ✓, en
+`static/css/input.css`). Desde JavaScript, los errores se pintan con
+`dbShowAppToast(message)` y los éxitos con `dbShowAppNotice(message)`. Un aviso
+de éxito no se usa cuando la página ya muestra el cambio (una tarjeta
+repintada, una navegación), y nunca sustituye a un error.
+
 El mensaje siempre sale del catálogo de errores (`DayBetes_food/errors.py`) o
 es un texto público más específico de la misma categoría; nunca contiene
 detalles técnicos, identificadores internos ni texto de excepción. Esto
