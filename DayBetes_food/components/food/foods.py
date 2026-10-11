@@ -4,6 +4,7 @@ from fasthtml.common import *
 from DayBetes_food.components.cart.cart_shared import CHECKBOX_CLS
 from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.components.navigation import back_js
+from DayBetes_food.components.food.rescue import RescueMarkButton, RescueModal, rescue_open_attrs
 from DayBetes_food.components.modal import (
     close_modal_js,
     ConfirmActionModal,
@@ -1937,139 +1938,19 @@ def QuickCreateButtons():
         transition-colors duration-150
         flex flex-col items-start justify-between gap-1
     """
-    power_panel_cls = """
-        absolute top-full left-0 z-10 mt-3 bg-surface
-        w-[min(24rem,calc(100vw-1.5rem))]
-        min-w-[18rem]
-        rounded-3xl
-        border border-line-soft
-        shadow-[0_12px_40px_rgba(80,60,40,0.18)]
-        p-3
-    """
     return Div(
         Div(
             Div(
+                # Opens the rescue pop-up (frontend_conventions.md §9.6).
                 Button(
                     Img(src="/images/content/power_icon.svg", alt="", cls="h-6 w-6"),
                     type="button",
-                    aria_label="Open power menu",
+                    aria_label="Log a rescue",
                     cls=menu_button_cls,
-                    id="food_power_toggle",
-                    aria_controls="food_power_menu",
-                    aria_expanded="false",
+                    id="food_rescue_button",
+                    **rescue_open_attrs(),
                 ),
-                Div(
-                    Form(
-                        Input(type="hidden", name="entry_type", id="rescue_entry_type"),
-                        Input(type="hidden", name="entry_id", id="rescue_entry_id"),
-                        Input(type="hidden", name="consumed_g", id="rescue_consumed_g", value="0"),
-                        Input(type="hidden", id="rescue_serving_g", value="100"),
-                        Input(type="hidden", id="rescue_available_g", value="0"),
-                        Div(
-                            Span("Rescue item", cls="text-[11px] text-gray-600"),
-                            Input(
-                                id="rescue_search_input",
-                                name="q",
-                                type="text",
-                                placeholder="Search rescue",
-                                autocomplete="off",
-                                cls="web_input rounded-lg border border-line px-2 py-1 text-sm",
-                            ),
-                            Div(
-                                id="rescue_selected_label",
-                                cls="text-[11px] text-gray-700 min-h-[1rem]",
-                            ),
-                            Div(
-                                id="rescue_picker_results",
-                                hx_get="/food/rescue/options",
-                                hx_trigger="load, keyup changed delay:220ms from:#rescue_search_input",
-                                hx_include="#rescue_search_input",
-                                hx_swap="innerHTML",
-                                cls="max-h-32 overflow-y-auto rounded-xl border border-line-soft bg-white p-1",
-                            ),
-                            cls="flex flex-col gap-1",
-                        ),
-                        Div(
-                            Div(
-                                Span("Time", cls="text-[11px] text-gray-600"),
-                                Input(
-                                    type="time",
-                                    name="meal_hour",
-                                    id="rescue_meal_hour",
-                                    cls="web_input rounded-lg border border-line px-2 py-1 text-sm",
-                                ),
-                                cls="flex flex-col gap-1",
-                            ),
-                            Div(
-                                Span("Unit", cls="text-[11px] text-gray-600"),
-                                Select(
-                                    Option("grams", value="grams"),
-                                    Option("servings", value="servings"),
-                                    id="rescue_unit",
-                                    cls="web_input rounded-lg border border-line px-2 py-1 text-sm",
-                                ),
-                                cls="flex flex-col gap-1",
-                            ),
-                            cls="grid grid-cols-2 gap-2",
-                        ),
-                        Div(
-                            Div(
-                                Span("Amount", cls="text-[11px] text-gray-600"),
-                                Input(
-                                    type="number",
-                                    id="rescue_amount_value",
-                                    step="any",
-                                    min="0",
-                                    value="0",
-                                    cls="web_input rounded-lg border border-line px-2 py-1 text-sm",
-                                ),
-                                cls="flex flex-col gap-1",
-                            ),
-                            Div(
-                                Span("Eaten %", cls="text-[11px] text-gray-600"),
-                                Input(
-                                    type="number",
-                                    id="rescue_eaten_percent",
-                                    step="any",
-                                    min="0",
-                                    max="100",
-                                    value="100",
-                                    cls="web_input rounded-lg border border-line px-2 py-1 text-sm",
-                                ),
-                                cls="flex flex-col gap-1",
-                            ),
-                            cls="grid grid-cols-2 gap-2",
-                        ),
-                        Div(
-                            Span("Consumed: ", cls="text-[11px] text-gray-600"),
-                            Span("0 g", id="rescue_consumed_label", cls="text-[11px] font-semibold text-gray-800"),
-                            Span(" · Leftover: ", cls="text-[11px] text-gray-600"),
-                            Span("0 g", id="rescue_leftover_label", cls="text-[11px] font-semibold text-gray-800"),
-                            cls="text-[11px]",
-                        ),
-                        Button(
-                            "OK",
-                            type="submit",
-                            cls="web_button web_button_primary w-full px-3 py-2.5 text-sm",
-                        ),
-                        Div(id="rescue_action_result", cls="text-[11px] min-h-[1rem]"),
-                        hx_post="/food/rescue/log",
-                        hx_target="#rescue_action_result",
-                        hx_swap="innerHTML",
-                        id="rescue_power_form",
-                        cls="flex flex-col gap-2",
-                    ),
-                    id="food_power_menu",
-                    role="menu",
-                    aria_label="Power menu",
-                    cls=power_panel_cls,
-                    style=(
-                        "width:min(22rem,calc(100vw - 1.5rem));min-width:10rem;"
-                        "visibility:hidden; opacity:0; transform:translateY(-8px) scale(0.97);"
-                        "pointer-events:none;"
-                        "transition: opacity 180ms ease, transform 180ms ease;"
-                    ),
-                ),
+                RescueModal(),
                 cls="relative flex justify-start",
             ),
             Div(
@@ -3496,6 +3377,7 @@ def FoodDetailPage(
     is_library: bool = False,
     has_serving: bool = True,
     cooking_factor: float | None = None,
+    is_rescue: bool = False,
 ):
     can_archive = can_edit if can_archive is None else can_archive
     # catalog and manual_intake are archived (§11.2.2, §11.2.3) under can_archive;
@@ -3904,6 +3786,13 @@ def FoodDetailPage(
                 cls="w-full",
             )
             if can_publish
+            else ""
+        ),
+        # Provisional while the tags interface is hidden: only for a food or
+        # dish the user can edit (frontend_conventions.md §9.6).
+        (
+            Div(RescueMarkButton(entry_type, int(entry["id"]), is_rescue), cls="w-full")
+            if archivable and can_edit and not TAGS_UI_ENABLED
             else ""
         ),
         (

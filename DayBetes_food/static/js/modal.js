@@ -6,7 +6,13 @@
     var layer = document.getElementById(id);
     if (!layer) return;
     var dialog = layer.closest("dialog");
-    if (dialog && !dialog.open) dialog.showModal();
+    if (dialog && !dialog.open) {
+      dialog.showModal();
+      // A dialog that was hidden has no painted start state yet: reading the
+      // layout makes the browser apply it, so the fade and the card's grow
+      // always run instead of the pop-up appearing at once.
+      void layer.offsetWidth;
+    }
     window.requestAnimationFrame(function () {
       layer.classList.remove("opacity-0");
       layer.classList.add("opacity-100");

@@ -18,6 +18,7 @@ from DayBetes_food.components.modal import (
     ModalLayer,
     open_modal_js,
 )
+from DayBetes_food.components.food.rescue import RescueModal, rescue_open_attrs
 from DayBetes_food.domain.constants import InjectionZone
 from DayBetes_food.time_utils import local_now, to_local
 
@@ -232,6 +233,17 @@ def quick_actions(latest_event, portions):
             ),
             cls="web_container w-full p-4 flex flex-col gap-3",
         ),
+        # Same pop-up as the bolt of the Food header (frontend_conventions.md §9.6).
+        Div(
+            _section_title("Rescue"),
+            Button(
+                "Log rescue",
+                type="button",
+                cls="web_button w-full py-3 text-sm",
+                **rescue_open_attrs(),
+            ),
+            cls="web_container w-full p-4 flex flex-col gap-3",
+        ),
         cls="w-xs md:w-md flex flex-col gap-5",
     )
 
@@ -342,6 +354,7 @@ def quick_actions(latest_event, portions):
     actions = Div(
         quick_grid,
         injection_modal,
+        RescueModal(),
         cls="relative"
     )
 

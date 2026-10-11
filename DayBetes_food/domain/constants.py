@@ -103,6 +103,12 @@ class PortionDestination(str, Enum):
 MASS_SANITY_MAX_G = 100000
 
 
+# Name of the global tag that marks a food as a rescue food
+# (frontend_conventions.md §9.6). It keeps the value already stored in
+# `tags`: a persisted value is not renamed (code_conventions.md §4.2).
+RESCUE_TAG_NAME = "rescate"
+
+
 @unique
 class FoodCategory(str, Enum):
     MEAT = "meat"

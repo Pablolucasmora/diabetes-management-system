@@ -15,7 +15,7 @@ from DayBetes_food.database.queries.crud import (
     _execute_query,
     _execute_query_many,
 )
-from DayBetes_food.domain.constants import IntakeEventState, PortionOrigin
+from DayBetes_food.domain.constants import RESCUE_TAG_NAME, IntakeEventState, MealType, PortionOrigin
 from DayBetes_food.time_utils import APP_TIMEZONE
 
 
@@ -66,9 +66,19 @@ def get_subtype_label(connection, subtype: str) -> str | None:
 
 
 def get_rescue_entries_suggestions(connection, user_id: int, search: str = "", limit: int = 50) -> list[dict]:
+    """Foods offered by the rescue pop-up (frontend_conventions.md §9.6).
+
+    A food is a rescue food if it carries the RESCUE_TAG_NAME tag or if this
+    user already ate it in a `rescue` event. With an empty search only those
+    are returned, most recently used first. With a search, every visible
+    `catalog` and `manual_intake` row that matches is returned, rescue foods
+    first. Visibility is the shared SQL rule, retained rows included.
+    """
     normalized = (search or "").strip()
     params = {
         "visibility_user_id": user_id,
+        "rescue_tag": RESCUE_TAG_NAME,
+        "rescue_meal_type": MealType.RESCUE.value,
         "q": normalized,
         "q_like": f"%{normalized}%",
         "limit": max(1, min(int(limit or 50), 200)),
@@ -77,8 +87,16 @@ def get_rescue_entries_suggestions(connection, user_id: int, search: str = "", l
         WITH rescue_tag AS (
             SELECT id
             FROM tags
-            WHERE lower(trim(name)) = 'rescate'
-            LIMIT 1
+            WHERE lower(trim(name)) = lower(%(rescue_tag)s)
+        ),
+        rescue_history AS (
+            SELECT pd.catalog_id, pd.manual_intake_id, MAX(ie.meal_time) AS last_used
+            FROM portion_detail pd
+            INNER JOIN intake_event ie ON ie.id = pd.intake_event_id
+            WHERE ie.users_id = %(visibility_user_id)s
+              AND ie.meal_type = %(rescue_meal_type)s
+              AND ie.deleted_at IS NULL
+            GROUP BY pd.catalog_id, pd.manual_intake_id
         ),
         catalog_rows AS (
             SELECT
@@ -87,13 +105,17 @@ def get_rescue_entries_suggestions(connection, user_id: int, search: str = "", l
                 c.name AS name,
                 COALESCE(fb.label, '') AS subtitle,
                 c.default_portion AS serving_g,
-                NULL::double precision AS available_g
-            FROM linked_tags lt
-            INNER JOIN rescue_tag rt ON rt.id = lt.tag_id
-            INNER JOIN catalog c ON c.id = lt.catalog_id
+                c.carbs_100g AS carbs_100g,
+                EXISTS (
+                    SELECT 1 FROM linked_tags lt
+                    INNER JOIN rescue_tag rt ON rt.id = lt.tag_id
+                    WHERE lt.catalog_id = c.id
+                ) AS is_tagged,
+                rh.last_used
+            FROM catalog c
             LEFT JOIN food_brands fb ON fb.id = c.brand_id
+            LEFT JOIN rescue_history rh ON rh.catalog_id = c.id
             WHERE {catalog_visibility}
-              AND (%(q)s = '' OR c.name ILIKE %(q_like)s OR COALESCE(fb.label, '') ILIKE %(q_like)s)
         ),
         manual_rows AS (
             SELECT
@@ -102,20 +124,31 @@ def get_rescue_entries_suggestions(connection, user_id: int, search: str = "", l
                 m.name AS name,
                 COALESCE(m.origin, '') AS subtitle,
                 m.default_portion AS serving_g,
-                NULL::double precision AS available_g
-            FROM linked_tags lt
-            INNER JOIN rescue_tag rt ON rt.id = lt.tag_id
-            INNER JOIN manual_intake m ON m.id = lt.manual_intake_id
+                m.carbs_100g AS carbs_100g,
+                EXISTS (
+                    SELECT 1 FROM linked_tags lt
+                    INNER JOIN rescue_tag rt ON rt.id = lt.tag_id
+                    WHERE lt.manual_intake_id = m.id
+                ) AS is_tagged,
+                rh.last_used
+            FROM manual_intake m
+            LEFT JOIN rescue_history rh ON rh.manual_intake_id = m.id
             WHERE {manual_visibility}
-              AND (%(q)s = '' OR m.name ILIKE %(q_like)s OR COALESCE(m.origin, '') ILIKE %(q_like)s)
         )
-        SELECT *
+        SELECT entry_type, entry_id, name, subtitle, serving_g, carbs_100g,
+               (is_tagged OR last_used IS NOT NULL) AS is_rescue
         FROM (
             SELECT * FROM catalog_rows
             UNION ALL
             SELECT * FROM manual_rows
         ) src
-        ORDER BY name ASC, entry_type ASC, entry_id ASC
+        WHERE CASE
+            WHEN %(q)s = '' THEN (is_tagged OR last_used IS NOT NULL)
+            ELSE (name ILIKE %(q_like)s OR subtitle ILIKE %(q_like)s)
+        END
+        ORDER BY (is_tagged OR last_used IS NOT NULL) DESC,
+                 last_used DESC NULLS LAST,
+                 name ASC, entry_type ASC, entry_id ASC
         LIMIT %(limit)s;
     """.format(
         catalog_visibility=_food_visibility_sql(PortionOrigin.CATALOG, "c", include_retained=True),
@@ -134,7 +167,8 @@ def get_rescue_entries_suggestions(connection, user_id: int, search: str = "", l
                 "name": str(row.get("name") or "").strip(),
                 "subtitle": str(row.get("subtitle") or "").strip(),
                 "serving_g": (float(serving_g) if serving_g is not None else None),
-                "available_g": (float(row.get("available_g")) if row.get("available_g") is not None else None),
+                "carbs_100g": (float(row["carbs_100g"]) if row.get("carbs_100g") is not None else None),
+                "is_rescue": bool(row.get("is_rescue")),
             }
         )
     return out

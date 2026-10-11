@@ -3,7 +3,6 @@ from DayBetes_food.components.cart.cart_main import cart_main, cart_events_list
 from DayBetes_food.components.cart.cart_components import CartCard, MacrosSummary, PortionTriStateFlag
 from DayBetes_food.components.cart.cart_shared import (
     calculate_macro_summary_metrics,
-    portion_intake_amount,
     portion_name,
 )
 from DayBetes_food.components.ui import render_fragment, render_page
@@ -17,7 +16,6 @@ from DayBetes_food.database.queries import (
     list_portions_by_event,
     list_portions_by_events,
     move_portion_to_plate,
-    scale_event_portion_amounts,
     update_portion_amount,
     update_portion_detail_fields,
     update_portion_flag,
@@ -31,8 +29,6 @@ from DayBetes_food.database.queries import (
     update_intake_plate,
     update_intake_plate_name,
     set_injection_zone,
-    create_injection_for_event,
-    confirm_intake_event,
     delete_intake_event,
     archive_intake_event,
     restore_intake_event,
@@ -57,7 +53,6 @@ from DayBetes_food.domain.constants import (
     parse_enum,
 )
 from DayBetes_food.domain.intake_event import (
-    INTAKE_EVENT_INGESTED_AMOUNT_MAX_G,
     INTAKE_EVENT_INGESTED_UNITS,
     INTAKE_EVENT_NAME_MAX_LENGTH,
     INTAKE_EVENT_NOTES_MAX_LENGTH,
@@ -72,6 +67,7 @@ from DayBetes_food.domain.intake_plate import (
 )
 from DayBetes_food.domain.portion_detail import PortionDetailUpdate, amount_to_grams
 from DayBetes_food.http_errors import app_error_response
+from DayBetes_food.services.intake_event import confirm_planned_event
 from DayBetes_food.errors import (
     AuthenticationError,
     AuthorizationError,
@@ -1126,62 +1122,14 @@ def setup_cart_routes(rt):
                 # total_amount, so the stored ingested_amount did not match the
                 # real sum of amount (finding 46, item 11 of §13).
                 with connection.transaction():
-                    portions = list_portions_by_event(connection, int(user_id), event_id)
-                    if not portions:
-                        # Rule that depends on the database state (§7.10): an event
-                        # without portions cannot be confirmed; a disallowed state
-                        # transition → conflict (error_conventions.md §3.6). Finding 34
-                        # of audit/audit_intake_event.md, decision 2026-09-10.
-                        raise ConflictError("intake_event_without_portions")
-                    total_amount = sum(portion_intake_amount(p) for p in portions)
-                    if not math.isfinite(total_amount) or total_amount > INTAKE_EVENT_INGESTED_AMOUNT_MAX_G:
-                        # Defense in depth: total_amount is computed live from
-                        # portion_detail (outside this table's scope), but an
-                        # ingested_amount derived from it must still respect this
-                        # table's sanity limit (§6.9.2, finding 32/35).
-                        raise ValidationError("total_amount_out_of_range")
-
-                    if value is None:
-                        fraction = 1.0
-                    elif unit is AmountInputUnit.PERCENT:
-                        fraction = value / 100.0
-                    else:
-                        # Only remaining branch: grams, already validated above.
-                        if total_amount <= 0:
-                            # There is nothing to consume: grams > 0 cannot be interpreted.
-                            raise ValidationError("total_amount_not_positive")
-                        fraction = value / total_amount
-                    # (0, 1] since decision 2026-09-22: eating nothing is not a
-                    # confirm; an event nobody ate is deleted, not confirmed.
-                    if not (0.0 < fraction <= 1.0):
-                        raise ValidationError("fraction_out_of_range")
-
-                    # amount_confidence is a proportion: a uniform scale of every portion
-                    # does not change it, so it is computed on the served portions, before
-                    # scaling them (§6.9.1). quality_confidence and *_uncertainty are not
-                    # stored: they are computed live (§6.9.4).
-                    metrics = calculate_macro_summary_metrics(portions)
-                    update_payload = IntakeEventUpdate(
-                        ingested_amount=total_amount * fraction,
-                        amount_confidence=metrics["amount_confidence"],
-                    )
-
-                    # 4) Ownership + idempotency in a single statement (§6.6).
-                    confirm_intake_event(
-                        connection, user_id=int(user_id), event_id=event_id, commit=False
-                    )
-                    # 5) Overwrite amount = amount * fraction for every portion
-                    # of the event, in a single SQL statement (§6.9.1).
-                    scale_event_portion_amounts(
-                        connection, int(user_id), event_id, fraction, commit=False
-                    )
-                    # 6) The rest of the writes, already inside the same transaction.
-                    update_intake_event(
-                        connection, user_id=int(user_id), event_id=event_id, data=update_payload, commit=False
-                    )
-                    # 7) Automatic injection: returns an id or None (event without insulin).
-                    create_injection_for_event(
-                        connection, user_id=int(user_id), intake_event_id=event_id, commit=False
+                    # Shared confirm path, also used by the rescue pop-up
+                    # (services/intake_event.py, frontend_conventions.md §9.6).
+                    confirm_planned_event(
+                        connection,
+                        int(user_id),
+                        event_id,
+                        ingested_value=value,
+                        ingested_unit=unit,
                     )
             except NotFoundError:
                 return _error(request, NotFoundError, _EVENT_GONE)

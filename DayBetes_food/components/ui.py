@@ -49,6 +49,7 @@ def AppToast():
             cls="text-sm md:text-base",
         ),
         id="app_toast",
+        data_tone="error",
         role="status",
         aria_live="polite",
         cls="""
@@ -112,7 +113,7 @@ def _base_html_shell(content_html: str) -> str:
     <script src="{asset_busted("/js/modal.js")}" defer></script>
     <script src="{asset_busted("/js/navigation.js")}" defer></script>
     <script src="{asset_busted("/js/food_quick_create.js")}" defer></script>
-    <script src="{asset_busted("/js/rescue_power_panel.js")}" defer></script>
+    <script src="{asset_busted("/js/rescue.js")}" defer></script>
     <script src="{asset_busted("/js/cart_units.js")}" defer></script>
     <script src="{asset_busted("/js/food_detail.js")}" defer></script>
     <script src="{asset_busted("/js/scanner.js")}" defer></script>
