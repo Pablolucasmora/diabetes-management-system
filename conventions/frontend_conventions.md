@@ -278,7 +278,8 @@ Decisión 2026-10-11. Un rescate es lo que se toma para tratar una hipoglucemia.
 **Qué alimentos se ofrecen**
 
 - Con el buscador vacío salen los alimentos de rescate: los que tienen la etiqueta de rescate y los que este usuario ya ha usado en comidas `rescue`, primero los usados más recientemente.
-- Al escribir, se busca en todos los alimentos (`catalog`) y platos (`manual_intake`) que el usuario puede ver, con la misma regla de visibilidad que el resto de búsquedas, incluidos los archivados que conserva (`code_conventions.md` §11.2). Los de rescate van primero.
+- Al escribir, los resultados **sustituyen** a los alimentos de rescate en el mismo sitio, y al vaciar el buscador vuelven los de rescate. La lista declara su propio `hx-target`: sin él heredaría el del formulario (`#rescue_form_error`) y los resultados aparecerían debajo. Enter en el buscador (la tecla Buscar del teclado del móvil) no envía el rescate: solo cierra el teclado.
+- La búsqueda abarca todos los alimentos (`catalog`) y platos (`manual_intake`) que el usuario puede ver, con la misma regla de visibilidad que el resto de búsquedas, incluidos los archivados que conserva (`code_conventions.md` §11.2). Los de rescate van primero.
 - Cada opción es una fila `control` compacta (§8) con el nombre y, debajo, la marca u origen y los hidratos del alimento (por ración si la tiene, si no por 100 g). La lista tiene una altura máxima con scroll propio. Sin alimentos de rescate, una línea explica que basta con buscar cualquiera y que los registrados aparecerán ahí.
 - La etiqueta se identifica por la constante `RESCUE_TAG_NAME` de `domain/constants.py`, con el valor `rescate` que ya está guardado (un valor persistido no se renombra, `code_conventions.md` §4.2). Su nombre no se escribe a mano en el SQL.
 

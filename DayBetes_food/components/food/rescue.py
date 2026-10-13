@@ -100,6 +100,10 @@ def RescueForm(date_value: str, time_value: str, options: list[dict]):
                     placeholder="Search a food",
                     autocomplete="off",
                     aria_label="Search a food",
+                    enterkeyhint="search",
+                    # Enter (the keyboard's Search key) would submit the
+                    # rescue: here it only closes the keyboard.
+                    onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}",
                     cls="web_input w-full rounded-lg border border-line pl-8 pr-2 py-1.5 text-sm",
                 ),
                 cls="relative block",
@@ -110,6 +114,9 @@ def RescueForm(date_value: str, time_value: str, options: list[dict]):
                 hx_get="/food/rescue/options",
                 hx_trigger="input changed delay:220ms from:#rescue_search_input",
                 hx_include="#rescue_search_input",
+                # Explicit: otherwise it inherits the form's hx-target
+                # (#rescue_form_error) and the results land below the list.
+                hx_target="this",
                 hx_swap="innerHTML",
                 cls="max-h-[36vh] overflow-y-auto",
             ),
