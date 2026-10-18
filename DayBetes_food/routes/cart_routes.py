@@ -68,6 +68,7 @@ from DayBetes_food.domain.intake_plate import (
 from DayBetes_food.domain.portion_detail import PortionDetailUpdate, amount_to_grams
 from DayBetes_food.http_errors import app_error_response
 from DayBetes_food.services.intake_event import confirm_planned_event
+from DayBetes_food.services.recipe import save_plate_as_recipe
 from DayBetes_food.errors import (
     AuthenticationError,
     AuthorizationError,
@@ -357,6 +358,13 @@ _INGREDIENT_AMOUNT_INVALID = (
 _PLATE_GONE = "That plate no longer exists."
 _PLATE_NOT_EMPTY = "Move or delete its ingredients before removing the plate."
 _PLATE_FAILED = "The plate could not be updated."
+# Public message per conflict of save_plate_as_recipe (services/recipe.py).
+_SAVE_RECIPE_CONFLICTS = {
+    "plate_without_portions": "Add some food to the plate before saving it as a recipe.",
+    "plate_has_quick_add": "This plate has a quick add, which cannot be saved in a recipe.",
+    "recipe_name_taken": "You already have a recipe with this name. Rename the plate to save it.",
+}
+_RECIPE_NAME_TOO_LONG = "The plate name is too long for a recipe name."
 
 
 def setup_cart_routes(rt):
@@ -1059,6 +1067,36 @@ def setup_cart_routes(rt):
             except ConflictError:
                 return _error(request, ConflictError, _PLATE_NOT_EMPTY)
             return _card_response(request, connection, int(user_id), event_id)
+
+    @rt("/cart/plate/{plate_id}/recipe")
+    def post(request: Request, plate_id: int):
+        """Save the plate as a new personal recipe, in favorites (provisional,
+        frontend_conventions.md §7.13).
+
+        Nothing in the card changes, so the answer is an empty body and the
+        `recipeSaved` event, which shows the success notice (cart contract,
+        code_conventions.md §9.5). Repeating it answers 409: the first recipe
+        already took the name.
+        """
+        if request.headers.get("HX-Request") != "true":
+            return _error(request, AuthorizationError, _NOT_HTMX)
+        user_id = get_current_user_id()
+        if not user_id:
+            return _error(request, AuthenticationError, _NO_SESSION)
+        with get_connection() as connection:
+            try:
+                save_plate_as_recipe(connection, int(user_id), plate_id)
+            except NotFoundError:
+                return _error(request, NotFoundError, _PLATE_GONE)
+            except ConflictError as error:
+                return _error(
+                    request,
+                    ConflictError,
+                    _SAVE_RECIPE_CONFLICTS.get(str(error), ConflictError.public_message),
+                )
+            except ValidationError:
+                return _error(request, ValidationError, _RECIPE_NAME_TOO_LONG)
+        return HTMLResponse("", headers={"HX-Trigger": "recipeSaved"})
 
     @rt("/cart/event/{event_id}/confirm")
     def post(

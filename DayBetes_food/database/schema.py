@@ -425,9 +425,11 @@ class DBSchema:
                 'afternoon_snack', 'dinner', 'snack', 'rescue'
             )
         ), -- Used to set this as the default value in intake_event, making it easier to reuse
-        name VARCHAR(255) NOT NULL,
+        name VARCHAR(255) NOT NULL, -- Max length in domain/recipe.py (RECIPE_NAME_MAX_LENGTH)
         notes TEXT,
         is_published BOOLEAN NOT NULL DEFAULT FALSE -- True: visible to everyone; FALSE: only owner can view it
+        -- Personal-name uniqueness (uq_recipe_personal_name) is a PARTIAL unique
+        -- index and therefore lives in db_init._ensure_recipe_schema, not here.
     );
     """
 

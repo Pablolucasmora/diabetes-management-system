@@ -121,7 +121,7 @@ Hasta el 2026-10-10 la cabecera solo se mostraba con dos o más tandas o con una
 
 ### 7.3 Contenido de la cabecera
 
-De izquierda a derecha: **título**, **offset de la tanda**, **`Apply all`**, y las acciones de editar nombre y borrar tanda.
+De izquierda a derecha: **título**, **offset de la tanda**, **`Apply all`**, **`Save as recipe`** (solo si la tanda tiene ingredientes, §7.13), y las acciones de editar nombre y borrar tanda.
 
 - El **título** es el nombre de la tanda (propio o derivado, §4.6.3) y se edita igual que el nombre del evento, con el mismo control.
 - El **offset de la tanda** es un input numérico editable en la propia cabecera. Es el valor que heredarán los alimentos que se añadan después a esa tanda.
@@ -195,6 +195,35 @@ No basta con no tocarlo desde el código: al reemplazar la tarjeta entera con `o
 Toda la interfaz de la web se escribe **en inglés** (`Plates`, `Apply all`, `Move`, `+ Add plate`, `+ New plate`): textos, etiquetas, placeholders, mensajes de validación, mensajes públicos de error (`errors.py`, `error_conventions.md` §2), avisos del cliente (`app_toast.js`) y las páginas de acceso. El atributo `lang` de las páginas es `en`. Lo que introduce el usuario no se traduce: el nombre derivado de una tanda sale de los nombres de los alimentos, que están en el idioma en que se guardaron, y los alias del parser de macros ("hidratos", "azúcar") son datos de entrada, no interfaz (decisión 2026-10-09).
 
 Queda **pendiente de decisión** la internacionalización de la web (español/inglés a elección del usuario): no existe convención de i18n, los literales están incrustados en los componentes, y la parte cara no es traducir la interfaz sino decidir qué pasa con el contenido (nombres del catálogo, métodos de cocción, tipos de comida). Escribir los literales nuevos en inglés no cierra ninguna puerta a esa decisión.
+
+### 7.13 Guardar una tanda como receta (provisional)
+
+Decisión 2026-10-18. Es **provisional** hasta la auditoría de `recipe`, que puede cambiarla o completarla. Responde a la entrada "Add recipe to plate functionality" de `audit/deuda_pendiente.md`.
+
+**Dónde está**
+
+- En la cabecera de cada tanda, en la fila del offset y detrás de `Apply all`, hay un botón `Save as recipe` (§7.3). En el móvil, si no cabe, la fila envuelve (§7.9).
+- Solo aparece si la tanda tiene ingredientes. Una tanda vacía no tiene nada que guardar.
+- Al pulsarlo se abre un pop-up de confirmación (`ConfirmActionModal`, §8) que dice con qué nombre se guardará la receta y que entrará en favoritos. El botón de confirmar es `ink`, porque no borra nada.
+
+**Qué se guarda** (`services/recipe.py`, `save_plate_as_recipe`)
+
+- Una receta nueva, en una sola transacción (`code_conventions.md` §2.3):
+  - **Nombre**: el nombre visible de la tanda, el propio o el derivado (`measurement_conventions.md` §4.6.3), normalizado con `normalize_food_text`. Como cualquier límite de longitud, el exceso sobre `RECIPE_NAME_MAX_LENGTH` se rechaza con `422`, sin truncar.
+  - **Tipo de comida**: el `meal_type` del evento.
+  - **Visibilidad**: nace personal (`code_conventions.md` §11.4.1) y **en favoritos** del usuario.
+  - **Ingredientes**: una porción por cada porción de la tanda, con su cantidad actual, su preparación (`cooking`, `conservation`, `final_state`), `strictly_weighed` e `is_cooked_weight`, como al copiar una receta (`measurement_conventions.md` §5.2 y §6.11). El offset no se copia, porque una porción de receta no puede tenerlo (`ck_portion_detail_offset_only_for_event`).
+- La tanda y la comida no cambian.
+
+**Cuándo no se guarda** (todas con su status por el canal de errores, `error_conventions.md` §7.1)
+
+- Si la tanda tiene un **añadido rápido**, no se guarda nada (`409`). Un añadido rápido no se reutiliza ni puede ser ingrediente de receta (`code_conventions.md` §11.2.3).
+- Si el usuario ya tiene una **receta personal con ese nombre**, la respuesta es `409` y el aviso pide renombrar la tanda. La garantía es el índice único parcial `uq_recipe_personal_name`, `(users_id, lower(name)) WHERE NOT is_published` (`code_conventions.md` §6.1 y §11.4.1). Se adelantó de la auditoría de `recipe`, y el índice de las recetas publicadas sigue pendiente en ella. Desde que existe, crear, editar o copiar una receta con un nombre personal repetido también responde `409`.
+- Si la tanda está vacía o ya no existe, la respuesta es `409` o `404`.
+
+**Al repetirlo**: la segunda petición choca con el nombre que tomó la primera y responde `409`. Nunca crea dos recetas iguales.
+
+**Después de guardar** el usuario se queda en el carrito: se cierra el pop-up y sale el aviso de éxito `Recipe saved` (`dbShowAppNotice`, desde `static/js/cart_units.js`). La respuesta HTMX está en el contrato del carrito (`code_conventions.md` §9.5).
 
 ## 8. Superficies, contraste y colores
 

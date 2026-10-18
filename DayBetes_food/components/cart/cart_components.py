@@ -581,12 +581,50 @@ def _MoveIngredientSelect(plate, plates, plate_labels, portion_id, item_key, ing
     )
 
 
-def PlateHeader(event, plate, display_name, card_target):
-    """Header of a plate (§7.3): title, offset, `Apply all` and delete.
+def _SaveRecipeButton(plate, display_name, card_target):
+    """`Save as recipe` and its confirmation pop-up (§7.13, provisional).
+
+    It does not repaint the card (`hx-swap="none"`): the answer is the
+    `recipeSaved` event, which shows the success notice. The target is still
+    declared, as every cart action does (code_conventions.md §9.5).
+    """
+    confirm_id = f"save_recipe_confirm_{plate.id}"
+    return (
+        Button(
+            "Save as recipe",
+            type="button",
+            aria_label="Save this plate as a recipe",
+            cls=f"{_SOFT_BUTTON_CLS} px-3 py-2 text-xs font-semibold shrink-0",
+            onclick=open_modal_js(confirm_id),
+        ),
+        ConfirmActionModal(
+            modal_id=confirm_id,
+            title="Save as recipe",
+            question=(
+                "Save this plate as the recipe ",
+                Strong(display_name),
+                "? It will be added to your recipes as a favorite.",
+            ),
+            yes_button=modal_confirm_button(
+                "Yes",
+                hx_post=f"/cart/plate/{plate.id}/recipe",
+                hx_target=card_target,
+                hx_swap="none",
+                hx_disabled_elt="this",
+                onclick=close_modal_js(confirm_id),
+            ),
+        ),
+    )
+
+
+def PlateHeader(event, plate, display_name, card_target, has_portions=False):
+    """Header of a plate (§7.3): title, offset, `Apply all`, `Save as recipe`
+    and delete.
 
     The title is edited like the event's (same control, autosave on blur).
     Clearing it returns the plate to its derived name, which is what is shown
-    as the placeholder.
+    as the placeholder. `Save as recipe` only appears when the plate has
+    ingredients: an empty plate has nothing to save (§7.13).
     """
     name_input_id = f"plate_name_{plate.id}"
     offset_input_id = f"plate_offset_{plate.id}"
@@ -650,6 +688,7 @@ def PlateHeader(event, plate, display_name, card_target):
             ),
             Span("min", cls="text-xs text-gray-600"),
             _ApplyAllButton(plate, offset_input_id, card_target),
+            *(_SaveRecipeButton(plate, display_name, card_target) if has_portions else ()),
             cls="flex items-center gap-2 flex-wrap",
         ),
         ConfirmActionModal(
@@ -700,7 +739,7 @@ def PlateBlock(event, plate, plate_portions, plates, plate_labels):
         return result
 
     return Div(
-        PlateHeader(event, plate, plate_labels[plate.id], card_target),
+        PlateHeader(event, plate, plate_labels[plate.id], card_target, has_portions=bool(plate_portions)),
         *[
             IngredientRow(
                 event,

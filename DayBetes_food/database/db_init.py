@@ -1006,6 +1006,47 @@ def _ensure_copy_origin_schema(cursor):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_origin_root ON recipe (origin_root_id);")
 
 
+def _ensure_recipe_schema(cursor):
+    """Personal-name uniqueness of `recipe` (§6.1, §11.4.1).
+
+    Brought forward from the pending `recipe` audit for saving a cart plate as
+    a recipe (frontend_conventions.md §7.13): the 409 for a name the owner
+    already uses comes from this index, never from a check in Python. The
+    published-recipes index stays pending for the audit.
+
+    Without btrim, like the other food tables: the writer normalizes the name
+    (normalize_food_text) before inserting it. The table has no deleted_at
+    (recipes are deleted physically), so there is no archived filter.
+
+    Existing duplicates stop the migration (§12.2, §12.7): which recipe keeps
+    the name is a decision, not something to resolve here.
+    """
+    cursor.execute(
+        """
+        SELECT r.users_id, lower(r.name) AS name, count(*) AS total
+        FROM recipe r
+        WHERE NOT r.is_published
+        GROUP BY r.users_id, lower(r.name)
+        HAVING count(*) > 1;
+        """
+    )
+    duplicates = cursor.fetchall() or []
+    if duplicates:
+        detail = ", ".join(
+            f"user {row['users_id']}: {row['total']} x '{row['name']}'" for row in duplicates
+        )
+        raise RuntimeError(
+            "Personal recipes with a repeated name block uq_recipe_personal_name; "
+            f"rename or delete them first: {detail}"
+        )
+    cursor.execute("DROP INDEX IF EXISTS uq_recipe_personal_name;")
+    cursor.execute(
+        "CREATE UNIQUE INDEX uq_recipe_personal_name "
+        "ON recipe (users_id, lower(name)) "
+        "WHERE NOT is_published;"
+    )
+
+
 def _index_exists(cursor, name: str) -> bool:
     cursor.execute(
         "SELECT 1 AS ok FROM pg_indexes WHERE schemaname = 'public' AND indexname = %(name)s;",
@@ -2258,6 +2299,8 @@ def init_db():
         _ensure_copy_origin_schema(cur)
         _ensure_food_publication_schema(cur)
         _ensure_food_filter_indexes(cur)
+        # After the publication step: its unique index filters on is_published.
+        _ensure_recipe_schema(cur)
         _ensure_catalog_schema(cur)
         # After the publication and copy-origin steps: its indexes use
         # is_published and origin_root_id, which they create on old installs.

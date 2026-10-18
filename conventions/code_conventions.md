@@ -1099,6 +1099,7 @@ petición y el swap `outerHTML` lo destruye.
 | `POST /cart/portion/{portion_id}/is_cooked_weight` | `#macros_summary_event_{id}` | `outerHTML` | `Div(MacrosSummary(...), id="macros_summary_event_{id}")` |
 | `POST /cart/event/{id}/plate`, `POST /cart/plate/{plate_id}/name`, `…/offset`, `…/apply_offset`, `…/delete` | `#cart_card_event_{id}` | `outerHTML` | `CartCard(event, portions, plates)` |
 | `delete`, `confirm` | `#cart_card_event_{id}` | `outerHTML` | cuerpo vacío (la tarjeta desaparece) y, si no queda ningún evento planificado, swap OOB de `#cart_body` con el carrito vacío |
+| `POST /cart/plate/{plate_id}/recipe` (guardar la tanda como receta, provisional, `frontend_conventions.md` §7.13) | `#cart_card_event_{id}`, declarado pero sin swap | `none` | cuerpo vacío y el evento `recipeSaved` (`HX-Trigger`); `static/js/cart_units.js` muestra el aviso de éxito `Recipe saved`. La tarjeta no cambia |
 | `archive`, `restore` | página completa del carrito | `outerHTML` | `cart_main(...)`; no están enlazadas desde ninguna tarjeta todavía |
 
 Los dos flags de tres estados se repintan **fuera de banda** junto al resumen: el control lleva
@@ -1115,7 +1116,8 @@ Fragmento de error: ninguno. Las acciones del carrito son ediciones en línea,
 no un formulario de guardado, así que **no** aplican la excepción de `200` +
 fragmento de esta misma sección: conservan el status semántico de su categoría
 y el aviso viaja por el canal de error visible definido en
-`error_conventions.md` §7. Eventos `HX-Trigger`: solo `appError`.
+`error_conventions.md` §7. Eventos `HX-Trigger`: `appError` y, en el éxito de
+guardar una tanda como receta, `recipeSaved`.
 
 Añadir un botón nuevo al carrito obliga a elegir una de las filas de esta
 tabla o a añadir una nueva; no se deja el `hx-target` implícito.

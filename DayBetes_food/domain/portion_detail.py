@@ -110,6 +110,9 @@ class PortionSourceRead:
     unit_g: float | None           # catalog.default_portion | manual_intake.default_portion; None = no serving
     category: str | None
     subtype: str | None
+    # manual_intake only (§11.2.3); always False for catalog. A quick add
+    # cannot be reused, so it cannot go into a recipe.
+    is_quick_add: bool
     cooking_factor: float | None  # catalog only; None for manual_intake
     # The food's, read live (measurement §6.11, decision 2026-10-09): the
     # portion does not store a copy. None = no data.
