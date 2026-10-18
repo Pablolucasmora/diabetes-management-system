@@ -2140,6 +2140,10 @@ def setup_food_routes(rt):
                         )
             except ValueError as error:
                 return app_error_response(request, InfrastructureError, str(error))
+            except ConflictError as error:
+                # uq_recipe_personal_name: only if another request took the
+                # copy name between _next_copy_name and the insert.
+                return app_error_response(request, error, str(error))
         return HTMLResponse("", headers={"HX-Redirect": f"/food/edit/recipe/{created_id}/form"})
 
     @rt("/food/edit/{entry_type}/{entry_id}/form")
@@ -3192,6 +3196,8 @@ def setup_food_routes(rt):
                         raise ValueError("Could not save the tags.")
             except (ValueError, ValidationError) as error:
                 return _error_msg(str(error))
+            except ConflictError as error:
+                return app_error_response(request, error, str(error))
             return HTMLResponse("", headers={"HX-Redirect": f"/food/item/recipe/{entry_id}"})
 
     @rt("/food/create/catalog")
@@ -3484,6 +3490,8 @@ def setup_food_routes(rt):
                         raise ValueError("Recipe tags could not be saved.")
             except (ValueError, ValidationError) as error:
                 return _error_msg(str(error))
+            except ConflictError as error:
+                return app_error_response(request, error, str(error))
             return HTMLResponse("", headers={"HX-Redirect": f"/food/item/recipe/{created_id}"})
     
     @rt("/meal_selector_input")

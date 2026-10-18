@@ -73,6 +73,7 @@ _PORTION_COLUMNS = """
     COALESCE(c.default_portion, im.default_portion) AS source_unit_g,
     c.category AS source_category,
     im.subtype AS source_subtype,
+    COALESCE(im.is_quick_add, FALSE) AS source_is_quick_add,
     c.cooking_factor AS source_cooking_factor,
     COALESCE(c.macros_quality, im.macros_quality) AS source_macros_quality,
     COALESCE(c.calories_100g, im.calories_100g) AS source_calories_100g,

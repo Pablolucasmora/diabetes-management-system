@@ -2,6 +2,8 @@
 
 from typing import Optional
 
+from psycopg.errors import UniqueViolation
+
 from DayBetes_food.database.queries.crud import (
     _add_entity_filters,
     _add_fuzzy_name_condition,
@@ -10,6 +12,19 @@ from DayBetes_food.database.queries.crud import (
     _execute_query_many,
     _favorite_filter_sql,
 )
+from DayBetes_food.errors import ConflictError
+
+# Public message per unique index (§6.2). Only the personal one exists so far:
+# it was brought forward from the recipe audit for saving a cart plate as a
+# recipe (frontend_conventions.md §7.13); the published one is still pending.
+_RECIPE_UNIQUE_MESSAGES = {
+    "uq_recipe_personal_name": "You already have a recipe with that name.",
+}
+
+
+def _conflict_from(exc: UniqueViolation) -> ConflictError:
+    name = getattr(exc.diag, "constraint_name", None)
+    return ConflictError(_RECIPE_UNIQUE_MESSAGES.get(name, "That recipe already exists."))
 
 
 def add_recipe(
@@ -21,19 +36,26 @@ def add_recipe(
     origin_root_id: int = None,
     commit: bool = True,
 ) -> Optional[int]:
-    """Creates a new recipe. Personal by default (no is_published, R5)."""
+    """Creates a new recipe. Personal by default (no is_published, R5).
+
+    A personal name the owner already uses -> UniqueViolation on
+    uq_recipe_personal_name -> ConflictError (§6.2).
+    """
     query = """
         INSERT INTO recipe (users_id, origin_root_id, meal_type, name, notes)
         VALUES (%(users_id)s, %(origin_root_id)s, %(meal_type)s, %(name)s, %(notes)s)
         RETURNING id;
     """
-    result = _execute_query(connection, query, {
-        "users_id": users_id,
-        "origin_root_id": origin_root_id,
-        "meal_type": meal_type,
-        "name": name,
-        "notes": notes,
-    }, commit=commit)
+    try:
+        result = _execute_query(connection, query, {
+            "users_id": users_id,
+            "origin_root_id": origin_root_id,
+            "meal_type": meal_type,
+            "name": name,
+            "notes": notes,
+        }, commit=commit)
+    except UniqueViolation as exc:
+        raise _conflict_from(exc) from exc
     return result["id"] if result else None
 
 
@@ -103,7 +125,11 @@ def update_recipe(
     is_published: bool = None,
     commit: bool = True,
 ) -> bool:
-    """Updates a recipe."""
+    """Updates a recipe.
+
+    Renaming or unpublishing onto a personal name the owner already uses ->
+    UniqueViolation on uq_recipe_personal_name -> ConflictError (§6.2).
+    """
     params = {
         "id": recipe_id, 
         "name": name, 
@@ -117,7 +143,10 @@ def update_recipe(
     if not query:
         return False
         
-    result = _execute_query(connection, query, params, commit=commit)
+    try:
+        result = _execute_query(connection, query, params, commit=commit)
+    except UniqueViolation as exc:
+        raise _conflict_from(exc) from exc
     return result is not None
 
 

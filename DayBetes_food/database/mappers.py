@@ -285,6 +285,7 @@ def portion_detail_read_from_row(row: dict) -> PortionDetailRead:
             unit_g=(float(source_unit_g) if source_unit_g is not None else None),
             category=row.get("source_category"),
             subtype=row.get("source_subtype"),
+            is_quick_add=bool(row["source_is_quick_add"]),
             cooking_factor=row.get("source_cooking_factor"),
             macros_quality=row.get("source_macros_quality"),
             calories_100g=row.get("source_calories_100g"),

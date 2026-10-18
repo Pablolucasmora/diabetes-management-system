@@ -222,3 +222,23 @@
     bind();
   }
 })();
+
+(function () {
+  // Success of POST /cart/plate/{id}/recipe (HX-Trigger,
+  // frontend_conventions.md §7.13): the card does not change, so this notice
+  // is the only confirmation the user gets.
+  if (window.__dbCartRecipeNotice) return;
+  window.__dbCartRecipeNotice = true;
+
+  function bind() {
+    document.body.addEventListener("recipeSaved", function () {
+      if (window.dbShowAppNotice) window.dbShowAppNotice("Recipe saved");
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bind);
+  } else {
+    bind();
+  }
+})();
