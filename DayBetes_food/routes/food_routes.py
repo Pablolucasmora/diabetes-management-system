@@ -131,6 +131,11 @@ from DayBetes_food.domain.portion_detail import (
 )
 from DayBetes_food.integrations.open_food_facts import fetch_product_prefill
 from DayBetes_food.components.food.foods import FoodSectionsContent, FoodCard, FavoriteButton, on_after
+from DayBetes_food.components.food.food_actions import (
+    FoodActionsCopyConfirm,
+    FoodActionsMenu,
+    FoodActionsRecipes,
+)
 from DayBetes_food.components.food.rescue import (
     RescueForm,
     RescueFormError,
@@ -1318,6 +1323,32 @@ def _filtered_entries(
 
 
 
+def _food_actions_entry(connection, user_id: int, entry_type: str, entry_id: int) -> dict | None:
+    """Name, subtitle and edit permission of a row of the Food list for its
+    actions pop-up (frontend_conventions.md §9.3.1), with the same visibility
+    and permission as its detail page. None if the user cannot see it."""
+    if entry_type == "catalog":
+        item = get_catalog_item(connection, user_id, entry_id)
+        if item is None:
+            return None
+        return {"name": item.name, "subtitle": (item.brand or "").strip(), "can_edit": item.can_edit}
+    if entry_type == "manual_intake":
+        manual_item = get_manual_intake(connection, user_id, entry_id)
+        if manual_item is None:
+            return None
+        return {"name": manual_item.name, "subtitle": (manual_item.origin or "").strip(), "can_edit": manual_item.can_edit}
+    if entry_type == "recipe":
+        recipe = get_recipe(connection, entry_id, viewer_user_id=user_id)
+        if not recipe or not _can_view_entry("recipe", recipe, user_id):
+            return None
+        return {
+            "name": str(recipe.get("name") or ""),
+            "subtitle": "Recipe",
+            "can_edit": _can_edit_entry("recipe", recipe, user_id),
+        }
+    return None
+
+
 def _error_msg(text: str, status_code: int = 200):
     return render_fragment(
         Div(
@@ -1635,6 +1666,52 @@ def setup_food_routes(rt):
                 remove_entry_tag(connection, origin.value, entry_id, RESCUE_TAG_NAME)
             is_rescue = entry_has_tag(connection, origin.value, entry_id, RESCUE_TAG_NAME)
         return render_fragment(RescueMarkButton(origin.value, entry_id, is_rescue))
+
+    @rt("/food/actions/{entry_type}/{entry_id}")
+    def get(request: Request, entry_type: str, entry_id: int):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        with get_connection() as connection:
+            entry = _food_actions_entry(connection, int(user_id), entry_type, entry_id)
+        if entry is None:
+            return app_error_response(request, NotFoundError, "Food not found.")
+        return render_fragment(
+            FoodActionsMenu(entry_type, entry_id, entry["name"], entry["subtitle"], entry["can_edit"])
+        )
+
+    @rt("/food/actions/{entry_type}/{entry_id}/recipes")
+    def get(request: Request, entry_type: str, entry_id: int):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        # A recipe cannot be an ingredient of another recipe.
+        if entry_type not in ("catalog", "manual_intake"):
+            return app_error_response(request, NotFoundError, "Food not found.")
+        with get_connection() as connection:
+            entry = _food_actions_entry(connection, int(user_id), entry_type, entry_id)
+            if entry is None:
+                return app_error_response(request, NotFoundError, "Food not found.")
+            # Only the user's own recipes: the only ones they can edit.
+            recipes = get_all_recipes(connection, users_id=int(user_id), viewer_user_id=int(user_id))
+        return render_fragment(FoodActionsRecipes(entry_type, entry_id, entry["name"], recipes))
+
+    @rt("/food/actions/{entry_type}/{entry_id}/copy")
+    def get(request: Request, entry_type: str, entry_id: int):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        with get_connection() as connection:
+            entry = _food_actions_entry(connection, int(user_id), entry_type, entry_id)
+        if entry is None:
+            return app_error_response(request, NotFoundError, "Food not found.")
+        return render_fragment(FoodActionsCopyConfirm(entry_type, entry_id, entry["name"]))
 
     @rt("/food/item/{entry_type}/{entry_id}")
     def get(request: Request, entry_type: str, entry_id: int):

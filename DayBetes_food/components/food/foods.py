@@ -4,6 +4,7 @@ from fasthtml.common import *
 from DayBetes_food.components.cart.cart_shared import CHECKBOX_CLS
 from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.components.navigation import back_js
+from DayBetes_food.components.food.food_actions import EDIT_LABELS, FoodActionsTrigger
 from DayBetes_food.components.food.rescue import RescueMarkButton, RescueModal, rescue_open_attrs
 from DayBetes_food.components.modal import (
     close_modal_js,
@@ -809,15 +810,18 @@ def _labeled_input(
     attrs = {}
     if select_on_click:
         attrs["onclick"] = "this.select()"
-    if step:
+    # A decimal field is a text field with the decimal keypad
+    # (frontend_conventions.md §4): step, min and max only apply to
+    # type="number", and the server checks the range either way.
+    if step and typ == "number":
         attrs["step"] = step
     if value is not None:
         attrs["value"] = value
     if inputmode:
         attrs["inputmode"] = inputmode
-    if min_value is not None:
+    if min_value is not None and typ == "number":
         attrs["min"] = str(min_value)
-    if max_value is not None:
+    if max_value is not None and typ == "number":
         attrs["max"] = str(max_value)
     if maxlength is not None:
         attrs["maxlength"] = str(maxlength)
@@ -2311,7 +2315,7 @@ def CreateCatalogPage(
             _labeled_input(
                 "Default serving (g)",
                 "default_portion",
-                "number",
+                "text",
                 help_text="Default serving size in g. Leave empty if the food has no serving.",
                 step="any",
                 inputmode="decimal",
@@ -2345,12 +2349,12 @@ def CreateCatalogPage(
                     allow_add=False,
                     value=_pv("initial_state"),
                 ),
-                _labeled_input("Cooking factor", "cooking_factor", "number", help_text="Cooked/raw weight ratio. Leave empty if unknown.", step="any", inputmode="decimal", min_value=0, max_value=10, value=_pv("cooking_factor")),
+                _labeled_input("Cooking factor", "cooking_factor", "text", help_text="Cooked/raw weight ratio. Leave empty if unknown.", step="any", inputmode="decimal", min_value=0, max_value=10, value=_pv("cooking_factor")),
             ),
             _form_subgroup(
                 "Other nutrients per 100 g",
-                _labeled_input("Caffeine (mg)", "caffeine", "number", help_text="Caffeine in mg per 100 g.", step="any", inputmode="decimal", min_value=NUTRIENT_LIMITS["caffeine"].minimum, max_value=NUTRIENT_LIMITS["caffeine"].maximum, value=_pv("caffeine")),
-                _labeled_input("Alcohol (g)", "alcohol", "number", help_text="Alcohol in g per 100 g.", step="any", inputmode="decimal", min_value=NUTRIENT_LIMITS["alcohol"].minimum, max_value=NUTRIENT_LIMITS["alcohol"].maximum, value=_pv("alcohol")),
+                _labeled_input("Caffeine (mg)", "caffeine", "text", help_text="Caffeine in mg per 100 g.", step="any", inputmode="decimal", min_value=NUTRIENT_LIMITS["caffeine"].minimum, max_value=NUTRIENT_LIMITS["caffeine"].maximum, value=_pv("caffeine")),
+                _labeled_input("Alcohol (g)", "alcohol", "text", help_text="Alcohol in g per 100 g.", step="any", inputmode="decimal", min_value=NUTRIENT_LIMITS["alcohol"].minimum, max_value=NUTRIENT_LIMITS["alcohol"].maximum, value=_pv("alcohol")),
                 *([P(alcohol_source_note, cls="text-xs text-gray-600 md:col-span-2")] if alcohol_source_note else []),
             ),
             _form_subgroup(
@@ -2401,7 +2405,7 @@ def _manual_nutrient_input(label_per100: str, label_total: str, name: str, value
     return _labeled_input(
         label_per100,
         name,
-        "number",
+        "text",
         step="any",
         inputmode="decimal",
         min_value=limits.minimum,
@@ -2420,7 +2424,7 @@ def _manual_portion_input(value: str | None = None):
     return _labeled_input(
         "Serving weight (g)",
         "default_portion",
-        "number",
+        "text",
         help_text="Optional when you type values per 100 g; required when you type totals.",
         step="any",
         inputmode="decimal",
@@ -2561,7 +2565,7 @@ def QuickAddPage(events: list, plate_options: list, selected_plate_id: int | Non
             _labeled_input(
                 "Estimated weight (g)*",
                 "default_portion",
-                "number",
+                "text",
                 help_text="Rough weight of everything you ate. Required.",
                 step="any",
                 inputmode="decimal",
@@ -2709,7 +2713,7 @@ def EditCatalogPage(
         return _labeled_input(
             label,
             name,
-            "number",
+            "text",
             step="any",
             inputmode="decimal",
             min_value=limits.minimum,
@@ -2732,7 +2736,7 @@ def EditCatalogPage(
                 maxlength=CATALOG_BARCODE_MAX_LENGTH,
                 input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
             ),
-            _labeled_input("Default serving (g)", "default_portion", "number", step="any", inputmode="decimal", min_value=0, max_value=3000, value=_input_value(entry.get("default_portion"))),
+            _labeled_input("Default serving (g)", "default_portion", "text", step="any", inputmode="decimal", min_value=0, max_value=3000, value=_input_value(entry.get("default_portion"))),
         ),
         _form_section(
             "Nutrition per 100 g",
@@ -2752,7 +2756,7 @@ def EditCatalogPage(
             _searchable_autocomplete_input("Category*", "category", [c.value for c in FoodCategory], allow_add=False, value=_input_value(entry.get("category"))),
             _searchable_autocomplete_input("Subtype*", "subtype", subtype_options or [], allow_add=True, value=_input_value(entry.get("subtype")), maxlength=FOOD_SUBTYPE_MAX_LENGTH),
             _searchable_autocomplete_input("Initial state", "initial_state", [s.value for s in FoodPhysicalState], allow_add=False, value=_input_value(entry.get("initial_state"))),
-            _labeled_input("Cooking factor", "cooking_factor", "number", step="any", inputmode="decimal", min_value=0, max_value=10, value=_input_value(entry.get("cooking_factor"))),
+            _labeled_input("Cooking factor", "cooking_factor", "text", step="any", inputmode="decimal", min_value=0, max_value=10, value=_input_value(entry.get("cooking_factor"))),
         ),
         _form_section(
             "Data quality",
@@ -3413,11 +3417,7 @@ def FoodDetailPage(
             if entry_type == "catalog"
             else "Archived: removed from searches. You can keep using it."
         )
-    edit_label = (
-        {"catalog": "Edit food", "manual_intake": "Edit manual", "recipe": "Edit recipe"}.get(entry_type, "Edit")
-        if can_edit
-        else "Create editable copy"
-    )
+    edit_label = EDIT_LABELS.get(entry_type, "Edit") if can_edit else "Create editable copy"
     edit_href = {
         "catalog": f"/food/edit/catalog/{entry['id']}/form",
         "manual_intake": f"/food/edit/manual_intake/{entry['id']}/form",
@@ -4020,12 +4020,15 @@ def FoodCard(food):
             AddButton(label=add_label, hx_post=add_path),
             cls="flex items-center gap-2 ml-3",
         ),
+        FoodActionsTrigger(food["entry_type"], food["id"]),
         hx_get=f"/food/item/{food['entry_type']}/{food['id']}",
         hx_target="#main_content",
         hx_swap="innerHTML",
         hx_push_url="true",
         hx_trigger="click[!event.target.closest('[data-no-open]')]",
         **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
+        # Long press or right click: actions pop-up (§9.3.1, static/js/food_actions.js).
+        data_food_actions="true",
         cls="web_container food_entry rounded-2xl flex items-center justify-between cursor-pointer",
     )
 

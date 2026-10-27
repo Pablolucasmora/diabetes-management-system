@@ -303,10 +303,8 @@ def quick_actions(latest_event, portions):
             Div(
                 Label("Basal dose", cls="text-xs text-gray-600"),
                 Input(
-                    type="number",
+                    type="text",
                     name="units",
-                    step="0.5",
-                    min="0.5",
                     inputmode="decimal",
                     pattern="[0-9]+([\\.,][0-9]+)?",
                     placeholder="e.g. 8.5",
