@@ -133,3 +133,56 @@ Este documento complementa `conventions/code_conventions.md` §8 (configuración
 - Durante unos segundos, la versión anterior de `web` funciona sobre el esquema ya migrado. Los cambios de esquema deben ser compatibles con el código anterior mientras dura el despliegue (añadir antes de quitar).
 - Excepción aprobada (decisión 2026-10-09): el despliegue de la auditoría de `manual_intake` (PR #14) no es compatible con el código anterior, porque borra siete columnas de `intake_event` y renombra dos de `manual_intake`. Se acepta, con un solo usuario, que la versión anterior dé errores durante esos segundos. Antes del merge se exige: comprobar en producción, en solo lectura, los datos que la migración valida; exportar las columnas que se borran, y hacer un `pg_dump`. El merge se hace cuando nadie esté usando la app. Cualquier otro despliegue incompatible necesita su propia decisión.
 - Deuda: la identidad de migraciones es superusuario y bastaría con que fuera propietaria de los objetos del esquema.
+
+## 15. Commits, ramas y Pull Requests
+
+Decisión 2026-10-27. Recoge el formato que ya seguía casi todo el historial, para que deje de haber excepciones (`correction`, `update`, resúmenes en mayúscula). Todo se escribe en inglés (`code_conventions.md` §0).
+
+**Mensaje de commit**
+
+```
+feat(food): long-press actions pop-up on food rows
+
+Holding a row of the Food list opens a pop-up with the food's
+actions. Documented in frontend_conventions.md §9.3.1.
+
+Co-Authored-By: <agente> <correo>
+```
+
+- Primera línea: `tipo(ámbito): resumen`.
+- **Tipo**, uno de estos:
+
+  | Tipo | Cuándo |
+  |---|---|
+  | `feat` | funcionalidad nueva o ampliación visible para el usuario |
+  | `fix` | corrige un comportamiento incorrecto |
+  | `refactor` | cambia la estructura del código sin cambiar su comportamiento |
+  | `perf` | mejora el rendimiento sin cambiar el comportamiento |
+  | `style` | cambia solo el aspecto visual (colores, tema, animaciones), sin lógica |
+  | `docs` | solo documentación: `README.md`, `conventions/`, auditorías |
+  | `build` | dependencias e imágenes (`build(deps)`, §10) |
+  | `chore` | mantenimiento sin efecto en la app: comentarios, agentes, CSS regenerado suelto |
+  | `test` | solo pruebas |
+
+- **Ámbito**: obligatorio. Es el módulo, la tabla o el área con el nombre que ya usa el código (`cart`, `food`, `rescue`, `manual_intake`, `portion_detail`, `deploy`, `auth`, `ui`, `conventions`…). Si el cambio toca dos áreas por igual, se separan con coma (`fix(auth,nav)`). Solo se omite cuando el cambio afecta a todo el proyecto (`chore: translate comments to English`).
+- **Resumen**: en imperativo (`add`, `fix`, `move`), empieza en minúscula, sin punto final y con 72 caracteres como máximo contando el prefijo. Dice qué cambia para quien lee el historial, no qué archivos se tocaron.
+- **Cuerpo** (opcional): separado por una línea en blanco y con líneas de 72 caracteres como máximo. Explica qué y, sobre todo, por qué, y cita la sección de las convenciones que se haya creado o cambiado.
+- **Coautoría**: si el cambio se ha hecho con un agente (Claude Code), el mensaje termina con su línea `Co-Authored-By`. Así el repositorio refleja qué parte del trabajo se hizo con asistencia, de forma coherente con lo que se declare en la memoria del TFG.
+
+**Qué va en cada commit**
+
+- Un cambio lógico por commit, y la app arranca y funciona después de cada uno. Dos cambios independientes van en dos commits, aunque toquen el mismo archivo.
+- No se mezcla trabajo de tareas distintas: lo que estaba a medias antes de empezar se queda fuera del commit.
+- La convención que acompaña al código va en el mismo commit que el código. Una decisión sin código va sola, como `docs(conventions)`.
+- `static/css/output.css` regenerado va en el commit del cambio que lo necesita. `chore(css): rebuild Tailwind output` solo se usa cuando se regenera sin ningún otro cambio.
+- Cada actualización de dependencias va en su propio commit (§10).
+
+**Ramas**
+
+- Se crean desde `main` con el nombre `tipo/descripcion-corta`, en inglés y en kebab-case, con los mismos tipos que los commits (`feat/food-row-actions`, `docs/language-map`).
+- No se commitea directamente en `main` (§13).
+
+**Pull Requests**
+
+- El título sigue el mismo formato que la primera línea de un commit y resume el conjunto de la rama.
+- La descripción, en inglés, dice qué cambia, por qué, cómo se ha probado y qué convenciones se han creado o cambiado. Si se ha hecho con un agente, termina con su línea de atribución.

@@ -4,7 +4,7 @@ from fasthtml.common import *
 from DayBetes_food.components.cart.cart_shared import CHECKBOX_CLS
 from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.components.navigation import back_js
-from DayBetes_food.components.food.food_actions import EDIT_LABELS, FoodActionsTrigger
+from DayBetes_food.components.food.food_actions import COPY_LABEL, COPY_QUESTION, EDIT_LABELS, FoodActionsTrigger
 from DayBetes_food.components.food.rescue import RescueMarkButton, RescueModal, rescue_open_attrs
 from DayBetes_food.components.modal import (
     close_modal_js,
@@ -18,7 +18,6 @@ from DayBetes_food.domain.catalog import (
     CatalogItemRead,
 )
 from DayBetes_food.domain.food import (
-    FOOD_DEFAULT_PORTION_RANGE,
     FOOD_SUBTYPE_MAX_LENGTH,
     INITIAL_AMOUNT_WITHOUT_SERVING_G,
 )
@@ -37,6 +36,7 @@ from DayBetes_food.domain.constants import (
     ConservationMethod,
     CookingMethod,
     FoodCategory,
+    FoodEntryType,
     FoodPhysicalState,
     GlycemicIndex,
     MealType,
@@ -44,7 +44,7 @@ from DayBetes_food.domain.constants import (
     NutrientEntryMode,
     PortionOrigin,
 )
-from DayBetes_food.domain.nutrition import NUTRIENT_LIMITS, SMART_MACROS_MAX_LENGTH
+from DayBetes_food.domain.nutrition import SMART_MACROS_MAX_LENGTH
 from DayBetes_food.time_utils import to_local
 
 
@@ -810,18 +810,15 @@ def _labeled_input(
     attrs = {}
     if select_on_click:
         attrs["onclick"] = "this.select()"
-    # A decimal field is a text field with the decimal keypad
-    # (frontend_conventions.md §4): step, min and max only apply to
-    # type="number", and the server checks the range either way.
-    if step and typ == "number":
+    if step:
         attrs["step"] = step
     if value is not None:
         attrs["value"] = value
     if inputmode:
         attrs["inputmode"] = inputmode
-    if min_value is not None and typ == "number":
+    if min_value is not None:
         attrs["min"] = str(min_value)
-    if max_value is not None and typ == "number":
+    if max_value is not None:
         attrs["max"] = str(max_value)
     if maxlength is not None:
         attrs["maxlength"] = str(maxlength)
@@ -840,6 +837,32 @@ def _labeled_input(
             **attrs,
         ),
         cls="flex flex-col gap-1",
+    )
+
+
+
+def _decimal_input(
+    label: str,
+    name: str,
+    *,
+    help_text: str = "",
+    value: str | None = None,
+    label_attrs: dict | None = None,
+    input_attrs: dict | None = None,
+):
+    """A field that admits decimals (frontend_conventions.md §4): a text field
+    with the decimal keypad, never type="number", which rejects the comma the
+    keypad types in Spanish. It takes no step, min or max: they only apply to
+    type="number", and the server checks the range."""
+    return _labeled_input(
+        label,
+        name,
+        "text",
+        help_text=help_text,
+        value=value,
+        inputmode="decimal",
+        label_attrs=label_attrs,
+        input_attrs=input_attrs,
     )
 
 
@@ -2312,15 +2335,10 @@ def CreateCatalogPage(
         _form_section(
             "Nutrition",
             _smart_macros_block("catalog", prefill=data, label="Macros per 100 g"),
-            _labeled_input(
+            _decimal_input(
                 "Default serving (g)",
                 "default_portion",
-                "text",
                 help_text="Default serving size in g. Leave empty if the food has no serving.",
-                step="any",
-                inputmode="decimal",
-                min_value=0,
-                max_value=3000,
                 value=_pv("default_portion"),
             ),
             step=2,
@@ -2349,12 +2367,12 @@ def CreateCatalogPage(
                     allow_add=False,
                     value=_pv("initial_state"),
                 ),
-                _labeled_input("Cooking factor", "cooking_factor", "text", help_text="Cooked/raw weight ratio. Leave empty if unknown.", step="any", inputmode="decimal", min_value=0, max_value=10, value=_pv("cooking_factor")),
+                _decimal_input("Cooking factor", "cooking_factor", help_text="Cooked/raw weight ratio. Leave empty if unknown.", value=_pv("cooking_factor")),
             ),
             _form_subgroup(
                 "Other nutrients per 100 g",
-                _labeled_input("Caffeine (mg)", "caffeine", "text", help_text="Caffeine in mg per 100 g.", step="any", inputmode="decimal", min_value=NUTRIENT_LIMITS["caffeine"].minimum, max_value=NUTRIENT_LIMITS["caffeine"].maximum, value=_pv("caffeine")),
-                _labeled_input("Alcohol (g)", "alcohol", "text", help_text="Alcohol in g per 100 g.", step="any", inputmode="decimal", min_value=NUTRIENT_LIMITS["alcohol"].minimum, max_value=NUTRIENT_LIMITS["alcohol"].maximum, value=_pv("alcohol")),
+                _decimal_input("Caffeine (mg)", "caffeine", help_text="Caffeine in mg per 100 g.", value=_pv("caffeine")),
+                _decimal_input("Alcohol (g)", "alcohol", help_text="Alcohol in g per 100 g.", value=_pv("alcohol")),
                 *([P(alcohol_source_note, cls="text-xs text-gray-600 md:col-span-2")] if alcohol_source_note else []),
             ),
             _form_subgroup(
@@ -2398,38 +2416,27 @@ def CreateCatalogPage(
 
 def _manual_nutrient_input(label_per100: str, label_total: str, name: str, value: str | None = None):
     """Nutrient field of the manual dish forms. Its label follows the nutrient
-    mode, and `max` only applies per 100 g: a total may legitimately exceed it,
-    and the server checks the converted value (measurement §5.4). The JS of
-    static/js/manual_intake_form.js moves both."""
-    limits = NUTRIENT_LIMITS[name]
-    return _labeled_input(
+    mode (static/js/manual_intake_form.js). There is no `max` on the field: a
+    total may legitimately exceed the per-100 g limit, and the server checks
+    the converted value (measurement §5.4)."""
+    return _decimal_input(
         label_per100,
         name,
-        "text",
-        step="any",
-        inputmode="decimal",
-        min_value=limits.minimum,
-        max_value=limits.maximum,
         value=value,
         label_attrs={
             "data_mode_label": "true",
             "data_label_per100": label_per100,
             "data_label_total": label_total,
         },
-        input_attrs={"data_nutrient_field": "true", "data_max_per100": str(limits.maximum)},
+        input_attrs={"data_nutrient_field": "true"},
     )
 
 
 def _manual_portion_input(value: str | None = None):
-    return _labeled_input(
+    return _decimal_input(
         "Serving weight (g)",
         "default_portion",
-        "text",
         help_text="Optional when you type values per 100 g; required when you type totals.",
-        step="any",
-        inputmode="decimal",
-        min_value=FOOD_DEFAULT_PORTION_RANGE.minimum,
-        max_value=FOOD_DEFAULT_PORTION_RANGE.maximum,
         value=value,
         input_attrs={"data_manual_weight": "true"},
     )
@@ -2562,15 +2569,10 @@ def QuickAddPage(events: list, plate_options: list, selected_plate_id: int | Non
                 help_text="e.g. Menu of the day. Required.",
                 maxlength=MANUAL_INTAKE_NAME_MAX_LENGTH,
             ),
-            _labeled_input(
+            _decimal_input(
                 "Estimated weight (g)*",
                 "default_portion",
-                "text",
                 help_text="Rough weight of everything you ate. Required.",
-                step="any",
-                inputmode="decimal",
-                min_value=FOOD_DEFAULT_PORTION_RANGE.minimum,
-                max_value=FOOD_DEFAULT_PORTION_RANGE.maximum,
             ),
             _smart_macros_block("quick", label="Macros of everything you ate"),
             P("Carbs are required: write 0hc if there were none.", cls="text-xs text-gray-500 md:col-span-2 -mt-1"),
@@ -2709,17 +2711,8 @@ def EditCatalogPage(
     result_id = f"edit_catalog_result_{entry['id']}"
     back_path = f"/food/item/catalog/{entry['id']}"
 
-    def _num(label, name, limits):
-        return _labeled_input(
-            label,
-            name,
-            "text",
-            step="any",
-            inputmode="decimal",
-            min_value=limits.minimum,
-            max_value=limits.maximum,
-            value=_input_value(entry.get(name)),
-        )
+    def _num(label, name):
+        return _decimal_input(label, name, value=_input_value(entry.get(name)))
 
     form = Form(
         _edit_header("food", _input_value(entry.get("name")), back_path, CATALOG_NAME_MAX_LENGTH),
@@ -2736,19 +2729,19 @@ def EditCatalogPage(
                 maxlength=CATALOG_BARCODE_MAX_LENGTH,
                 input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
             ),
-            _labeled_input("Default serving (g)", "default_portion", "text", step="any", inputmode="decimal", min_value=0, max_value=3000, value=_input_value(entry.get("default_portion"))),
+            _decimal_input("Default serving (g)", "default_portion", value=_input_value(entry.get("default_portion"))),
         ),
         _form_section(
             "Nutrition per 100 g",
-            _num("Calories (kcal)", "calories_100g", NUTRIENT_LIMITS["calories_100g"]),
-            _num("Carbs (g)", "carbs_100g", NUTRIENT_LIMITS["carbs_100g"]),
-            _num("Sugars (g)", "sugars_100g", NUTRIENT_LIMITS["sugars_100g"]),
-            _num("Fats (g)", "fats_100g", NUTRIENT_LIMITS["fats_100g"]),
-            _num("Saturated (g)", "saturated_100g", NUTRIENT_LIMITS["saturated_100g"]),
-            _num("Proteins (g)", "proteins_100g", NUTRIENT_LIMITS["proteins_100g"]),
-            _num("Fiber (g)", "fiber_100g", NUTRIENT_LIMITS["fiber_100g"]),
-            _num("Caffeine (mg)", "caffeine", NUTRIENT_LIMITS["caffeine"]),
-            _num("Alcohol (g)", "alcohol", NUTRIENT_LIMITS["alcohol"]),
+            _num("Calories (kcal)", "calories_100g"),
+            _num("Carbs (g)", "carbs_100g"),
+            _num("Sugars (g)", "sugars_100g"),
+            _num("Fats (g)", "fats_100g"),
+            _num("Saturated (g)", "saturated_100g"),
+            _num("Proteins (g)", "proteins_100g"),
+            _num("Fiber (g)", "fiber_100g"),
+            _num("Caffeine (mg)", "caffeine"),
+            _num("Alcohol (g)", "alcohol"),
             cols=3,
         ),
         _form_section(
@@ -2756,7 +2749,7 @@ def EditCatalogPage(
             _searchable_autocomplete_input("Category*", "category", [c.value for c in FoodCategory], allow_add=False, value=_input_value(entry.get("category"))),
             _searchable_autocomplete_input("Subtype*", "subtype", subtype_options or [], allow_add=True, value=_input_value(entry.get("subtype")), maxlength=FOOD_SUBTYPE_MAX_LENGTH),
             _searchable_autocomplete_input("Initial state", "initial_state", [s.value for s in FoodPhysicalState], allow_add=False, value=_input_value(entry.get("initial_state"))),
-            _labeled_input("Cooking factor", "cooking_factor", "text", step="any", inputmode="decimal", min_value=0, max_value=10, value=_input_value(entry.get("cooking_factor"))),
+            _decimal_input("Cooking factor", "cooking_factor", value=_input_value(entry.get("cooking_factor"))),
         ),
         _form_section(
             "Data quality",
@@ -3417,7 +3410,7 @@ def FoodDetailPage(
             if entry_type == "catalog"
             else "Archived: removed from searches. You can keep using it."
         )
-    edit_label = EDIT_LABELS.get(entry_type, "Edit") if can_edit else "Create editable copy"
+    edit_label = EDIT_LABELS[FoodEntryType(entry_type)] if can_edit else COPY_LABEL
     edit_href = {
         "catalog": f"/food/edit/catalog/{entry['id']}/form",
         "manual_intake": f"/food/edit/manual_intake/{entry['id']}/form",
@@ -3770,6 +3763,24 @@ def FoodDetailPage(
             action_button,
             cls="w-full grid grid-cols-2 gap-3",
         ),
+        # Anyone who sees the item can copy it, the owner too (decision
+        # 2026-10-27). Without edit rights the copy takes the Edit slot.
+        (
+            Div(
+                Button(
+                    COPY_LABEL,
+                    type="button",
+                    cls="""
+                        web_button w-full px-4 py-2 text-sm rounded-2xl
+                        bg-white/85 text-gray-800 border border-gray-300
+                    """,
+                    onclick=open_modal_js(copy_confirm_id),
+                ),
+                cls="w-full",
+            )
+            if can_edit
+            else ""
+        ),
         (
             Div(
                 Button(
@@ -3795,23 +3806,19 @@ def FoodDetailPage(
             if archivable and can_edit and not TAGS_UI_ENABLED
             else ""
         ),
-        (
-            ConfirmActionModal(
-                modal_id=copy_confirm_id,
-                title="Create editable copy",
-                question="A personal copy will be created and opened for editing. Continue?",
-                yes_button=modal_confirm_button(
-                    "Yes",
-                    danger=False,
-                    hx_post=f"/food/copy/{entry_type}/{entry['id']}",
-                    hx_swap="none",
-                    hx_push_url="false",
-                    data_skip_page_loading="true",
-                    onclick=close_modal_js(copy_confirm_id),
-                ),
-            )
-            if not can_edit
-            else ""
+        ConfirmActionModal(
+            modal_id=copy_confirm_id,
+            title=COPY_LABEL,
+            question=COPY_QUESTION,
+            yes_button=modal_confirm_button(
+                "Yes",
+                danger=False,
+                hx_post=f"/food/copy/{entry_type}/{entry['id']}",
+                hx_swap="none",
+                hx_push_url="false",
+                data_skip_page_loading="true",
+                onclick=close_modal_js(copy_confirm_id),
+            ),
         ),
         (
             ConfirmActionModal(
@@ -4020,7 +4027,7 @@ def FoodCard(food):
             AddButton(label=add_label, hx_post=add_path),
             cls="flex items-center gap-2 ml-3",
         ),
-        FoodActionsTrigger(food["entry_type"], food["id"]),
+        FoodActionsTrigger(FoodEntryType(food["entry_type"]), food["id"]),
         hx_get=f"/food/item/{food['entry_type']}/{food['id']}",
         hx_target="#main_content",
         hx_swap="innerHTML",

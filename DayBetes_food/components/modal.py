@@ -23,6 +23,22 @@ def close_modal_js(modal_id: str) -> str:
 _MODAL_BUTTON_CLS = "px-4 py-2 rounded-xl text-sm font-semibold cursor-pointer transition-colors"
 
 
+# A long name inside a pop-up (a food, a recipe): up to two lines, then an
+# ellipsis; a single long word breaks instead of overflowing the card.
+MODAL_NAME_CLS = "min-w-0 max-w-full line-clamp-2 break-words font-semibold text-gray-900"
+
+_MODAL_ICON_BUTTON_CLS = """
+    h-7 w-7 shrink-0 rounded-full cursor-pointer
+    text-gray-500 hover:bg-line-soft transition-colors
+    flex items-center justify-center text-lg leading-none
+"""
+
+
+def modal_icon_button(symbol: str, *, aria_label: str, **attrs):
+    """Small round button of a pop-up with a single symbol (×, ‹)."""
+    return Button(symbol, type="button", aria_label=aria_label, cls=_MODAL_ICON_BUTTON_CLS, **attrs)
+
+
 def modal_confirm_button(label: str, *, danger: bool = False, cls: str = "", **attrs):
     """Main action of a pop-up: red if it deletes something, ink otherwise."""
     colour = "bg-danger hover:bg-danger/90" if danger else "bg-ink hover:bg-ink/90"

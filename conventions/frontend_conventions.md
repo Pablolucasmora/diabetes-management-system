@@ -34,7 +34,7 @@ Los inputs cuyo control visual lo dibuja el navegador (`type="time"`, `type="dat
   - `inputmode="numeric"` si el campo es siempre un entero (p. ej. `step="1"` o sin decimales posibles).
 - `inputmode="number"` **no es un valor válido** del atributo (los valores válidos son `none`, `text`, `decimal`, `numeric`, `tel`, `search`, `email`, `url`) y no debe usarse. Un input numérico tampoco debe quedarse con `inputmode="text"`.
 - Un input con `inputmode` incorrecto o ausente en un campo numérico se considera un defecto a corregir, no una variación de estilo aceptable.
-- **Un campo que admite decimales es `type="text"` con `inputmode="decimal"`, no `type="number"`** (decisión 2026-10-27). En un móvil configurado en español, el teclado decimal escribe una coma, y un `type="number"` la rechaza: el valor llega vacío o el navegador no deja enviar el formulario. El servidor acepta tanto `12,5` como `12.5` y comprueba el rango, así que en estos campos no se ponen `step`, `min` ni `max`, porque solo valen para `type="number"`. Los campos enteros (NOVA, Yuka) siguen siendo `type="number"` con `inputmode="numeric"`.
+- **Un campo que admite decimales es `type="text"` con `inputmode="decimal"`, no `type="number"`** (decisión 2026-10-27). En los formularios de Food se construye con `_decimal_input` (`components/food/foods.py`). En un móvil configurado en español, el teclado decimal escribe una coma, y un `type="number"` la rechaza: el valor llega vacío o el navegador no deja enviar el formulario. El servidor acepta tanto `12,5` como `12.5` y comprueba el rango, así que en estos campos no se ponen `step`, `min` ni `max`, porque solo valen para `type="number"`. Los campos enteros (NOVA, Yuka) siguen siendo `type="number"` con `inputmode="numeric"`.
 - **Excepción: un campo entero que admite negativos usa `inputmode="text"`** (decisión 2026-10-27, pedida por el usuario). El teclado numérico del iPhone no tiene la tecla "−", y así se puede escribir `-15` directamente. Hoy es el caso del offset del carrito (§7.9), que lleva además `pattern="-?[0-9]*"`.
 
 ## 5. Posición del scroll al cambiar de página
@@ -297,22 +297,22 @@ Decisión 2026-10-27, acordada con el usuario como prueba de diseño.
 - **Forma.** Es un pop-up (`ModalLayer`, §8, id `food_actions_modal`), no un panel anclado a la fila. Arriba muestra el nombre del alimento y, debajo, la marca, el origen o `Recipe`, con una × para cerrar. Debajo van las opciones como filas `control`. Su contenido se pide al servidor cada vez que se abre, y el pop-up se abre cuando ese contenido llega (como en §9.6). Las vistas interiores (recetas y confirmación de copia) sustituyen el cuerpo del pop-up y llevan "‹" para volver al menú. Al cambiar de vista se anima igual que el pop-up de rescate (§10).
 - **Opciones.** Cada una aparece solo si el usuario tiene permiso, con el mismo criterio que el detalle (§9.4):
   - `Edit food` / `Edit manual` / `Edit recipe`: solo si es suyo y está activo. Abre la página de editar.
-  - `Create editable copy`: si no puede editarlo. Pide la misma confirmación que el detalle y usa `POST /food/copy/...`.
+  - `Make a copy`: siempre, también en lo propio (decisión 2026-10-27, `code_conventions.md` §11.2.2). Pide la misma confirmación que el detalle, usa `POST /food/copy/...` y abre la edición de la copia.
   - `Add to recipe`: solo para alimentos y platos (`catalog`, `manual_intake`), porque una receta no puede ser ingrediente. Lista las recetas propias del usuario. Al elegir una, se añade con la cantidad inicial de siempre (una ración, o 100 g si no tiene) usando la ruta de añadir ingrediente que ya existe, que suma la cantidad si el alimento ya estaba en esa receta. El pop-up se cierra y aparece el aviso `Added to <receta>` (`dbShowAppNotice`).
 
 **Respuestas HTMX**
 
 | Acción | `hx-target` | `hx-swap` | Éxito | Error |
 |---|---|---|---|---|
-| `GET /food/actions/{entry_type}/{entry_id}` | `#food_actions_modal_body` | `innerHTML` | el menú | sin sesión: `401`; no visible: `404`, por el canal de errores |
-| `GET /food/actions/{entry_type}/{entry_id}/recipes` | `#food_actions_modal_body` | `innerHTML` | la lista de recetas propias | igual; `404` también para una receta |
+| `GET /food/actions/{entry_type}/{entry_id}` | `#food_actions_modal_body` | `innerHTML` | el menú | sin sesión: `401`; tipo desconocido: `422` (`code_conventions.md` §7.7); no visible: `404`. Todo por el canal de errores |
+| `GET /food/actions/{entry_type}/{entry_id}/recipes` | `#food_actions_modal_body` | `innerHTML` | la lista de recetas propias | igual; `422` también para una receta, que no puede ser ingrediente |
 | `GET /food/actions/{entry_type}/{entry_id}/copy` | `#food_actions_modal_body` | `innerHTML` | la confirmación | igual |
 
 Todas exigen el header `HX-Request` (`403` si falta).
 
 ### 9.4 Detalle de un alimento, plato o receta
 
-De arriba abajo: el nombre y sus datos, *Add to*, la cantidad (con *Advanced* para la preparación), `Strictly weighted` (§7.1, `measurement_conventions.md` §6.11), *Macros Summary* y *Details*. Entra bloque a bloque (§10). En un alimento o plato propio y activo aparece además el botón `Rescue` (§9.6).
+De arriba abajo: el nombre y sus datos, *Add to*, la cantidad (con *Advanced* para la preparación), `Strictly weighted` (§7.1, `measurement_conventions.md` §6.11), *Macros Summary* y *Details*. Debajo, las acciones: `Edit` y `Log`; si el usuario no puede editarlo, `Make a copy` ocupa el sitio de `Edit`. Si puede editarlo, `Make a copy` va en su propia fila debajo, encima de `Publish` (decisión 2026-10-27). Copiar pide confirmación y abre la edición de la copia. Entra bloque a bloque (§10). En un alimento o plato propio y activo aparece además el botón `Rescue` (§9.6).
 
 ### 9.5 Carrito
 
@@ -391,6 +391,7 @@ Decisión 2026-10-10. Animaciones pequeñas para que los cambios se perciban con
 - La tarjeta de un pop-up crece mientras aparece su fondo (`data-modal-card`, `components/modal.py`).
 - En el pop-up de rescate (§9.6), al elegir un alimento las opciones se desvanecen y la línea nueva entra cuando ya han desaparecido, para que no se pisen. Al quitar una línea se desvanece, y las opciones y `+ Add another food` aparecen suavemente.
 - **Excepción: la altura de la tarjeta del pop-up de rescate** (decisión 2026-10-11, pedida expresamente por el usuario para este caso). Cuando cambia su contenido (al elegir, sumar o quitar un alimento, al pulsar `+ Add another food`, con resultados nuevos de búsqueda o con un error de validación), la tarjeta pasa de su altura anterior a la nueva en 220 ms en vez de saltar (`static/js/rescue.js`, `animateCardHeight`). Mide la altura antes y después del cambio, anima `height` entre las dos y luego la deja libre. Una línea nueva no ocupa espacio hasta que las opciones se han desvanecido, de modo que la tarjeta cambia de tamaño una sola vez y no crece para luego encoger. Animar `height` obliga a recalcular el layout en cada frame, por eso esta excepción no se extiende a otros componentes sin acordarlo.
-- **La excepción se extiende al pop-up de acciones de una fila de Food** (§9.3.1; decisión 2026-10-27, pedida expresamente por el usuario). Al pulsar `Add to recipe`, `Create editable copy` o "‹", la vista actual se desvanece en 150 ms y el cambio espera a que termine (`hx-swap="innerHTML swap:150ms"`). Después la tarjeta pasa de su altura anterior a la nueva en 220 ms y la vista nueva entra subiendo (`static/js/food_actions.js`).
+- **La excepción se extiende al pop-up de acciones de una fila de Food** (§9.3.1; decisión 2026-10-27, pedida expresamente por el usuario). Al pulsar `Add to recipe`, `Make a copy` o "‹", la vista actual se desvanece en 150 ms mientras se pide la siguiente. La vista nueva no se muestra, y la tarjeta conserva su altura, hasta que termina el desvanecimiento. Después la tarjeta pasa a la altura nueva en 220 ms y la vista nueva entra subiendo (`static/js/food_actions.js`). Con movimiento reducido no hay animación ni espera.
+- Las utilidades de movimiento de los pop-ups (desvanecer, entrar subiendo, animar la altura de la tarjeta) están una sola vez en `static/js/modal.js` (`window.dbModalMotion`) y las usan el rescate y el menú de acciones. Un pop-up nuevo que se anime las reutiliza en vez de copiarlas.
 - Los botones (`web_button`) se hunden un poco al pulsarlos (`active:scale-95`). En móvil se quita el resaltado azul del toque.
 - Los repintados parciales (una tarjeta del carrito tras cambiar un valor) **no** se animan: pasan a cada cambio y un parpadeo ahí molesta más de lo que ayuda.

@@ -77,6 +77,16 @@ class AmountInputUnit(str, Enum):
 
 
 @unique
+class FoodEntryType(str, Enum):
+    """Kind of entry of the Food list, as it travels in the URL of the Food
+    routes: a food, a dish or a recipe. Only the first two can be the origin
+    of a portion (PortionOrigin)."""
+    CATALOG = "catalog"
+    MANUAL_INTAKE = "manual_intake"
+    RECIPE = "recipe"
+
+
+@unique
 class PortionOrigin(str, Enum):
     """Where the food of a portion comes from (`portion_detail` origin arc)."""
     CATALOG = "catalog"

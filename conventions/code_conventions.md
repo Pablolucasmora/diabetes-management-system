@@ -743,6 +743,8 @@ El parser central define los valores aceptados, por ejemplo `{"true"}` y `{"fals
 
 Los valores cerrados se convierten mediante los enums centrales. Un valor desconocido produce `422`, no un fallback. Los componentes generan sus opciones recorriendo el enum y los servicios reciben el valor ya validado. Las opciones abiertas se validan contra sus tablas de catálogo.
 
+Esto incluye los valores cerrados que llegan en la URL. El tipo de alimento de las rutas de Food (`catalog`, `manual_intake`, `recipe`) es `FoodEntryType` (`domain/constants.py`, decisión 2026-10-27). Cada ruta lo convierte al empezar y responde `422` a un tipo desconocido, en vez de `404` o de seguir sin rama. Las acciones en línea lo devuelven con `app_error_response` y las páginas completas lo lanzan, como el resto de sus errores.
+
 ### 7.8 Identificadores, fechas y horas
 
 - Los identificadores de URL, formularios y HTMX se validan antes de ejecutar SQL.
@@ -1322,6 +1324,7 @@ Decisión 2026-09-24 (`conventions/decisions.md`). Cuando un contrato no cabe en
 - **Copiar**:
   - Crea una **fila nueva** con su propio `id`, `created_by` = quien copia y `origin_root_id` = el alimento raíz de la familia. Una copia de una copia también apunta a la raíz.
   - Duplica los datos y es independiente del original: archivar o cambiar uno no afecta al otro.
+  - Lo puede copiar cualquiera que vea el alimento, **también su propietario**, por ejemplo para partir de él y crear una variante (decisión 2026-10-27). Hasta entonces, copiar un alimento propio y activo abría su edición en vez de copiarlo. La copia se llama `<nombre> (copy)` y se abre en edición. Lo mismo vale para `manual_intake` (§11.2.3) y `recipe`.
   - Con el versionado, además guarda `origin_version_id` y crea su propia v1. **Copiar solo hace falta para tener valores distintos**: las fechas de vigencia son de cada usuario y se gestionan sobre cualquier alimento visible, sin copiarlo (decisión 2026-09-24, versionado).
   - Los alimentos con el mismo `COALESCE(origin_root_id, id)` forman una **familia**.
 - **Versionado**: los valores son del dueño del alimento y la línea de tiempo de vigencias es de cada usuario (decisión 2026-09-24). El diseño está pendiente de implementar y se detalla en `audit/deuda_pendiente.md`, `portion_detail` H1. Mientras no exista, el alimento se comporta como si tuviera una única versión.

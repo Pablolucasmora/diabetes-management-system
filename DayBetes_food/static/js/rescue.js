@@ -5,18 +5,17 @@
 // pop-up when the rescue is registered. Nothing is stored in localStorage
 // and no field takes the focus on its own (it would open a phone keyboard).
 //
-// Motion (frontend_conventions.md §10): opacity and transform, short, and
-// none when the system asks to reduce motion. The card's height is the one
+// Motion (frontend_conventions.md §10) uses the helpers every pop-up shares
+// (window.dbModalMotion, static/js/modal.js). The card's height is the
 // exception the user asked for: it grows and shrinks instead of jumping.
 (function () {
   if (window.__dbRescueBootstrapped) return;
   window.__dbRescueBootstrapped = true;
 
   var MODAL_ID = "rescue_modal";
-  var FADE_MS = 150;
+  var motion = window.dbModalMotion;
   // Step of the − / + buttons per amount unit (AmountInputUnit codes).
   var STEP_BY_UNIT = { portion: 1, g: 10, oz: 1, lb: 0.25 };
-  var HEIGHT_MS = 220;
   var pickerFadeStartedAt = 0;
   var heightBeforeSwap = null;
 
@@ -24,53 +23,24 @@
     return document.getElementById(id);
   }
 
-  function reducedMotion() {
-    return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-  }
-
   function lineCount() {
     var lines = byId("rescue_lines");
     return lines ? lines.querySelectorAll("[data-rescue-line]").length : 0;
   }
 
-  // ---- Motion helpers ----
+  // ---- Motion ----
 
-  function clearMotion(el) {
-    el.style.transition = "";
-    el.style.opacity = "";
-    el.style.transform = "";
-  }
-
-  function fadeOut(el, done) {
-    if (!el || reducedMotion()) {
-      if (done) done();
-      return;
-    }
-    el.style.transition = "opacity " + FADE_MS + "ms ease, transform " + FADE_MS + "ms ease";
-    el.style.opacity = "0";
-    el.style.transform = "translateY(-4px)";
-    window.setTimeout(function () {
-      if (done) done();
-      clearMotion(el);
-    }, FADE_MS);
-  }
-
-  function riseIn(el) {
-    if (!el || reducedMotion()) return;
-    el.removeAttribute("data-enter");
-    void el.offsetWidth;
-    el.setAttribute("data-enter", "");
-  }
-
+  // Only the rescue pop-up fades an element back in; the other helpers are
+  // shared (static/js/modal.js).
   function fadeIn(el) {
-    if (!el || reducedMotion()) return;
+    if (!el || motion.reduced()) return;
     el.style.opacity = "0";
     el.style.transform = "translateY(4px)";
     void el.offsetWidth;
     el.style.transition = "opacity 200ms ease, transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1)";
     el.style.opacity = "1";
     el.style.transform = "none";
-    window.setTimeout(function () { clearMotion(el); }, 220);
+    window.setTimeout(function () { motion.clear(el); }, 220);
   }
 
   function card() {
@@ -78,29 +48,9 @@
     return form ? form.closest("[data-modal-card]") : null;
   }
 
-  // Runs `change` and animates the pop-up card from its old height to the
-  // new one, instead of letting it jump (§10, exception asked by the user).
-  // `fromHeight` is passed when the change already happened (an htmx swap).
+  // The pop-up card grows and shrinks with its content (§10, exception).
   function animateCardHeight(change, fromHeight) {
-    var el = card();
-    if (!el || reducedMotion()) {
-      if (change) change();
-      return;
-    }
-    var from = fromHeight != null ? fromHeight : el.offsetHeight;
-    if (change) change();
-    var to = el.offsetHeight;
-    if (Math.abs(to - from) < 2) return;
-    el.style.height = from + "px";
-    el.style.overflow = "hidden";
-    void el.offsetHeight;
-    el.style.transition = "height " + HEIGHT_MS + "ms cubic-bezier(0.2, 0.8, 0.2, 1)";
-    el.style.height = to + "px";
-    window.setTimeout(function () {
-      el.style.height = "";
-      el.style.overflow = "";
-      el.style.transition = "";
-    }, HEIGHT_MS + 20);
+    motion.animateCardHeight(card(), change, fromHeight);
   }
 
   // ---- Picker and lines ----
@@ -197,7 +147,7 @@
         // Stops htmx from asking for a second line.
         event.preventDefault();
         event.stopPropagation();
-        fadeOut(byId("rescue_picker"), function () {
+        motion.fadeOut(byId("rescue_picker"), function () {
           animateCardHeight(function () {
             clearSearch();
             hidePicker();
@@ -209,17 +159,15 @@
       // carries on with the click.
       pickerFadeStartedAt = Date.now();
       var picker = byId("rescue_picker");
-      if (picker && !reducedMotion()) {
-        picker.style.transition = "opacity " + FADE_MS + "ms ease, transform " + FADE_MS + "ms ease";
-        picker.style.opacity = "0";
-        picker.style.transform = "translateY(-4px)";
+      if (picker) {
+        motion.startFade(picker);
       }
       return;
     }
     var remove = target.closest("[data-rescue-remove]");
     if (remove) {
       var line = remove.closest("[data-rescue-line]");
-      fadeOut(line, function () {
+      motion.fadeOut(line, function () {
         animateCardHeight(function () {
           if (line) line.remove();
           if (lineCount() === 0) showPicker();
@@ -252,18 +200,18 @@
       var lines = target.querySelectorAll("[data-rescue-line]");
       var line = lines.length ? lines[lines.length - 1] : null;
       if (line) line.classList.add("hidden");
-      var wait = Math.max(0, FADE_MS - (Date.now() - pickerFadeStartedAt));
+      var wait = Math.max(0, motion.FADE_MS - (Date.now() - pickerFadeStartedAt));
       window.setTimeout(function () {
         animateCardHeight(function () {
           var picker = byId("rescue_picker");
-          if (picker) clearMotion(picker);
+          if (picker) motion.clear(picker);
           clearSearch();
           hidePicker();
           if (line) line.classList.remove("hidden");
         });
-        riseIn(line);
+        motion.riseIn(line);
         refresh();
-      }, reducedMotion() ? 0 : wait);
+      }, motion.reduced() ? 0 : wait);
     } else if (heightBeforeSwap != null && (target.id === "rescue_picker_results" || target.id === "rescue_form_error")) {
       // New search results or a validation message: the card follows.
       var from = heightBeforeSwap;
@@ -289,7 +237,7 @@
     var target = event && event.detail ? event.detail.target : null;
     if (target && target.id === "rescue_lines") {
       var picker = byId("rescue_picker");
-      if (picker) clearMotion(picker);
+      if (picker) motion.clear(picker);
     }
   });
 

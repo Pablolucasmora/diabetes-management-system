@@ -521,7 +521,7 @@ def _injection_edit_modal(injection):
                     pattern="[0-9]+([\\.,][0-9]+)?",
                     placeholder="e.g. 8.5",
                     value=(f"{float(units):g}" if units is not None else ""),
-                    cls="web_input border border-white rounded-lg px-2 py-1 text-base",
+                    cls="web_input border border-white rounded-lg px-2 py-1 text-sm",
                 ),
                 data_settings_basal_wrap="true",
                 cls=f"{'hidden ' if injection.insulin_type is not InsulinType.BASAL else ''}flex flex-col gap-1",

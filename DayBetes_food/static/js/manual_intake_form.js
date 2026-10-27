@@ -32,8 +32,8 @@
     if (hint) hint.textContent = text || "";
   }
 
-  // Labels follow the mode; the per-100 g `max` only applies per 100 g,
-  // because a total may legitimately exceed it.
+  // Labels follow the mode. The range is checked by the server on the
+  // converted per-100 g value, since a total may legitimately exceed it.
   function applyMode(form) {
     var select = modeSelectOf(form);
     if (!select) return;
@@ -42,14 +42,6 @@
     for (var i = 0; i < labels.length; i += 1) {
       var text = total ? labels[i].dataset.labelTotal : labels[i].dataset.labelPer100;
       if (text) labels[i].textContent = text;
-    }
-    var fields = form.querySelectorAll("[data-max-per100]");
-    for (var j = 0; j < fields.length; j += 1) {
-      if (total) {
-        fields[j].removeAttribute("max");
-      } else {
-        fields[j].setAttribute("max", fields[j].dataset.maxPer100);
-      }
     }
   }
 
