@@ -287,6 +287,27 @@ Arriba, el saludo con el nombre de usuario (`Hi <usuario>`). Debajo, en este ord
 - La cabecera es fija arriba (`sticky`) y usa `web_glass_strong` (§8). Lleva el botón del rayo, que abre el pop-up de rescate (§9.6), el menú "+", el buscador, los filtros y el selector de comida (*Add to*). Mientras el menú "+" está abierto, la capa `#food_menu_scrim` desenfoca el resto de la página (§8).
 - Cada alimento de la lista es una tarjeta con el nombre, la marca u origen debajo y los carbohidratos por 100 g. Los propios llevan la etiqueta `Mine` y los archivados, `Archived`. Las listas van agrupadas bajo etiquetas de sección (`web_section_label`).
 
+#### 9.3.1 Menú de acciones de una fila (en prueba)
+
+Decisión 2026-10-27, acordada con el usuario como prueba de diseño.
+
+- **Gesto.** Mantener pulsada una fila de la lista de Food 500 ms sin mover el dedo abre un pop-up de acciones. Si el dedo se mueve más de 10 px, es un scroll y se cancela. En el ordenador, el clic derecho abre el mismo pop-up. Al soltar después de una pulsación larga no se abre el detalle. La estrella y el "+" de la fila mantienen su propio toque. La fila no permite seleccionar texto ni abre el menú nativo de iOS. A partir de 150 ms se hunde un poco (§10) y, al abrirse el pop-up, el móvil vibra brevemente si el navegador tiene la API de vibración (Android). En el iPhone no hay vibración: Safari no tiene esa API, y el truco del interruptor nativo oculto (`<input type="checkbox" switch>`) no da el toque cuando el pop-up se abre desde el temporizador de la pulsación larga (probado en iOS 27.2, 2026-10-27). El gesto está en `static/js/food_actions.js`.
+- **Forma.** Es un pop-up (`ModalLayer`, §8, id `food_actions_modal`), no un panel anclado a la fila. Arriba muestra el nombre del alimento y, debajo, la marca, el origen o `Recipe`, con una × para cerrar. Debajo van las opciones como filas `control`. Su contenido se pide al servidor cada vez que se abre, y el pop-up se abre cuando ese contenido llega (como en §9.6). Las vistas interiores (recetas y confirmación de copia) sustituyen el cuerpo del pop-up y llevan "‹" para volver al menú. Al cambiar de vista se anima igual que el pop-up de rescate (§10).
+- **Opciones.** Cada una aparece solo si el usuario tiene permiso, con el mismo criterio que el detalle (§9.4):
+  - `Edit food` / `Edit manual` / `Edit recipe`: solo si es suyo y está activo. Abre la página de editar.
+  - `Create editable copy`: si no puede editarlo. Pide la misma confirmación que el detalle y usa `POST /food/copy/...`.
+  - `Add to recipe`: solo para alimentos y platos (`catalog`, `manual_intake`), porque una receta no puede ser ingrediente. Lista las recetas propias del usuario. Al elegir una, se añade con la cantidad inicial de siempre (una ración, o 100 g si no tiene) usando la ruta de añadir ingrediente que ya existe, que suma la cantidad si el alimento ya estaba en esa receta. El pop-up se cierra y aparece el aviso `Added to <receta>` (`dbShowAppNotice`).
+
+**Respuestas HTMX**
+
+| Acción | `hx-target` | `hx-swap` | Éxito | Error |
+|---|---|---|---|---|
+| `GET /food/actions/{entry_type}/{entry_id}` | `#food_actions_modal_body` | `innerHTML` | el menú | sin sesión: `401`; no visible: `404`, por el canal de errores |
+| `GET /food/actions/{entry_type}/{entry_id}/recipes` | `#food_actions_modal_body` | `innerHTML` | la lista de recetas propias | igual; `404` también para una receta |
+| `GET /food/actions/{entry_type}/{entry_id}/copy` | `#food_actions_modal_body` | `innerHTML` | la confirmación | igual |
+
+Todas exigen el header `HX-Request` (`403` si falta).
+
 ### 9.4 Detalle de un alimento, plato o receta
 
 De arriba abajo: el nombre y sus datos, *Add to*, la cantidad (con *Advanced* para la preparación), `Strictly weighted` (§7.1, `measurement_conventions.md` §6.11), *Macros Summary* y *Details*. Entra bloque a bloque (§10). En un alimento o plato propio y activo aparece además el botón `Rescue` (§9.6).
@@ -368,5 +389,6 @@ Decisión 2026-10-10. Animaciones pequeñas para que los cambios se perciban con
 - La tarjeta de un pop-up crece mientras aparece su fondo (`data-modal-card`, `components/modal.py`).
 - En el pop-up de rescate (§9.6), al elegir un alimento las opciones se desvanecen y la línea nueva entra cuando ya han desaparecido, para que no se pisen. Al quitar una línea se desvanece, y las opciones y `+ Add another food` aparecen suavemente.
 - **Excepción: la altura de la tarjeta del pop-up de rescate** (decisión 2026-10-11, pedida expresamente por el usuario para este caso). Cuando cambia su contenido (al elegir, sumar o quitar un alimento, al pulsar `+ Add another food`, con resultados nuevos de búsqueda o con un error de validación), la tarjeta pasa de su altura anterior a la nueva en 220 ms en vez de saltar (`static/js/rescue.js`, `animateCardHeight`). Mide la altura antes y después del cambio, anima `height` entre las dos y luego la deja libre. Una línea nueva no ocupa espacio hasta que las opciones se han desvanecido, de modo que la tarjeta cambia de tamaño una sola vez y no crece para luego encoger. Animar `height` obliga a recalcular el layout en cada frame, por eso esta excepción no se extiende a otros componentes sin acordarlo.
+- **La excepción se extiende al pop-up de acciones de una fila de Food** (§9.3.1; decisión 2026-10-27, pedida expresamente por el usuario). Al pulsar `Add to recipe`, `Create editable copy` o "‹", la vista actual se desvanece en 150 ms y el cambio espera a que termine (`hx-swap="innerHTML swap:150ms"`). Después la tarjeta pasa de su altura anterior a la nueva en 220 ms y la vista nueva entra subiendo (`static/js/food_actions.js`).
 - Los botones (`web_button`) se hunden un poco al pulsarlos (`active:scale-95`). En móvil se quita el resaltado azul del toque.
 - Los repintados parciales (una tarjeta del carrito tras cambiar un valor) **no** se animan: pasan a cada cambio y un parpadeo ahí molesta más de lo que ayuda.

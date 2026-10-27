@@ -1,6 +1,7 @@
 from fasthtml.common import *
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.cart.cart_components import plate_display_name
+from DayBetes_food.components.food.food_actions import FoodActionsModal
 from DayBetes_food.components.food.foods import (
     Filters,
     MealSelector,
@@ -102,6 +103,8 @@ def food_main(connection):
             data_skip_page_loading="true",
             cls="flex flex-col items-center md:gap-3 lg:gap-3 gap-2 mt-4 transition-all duration-150 ease-out",
         ),
+        # Outside #food-list, so a new search does not remove an open pop-up.
+        FoodActionsModal(),
         id="food_list_wrapper",
         cls="""md:mb-50 lg:mb-50 mb-36""",
     )

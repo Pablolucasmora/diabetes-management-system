@@ -4,6 +4,7 @@ from fasthtml.common import *
 from DayBetes_food.components.cart.cart_shared import CHECKBOX_CLS
 from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.components.navigation import back_js
+from DayBetes_food.components.food.food_actions import EDIT_LABELS, FoodActionsTrigger
 from DayBetes_food.components.food.rescue import RescueMarkButton, RescueModal, rescue_open_attrs
 from DayBetes_food.components.modal import (
     close_modal_js,
@@ -3413,11 +3414,7 @@ def FoodDetailPage(
             if entry_type == "catalog"
             else "Archived: removed from searches. You can keep using it."
         )
-    edit_label = (
-        {"catalog": "Edit food", "manual_intake": "Edit manual", "recipe": "Edit recipe"}.get(entry_type, "Edit")
-        if can_edit
-        else "Create editable copy"
-    )
+    edit_label = EDIT_LABELS.get(entry_type, "Edit") if can_edit else "Create editable copy"
     edit_href = {
         "catalog": f"/food/edit/catalog/{entry['id']}/form",
         "manual_intake": f"/food/edit/manual_intake/{entry['id']}/form",
@@ -4020,12 +4017,15 @@ def FoodCard(food):
             AddButton(label=add_label, hx_post=add_path),
             cls="flex items-center gap-2 ml-3",
         ),
+        FoodActionsTrigger(food["entry_type"], food["id"]),
         hx_get=f"/food/item/{food['entry_type']}/{food['id']}",
         hx_target="#main_content",
         hx_swap="innerHTML",
         hx_push_url="true",
         hx_trigger="click[!event.target.closest('[data-no-open]')]",
         **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
+        # Long press or right click: actions pop-up (§9.3.1, static/js/food_actions.js).
+        data_food_actions="true",
         cls="web_container food_entry rounded-2xl flex items-center justify-between cursor-pointer",
     )
 

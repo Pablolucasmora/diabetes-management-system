@@ -183,6 +183,14 @@
     button {
         -webkit-tap-highlight-color: transparent;
     }
+    /* A food row opens its actions pop-up when held (static/js/food_actions.js):
+       holding it selects no text and opens no iOS callout. */
+    .food_entry[data-food-actions] {
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+    }
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -225,6 +233,17 @@
     }
     .db_modal .opacity-0 > [data-modal-card] {
         transform: translateY(10px) scale(0.97);
+    }
+
+    /* A held food row sinks a little until its actions pop-up opens
+       (static/js/food_actions.js). */
+    .food_entry[data-food-pressed] {
+        scale: 0.97;
+    }
+
+    /* Food actions pop-up (static/js/food_actions.js): a new view rises in. */
+    #food_actions_modal_body[data-enter] > * {
+        animation: db-rise-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
     }
 
     /* Rescue pop-up (static/js/rescue.js): a picked food rises in. */

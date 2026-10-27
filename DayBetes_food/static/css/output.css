@@ -508,6 +508,9 @@
   .max-h-\[38vh\] {
     max-height: 38vh;
   }
+  .max-h-\[50vh\] {
+    max-height: 50vh;
+  }
   .max-h-\[85vh\] {
     max-height: 85vh;
   }
@@ -1936,6 +1939,12 @@
   button {
     -webkit-tap-highlight-color: transparent;
   }
+  .food_entry[data-food-actions] {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
 }
 @media (prefers-reduced-motion: no-preference) {
   #main_content > * {
@@ -1988,6 +1997,12 @@
   }
   .db_modal .opacity-0 > [data-modal-card] {
     transform: translateY(10px) scale(0.97);
+  }
+  .food_entry[data-food-pressed] {
+    scale: 0.97;
+  }
+  #food_actions_modal_body[data-enter] > * {
+    animation: db-rise-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
   }
   [data-rescue-line][data-enter] {
     animation: db-rise-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
