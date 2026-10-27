@@ -10,9 +10,11 @@ shows, hides and removes them, and moves the amount with the − / + buttons
 from fasthtml.common import *
 
 from DayBetes_food.components.modal import (
+    MODAL_NAME_CLS,
     ModalLayer,
     close_modal_js,
     modal_confirm_button,
+    modal_icon_button,
     modal_secondary_button,
 )
 from DayBetes_food.domain.constants import AmountInputUnit
@@ -28,13 +30,6 @@ _NATIVE_FIELD_CLS = (
     "web_input block w-full min-w-0 max-w-full appearance-none overflow-hidden "
     "rounded-lg border border-line px-1.5 py-1.5 text-sm text-center"
 )
-# Long food names: up to two lines, then an ellipsis; a single long word breaks.
-_NAME_CLS = "min-w-0 max-w-full line-clamp-2 break-words font-semibold text-gray-900"
-_ICON_BUTTON_CLS = """
-    h-7 w-7 shrink-0 rounded-full cursor-pointer
-    text-gray-500 hover:bg-line-soft transition-colors
-    flex items-center justify-center text-lg leading-none
-"""
 _STEP_BUTTON_CLS = """
     h-8 w-8 shrink-0 cursor-pointer
     text-base text-gray-700 hover:bg-control transition-colors
@@ -87,7 +82,7 @@ def RescueForm(date_value: str, time_value: str, options: list[dict]):
     return Form(
         Div(
             P("Rescue", cls="text-lg font-semibold text-gray-900"),
-            Button("×", type="button", aria_label="Close", onclick=close_modal_js(RESCUE_MODAL_ID), cls=_ICON_BUTTON_CLS),
+            modal_icon_button("×", aria_label="Close", onclick=close_modal_js(RESCUE_MODAL_ID)),
             cls="flex items-center justify-between gap-3",
         ),
         Div(
@@ -173,7 +168,7 @@ def RescueOptions(rows: list[dict], searching: bool):
         *[
             Button(
                 Div(
-                    Span(row["name"] or "Unnamed", cls=f"text-sm {_NAME_CLS}"),
+                    Span(row["name"] or "Unnamed", cls=f"text-sm {MODAL_NAME_CLS}"),
                     Span(
                         " · ".join(x for x in (row["subtitle"], _carbs_meta(row["carbs_100g"], row["serving_g"])) if x),
                         cls="block max-w-full text-[11px] text-gray-500 truncate",
@@ -226,8 +221,8 @@ def RescueLine(entry_type: str, entry_id: int, name: str, serving_g: float | Non
         Input(type="hidden", name="entry_type", value=entry_type),
         Input(type="hidden", name="entry_id", value=str(entry_id)),
         Div(
-            Span(name or "Unnamed", cls=f"text-sm flex-1 {_NAME_CLS}"),
-            Button("×", type="button", aria_label=f"Remove {name}", data_rescue_remove="true", cls=_ICON_BUTTON_CLS),
+            Span(name or "Unnamed", cls=f"text-sm flex-1 {MODAL_NAME_CLS}"),
+            modal_icon_button("×", aria_label=f"Remove {name}", data_rescue_remove="true"),
             cls="flex items-start justify-between gap-2 min-w-0",
         ),
         Div(

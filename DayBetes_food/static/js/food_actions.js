@@ -18,15 +18,14 @@
   // On Android a long press also fires `contextmenu`: one menu per gesture.
   var REOPEN_GUARD_MS = 800;
 
-  // Changing view inside the open pop-up (§10, as in the rescue pop-up):
-  // the view fades out in FADE_MS (the swap waits as long, `swap:150ms` in
-  // components/food/food_actions.py), the card goes from its old height to
-  // the new one in HEIGHT_MS and the new view rises in.
-  var FADE_MS = 150;
-  var HEIGHT_MS = 220;
+  // Changing view inside the open pop-up (§10, as in the rescue pop-up): the
+  // current view fades out, the card keeps its height until the fade ends,
+  // then goes to the new height while the new view rises in. The shared
+  // helpers are in static/js/modal.js.
+  var motion = window.dbModalMotion;
 
   var press = null;
-  var heightBeforeSwap = null;
+  var viewChange = null;
   var suppressClickOn = null;
   var lastOpenAt = 0;
 
@@ -122,10 +121,6 @@
 
   // ---- Changing view ----
 
-  function reducedMotion() {
-    return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-  }
-
   function body() {
     return document.getElementById(BODY_ID);
   }
@@ -135,72 +130,55 @@
     return el ? el.closest("[data-modal-card]") : null;
   }
 
-  function clearMotion(el) {
-    el.style.transition = "";
-    el.style.opacity = "";
-    el.style.transform = "";
-  }
-
-  // Animates the card from `from` to its current height and then leaves the
-  // height free again (the exception of §10 for this pop-up).
-  function animateCardHeight(from) {
-    var el = card();
-    if (!el || from == null) return;
-    var to = el.offsetHeight;
-    if (Math.abs(to - from) < 2) return;
-    el.style.height = from + "px";
-    el.style.overflow = "hidden";
-    void el.offsetHeight;
-    el.style.transition = "height " + HEIGHT_MS + "ms cubic-bezier(0.2, 0.8, 0.2, 1)";
-    el.style.height = to + "px";
-    window.setTimeout(function () {
-      el.style.height = "";
-      el.style.overflow = "";
-      el.style.transition = "";
-    }, HEIGHT_MS + 20);
-  }
-
   // Capture phase: the pop-up card stops the bubbling of its clicks
-  // (components/modal.py). The current view starts to fade on the click.
+  // (components/modal.py). The current view starts to fade on the click,
+  // while htmx asks for the next one.
   document.addEventListener("click", function (event) {
     var link = event.target && event.target.closest ? event.target.closest("[data-food-actions-view]") : null;
     var el = body();
-    if (!link || !el || !el.contains(link)) return;
     var c = card();
-    heightBeforeSwap = c ? c.offsetHeight : null;
-    if (reducedMotion()) return;
-    el.style.transition = "opacity " + FADE_MS + "ms ease, transform " + FADE_MS + "ms ease";
-    el.style.opacity = "0";
-    el.style.transform = "translateY(-4px)";
+    if (!link || !el || !c || !el.contains(link)) return;
+    viewChange = { fromHeight: c.offsetHeight, startedAt: Date.now() };
+    motion.startFade(el);
   }, true);
 
-  // The view did not arrive: the current one comes back.
-  document.body.addEventListener("htmx:responseError", function (event) {
+  // The next view did not arrive (an error status or no connection): the
+  // current one comes back. The error itself is shown by app_toast.js.
+  function restoreView(event) {
     var target = event && event.detail ? event.detail.target : null;
-    if (target && target.id === BODY_ID) {
-      clearMotion(target);
-      heightBeforeSwap = null;
-    }
-  });
+    if (!target || target.id !== BODY_ID) return;
+    motion.clear(target);
+    viewChange = null;
+  }
+  document.body.addEventListener("htmx:responseError", restoreView);
+  document.body.addEventListener("htmx:sendError", restoreView);
 
   document.body.addEventListener("htmx:afterSwap", function (event) {
     var target = event && event.detail ? event.detail.target : null;
     if (!target || target.id !== BODY_ID) return;
-    var from = heightBeforeSwap;
-    heightBeforeSwap = null;
-    if (from == null) {
+    var change = viewChange;
+    viewChange = null;
+    if (!change) {
       // The menu arrived complete: only now does the pop-up open, with its
       // own animation and not the one of a view change.
       target.removeAttribute("data-enter");
       if (window.dbOpenModal) window.dbOpenModal(MODAL_ID);
       return;
     }
-    clearMotion(target);
-    if (reducedMotion()) return;
-    animateCardHeight(from);
-    target.removeAttribute("data-enter");
-    void target.offsetWidth;
-    target.setAttribute("data-enter", "");
+    // The new view is in but still hidden: the card keeps its old height
+    // until the fade ends, so it changes size once.
+    var c = card();
+    c.style.height = change.fromHeight + "px";
+    c.style.overflow = "hidden";
+    var wait = motion.reduced() ? 0 : Math.max(0, motion.FADE_MS - (Date.now() - change.startedAt));
+    window.setTimeout(function () {
+      motion.animateCardHeight(c, function () {
+        c.style.height = "";
+        c.style.overflow = "";
+        motion.clear(target);
+      }, change.fromHeight);
+      motion.riseIn(target);
+    }, wait);
   });
 
   // A recipe picked in the pop-up: the food was added, the pop-up closes

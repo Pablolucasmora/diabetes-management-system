@@ -4,16 +4,18 @@ Holding a row of the Food list (or a right click on it) opens one
 `ModalLayer` whose body is requested from the server each time, so the
 options follow what the user can do with that food now. Its views (the
 menu, the recipe picker and the copy confirmation) are swapped inside the
-same body; static/js/food_actions.js only detects the gesture, opens the
-layer and closes it after an add.
+same body; static/js/food_actions.js detects the gesture, opens the layer,
+animates the change of view and closes it after an add.
 """
 
 from fasthtml.common import *
 
 from DayBetes_food.components.modal import (
+    MODAL_NAME_CLS,
     ModalLayer,
     close_modal_js,
     modal_confirm_button,
+    modal_icon_button,
     modal_secondary_button,
 )
 from DayBetes_food.domain.constants import FoodEntryType
@@ -31,13 +33,6 @@ EDIT_LABELS = {
 COPY_LABEL = "Make a copy"
 COPY_QUESTION = "A personal copy will be created and opened for editing. Continue?"
 
-# Long food names: up to two lines, then an ellipsis (as in the rescue pop-up).
-_NAME_CLS = "min-w-0 max-w-full line-clamp-2 break-words font-semibold text-gray-900"
-_ICON_BUTTON_CLS = """
-    h-7 w-7 shrink-0 rounded-full cursor-pointer
-    text-gray-500 hover:bg-line-soft transition-colors
-    flex items-center justify-center text-lg leading-none
-"""
 # Options are solid `control` rows: the pop-up card is a solid panel (§8).
 _OPTION_CLS = """
     w-full text-left px-3 py-2.5 rounded-xl cursor-pointer
@@ -78,13 +73,12 @@ def FoodActionsModal():
 
 
 def _view_link_attrs(url: str) -> dict:
-    """Swaps another view of the pop-up into its body. The current view
-    fades out on the click and the swap waits for it, so the card changes
-    height once and the new view rises in (static/js/food_actions.js, §10)."""
+    """Swaps another view of the pop-up into its body. `data-food-actions-view`
+    is what static/js/food_actions.js animates (§10)."""
     return {
         "hx_get": url,
         "hx_target": f"#{FOOD_ACTIONS_BODY_ID}",
-        "hx_swap": "innerHTML swap:150ms",
+        "hx_swap": "innerHTML",
         "hx_push_url": "false",
         "data_skip_page_loading": "true",
         "data_food_actions_view": "true",
@@ -92,19 +86,14 @@ def _view_link_attrs(url: str) -> dict:
 
 
 def _header(title: str, subtitle: str = "", back_url: str | None = None):
-    back = (
-        Button("‹", type="button", aria_label="Back", cls=_ICON_BUTTON_CLS, **_view_link_attrs(back_url))
-        if back_url
-        else ""
-    )
     return Div(
-        back,
+        modal_icon_button("‹", aria_label="Back", **_view_link_attrs(back_url)) if back_url else "",
         Div(
-            P(title, cls=f"text-lg leading-snug {_NAME_CLS}"),
+            P(title, cls=f"text-lg leading-snug {MODAL_NAME_CLS}"),
             P(subtitle, cls="text-xs text-gray-500 truncate") if subtitle else "",
             cls="flex flex-col min-w-0 flex-1",
         ),
-        Button("×", type="button", aria_label="Close", onclick=close_modal_js(FOOD_ACTIONS_MODAL_ID), cls=_ICON_BUTTON_CLS),
+        modal_icon_button("×", aria_label="Close", onclick=close_modal_js(FOOD_ACTIONS_MODAL_ID)),
         cls="flex items-start justify-between gap-2",
     )
 
