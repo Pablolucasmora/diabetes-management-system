@@ -84,6 +84,7 @@ from DayBetes_food.domain.constants import (
     Nutriscore,
     NutrientEntryMode,
     PortionDestination,
+    FoodEntryType,
     PortionOrigin,
     parse_enum,
 )
@@ -104,6 +105,7 @@ from DayBetes_food.domain.catalog import (
     parse_catalog_name,
     parse_cooking_factor,
 )
+from DayBetes_food.domain.food_entry import FoodEntrySummary
 from DayBetes_food.domain.food import (
     INITIAL_AMOUNT_WITHOUT_SERVING_G,
     parse_declared_confidence,
@@ -1323,30 +1325,42 @@ def _filtered_entries(
 
 
 
-def _food_actions_entry(connection, user_id: int, entry_type: str, entry_id: int) -> dict | None:
-    """Name, subtitle and edit permission of a row of the Food list for its
-    actions pop-up (frontend_conventions.md §9.3.1), with the same visibility
-    and permission as its detail page. None if the user cannot see it."""
-    if entry_type == "catalog":
+_UNKNOWN_ENTRY_TYPE = "Unknown food type."
+
+
+def _parse_food_entry_type(raw: str) -> FoodEntryType | None:
+    """The food type of a Food URL, or None when it is not one. The route
+    answers None as a validation_error (422, code_conventions.md §7.7)."""
+    try:
+        return FoodEntryType(raw)
+    except ValueError:
+        return None
+
+
+def _food_entry_summary(connection, user_id: int, entry_type: FoodEntryType, entry_id: int) -> FoodEntrySummary | None:
+    """What the actions pop-up of a Food row shows (frontend_conventions.md
+    §9.3.1), with the same visibility and permission as its detail page.
+    None if the user cannot see it."""
+    if entry_type is FoodEntryType.CATALOG:
         item = get_catalog_item(connection, user_id, entry_id)
         if item is None:
             return None
-        return {"name": item.name, "subtitle": (item.brand or "").strip(), "can_edit": item.can_edit}
-    if entry_type == "manual_intake":
+        return FoodEntrySummary(name=item.name, subtitle=(item.brand or "").strip(), can_edit=item.can_edit)
+    if entry_type is FoodEntryType.MANUAL_INTAKE:
         manual_item = get_manual_intake(connection, user_id, entry_id)
         if manual_item is None:
             return None
-        return {"name": manual_item.name, "subtitle": (manual_item.origin or "").strip(), "can_edit": manual_item.can_edit}
-    if entry_type == "recipe":
-        recipe = get_recipe(connection, entry_id, viewer_user_id=user_id)
-        if not recipe or not _can_view_entry("recipe", recipe, user_id):
-            return None
-        return {
-            "name": str(recipe.get("name") or ""),
-            "subtitle": "Recipe",
-            "can_edit": _can_edit_entry("recipe", recipe, user_id),
-        }
-    return None
+        return FoodEntrySummary(
+            name=manual_item.name, subtitle=(manual_item.origin or "").strip(), can_edit=manual_item.can_edit
+        )
+    recipe = get_recipe(connection, entry_id, viewer_user_id=user_id)
+    if not recipe or not _can_view_entry(entry_type.value, recipe, user_id):
+        return None
+    return FoodEntrySummary(
+        name=str(recipe.get("name") or ""),
+        subtitle="Recipe",
+        can_edit=_can_edit_entry(entry_type.value, recipe, user_id),
+    )
 
 
 def _error_msg(text: str, status_code: int = 200):
@@ -1519,7 +1533,8 @@ def setup_food_routes(rt):
         try:
             origin = PortionOrigin(entry_type)
         except ValueError:
-            return app_error_response(request, NotFoundError, "Food not found.")
+            # Value outside the closed set of the URL: validation_error (§7.7).
+            return app_error_response(request, ValidationError, _UNKNOWN_ENTRY_TYPE)
         with get_connection() as connection:
             item = _get_rescue_food(connection, int(user_id), origin, entry_id)
         if item is None:
@@ -1674,13 +1689,14 @@ def setup_food_routes(rt):
         user_id = get_current_user_id()
         if not user_id:
             return app_error_response(request, AuthenticationError, "Your session has expired.")
+        kind = _parse_food_entry_type(entry_type)
+        if kind is None:
+            return app_error_response(request, ValidationError, _UNKNOWN_ENTRY_TYPE)
         with get_connection() as connection:
-            entry = _food_actions_entry(connection, int(user_id), entry_type, entry_id)
+            entry = _food_entry_summary(connection, int(user_id), kind, entry_id)
         if entry is None:
             return app_error_response(request, NotFoundError, "Food not found.")
-        return render_fragment(
-            FoodActionsMenu(entry_type, entry_id, entry["name"], entry["subtitle"], entry["can_edit"])
-        )
+        return render_fragment(FoodActionsMenu(kind, entry_id, entry))
 
     @rt("/food/actions/{entry_type}/{entry_id}/recipes")
     def get(request: Request, entry_type: str, entry_id: int):
@@ -1689,16 +1705,18 @@ def setup_food_routes(rt):
         user_id = get_current_user_id()
         if not user_id:
             return app_error_response(request, AuthenticationError, "Your session has expired.")
-        # A recipe cannot be an ingredient of another recipe.
-        if entry_type not in ("catalog", "manual_intake"):
-            return app_error_response(request, NotFoundError, "Food not found.")
+        kind = _parse_food_entry_type(entry_type)
+        if kind is None:
+            return app_error_response(request, ValidationError, _UNKNOWN_ENTRY_TYPE)
+        if kind is FoodEntryType.RECIPE:
+            return app_error_response(request, ValidationError, "A recipe cannot be an ingredient of another recipe.")
         with get_connection() as connection:
-            entry = _food_actions_entry(connection, int(user_id), entry_type, entry_id)
+            entry = _food_entry_summary(connection, int(user_id), kind, entry_id)
             if entry is None:
                 return app_error_response(request, NotFoundError, "Food not found.")
             # Only the user's own recipes: the only ones they can edit.
             recipes = get_all_recipes(connection, users_id=int(user_id), viewer_user_id=int(user_id))
-        return render_fragment(FoodActionsRecipes(entry_type, entry_id, entry["name"], recipes))
+        return render_fragment(FoodActionsRecipes(kind, entry_id, entry, recipes))
 
     @rt("/food/actions/{entry_type}/{entry_id}/copy")
     def get(request: Request, entry_type: str, entry_id: int):
@@ -1707,17 +1725,23 @@ def setup_food_routes(rt):
         user_id = get_current_user_id()
         if not user_id:
             return app_error_response(request, AuthenticationError, "Your session has expired.")
+        kind = _parse_food_entry_type(entry_type)
+        if kind is None:
+            return app_error_response(request, ValidationError, _UNKNOWN_ENTRY_TYPE)
         with get_connection() as connection:
-            entry = _food_actions_entry(connection, int(user_id), entry_type, entry_id)
+            entry = _food_entry_summary(connection, int(user_id), kind, entry_id)
         if entry is None:
             return app_error_response(request, NotFoundError, "Food not found.")
-        return render_fragment(FoodActionsCopyConfirm(entry_type, entry_id, entry["name"]))
+        return render_fragment(FoodActionsCopyConfirm(kind, entry_id, entry))
 
     @rt("/food/item/{entry_type}/{entry_id}")
     def get(request: Request, entry_type: str, entry_id: int):
+        kind = _parse_food_entry_type(entry_type)
+        if kind is None:
+            raise ValidationError(_UNKNOWN_ENTRY_TYPE, fields={"entry_type": "invalid"})
         with get_connection() as connection:
             user_id = get_current_user_id()
-            if entry_type == "catalog":
+            if kind is FoodEntryType.CATALOG:
                 item = get_catalog_item(connection, int(user_id), entry_id) if user_id else None
                 if item is None:
                     raise NotFoundError("Food not found.")
@@ -1751,7 +1775,7 @@ def setup_food_routes(rt):
                     ),
                     show_cart=False,
                 )
-            if entry_type == "manual_intake":
+            if kind is FoodEntryType.MANUAL_INTAKE:
                 # None also for another user's personal dish or a quick add (§5.4, §11.2.3).
                 manual_item = get_manual_intake(connection, int(user_id), entry_id) if user_id else None
                 if manual_item is None:
@@ -1785,13 +1809,10 @@ def setup_food_routes(rt):
                     ),
                     show_cart=False,
                 )
-            entry = None
-            recipe_portions = None
-            if entry_type == "recipe":
-                entry = get_recipe(connection, entry_id, viewer_user_id=user_id)
-                recipe_portions = list_viewable_recipe_portions(connection, int(user_id), entry_id) if entry else []
+            entry = get_recipe(connection, entry_id, viewer_user_id=user_id)
+            recipe_portions = list_viewable_recipe_portions(connection, int(user_id), entry_id) if entry else []
             if not entry or not _can_view_entry(entry_type, entry, user_id):
-                return HTMLResponse(status_code=404)
+                raise NotFoundError("Recipe not found.")
             summary = _build_detail_summary(entry_type, entry, recipe_portions=recipe_portions)
             tags = get_entry_tags(connection, entry_type, entry_id)
             can_edit = _can_edit_entry(entry_type, entry, user_id)
@@ -2153,14 +2174,15 @@ def setup_food_routes(rt):
     def post(request: Request, entry_type: str, entry_id: int):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
-        if entry_type not in ("catalog", "manual_intake", "recipe"):
-            return app_error_response(request, NotFoundError, "Unsupported entry type.")
+        kind = _parse_food_entry_type(entry_type)
+        if kind is None:
+            return app_error_response(request, ValidationError, _UNKNOWN_ENTRY_TYPE)
         user_id = get_current_user_id()
         if not user_id:
             return app_error_response(request, AuthenticationError, "Your session has expired.")
-        if entry_type == "catalog":
+        if kind is FoodEntryType.CATALOG:
             return _copy_catalog_item(request, int(user_id), entry_id)
-        if entry_type == "manual_intake":
+        if kind is FoodEntryType.MANUAL_INTAKE:
             return _copy_manual_intake(request, int(user_id), entry_id)
 
         with get_connection() as connection:
@@ -2217,10 +2239,13 @@ def setup_food_routes(rt):
 
     @rt("/food/edit/{entry_type}/{entry_id}/form")
     def get(request: Request, entry_type: str, entry_id: int):
+        kind = _parse_food_entry_type(entry_type)
+        if kind is None:
+            raise ValidationError(_UNKNOWN_ENTRY_TYPE, fields={"entry_type": "invalid"})
         with get_connection() as connection:
             user_id = get_current_user_id()
             entry = None
-            if entry_type == "catalog":
+            if kind is FoodEntryType.CATALOG:
                 item = get_catalog_item(connection, int(user_id), entry_id) if user_id else None
                 if item is None:
                     raise NotFoundError("Food not found.")
@@ -2243,7 +2268,7 @@ def setup_food_routes(rt):
                     ),
                     show_cart=False,
                 )
-            if entry_type == "manual_intake":
+            if kind is FoodEntryType.MANUAL_INTAKE:
                 # None also for another user's personal dish or a quick add (§5.4, §11.2.3).
                 manual_item = get_manual_intake(connection, int(user_id), entry_id) if user_id else None
                 if manual_item is None:
@@ -2267,25 +2292,23 @@ def setup_food_routes(rt):
                     ),
                     show_cart=False,
                 )
-            if entry_type == "recipe":
-                entry = get_recipe(connection, entry_id, viewer_user_id=user_id)
-                if not entry or not _can_view_entry("recipe", entry, user_id):
-                    return HTMLResponse(status_code=404)
-                if not _can_edit_entry("recipe", entry, user_id):
-                    return HTMLResponse(status_code=403)
-                tags = get_tag_suggestions(connection, search="", limit=500)
-                selected_tags = [str(row.get("name") or "") for row in get_entry_tags(connection, "recipe", entry_id)]
-                return render_page(
-                    request,
-                    lambda _: EditRecipePage(
-                        entry=entry,
-                        show_published=_can_toggle_published("recipe", entry, user_id),
-                        tag_options=tags,
-                        selected_tags=selected_tags,
-                    ),
-                    show_cart=False,
-                )
-        return HTMLResponse(status_code=404)
+            entry = get_recipe(connection, entry_id, viewer_user_id=user_id)
+            if not entry or not _can_view_entry("recipe", entry, user_id):
+                raise NotFoundError("Recipe not found.")
+            if not _can_edit_entry("recipe", entry, user_id):
+                raise AuthorizationError("Only the owner can edit this recipe. Create a copy to edit it.")
+            tags = get_tag_suggestions(connection, search="", limit=500)
+            selected_tags = [str(row.get("name") or "") for row in get_entry_tags(connection, "recipe", entry_id)]
+            return render_page(
+                request,
+                lambda _: EditRecipePage(
+                    entry=entry,
+                    show_published=_can_toggle_published("recipe", entry, user_id),
+                    tag_options=tags,
+                    selected_tags=selected_tags,
+                ),
+                show_cart=False,
+            )
 
     def _archive_catalog_item(request: Request, user_id: int, catalog_id: int):
         with get_connection() as connection:
@@ -2451,8 +2474,9 @@ def setup_food_routes(rt):
         """
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
-        if entry_type not in ("catalog", "manual_intake", "recipe"):
-            return app_error_response(request, ValidationError, "Unknown food type.")
+        kind = _parse_food_entry_type(entry_type)
+        if kind is None:
+            return app_error_response(request, ValidationError, _UNKNOWN_ENTRY_TYPE)
 
         try:
             cooked_weight = _parse_strict_bool(is_cooked_weight)
@@ -2489,7 +2513,7 @@ def setup_food_routes(rt):
             origin_item = None
             recipe_rows = []
             portion_defaults = {}
-            if entry_type == "catalog":
+            if kind is FoodEntryType.CATALOG:
                 origin_item = get_catalog_item(connection, int(user_id), entry_id)
                 if origin_item is None:
                     return app_error_response(request, NotFoundError, "Item not found.")
@@ -2500,7 +2524,7 @@ def setup_food_routes(rt):
                 if unit is AmountInputUnit.PORTION and serving_grams is None:
                     return _error_msg("This food has no serving. Use grams, lb or oz.")
                 portion_defaults = _portion_defaults(origin_item)
-            elif entry_type == "manual_intake":
+            elif kind is FoodEntryType.MANUAL_INTAKE:
                 origin_item = get_manual_intake(connection, int(user_id), entry_id)
                 if origin_item is None:
                     return app_error_response(request, NotFoundError, "Item not found.")
@@ -2578,7 +2602,7 @@ def setup_food_routes(rt):
                                 cooking=parsed_cooking,
                                 final_state=parsed_final_state,
                                 conservation=parsed_conservation,
-                                is_cooked_weight=(cooked_weight if entry_type == "catalog" else False),
+                                is_cooked_weight=(cooked_weight if kind is FoodEntryType.CATALOG else False),
                                 **portion_defaults,
                             ),
                             commit=False,
@@ -2977,11 +3001,14 @@ def setup_food_routes(rt):
     def post(request: Request, entry_type: str, entry_id: int):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
+        kind = _parse_food_entry_type(entry_type)
+        if kind is None:
+            return app_error_response(request, ValidationError, _UNKNOWN_ENTRY_TYPE)
 
         with get_connection() as connection:
             user_id = get_current_user_id()
 
-            if entry_type == "catalog":
+            if kind is FoodEntryType.CATALOG:
                 if not user_id:
                     return app_error_response(request, AuthenticationError, "Your session has expired.")
                 item = get_catalog_item(connection, int(user_id), entry_id)
@@ -2998,7 +3025,7 @@ def setup_food_routes(rt):
                     return app_error_response(request, NotFoundError, "Food not found.")
                 return render_fragment(FavoriteButton(entry_type, entry_id, new_favorite))
 
-            if entry_type == "manual_intake":
+            if kind is FoodEntryType.MANUAL_INTAKE:
                 if not user_id:
                     return app_error_response(request, AuthenticationError, "Your session has expired.")
                 manual_item = get_manual_intake(connection, int(user_id), entry_id)
@@ -3015,15 +3042,12 @@ def setup_food_routes(rt):
                     return app_error_response(request, NotFoundError, "Dish not found.")
                 return render_fragment(FavoriteButton(entry_type, entry_id, new_favorite))
 
-            current = None
             new_favorite = None
-            if entry_type == "recipe":
-                current = get_recipe(connection, entry_id, viewer_user_id=user_id)
-                if current and _can_view_entry("recipe", current, user_id):
-                    new_favorite = toggle_user_favorite(connection, user_id, entry_type, entry_id)
-
-            if not current or new_favorite is None:
-                return HTMLResponse(status_code=400)
+            current = get_recipe(connection, entry_id, viewer_user_id=user_id)
+            if current and _can_view_entry("recipe", current, user_id):
+                new_favorite = toggle_user_favorite(connection, user_id, entry_type, entry_id)
+            if new_favorite is None:
+                return app_error_response(request, NotFoundError, "Recipe not found.")
 
             return render_fragment(FavoriteButton(entry_type, entry_id, new_favorite))
 

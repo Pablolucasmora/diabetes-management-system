@@ -37,6 +37,7 @@ from DayBetes_food.domain.constants import (
     ConservationMethod,
     CookingMethod,
     FoodCategory,
+    FoodEntryType,
     FoodPhysicalState,
     GlycemicIndex,
     MealType,
@@ -3417,7 +3418,7 @@ def FoodDetailPage(
             if entry_type == "catalog"
             else "Archived: removed from searches. You can keep using it."
         )
-    edit_label = EDIT_LABELS.get(entry_type, "Edit") if can_edit else COPY_LABEL
+    edit_label = EDIT_LABELS[FoodEntryType(entry_type)] if can_edit else COPY_LABEL
     edit_href = {
         "catalog": f"/food/edit/catalog/{entry['id']}/form",
         "manual_intake": f"/food/edit/manual_intake/{entry['id']}/form",
@@ -4034,7 +4035,7 @@ def FoodCard(food):
             AddButton(label=add_label, hx_post=add_path),
             cls="flex items-center gap-2 ml-3",
         ),
-        FoodActionsTrigger(food["entry_type"], food["id"]),
+        FoodActionsTrigger(FoodEntryType(food["entry_type"]), food["id"]),
         hx_get=f"/food/item/{food['entry_type']}/{food['id']}",
         hx_target="#main_content",
         hx_swap="innerHTML",

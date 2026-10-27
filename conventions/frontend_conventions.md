@@ -304,8 +304,8 @@ Decisión 2026-10-27, acordada con el usuario como prueba de diseño.
 
 | Acción | `hx-target` | `hx-swap` | Éxito | Error |
 |---|---|---|---|---|
-| `GET /food/actions/{entry_type}/{entry_id}` | `#food_actions_modal_body` | `innerHTML` | el menú | sin sesión: `401`; no visible: `404`, por el canal de errores |
-| `GET /food/actions/{entry_type}/{entry_id}/recipes` | `#food_actions_modal_body` | `innerHTML` | la lista de recetas propias | igual; `404` también para una receta |
+| `GET /food/actions/{entry_type}/{entry_id}` | `#food_actions_modal_body` | `innerHTML` | el menú | sin sesión: `401`; tipo desconocido: `422` (`code_conventions.md` §7.7); no visible: `404`. Todo por el canal de errores |
+| `GET /food/actions/{entry_type}/{entry_id}/recipes` | `#food_actions_modal_body` | `innerHTML` | la lista de recetas propias | igual; `422` también para una receta, que no puede ser ingrediente |
 | `GET /food/actions/{entry_type}/{entry_id}/copy` | `#food_actions_modal_body` | `innerHTML` | la confirmación | igual |
 
 Todas exigen el header `HX-Request` (`403` si falta).

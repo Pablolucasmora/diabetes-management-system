@@ -743,6 +743,8 @@ El parser central define los valores aceptados, por ejemplo `{"true"}` y `{"fals
 
 Los valores cerrados se convierten mediante los enums centrales. Un valor desconocido produce `422`, no un fallback. Los componentes generan sus opciones recorriendo el enum y los servicios reciben el valor ya validado. Las opciones abiertas se validan contra sus tablas de catálogo.
 
+Esto incluye los valores cerrados que llegan en la URL. El tipo de alimento de las rutas de Food (`catalog`, `manual_intake`, `recipe`) es `FoodEntryType` (`domain/constants.py`, decisión 2026-10-27). Cada ruta lo convierte al empezar y responde `422` a un tipo desconocido, en vez de `404` o de seguir sin rama. Las acciones en línea lo devuelven con `app_error_response` y las páginas completas lo lanzan, como el resto de sus errores.
+
 ### 7.8 Identificadores, fechas y horas
 
 - Los identificadores de URL, formularios y HTMX se validan antes de ejecutar SQL.
