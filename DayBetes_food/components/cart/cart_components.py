@@ -675,7 +675,9 @@ def PlateHeader(event, plate, display_name, card_target, has_portions=False):
                 type="text",
                 id=offset_input_id,
                 name="offset_minutes",
-                inputmode="numeric",
+                # Full keyboard: the phone's numeric keypad has no minus sign
+                # and the offset can be negative (frontend_conventions.md §4).
+                inputmode="text",
                 pattern="-?[0-9]*",
                 value=str(offset_value),
                 aria_label="Plate offset minutes",
@@ -864,7 +866,8 @@ def IngredientSettingsModal(event, plate, sample, item_key, ingredient_name, pla
                     type="text",
                     id=offset_input_id,
                     name="offset_minutes",
-                    inputmode="numeric",
+                    # Full keyboard: the numeric keypad has no minus sign (§4).
+                    inputmode="text",
                     pattern="-?[0-9]*",
                     value=str(offset_value),
                     aria_label=f"Offset minutes for {ingredient_name}",
@@ -1049,11 +1052,9 @@ def ConfirmSection(event, portions):
         Div(
             Label("Eaten", cls="text-xs text-gray-600 shrink-0", **{"for": ingested_value_id}),
             Input(
-                type="number",
+                type="text",
                 id=ingested_value_id,
                 inputmode="decimal",
-                step="0.1",
-                min="0",
                 name="ingested_value",
                 value=f"{float(event.ingested_amount or 0.0):.1f}" if event.ingested_amount is not None else "",
                 aria_label="Ingested amount",

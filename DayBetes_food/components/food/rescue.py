@@ -234,11 +234,9 @@ def RescueLine(entry_type: str, entry_id: int, name: str, serving_g: float | Non
             Div(
                 Button("−", type="button", aria_label="Less", data_rescue_step="-1", cls=_STEP_BUTTON_CLS),
                 Input(
-                    type="number",
+                    type="text",
                     name="amount_value",
                     value="1" if serving_g is not None else "",
-                    min="0",
-                    step="any",
                     inputmode="decimal",
                     required=True,
                     placeholder="0",
