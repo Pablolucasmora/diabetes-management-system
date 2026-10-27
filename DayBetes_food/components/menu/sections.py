@@ -308,7 +308,7 @@ def quick_actions(latest_event, portions):
                     inputmode="decimal",
                     pattern="[0-9]+([\\.,][0-9]+)?",
                     placeholder="e.g. 8.5",
-                    cls="web_input border border-white rounded-lg px-2 py-1 text-base",
+                    cls="web_input border border-white rounded-lg px-2 py-1 text-sm",
                 ),
                 data_menu_basal_wrap="true",
                 cls="hidden flex-col gap-1",
