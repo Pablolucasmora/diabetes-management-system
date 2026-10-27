@@ -2057,8 +2057,6 @@ def setup_food_routes(rt):
             source = get_catalog_item(connection, user_id, catalog_id)
             if source is None:
                 return app_error_response(request, NotFoundError, "Food not found.")
-            if source.can_edit:
-                return HTMLResponse("", headers={"HX-Redirect": f"/food/edit/catalog/{catalog_id}/form"})
             name = next_catalog_copy_name(connection, user_id, source.name, source.brand_id)
             root = source.origin_root_id or source.id
             try:
@@ -2105,15 +2103,12 @@ def setup_food_routes(rt):
 
     def _copy_manual_intake(request: Request, user_id: int, manual_intake_id: int):
         """Editable copy of a visible dish (H16, §11.2.3): a new personal row in
-        the family of the original, with every field copied."""
+        the family of the original, with every field copied. The owner can
+        copy their own dish too (decision 2026-10-27)."""
         with get_connection() as connection:
             source = get_manual_intake(connection, user_id, manual_intake_id)
             if source is None:
                 return app_error_response(request, NotFoundError, "Dish not found.")
-            if source.can_edit:
-                return HTMLResponse(
-                    "", headers={"HX-Redirect": f"/food/edit/manual_intake/{manual_intake_id}/form"}
-                )
             name = next_manual_intake_copy_name(connection, user_id, source.name, source.origin)
             root = source.origin_root_id or source.id
             try:
@@ -2173,9 +2168,6 @@ def setup_food_routes(rt):
 
             if not source or not _can_view_entry(entry_type, source, user_id):
                 return app_error_response(request, NotFoundError, "Item not found.")
-
-            if _can_edit_entry(entry_type, source, user_id):
-                return HTMLResponse("", headers={"HX-Redirect": f"/food/edit/{entry_type}/{entry_id}/form"})
 
             root_id = _copy_root_id(source) or int(source["id"])
             copy_name = _next_copy_name(connection, entry_type, str(source.get("name") or ""), int(user_id))

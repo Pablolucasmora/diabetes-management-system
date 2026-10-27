@@ -4,7 +4,7 @@ from fasthtml.common import *
 from DayBetes_food.components.cart.cart_shared import CHECKBOX_CLS
 from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.components.navigation import back_js
-from DayBetes_food.components.food.food_actions import EDIT_LABELS, FoodActionsTrigger
+from DayBetes_food.components.food.food_actions import COPY_LABEL, COPY_QUESTION, EDIT_LABELS, FoodActionsTrigger
 from DayBetes_food.components.food.rescue import RescueMarkButton, RescueModal, rescue_open_attrs
 from DayBetes_food.components.modal import (
     close_modal_js,
@@ -3417,7 +3417,7 @@ def FoodDetailPage(
             if entry_type == "catalog"
             else "Archived: removed from searches. You can keep using it."
         )
-    edit_label = EDIT_LABELS.get(entry_type, "Edit") if can_edit else "Create editable copy"
+    edit_label = EDIT_LABELS.get(entry_type, "Edit") if can_edit else COPY_LABEL
     edit_href = {
         "catalog": f"/food/edit/catalog/{entry['id']}/form",
         "manual_intake": f"/food/edit/manual_intake/{entry['id']}/form",
@@ -3770,6 +3770,24 @@ def FoodDetailPage(
             action_button,
             cls="w-full grid grid-cols-2 gap-3",
         ),
+        # Anyone who sees the item can copy it, the owner too (decision
+        # 2026-10-27). Without edit rights the copy takes the Edit slot.
+        (
+            Div(
+                Button(
+                    COPY_LABEL,
+                    type="button",
+                    cls="""
+                        web_button w-full px-4 py-2 text-sm rounded-2xl
+                        bg-white/85 text-gray-800 border border-gray-300
+                    """,
+                    onclick=open_modal_js(copy_confirm_id),
+                ),
+                cls="w-full",
+            )
+            if can_edit
+            else ""
+        ),
         (
             Div(
                 Button(
@@ -3795,23 +3813,19 @@ def FoodDetailPage(
             if archivable and can_edit and not TAGS_UI_ENABLED
             else ""
         ),
-        (
-            ConfirmActionModal(
-                modal_id=copy_confirm_id,
-                title="Create editable copy",
-                question="A personal copy will be created and opened for editing. Continue?",
-                yes_button=modal_confirm_button(
-                    "Yes",
-                    danger=False,
-                    hx_post=f"/food/copy/{entry_type}/{entry['id']}",
-                    hx_swap="none",
-                    hx_push_url="false",
-                    data_skip_page_loading="true",
-                    onclick=close_modal_js(copy_confirm_id),
-                ),
-            )
-            if not can_edit
-            else ""
+        ConfirmActionModal(
+            modal_id=copy_confirm_id,
+            title=COPY_LABEL,
+            question=COPY_QUESTION,
+            yes_button=modal_confirm_button(
+                "Yes",
+                danger=False,
+                hx_post=f"/food/copy/{entry_type}/{entry['id']}",
+                hx_swap="none",
+                hx_push_url="false",
+                data_skip_page_loading="true",
+                onclick=close_modal_js(copy_confirm_id),
+            ),
         ),
         (
             ConfirmActionModal(

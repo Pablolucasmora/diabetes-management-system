@@ -21,6 +21,8 @@ FOOD_ACTIONS_MODAL_ID = "food_actions_modal"
 FOOD_ACTIONS_BODY_ID = "food_actions_modal_body"
 
 EDIT_LABELS = {"catalog": "Edit food", "manual_intake": "Edit manual", "recipe": "Edit recipe"}
+COPY_LABEL = "Make a copy"
+COPY_QUESTION = "A personal copy will be created and opened for editing. Continue?"
 
 # Long food names: up to two lines, then an ellipsis (as in the rescue pop-up).
 _NAME_CLS = "min-w-0 max-w-full line-clamp-2 break-words font-semibold text-gray-900"
@@ -112,7 +114,7 @@ def _option(label: str, *, chevron: bool = False, **attrs):
 
 def FoodActionsMenu(entry_type: str, entry_id: int, name: str, subtitle: str, can_edit: bool):
     """First view: the food and what can be done with it. Edit only for the
-    owner; anyone else gets the editable copy, as in the detail (§9.4)."""
+    owner; anyone who sees it can copy it, the owner too (§9.3.1)."""
     base_url = food_actions_url(entry_type, entry_id)
     options = []
     if can_edit:
@@ -126,8 +128,7 @@ def FoodActionsMenu(entry_type: str, entry_id: int, name: str, subtitle: str, ca
                 onclick=close_modal_js(FOOD_ACTIONS_MODAL_ID) + " window.scrollTo({ top: 0, behavior: 'auto' });",
             )
         )
-    else:
-        options.append(_option("Create editable copy", chevron=True, **_view_link_attrs(f"{base_url}/copy")))
+    options.append(_option(COPY_LABEL, chevron=True, **_view_link_attrs(f"{base_url}/copy")))
     # A recipe cannot be an ingredient of another recipe.
     if entry_type in ("catalog", "manual_intake"):
         options.append(_option("Add to recipe", chevron=True, **_view_link_attrs(f"{base_url}/recipes")))
@@ -173,8 +174,8 @@ def FoodActionsRecipes(entry_type: str, entry_id: int, name: str, recipes: list[
 def FoodActionsCopyConfirm(entry_type: str, entry_id: int, name: str):
     """Copy confirmation: the same question as the detail page (§9.4)."""
     return Div(
-        _header("Create editable copy", name or "Unnamed", back_url=food_actions_url(entry_type, entry_id)),
-        P("A personal copy will be created and opened for editing. Continue?", cls="text-sm text-gray-700"),
+        _header(COPY_LABEL, name or "Unnamed", back_url=food_actions_url(entry_type, entry_id)),
+        P(COPY_QUESTION, cls="text-sm text-gray-700"),
         Div(
             modal_secondary_button("No", onclick=close_modal_js(FOOD_ACTIONS_MODAL_ID), cls="w-full"),
             modal_confirm_button(
