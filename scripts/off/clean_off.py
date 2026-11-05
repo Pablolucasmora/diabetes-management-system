@@ -28,6 +28,9 @@ NUTRIENTS = {
     "caffeine": "caffeine",
     "alcohol": "alcohol",
 }
+# Mass units only discard an impossible value: "100g" is already normalized (§12.2).
+MASS_UNITS = "('g', 'mg', 'µg')"
+DEFAULT_PORTION_MAX_G = 3000
 NAME_MAX_LENGTH = 255
 BRAND_MAX_LENGTH = 255
 # A name equal to a brand this big is a contributor's mistake, not a product name:
@@ -83,18 +86,20 @@ CANDIDATES_SQL = r"""
               AND abs(kcal - (4 * carbs + 9 * fat + 4 * proteins + 2 * coalesce(fiber, 0))) <= greatest(0.25 * kcal, 20)
              THEN round(kcal, 3) END AS calories_100g,
         round(carbs, 3) AS carbs_100g,
-        CASE WHEN sugars IS NOT NULL THEN round(least(sugars, carbs), 3) END AS sugars_100g,
+        CASE WHEN sugars BETWEEN 0 AND 100 AND sugars_unit IN {mass_units} THEN round(least(sugars, carbs), 3) END AS sugars_100g,
         round(fat, 3) AS fats_100g,
-        CASE WHEN saturated IS NOT NULL THEN round(least(saturated, fat), 3) END AS saturated_100g,
+        CASE WHEN saturated BETWEEN 0 AND 100 AND saturated_unit IN {mass_units} THEN round(least(saturated, fat), 3) END AS saturated_100g,
         round(proteins, 3) AS proteins_100g,
-        round(fiber, 3) AS fiber_100g,
+        CASE WHEN fiber BETWEEN 0 AND 100 AND fiber_unit IN {mass_units} THEN round(fiber, 3) END AS fiber_100g,
         -- "100g" is in grams even when the contributor's unit says mg.
-        CASE WHEN caffeine BETWEEN 0 AND 1 THEN round(caffeine * 1000, 3) END AS caffeine,
-        CASE WHEN alcohol BETWEEN 0 AND 100 THEN round(alcohol, 3) END AS alcohol_vol,
+        CASE WHEN caffeine BETWEEN 0 AND 1 AND caffeine_unit IN {mass_units} THEN round(caffeine * 1000, 3) END AS caffeine,
+        CASE WHEN alcohol BETWEEN 0 AND 100 AND alcohol_unit = '% vol' THEN round(alcohol, 3) END AS alcohol_vol,
         CASE WHEN regexp_matches(lower(coalesce(serving_size, '')), '[0-9] ?g\b')
+              AND TRY_CAST(serving_quantity AS DOUBLE) > 0
+              AND TRY_CAST(serving_quantity AS DOUBLE) <= {portion_max}
              THEN TRY_CAST(serving_quantity AS DOUBLE) END AS default_portion,
-        nullif(nullif(nullif(nutriscore_grade, 'unknown'), 'not-applicable'), '') AS nutriscore,
-        nova_group AS nova,
+        CASE WHEN nutriscore_grade IN ('a', 'b', 'c', 'd', 'e') THEN nutriscore_grade END AS nutriscore,
+        CASE WHEN nova_group BETWEEN 1 AND 4 THEN nova_group END AS nova,
         ciqual_food_code,
         unique_scans_n,
         to_timestamp(last_modified_t) AS source_modified_at,
@@ -119,6 +124,25 @@ def flatten(con, source: Path, target: Path) -> None:
             target=target,
         )
     )
+
+
+# Last check of the written rows: any count above 0 stops the script.
+INVALID_ROWS_SQL = """
+    SELECT count(*) FILTER (sugars_100g NOT BETWEEN 0 AND carbs_100g),
+           count(*) FILTER (saturated_100g NOT BETWEEN 0 AND fats_100g),
+           count(*) FILTER (fiber_100g NOT BETWEEN 0 AND 100),
+           count(*) FILTER (caffeine NOT BETWEEN 0 AND 1000),
+           count(*) FILTER (alcohol_vol NOT BETWEEN 0 AND 100),
+           count(*) FILTER (nutriscore NOT IN ('a', 'b', 'c', 'd', 'e')),
+           count(*) FILTER (nova NOT BETWEEN 1 AND 4)
+    FROM candidates
+"""
+
+
+def validate(con) -> None:
+    invalid = con.execute(INVALID_ROWS_SQL).fetchone()
+    if any(invalid):
+        raise SystemExit(f"Rows outside the §12.2 limits, nothing written: {invalid}")
 
 
 def report(con) -> None:
@@ -152,6 +176,8 @@ def main() -> None:
             CANDIDATES_SQL.format(
                 flat=flat,
                 brand_max=BRAND_MAX_LENGTH,
+                mass_units=MASS_UNITS,
+                portion_max=DEFAULT_PORTION_MAX_G,
                 name_max=NAME_MAX_LENGTH,
                 export_date=args.export_date.isoformat(),
             )
@@ -166,6 +192,7 @@ def main() -> None:
             );
             """
         )
+        validate(con)
         report(con)
         con.execute(f"COPY candidates TO '{args.output}' (FORMAT CSV, HEADER, COMPRESSION GZIP)")
     print(f"written: {args.output} ({args.output.stat().st_size / 1_000_000:.1f} MB)")

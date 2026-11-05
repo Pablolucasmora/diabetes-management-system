@@ -924,7 +924,7 @@ Decisión 2026-11-05. Open Food Facts (OFF) es la fuente de los productos envasa
 - En Parquet, `nutriments` es una lista con `name`, `value`, `100g` y `unit`, y `product_name` es una lista con `lang` y `text`. `unit` y `value` son los del contribuidor, mientras que `100g` ya está normalizado: en la exportación del 2026-11-05, la cafeína con `unit = mg` tiene `value = 32` y `100g = 0.032`. Por eso se lee `100g`, y `unit` solo sirve para descartar valores con una unidad imposible para ese nutriente.
 - En CSV no hay columnas `<campo>_unit`. Según [`data-fields.txt`](https://static.openfoodfacts.org/data/data-fields.txt), los `_100g` van en gramos (kJ en energía), por 100 g o 100 ml, y `alcohol_100g` en `% vol`.
 
-Antes de cada carga se comprueban las unidades reales de la exportación usada.
+Antes de cada carga se comprueban las unidades reales de la exportación usada. El script descarta el valor con una unidad imposible o fuera de rango y, antes de escribir el archivo, se detiene si alguna fila incumple estos límites.
 
 | Campo de DayBetes | Origen en la exportación | Regla |
 |---|---|---|
@@ -962,9 +962,9 @@ Un valor que falta queda vacío; nunca se convierte en cero. Las fotos no forman
 
 Decisión del usuario del 2026-11-05, tras comparar con USDA y BLS 4.0. Ciqual 2025 es la fuente de alimentos genéricos, en la tabla `ciqual_food`, separada de `off_product`. Licencia abierta: se cita "Anses. 2025. Ciqual French food composition table" en los resultados, en el formulario y en Ajustes.
 
-- **Qué se carga.** Los alimentos con hidratos, grasa y proteína, sin el grupo de alimentación infantil. `scripts/ciqual/clean_ciqual.py` genera el archivo y `load_ciqual.sh` lo carga. La tabla no entra con filas en la copia de seguridad.
+- **Qué se carga.** Los alimentos con hidratos, grasa y proteína, sin el grupo de alimentación infantil. Un valor fuera de su rango físico detiene el script, porque indica que la fuente ha cambiado. `scripts/ciqual/clean_ciqual.py` genera el archivo y `load_ciqual.sh` lo carga. La tabla no entra con filas en la copia de seguridad.
 - **Nombres en español.** Los genera el script: primero nombres completos de `overrides_es.csv` y después frases y palabras de `glossary_es.csv`, con el nombre delante y los adjetivos concordados. Es una traducción aproximada, sin revisión experta; una palabra sin traducir queda en inglés y su tramo conserva el orden original. No se usa traducción automática: en la prueba con Argos cambiaba el alimento sin que se notara (`date` como «fecha», `pollock` como «pollo»). Se corrige añadiendo el nombre a `overrides_es.csv`. La búsqueda mira también el nombre en inglés.
-- **Valores `traces` y `< x`.** Se precargan como 0 con un aviso que muestra el original. No son valores que faltan. Un valor que falta (`-`) queda vacío o, si es hidratos, grasa o proteína, descarta el alimento.
+- **Valores `traces` y `< x`.** `traces` significa que el constituyente se detecta sin poder cuantificarse, o que se estima muy bajo sin ser nulo, y `< x` es un valor máximo: el real está entre 0 y `x`. Se sustituyen como hace [Anses](https://www.anses.fr/fr/system/files/NUT2014sa0117Ra.pdf): `traces` por 0 y `< x` por `x/2`. En cualquier nutriente, `value_notes` guarda el original y el formulario lo muestra. No son valores que faltan. Un valor que falta (`-`) queda vacío o, si es hidratos, grasa o proteína, descarta el alimento.
 - **Fiabilidad.** El formulario muestra las notas A–D de Ciqual. No rellenan `macros_confidence`, que declara el usuario.
 - **Peso.** Los valores son por 100 g de parte comestible: se pesa lo que se come. Con una entrada cocida no se marca peso en cocido, para no convertir dos veces. Arroz, pasta y legumbres se pesan preferiblemente en crudo, porque es donde más discrepan las tablas.
 - **Procedencia.** `prefill_source = ciqual` y su código (§12.1). Lo ya copiado no se vuelve a ofrecer.
