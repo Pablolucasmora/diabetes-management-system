@@ -24,8 +24,10 @@ from DayBetes_food.domain.constants import (
     InjectionZone,
     MealType,
     Nutriscore,
+    PrefillSource,
     sql_in_list,
 )
+from DayBetes_food.domain.search_text import search_text_sql
 from DayBetes_food.domain.food import (
     FOOD_CONFIDENCE_MAX,
     FOOD_CONFIDENCE_MIN,
@@ -78,6 +80,8 @@ def catalog_check_constraints() -> dict[str, str]:
         ),
         "ck_catalog_name_normalized": r"name <> '' AND name = regexp_replace(btrim(name), '\s+', ' ', 'g')",
         "ck_catalog_library_published": "created_by IS NOT NULL OR is_published",
+        "ck_catalog_prefill_source": f"prefill_source IS NULL OR prefill_source IN ({sql_in_list(PrefillSource)})",
+        "ck_catalog_prefill_reference": "(prefill_source IS NULL) = (prefill_source_id IS NULL)",
         "ck_catalog_macros_confidence_range": (
             f"macros_confidence IS NULL OR macros_confidence BETWEEN {FOOD_CONFIDENCE_MIN} AND {FOOD_CONFIDENCE_MAX}"
         ),
@@ -329,6 +333,9 @@ class DBSchema:
         macros_quality BOOLEAN, -- the food's data, read live by portions (measurement §6.11)
         default_strictly_weighed BOOLEAN, -- copied to each new portion (measurement §6.11)
         macros_confidence INTEGER, -- declared 0-2 (measurement §6.10)
+        prefill_source VARCHAR(20), -- where the form's first values came from; the saved values are the user's (measurement §12.1)
+        prefill_source_id VARCHAR(64),
+        search_name TEXT GENERATED ALWAYS AS ({search_text_sql("name")}) STORED, -- what the search compares with (§11.7)
         is_published BOOLEAN NOT NULL DEFAULT FALSE,
         deleted_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -391,6 +398,40 @@ class DBSchema:
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 {check_lines}
+    );
+    """
+
+    @classmethod
+    def off_product(cls):
+        """Local copy of Open Food Facts (measurement_conventions.md §12.2)."""
+        return f"""
+    -- Reference data with no owner: visible to every user and read-only for the
+    -- app (db_init revokes its writes). Each load replaces the whole table, in
+    -- one transaction (scripts/off/load_off.sh). Filters: measurement §12.2.
+    CREATE TABLE IF NOT EXISTS off_product (
+        code VARCHAR({CATALOG_BARCODE_MAX_LENGTH}) CONSTRAINT pk_off_product PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        brand VARCHAR(255),
+        categories TEXT,
+        calories_100g REAL,
+        carbs_100g REAL NOT NULL,
+        sugars_100g REAL,
+        fats_100g REAL NOT NULL,
+        saturated_100g REAL,
+        proteins_100g REAL NOT NULL,
+        fiber_100g REAL,
+        caffeine REAL, -- mg/100 g
+        alcohol_vol REAL, -- % vol, as OFF declares it; converted on prefill
+        default_portion REAL,
+        nutriscore VARCHAR(1),
+        nova INTEGER,
+        ciqual_food_code INTEGER,
+        unique_scans_n INTEGER,
+        source_modified_at TIMESTAMPTZ,
+        export_date DATE NOT NULL,
+        search_text TEXT GENERATED ALWAYS AS ({search_text_sql("name || ' ' || coalesce(brand, '')")}) STORED,
+        CONSTRAINT ck_off_product_code_format
+            CHECK (code ~ '^[0-9]{{{CATALOG_BARCODE_MIN_LENGTH},{CATALOG_BARCODE_MAX_LENGTH}}}$')
     );
     """
 

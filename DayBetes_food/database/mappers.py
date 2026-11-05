@@ -25,6 +25,7 @@ from DayBetes_food.domain.insulin import InsulinInjectionRead
 from DayBetes_food.domain.intake_event import IntakeEventRead
 from DayBetes_food.domain.intake_plate import IntakePlateRead
 from DayBetes_food.domain.manual_intake import ManualIntakeRead
+from DayBetes_food.domain.off_product import OffProductRead
 from DayBetes_food.domain.portion_detail import PortionDetailRead, PortionSourceRead
 from DayBetes_food.errors import InfrastructureError
 
@@ -39,6 +40,30 @@ def _enum_from_row(row: dict, key: str, enum_cls):
         raise InfrastructureError(
             f"Invalid {key} '{raw}' in database row"
         ) from exc
+
+
+def off_product_read_from_row(row: dict) -> OffProductRead:
+    try:
+        return OffProductRead(
+            code=row["code"],
+            name=row["name"],
+            brand=row.get("brand"),
+            categories=row.get("categories"),
+            calories_100g=row.get("calories_100g"),
+            carbs_100g=row["carbs_100g"],
+            sugars_100g=row.get("sugars_100g"),
+            fats_100g=row["fats_100g"],
+            saturated_100g=row.get("saturated_100g"),
+            proteins_100g=row["proteins_100g"],
+            fiber_100g=row.get("fiber_100g"),
+            caffeine=row.get("caffeine"),
+            alcohol_vol=row.get("alcohol_vol"),
+            default_portion=row.get("default_portion"),
+            nutriscore=row.get("nutriscore"),
+            nova=row.get("nova"),
+        )
+    except KeyError as exc:
+        raise InfrastructureError(f"Missing required field {exc} in off_product row") from exc
 
 
 def catalog_item_read_from_row(row: dict) -> CatalogItemRead:

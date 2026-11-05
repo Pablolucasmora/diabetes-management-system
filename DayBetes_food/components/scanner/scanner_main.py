@@ -1,4 +1,5 @@
 from fasthtml.common import *
+from DayBetes_food.components.data_sources import off_attribution
 from DayBetes_food.components.navigation import back_js
 from DayBetes_food.components.modal import ConfirmActionModal, modal_confirm_button, modal_secondary_button
 
@@ -50,6 +51,7 @@ def scanner_main():
                 ),
                 cls="web_container w-full p-3 rounded-2xl flex flex-col gap-2.5",
             ),
+            off_attribution(),
             Form(
                 Input(type="hidden", name="barcode", id="scanner_confirm_barcode", value=""),
                 id="scanner_confirm_form",

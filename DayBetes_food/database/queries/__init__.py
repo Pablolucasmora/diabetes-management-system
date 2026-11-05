@@ -4,7 +4,7 @@ One module per table (`users.py`, `catalog.py`, `manual_intake.py`,
 `recipe.py`, `tags.py`, `linked_tags.py`, `user_favorites.py`,
 `food_brands.py`, `intake_event.py`, `insulin_injections.py`,
 `portion_detail.py`, `meal_type_schedule.py`, `auth_sessions.py`,
-`auth_rate_limits.py`), plus
+`auth_rate_limits.py`, `off_product.py`), plus
 `entries.py` for cross-entity reads without an owning table and `crud.py`
 with the shared generic helpers (private, not re-exported here).
 
@@ -35,6 +35,10 @@ from DayBetes_food.database.queries.catalog import (
     publish_catalog_item,
     unpublish_catalog_item,
     next_catalog_copy_name,
+)
+from DayBetes_food.database.queries.off_product import (
+    get_off_product_by_code,
+    search_off_products,
 )
 from DayBetes_food.database.queries.manual_intake import (
     get_manual_origin_suggestions,

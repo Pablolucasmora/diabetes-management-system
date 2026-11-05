@@ -25,6 +25,7 @@ from DayBetes_food.domain.catalog import (
 )
 from DayBetes_food.domain.constants import PortionOrigin
 from DayBetes_food.domain.food import normalize_food_text
+from DayBetes_food.domain.search_text import normalize_search_text
 from DayBetes_food.errors import ConflictError, NotFoundError
 
 _CATALOG_COLUMNS = """
@@ -69,6 +70,8 @@ _CATALOG_CREATE_COLUMNS = (
     "macros_quality",
     "default_strictly_weighed",
     "macros_confidence",
+    "prefill_source",
+    "prefill_source_id",
 )
 
 # §6.2: never reveals another user's personal data.
@@ -117,6 +120,8 @@ def _create_params(payload: CatalogItemCreate) -> dict:
         "macros_quality": payload.macros_quality,
         "default_strictly_weighed": payload.default_strictly_weighed,
         "macros_confidence": payload.macros_confidence,
+        "prefill_source": payload.prefill_source.value if payload.prefill_source else None,
+        "prefill_source_id": payload.prefill_source_id,
         **_nutrient_params(payload.nutrients),
     }
 
@@ -214,8 +219,9 @@ def list_catalog_items(
     params = {"visibility_user_id": user_id}
     normalized = (search or "").strip()
     if normalized:
+        # search_name has no case or accents, so "limon" finds "Limón" (§11.7).
         name_condition, name_params, _ = _build_fuzzy_search(
-            connection, "entity.name", normalized, param_prefix="catalog_name"
+            connection, "entity.search_name", normalize_search_text(normalized), param_prefix="catalog_name"
         )
         brand_condition, brand_params, _ = _build_fuzzy_search(
             connection, "brand_search.label", normalized, param_prefix="catalog_brand"

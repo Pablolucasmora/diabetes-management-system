@@ -14,6 +14,7 @@ from DayBetes_food.database.schema import (
     manual_intake_check_constraints,
 )
 from DayBetes_food.domain.catalog import CATALOG_BARCODE_MAX_LENGTH, CATALOG_BARCODE_MIN_LENGTH
+from DayBetes_food.domain.search_text import search_text_sql
 from DayBetes_food.domain.constants import (
     IntakeEventState,
     InsulinType,
@@ -297,6 +298,18 @@ def _ensure_catalog_schema(cursor):
     Idempotent (§12.2). Closes findings 1, 2, 3, 12, 13, 18, 19, 23 and 26 of
     audit/audits/audit_catalog.md.
     """
+    # ---- 0. Prefill reference and search text (§11.7, measurement §12.1) ----
+    # First: the canonical CHECKs of step 6c use these columns.
+    if not _has_column(cursor, "catalog", "prefill_source"):
+        cursor.execute("ALTER TABLE catalog ADD COLUMN prefill_source VARCHAR(20);")
+    if not _has_column(cursor, "catalog", "prefill_source_id"):
+        cursor.execute("ALTER TABLE catalog ADD COLUMN prefill_source_id VARCHAR(64);")
+    if not _has_column(cursor, "catalog", "search_name"):
+        cursor.execute(
+            f"ALTER TABLE catalog ADD COLUMN search_name TEXT "
+            f"GENERATED ALWAYS AS ({search_text_sql('name')}) STORED;"
+        )
+
     # ---- 1. Temporal columns (H18, §10.5) ----
     if not _has_column(cursor, "catalog", "created_at"):
         cursor.execute("ALTER TABLE catalog ADD COLUMN created_at TIMESTAMPTZ;")
@@ -1131,6 +1144,32 @@ def _ensure_food_filter_indexes(cursor):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_intake_created_by ON manual_intake (created_by);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_users_id ON recipe (users_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_visibility ON recipe (is_published, users_id);")
+
+
+def _ensure_food_search_indexes(cursor):
+    # After _ensure_catalog_schema, which creates catalog.search_name on old
+    # installs. Tolerated like _ensure_trgm_search: without pg_trgm the searches
+    # still work, only slower.
+    cursor.execute("SAVEPOINT food_search_setup;")
+    try:
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_catalog_search_name_trgm "
+            "ON catalog USING gin (lower(search_name) gin_trgm_ops);"
+        )
+        cursor.execute(
+            sql.SQL("CREATE INDEX IF NOT EXISTS idx_catalog_search_name_compact_trgm ON catalog USING gin ({} gin_trgm_ops);").format(
+                sql.SQL(fuzzy_compact_sql("search_name"))
+            )
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_off_product_search_text_trgm "
+            "ON off_product USING gin (search_text gin_trgm_ops);"
+        )
+        cursor.execute("RELEASE SAVEPOINT food_search_setup;")
+    except Exception as exc:
+        cursor.execute("ROLLBACK TO SAVEPOINT food_search_setup;")
+        cursor.execute("RELEASE SAVEPOINT food_search_setup;")
+        logger.warning("Food search indexes skipped: %s", exc)
 
 
 def _ensure_tags_color_schema(cursor):
@@ -2279,6 +2318,7 @@ def init_db():
             DBSchema.food_brands,
             DBSchema.catalog(),
             DBSchema.manual_intake(),
+            DBSchema.off_product(),
             DBSchema.fridge,
             DBSchema.tags,
             DBSchema.recipe,
@@ -2304,6 +2344,7 @@ def init_db():
         # After the publication step: its unique index filters on is_published.
         _ensure_recipe_schema(cur)
         _ensure_catalog_schema(cur)
+        _ensure_food_search_indexes(cur)
         # After the publication and copy-origin steps: its indexes use
         # is_published and origin_root_id, which they create on old installs.
         _ensure_manual_intake_schema(cur)
@@ -2329,6 +2370,8 @@ def init_db():
         cur.execute(sql.SQL("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {}").format(role))
         cur.execute(sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {}").format(role))
         cur.execute(sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO {}").format(role))
+        # Reference data: only the load script writes it (measurement §12.2).
+        cur.execute(sql.SQL("REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON off_product FROM {}").format(role))
 
         conn.commit()
         logger.info("Database initialized successfully.")

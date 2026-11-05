@@ -900,7 +900,60 @@ Reglas:
 
 `source`, `measured_at`, `imported_at` y `request_id` pertenecen a la trazabilidad de mediciones, datos clínicos importados o transformaciones relevantes. No son campos obligatorios de las cuentas de usuario ni deben añadirse a `users` por defecto.
 
-**Caso en que el modelo no lo permite: `catalog`** (decisión 2026-09-25). Open Food Facts solo precarga el formulario de alta; el usuario revisa y corrige los valores antes de guardar, así que el valor guardado es suyo y no se marca como `imported`. `catalog` no tiene columnas de procedencia. No es un hallazgo de auditoría mientras la importación siga siendo una precarga revisada y no una escritura directa.
+**Caso en que el modelo no lo permite: `catalog`** (decisión 2026-09-25). Open Food Facts solo precarga el formulario de alta; el usuario revisa y corrige los valores antes de guardar, así que el valor guardado es suyo y no se marca como `imported`. No es un hallazgo de auditoría mientras la importación siga siendo una precarga revisada y no una escritura directa.
+
+Desde el 2026-11-05, `catalog.prefill_source` y `catalog.prefill_source_id` (opcionales, los dos o ninguno) indican de dónde salió la precarga, no de dónde salen los valores guardados, que siguen siendo del usuario. Sirven para no volver a ofrecer lo que ya se copió y para separar esas filas si la ODbL obliga a compartirlas (§12.2). Una copia de un alimento y los alimentos anteriores a esa fecha los tienen vacíos.
+
+### 12.2 Open Food Facts: copia local y licencia
+
+Decisión 2026-11-05. Open Food Facts (OFF) es la fuente de los productos envasados con los que se ayuda a recoger datos. DayBetes trabaja con una copia local limpia, generada desde una exportación de OFF y cargada en la base de datos del VPS. La exportación completa no se versiona ni se sube al servidor: solo se carga el resultado de la limpieza.
+
+**Lo que la licencia permite.** La base de datos está bajo la [Open Database License](https://opendatacommons.org/licenses/odbl/1-0/) (ODbL 1.0), que incluye expresamente el uso comercial y las copias permanentes. Sus contenidos individuales están bajo la Database Contents License y las fotos bajo CC BY-SA. La referencia son las [condiciones de OFF](https://world.openfoodfacts.org/terms-of-use), cuya versión francesa prevalece; la etiqueta `agpl-3.0` de la página del conjunto de datos en Hugging Face no las sustituye.
+
+**Obligaciones.**
+
+- **Atribución.** La interfaz muestra "Contains data from Open Food Facts, available under the Open Database License", con enlaces a OFF y a la licencia, mediante `off_attribution()` (`components/data_sources.py`). Aparece en el escáner, en Ajustes y en el formulario precargado desde OFF; allí enlaza a la página del producto. Cualquier pantalla nueva que muestre datos de OFF hace lo mismo. Los enlaces abren una pestaña nueva para no perder el borrador del formulario.
+- **Compartir la copia adaptada.** La copia local cuenta como base derivada (ODbL §4.4). Mientras solo la use el autor no es uso público. Antes de abrir la app a otras personas hay que ofrecer gratis, bajo ODbL, la base derivada o un archivo o método que describa sus cambios (ODbL §4.6). Por eso la limpieza se hace con un script reproducible, y se registra la fecha de la exportación usada.
+- **Sin mezclar fuentes.** Los datos de OFF van en su propia tabla, sin filas de otras fuentes cuya licencia no permita redistribuirlas bajo ODbL (ODbL §4.4 d). Las fuentes se combinan al buscar, no al guardar.
+- **Datos personales fuera.** Lo que se comparta bajo ODbL nunca incluye diarios, dosis, glucosa ni datos de cuentas.
+
+**Advertencia de uso.** Las condiciones de OFF, que también se aplican a quien reutiliza los datos, dicen que son orientativos, que pueden contener errores y que no deben usarse con fines médicos. No está aclarado cómo afecta a recomendaciones de insulina o avisos de glucosa de la fase 2: hay que preguntarlo a `reuse@openfoodfacts.org` antes de construirlos.
+
+**Campos de la copia.** La conversión sigue dependiendo de la unidad declarada (§5.1). Las exportaciones no tienen la misma forma que la API que usa el adaptador:
+
+- En Parquet, `nutriments` es una lista con `name`, `value`, `100g` y `unit`, y `product_name` es una lista con `lang` y `text`. `unit` y `value` son los del contribuidor, mientras que `100g` ya está normalizado: en la exportación del 2026-11-05, la cafeína con `unit = mg` tiene `value = 32` y `100g = 0.032`. Por eso se lee `100g`, y `unit` solo sirve para descartar valores con una unidad imposible para ese nutriente.
+- En CSV no hay columnas `<campo>_unit`. Según [`data-fields.txt`](https://static.openfoodfacts.org/data/data-fields.txt), los `_100g` van en gramos (kJ en energía), por 100 g o 100 ml, y `alcohol_100g` en `% vol`.
+
+Antes de cada carga se comprueban las unidades reales de la exportación usada.
+
+| Campo de DayBetes | Origen en la exportación | Regla |
+|---|---|---|
+| `barcode` | `code` | Pasa por `parse_barcode`; si no es válido, no se carga la fila |
+| `name` | `product_name` | Mismo orden que el adaptador: español, principal, inglés |
+| marca | `brands` | La primera de la lista |
+| `calories_100g` | `energy-kcal` | Solo en kcal |
+| `carbs_100g`, `sugars_100g`, `fats_100g`, `saturated_100g`, `proteins_100g`, `fiber_100g` | `carbohydrates`, `sugars`, `fat`, `saturated-fat`, `proteins`, `fiber` | En g; fuera de rango (§5.3) no se carga el valor |
+| `caffeine` | `caffeine` | `100g` está en g → mg (× 1000), también cuando `unit` es `mg` |
+| `alcohol` | `alcohol` | `% vol` → g/100 g con `ETHANOL_DENSITY_G_PER_ML`, conservando el valor original |
+| `default_portion` | `serving_quantity` | Solo si consta que está en g |
+| `nutriscore`, `nova` | `nutriscore_grade`, `nova_group` | Fuera de la lista cerrada no se carga el valor |
+
+Un valor que falta queda vacío; nunca se convierte en cero. Las fotos no forman parte de la copia.
+
+**Productos que se cargan** (aprobado el 2026-11-05):
+
+- Etiqueta `en:spain` o código de 13 dígitos con prefijo 84, porque hay productos españoles sin esa etiqueta.
+- Código de 8 a 48 dígitos y nombre no vacío, sin caracteres de control. Un código repetido conserva su fila modificada más recientemente.
+- Hidratos, grasa y proteína obligatorios: en gramos, entre 0 y 100 y con suma de hasta 105. Se descartan los productos con azúcares mayores que los hidratos o saturadas mayores que la grasa.
+- Las kcal se conservan solo si están entre 0 y 900 y difieren de `4 × hidratos + 9 × grasa + 4 × proteína + 2 × fibra` como máximo en el mayor de estos dos márgenes: 25 % o 20 kcal. Si no, las kcal quedan vacías y el producto se conserva.
+
+**Tabla.** La copia vive en `off_product`, con las mismas columnas y unidades que `catalog`, salvo el alcohol: se guarda en `% vol` (`alcohol_vol`) y se convierte al precargar, con el mismo adaptador que una respuesta de la API (`prefill_from_off_product`). Sin datos cargados, el escáner usa la API y el buscador solo muestra los alimentos del usuario.
+
+**Escáner.** El código se busca primero en la copia local; un código de 12 dígitos se busca también con un cero delante, porque OFF guarda así los UPC-A. Si no está, se consulta la API de OFF para ese código, porque la copia es de una fecha concreta y puede no incluir productos nuevos o de otros países. Si tampoco aparece, el formulario se abre vacío, con el código y el aviso "Product not found".
+
+**Buscador.** Con al menos 3 caracteres, debajo de los alimentos del usuario aparece la sección "From Open Food Facts", con un máximo de 20 productos, su atribución y sin los códigos que el usuario ya ve en `catalog`. Al pulsar uno se abre el formulario precargado, que se revisa antes de guardar.
+
+**Carga.** No forma parte del despliegue, se hace solo al actualizar los datos. `scripts/off/clean_off.py` genera en el ordenador del desarrollador un CSV comprimido con los filtros anteriores, con su propio `requirements.txt` porque DuckDB no entra en la imagen de la app. `scripts/off/load_off.sh` lo carga en el servidor, reemplazando la tabla en una transacción. La tabla no entra con filas en la copia de seguridad (`infra_conventions.md` §12).
 
 ## 13. Datos originales y derivados
 
