@@ -9,6 +9,7 @@ declares (`<field>_unit`) and never on the field name (decision 2026-09-25).
 
 import http.client
 import json
+import re
 from urllib import request as urlrequest
 from urllib.error import HTTPError
 
@@ -46,6 +47,47 @@ _MACRO_FIELDS = {
     "proteins_100g": ("proteins", "g", 1.0),
     "fiber_100g": ("fiber", "g", 1.0),
 }
+
+
+def _words(*terms: str) -> re.Pattern:
+    return re.compile(rf"\b({'|'.join(terms)})\b")
+
+
+# Whole words only: "steak" must not match "tea", nor "goat" match "oat".
+_CATEGORY_WORDS = {
+    FoodCategory.BEVERAGES: _words("beverages?", "drinks?", "juices?", "sodas?", "waters?", "teas?", "coffees?", "wines?", "beers?", "nectars?"),
+    FoodCategory.DAIRY: _words("dairy", "dairies", "milks?", "yogurts?", "yoghurts?", "cheeses?"),
+    FoodCategory.CEREALS: _words("cereals?", "breads?", "flours?", "grains?", "rices?", "wheat", "oats?", "pastas?", "noodles?", "mueslis?"),
+    FoodCategory.FRUITS: _words("fruits?", "apples?", "bananas?", "berries", "oranges?"),
+    FoodCategory.VEGETABLES: _words("vegetables?", "greens", "salads?", "tomato(es)?"),
+    FoodCategory.FISH: _words("fish", "fishes", "seafoods?", "salmons?", "tunas?", "anchovies"),
+    FoodCategory.MEAT: _words("meats?", "beef", "chickens?", "pork", "poultry"),
+    FoodCategory.PROCESSED_MEAT: _words("hams?", "sausages?", "salamis?", "chorizos?"),
+    FoodCategory.LEGUMES: _words("legumes?", "lentils?", "chickpeas?", "beans?"),
+    FoodCategory.NUTS: _words("nuts?", "almonds?", "hazelnuts?", "walnuts?", "peanuts?"),
+    FoodCategory.OILS_AND_FATS: _words("oils?", "fats", "butters?", "margarines?"),
+    FoodCategory.SWEETS: _words("sweets", "chocolates?", "cand(y|ies)", "desserts?", "biscuits?", "cookies?", "cakes?", "pastries", "jams?", "turrons?", "confectioneries"),
+    FoodCategory.SAUCES: _words("sauces?", "ketchups?", "mustards?", "mayonnaises?"),
+    FoodCategory.CONDIMENTS: _words("condiments?", "spices?", "seasonings?", "salts?"),
+    FoodCategory.EGGS: _words("eggs?", "omelettes?"),
+    FoodCategory.TUBERS: _words("potato(es)?", "tubers?"),
+    FoodCategory.SUPPLEMENTS: _words("supplements?"),
+}
+# Tags whose words would mislead, with their category.
+_CATEGORY_BY_TAG = {
+    "prepared meats": FoodCategory.PROCESSED_MEAT,
+    "plant based beverages": FoodCategory.BEVERAGES,
+    "fruit based beverages": FoodCategory.BEVERAGES,
+    "vegetable oils": FoodCategory.OILS_AND_FATS,
+    "vegetable fats": FoodCategory.OILS_AND_FATS,
+    "sweet potatoes": FoodCategory.TUBERS,
+    "cocoa and hazelnuts spreads": FoodCategory.SWEETS,
+}
+# Tags that are not about what the food is: a substitute, a whole dish or an occasion.
+_NOT_A_CATEGORY_TAG = _words(
+    "plant", "substitutes?", "alternatives?", "imitations?", "analogues?", "vegetarian", "vegan",
+    "meals?", "dishes", "soups?", "pizzas?", "sandwich(es)?", "pies?", "christmas", "festive", "easter",
+)
 
 
 def _off_number(value):
@@ -105,36 +147,17 @@ def _off_pick_subtype(product: dict) -> str | None:
 
 
 def _off_pick_category(product: dict) -> FoodCategory | None:
-    parts = _off_categories(product)
-    base = ""
-    if len(parts) >= 3:
-        base = parts[-3]
-    elif len(parts) >= 2:
-        base = parts[-2]
-    elif len(parts) == 1:
-        base = parts[0]
-
-    blob = base.strip().lower()
-    checks = (
-        (("beverage", "drink", "juice", "soda", "water", "tea", "coffee"), FoodCategory.BEVERAGES),
-        (("dairy", "milk", "yogurt", "cheese"), FoodCategory.DAIRY),
-        (("cereal", "bread", "flour", "grain", "rice", "wheat", "oat"), FoodCategory.CEREALS),
-        (("fruit", "apple", "banana", "berries"), FoodCategory.FRUITS),
-        (("vegetable", "greens", "salad", "tomato"), FoodCategory.VEGETABLES),
-        (("fish", "seafood", "salmon", "tuna"), FoodCategory.FISH),
-        (("meat", "beef", "chicken", "pork", "ham"), FoodCategory.MEAT),
-        (("legume", "lentil", "chickpea", "bean"), FoodCategory.LEGUMES),
-        (("nut", "almond", "hazelnut", "walnut"), FoodCategory.NUTS),
-        (("oil", "fat", "butter", "margarine"), FoodCategory.OILS_AND_FATS),
-        (("sweet", "chocolate", "candy", "dessert", "biscuit", "cookie"), FoodCategory.SWEETS),
-        (("sauce", "ketchup", "mustard", "mayo"), FoodCategory.SAUCES),
-        (("condiment", "spice", "seasoning"), FoodCategory.CONDIMENTS),
-        (("egg", "omelette"), FoodCategory.EGGS),
-        (("potato", "tuber"), FoodCategory.TUBERS),
-    )
-    for keywords, category in checks:
-        if any(keyword in blob for keyword in keywords):
-            return category
+    """From the most specific tag to the most general one (measurement §12.2), the
+    first tag that says something decides: one category, or none if it says two."""
+    for part in reversed(_off_categories(product)):
+        tag = part.lower().replace("-", " ")
+        if tag in _CATEGORY_BY_TAG:
+            return _CATEGORY_BY_TAG[tag]
+        if _NOT_A_CATEGORY_TAG.search(tag):
+            continue
+        found = {category for category, words in _CATEGORY_WORDS.items() if words.search(tag)}
+        if found:
+            return found.pop() if len(found) == 1 else None
     return None
 
 
@@ -177,6 +200,10 @@ def _safe_check(value, field: str, limits=None):
         return check_number(round(value, 4), field, limits or NUTRIENT_LIMITS[field])
     except ValidationError:
         return None
+
+
+def initial_state_for(category: FoodCategory | None) -> FoodPhysicalState:
+    return FoodPhysicalState.LIQUID if category is FoodCategory.BEVERAGES else FoodPhysicalState.SOLID
 
 
 def prefill_from_record(barcode: str | None, product: dict) -> FoodPrefill:
@@ -232,11 +259,7 @@ def prefill_from_record(barcode: str | None, product: dict) -> FoodPrefill:
         brand=_off_pick_brand(product),
         category=category,
         subtype=_off_pick_subtype(product),
-        initial_state=(
-            FoodPhysicalState.LIQUID
-            if category is FoodCategory.BEVERAGES
-            else FoodPhysicalState.SOLID
-        ),
+        initial_state=initial_state_for(category),
         default_portion_g=default_portion_g,
         nutriscore=_off_nutriscore(product),
         nova=_off_nova(product),

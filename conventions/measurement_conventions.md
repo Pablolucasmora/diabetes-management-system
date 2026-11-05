@@ -940,6 +940,8 @@ Antes de cada carga se comprueban las unidades reales de la exportación usada. 
 
 Un valor que falta queda vacío; nunca se convierte en cero. Las fotos no forman parte de la copia.
 
+**Categoría sugerida.** OFF no usa las categorías de DayBetes, así que el adaptador las sugiere y el usuario las revisa. Recorre las etiquetas de la más específica a la más general, comparando palabras completas, y decide la primera que diga algo: si señala dos categorías, el campo queda vacío, porque no se adivina (decisión 2026-09-25). Se saltan las etiquetas que engañan, como las de sustitutos vegetales o platos completos, y unas pocas etiquetas exactas tienen categoría propia (`vegetable oils`). Las etiquetas en otros idiomas no dan categoría. Una sugerencia con IA queda para el futuro (`study_conventions.md` §6.5).
+
 **Productos que se cargan** (aprobado el 2026-11-05):
 
 - Etiqueta `en:spain` o código de 13 dígitos con prefijo 84, porque hay productos españoles sin esa etiqueta.
@@ -967,6 +969,7 @@ Decisión del usuario del 2026-11-05, tras comparar con USDA y BLS 4.0. Ciqual 2
 - **Valores `traces` y `< x`.** `traces` significa que el constituyente se detecta sin poder cuantificarse, o que se estima muy bajo sin ser nulo, y `< x` es un valor máximo: el real está entre 0 y `x`. Se sustituyen como hace [Anses](https://www.anses.fr/fr/system/files/NUT2014sa0117Ra.pdf): `traces` por 0 y `< x` por `x/2`. En cualquier nutriente, `value_notes` guarda el original y el formulario lo muestra. No son valores que faltan. Un valor que falta (`-`) queda vacío o, si es hidratos, grasa o proteína, descarta el alimento.
 - **Fiabilidad.** El formulario muestra las notas A–D de Ciqual. No rellenan `macros_confidence`, que declara el usuario.
 - **Peso.** Los valores son por 100 g de parte comestible: se pesa lo que se come. Con una entrada cocida no se marca peso en cocido, para no convertir dos veces. Arroz, pasta y legumbres se pesan preferiblemente en crudo, porque es donde más discrepan las tablas.
+- **Categoría sugerida.** Sale de una tabla cerrada, revisada a mano, de subgrupo de Ciqual a categoría (`integrations/ciqual.py`). Los subgrupos que mezclan categorías, como `dishes` o `soups`, dejan el campo vacío.
 - **Procedencia.** `prefill_source = ciqual` y su código (§12.1). Lo ya copiado no se vuelve a ofrecer.
 
 ## 13. Datos originales y derivados
