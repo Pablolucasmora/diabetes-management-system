@@ -1447,6 +1447,8 @@ def setup_food_routes(rt):
             brands = get_food_brand_suggestions(connection, search="", limit=500)
             subtypes = get_subtype_suggestions(connection, search="", limit=500)
             tags = get_tag_suggestions(connection, search="", limit=500)
+        if valid_barcode and prefill is None and off_notice is None and not existing_item_id:
+            off_notice = "Product not found. You can fill the form by hand."
         prefill_view = _prefill_view(prefill, valid_barcode) if prefill else {"barcode": clean}
         subtype_prefill = (prefill_view.get("subtype") or "").strip()
         if subtype_prefill:
