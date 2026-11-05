@@ -66,7 +66,7 @@ class IntakeEventRead:
     SUM(amount) when needed (decision 2026-09-10,
     measurement_conventions.md §4.4/§6.9.1).
     amount_confidence is a snapshot of the portions' own data. There are no
-    quality_confidence or *_uncertainty columns: they depend on the food, so
+    quality_confidence or *_coverage columns: they depend on the food, so
     they are computed live from the portions (measurement_conventions.md
     §6.9.4).
     """

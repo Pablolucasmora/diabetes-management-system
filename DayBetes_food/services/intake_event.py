@@ -74,7 +74,7 @@ def confirm_planned_event(
 
     # amount_confidence is a proportion: a uniform scale of every portion
     # does not change it, so it is computed on the served portions, before
-    # scaling them (§6.9.1). quality_confidence and *_uncertainty are not
+    # scaling them (§6.9.1). quality_confidence and *_coverage are not
     # stored: they are computed live (§6.9.4).
     metrics = calculate_macro_summary_metrics(portions)
     update_payload = IntakeEventUpdate(
