@@ -288,6 +288,7 @@ Arriba, el saludo con el nombre de usuario (`Hi <usuario>`). Debajo, en este ord
 
 - La cabecera es fija arriba (`sticky`) y usa `web_glass_strong` (§8). Lleva el botón del rayo, que abre el pop-up de rescate (§9.6), el menú "+", el buscador, los filtros y el selector de comida (*Add to*). Mientras el menú "+" está abierto, la capa `#food_menu_scrim` desenfoca el resto de la página (§8).
 - Cada alimento de la lista es una tarjeta con el nombre, la marca u origen debajo y los carbohidratos por 100 g. Los propios llevan la etiqueta `Mine` y los archivados, `Archived`. Las listas van agrupadas bajo etiquetas de sección (`web_section_label`).
+- Sin búsqueda, la lista muestra 15 resultados y carga la página siguiente al llegar al final. Con búsqueda muestra 8 y las páginas siguientes, también de 8, se piden con un botón `Load more`, pequeño y centrado, porque debajo está la sección de Open Food Facts (`measurement_conventions.md` §12.2) y la carga automática no dejaría llegar a ella.
 
 #### 9.3.1 Menú de acciones de una fila (en prueba)
 

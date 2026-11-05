@@ -1390,6 +1390,7 @@ def _error_msg(text: str, status_code: int = 200):
 
 LIST_PAGE_SIZE = 15
 
+SEARCH_PAGE_SIZE = 8  # Short, so the Open Food Facts section stays close (frontend §9.3).
 
 def _search_load_more_node(
     search: str,
@@ -1410,6 +1411,19 @@ def _search_load_more_node(
         "page": next_page,
     })
     return Div(
+    if search:
+        # A button, not on scroll: below it comes the Open Food Facts section,
+        # which automatic loading would keep pushing down (frontend §9.3).
+        return Button(
+            "Load more",
+            type="button",
+            hx_get=f"/food/list?{query}",
+            hx_swap="outerHTML",
+            hx_target="this",
+            hx_disabled_elt="this",
+            data_skip_page_loading="true",
+            cls="web_button rounded-full px-4 py-1.5 mt-1 text-xs font-semibold text-muted",
+        )
         "Loading more...",
         hx_get=f"/food/list?{query}",
         hx_trigger="revealed",
@@ -2759,8 +2773,9 @@ def setup_food_routes(rt):
         if not entries and not off_nodes:
             return render_fragment(H2("No items", cls="text-gray-600"))
 
-        start = (page - 1) * LIST_PAGE_SIZE
-        end = start + LIST_PAGE_SIZE
+        page_size = SEARCH_PAGE_SIZE if clean_search else LIST_PAGE_SIZE
+        start = (page - 1) * page_size
+        end = start + page_size
         chunk = entries[start:end]
         has_more = end < len(entries)
 
