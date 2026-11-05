@@ -1170,6 +1170,10 @@ def _ensure_food_search_indexes(cursor):
             "CREATE INDEX IF NOT EXISTS idx_off_product_search_text_trgm "
             "ON off_product USING gin (search_text gin_trgm_ops);"
         )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ciqual_food_search_text_trgm "
+            "ON ciqual_food USING gin (search_text gin_trgm_ops);"
+        )
         cursor.execute("RELEASE SAVEPOINT food_search_setup;")
     except Exception as exc:
         cursor.execute("ROLLBACK TO SAVEPOINT food_search_setup;")
@@ -2324,6 +2328,7 @@ def init_db():
             DBSchema.catalog(),
             DBSchema.manual_intake(),
             DBSchema.off_product(),
+            DBSchema.ciqual_food(),
             DBSchema.fridge,
             DBSchema.tags,
             DBSchema.recipe,
@@ -2378,6 +2383,7 @@ def init_db():
         cur.execute(sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO {}").format(role))
         # Reference data: only the load script writes it (measurement §12.2).
         cur.execute(sql.SQL("REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON off_product FROM {}").format(role))
+        cur.execute(sql.SQL("REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ciqual_food FROM {}").format(role))
 
         conn.commit()
         logger.info("Database initialized successfully.")

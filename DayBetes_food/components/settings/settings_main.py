@@ -1,5 +1,5 @@
 from fasthtml.common import *
-from DayBetes_food.components.data_sources import off_attribution
+from DayBetes_food.components.data_sources import ciqual_attribution, off_attribution
 from DayBetes_food.components.navigation import back_js
 from DayBetes_food.database.queries import get_all_tags, get_meal_type_schedule
 from DayBetes_food.components.injection_zone import (
@@ -78,6 +78,7 @@ def settings_main(connection, current_user=None):
                 hx_push_url="true",
             ),
             off_attribution(),
+            ciqual_attribution(),
             cls="web_container p-6 flex flex-col items-center gap-3",
         ),
         cls="flex flex-col items-center justify-center gap-6 md:mt-7 lg:mt-7 mt-2",

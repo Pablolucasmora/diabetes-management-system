@@ -1301,6 +1301,7 @@ La clasificación de cada tabla se declara en este registro, que es el sitio ún
 | `intake_event` | **Híbrida por `state`**: `planned` no archivable, `consumed` archivable. | Físico en `planned`; `deleted_at` en `consumed`. | Decisión 2026-09-08. |
 | `manual_intake` | **Archivable**, irreversible (sin `restore_`), con el mismo contrato que `catalog`. Contrato completo en §11.2.3. | Solo `deleted_at`; nunca físico (porciones de eventos consumidos y, si se publica, favoritos y recetas de otros usuarios apuntan al plato). | `audit/audits/audit_manual_intake.md`, hallazgos 5 y 14; decisiones 2026-10-09. |
 | `off_product` | **Datos de referencia**, sin propietario: los ven todos los usuarios y la app no los escribe (`init_db` le retira esos permisos). | Físico: cada carga reemplaza la tabla entera, en una transacción (`scripts/off/load_off.sh`). | `measurement_conventions.md` §12.2. |
+| `ciqual_food` | **Datos de referencia**, igual que `off_product`. | Físico: cada carga reemplaza la tabla (`scripts/ciqual/load_ciqual.sh`). | `measurement_conventions.md` §12.3. |
 | `portion_detail` | **Dependent** de su destino (`intake_event`, `recipe` o `fridge`); hereda su propietario y su ciclo de vida. | `CASCADE` desde el destino. El borrado físico es apropiado en recetas y en eventos `planned`; en un evento `consumed` es histórico clínico y hoy lo impide la ruta, no la query (limitación declarada). | `audit/audit_portion_detail.md`; `measurement_conventions.md` §6.9.3; `audit/deuda_pendiente.md`, `portion_detail` H27. |
 
 #### 11.2.2 Contrato de ciclo de vida de `catalog`
@@ -1518,7 +1519,7 @@ Cada columna buscada tiene dos índices GIN trigram: `idx_<tabla>_<columna>_trgm
 
 **Texto sin acentos** (2026-11-05). `catalog` se busca por `search_name`, una columna generada con el nombre en minúsculas y sin acentos, y el término se normaliza igual, así que "limon" encuentra "Limón". El mapa de caracteres vive en `domain/search_text.py`, que da tanto la expresión SQL de la columna como la normalización del término. No es el antiguo `catalog.slug`, eliminado el 2026-09-25: aquel era un dato aplicado a mano y sin uso, y este lo calcula PostgreSQL y lo usa la búsqueda. Las demás tablas siguen buscando por su columna original.
 
-**Excepción: `off_product`** (2026-11-05). No usa `_build_fuzzy_search`, porque compara el término entero y "hacendado gazpacho" devolvía cualquier producto de Hacendado. Cada palabra debe aparecer en `search_text` (nombre y marca, sin acentos). Se ordena primero por las que empiezan por la primera palabra y después por escaneos. Si no hay resultados, se busca por similitud, para tolerar erratas. Un único índice GIN trigram sobre `search_text`: `idx_off_product_search_text_trgm`.
+**Excepción: `off_product` y `ciqual_food`** (2026-11-05). No usa `_build_fuzzy_search`, porque compara el término entero y "hacendado gazpacho" devolvía cualquier producto de Hacendado. Cada palabra debe aparecer en `search_text` (nombre y marca, sin acentos). Se ordena primero por las que empiezan por la primera palabra y después por escaneos. Si no hay resultados, se busca por similitud, para tolerar erratas. Un único índice GIN trigram sobre `search_text`: `idx_off_product_search_text_trgm`.
 
 ### 11.8 Claves foráneas
 

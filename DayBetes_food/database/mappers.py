@@ -7,6 +7,7 @@ code.
 """
 
 from DayBetes_food.domain.catalog import CatalogItemRead
+from DayBetes_food.domain.ciqual_food import CiqualFoodRead
 from DayBetes_food.domain.constants import (
     ConservationMethod,
     CookingMethod,
@@ -40,6 +41,13 @@ def _enum_from_row(row: dict, key: str, enum_cls):
         raise InfrastructureError(
             f"Invalid {key} '{raw}' in database row"
         ) from exc
+
+
+def ciqual_food_read_from_row(row: dict) -> CiqualFoodRead:
+    try:
+        return CiqualFoodRead(**{field: row[field] for field in CiqualFoodRead.__dataclass_fields__})
+    except KeyError as exc:
+        raise InfrastructureError(f"Missing required field {exc} in ciqual_food row") from exc
 
 
 def off_product_read_from_row(row: dict) -> OffProductRead:
