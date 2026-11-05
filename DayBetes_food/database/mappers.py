@@ -28,6 +28,7 @@ from DayBetes_food.domain.intake_plate import IntakePlateRead
 from DayBetes_food.domain.manual_intake import ManualIntakeRead
 from DayBetes_food.domain.off_product import OffProductRead
 from DayBetes_food.domain.recipe import RecipeRead
+from DayBetes_food.domain.recipe_plate import RecipePlateRead
 from DayBetes_food.domain.portion_detail import PortionDetailRead, PortionSourceRead
 from DayBetes_food.errors import InfrastructureError
 
@@ -65,6 +66,20 @@ def recipe_read_from_row(row: dict) -> RecipeRead:
         )
     except (KeyError, ValueError) as exc:
         raise InfrastructureError(f"Invalid recipe row: {exc}") from exc
+
+
+def recipe_plate_read_from_row(row: dict) -> RecipePlateRead:
+    try:
+        return RecipePlateRead(
+            id=row["id"],
+            recipe_id=row["recipe_id"],
+            position=row["position"],
+            name=row.get("name"),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+    except KeyError as exc:
+        raise InfrastructureError(f"Missing required field {exc} in recipe_plate row") from exc
 
 
 def ciqual_food_read_from_row(row: dict) -> CiqualFoodRead:
@@ -378,6 +393,7 @@ def portion_detail_read_from_row(row: dict) -> PortionDetailRead:
             destination=destination,
             destination_id=int(row[destination_column]),
             plate_id=row.get("plate_id"),
+            recipe_plate_id=row.get("recipe_plate_id"),
             amount=float(row["amount"]),
             cooking=_enum_from_row(row, "cooking", CookingMethod),
             conservation=_enum_from_row(row, "conservation", ConservationMethod),

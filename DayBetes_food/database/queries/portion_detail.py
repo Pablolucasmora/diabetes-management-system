@@ -60,6 +60,7 @@ _PORTION_COLUMNS = """
     pd.recipe_id,
     pd.fridge_id,
     pd.plate_id,
+    pd.recipe_plate_id,
     pd.amount,
     pd.cooking,
     pd.conservation,
@@ -154,6 +155,11 @@ def _plate_row(connection, plate_id: int):
     )
 
 
+def _portion_plate_key(portion: PortionDetailRead) -> int | None:
+    """The plate that holds the uniqueness key of a portion (4.6.4, 4.7)."""
+    return portion.recipe_plate_id if portion.destination is PortionDestination.RECIPE else portion.plate_id
+
+
 def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate, commit: bool = True) -> int:
     """Insert one portion, merging into an existing row when the key matches (4.6.4).
 
@@ -169,7 +175,12 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
     origin = PortionOrigin(payload.origin)
     destination = PortionDestination(payload.destination)
     is_event = destination is PortionDestination.INTAKE_EVENT
+    is_recipe = destination is PortionDestination.RECIPE
 
+    if is_recipe and payload.recipe_plate_id is None:
+        raise ValidationError("recipe_plate_required")
+    if not is_recipe and payload.recipe_plate_id is not None:
+        raise ValidationError("recipe_plate_only_for_recipe")
     if is_event and payload.plate_id is None:
         raise ValidationError("plate_required")
     if not is_event and payload.plate_id is not None:
@@ -186,6 +197,16 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
             raise NotFoundError("portion_plate_not_found")
         if offset_minutes is None:
             offset_minutes = plate["offset_minutes"]
+    if is_recipe:
+        # The composite FK guarantees it; this gives a 404 instead of a violation.
+        recipe_plate = _execute_query(
+            connection,
+            "SELECT 1 AS found FROM recipe_plate rp WHERE rp.id = %(id)s AND rp.recipe_id = %(recipe_id)s;",
+            {"id": payload.recipe_plate_id, "recipe_id": payload.destination_id},
+            commit=False,
+        )
+        if recipe_plate is None:
+            raise NotFoundError("portion_plate_not_found")
 
     data = {
         "amount": amount,
@@ -195,6 +216,7 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
         "recipe_id": payload.destination_id if destination is PortionDestination.RECIPE else None,
         "fridge_id": payload.destination_id if destination is PortionDestination.FRIDGE else None,
         "plate_id": payload.plate_id,
+        "recipe_plate_id": payload.recipe_plate_id,
         "cooking": cooking.value if cooking is not None else None,
         "conservation": conservation.value if conservation is not None else None,
         "final_state": final_state.value if final_state is not None else None,
@@ -203,29 +225,30 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
         "offset_minutes": offset_minutes,
     }
 
-    # ON CONFLICT over the partial unique index of 4.6.4: the inference needs to
-    # repeat its WHERE. Recipe and fridge portions have plate_id NULL, do not
-    # enter the index and therefore never merge.
-    query = """
+    # ON CONFLICT over the partial unique index of 4.6.4 or 4.7: the inference needs
+    # to repeat its WHERE. Fridge portions enter neither index and never merge.
+    plate_column = "recipe_plate_id" if is_recipe else "plate_id"
+    conflict = (
+        f"ON CONFLICT ({plate_column}, catalog_id, manual_intake_id, cooking, conservation, final_state, is_cooked_weight) "
+        f"WHERE {plate_column} IS NOT NULL "
+        "DO UPDATE SET amount = portion_detail.amount + EXCLUDED.amount, updated_at = NOW()"
+    )
+    query = f"""
         INSERT INTO portion_detail (
             amount, catalog_id, manual_intake_id,
-            intake_event_id, recipe_id, fridge_id, plate_id,
+            intake_event_id, recipe_id, fridge_id, plate_id, recipe_plate_id,
             cooking, conservation, final_state,
             strictly_weighed,
             is_cooked_weight, offset_minutes
         )
         VALUES (
             %(amount)s, %(catalog_id)s, %(manual_intake_id)s,
-            %(intake_event_id)s, %(recipe_id)s, %(fridge_id)s, %(plate_id)s,
+            %(intake_event_id)s, %(recipe_id)s, %(fridge_id)s, %(plate_id)s, %(recipe_plate_id)s,
             %(cooking)s, %(conservation)s, %(final_state)s,
             %(strictly_weighed)s,
             %(is_cooked_weight)s, %(offset_minutes)s
         )
-        ON CONFLICT (plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state, is_cooked_weight)
-        WHERE plate_id IS NOT NULL
-        DO UPDATE SET
-            amount = portion_detail.amount + EXCLUDED.amount,
-            updated_at = NOW()
+        {conflict}
         RETURNING id;
     """
     result = _execute_query(connection, query, data, commit=commit)
@@ -283,40 +306,13 @@ def list_portions_by_recipe(connection, user_id: int, recipe_id: int) -> list[Po
     query = f"""
         SELECT {_PORTION_COLUMNS}
         {_PORTION_FROM}
+        JOIN recipe_plate rp ON rp.id = pd.recipe_plate_id
         WHERE pd.recipe_id = %(recipe_id)s
         {_PORTION_OWNED_BY_USER}
-        ORDER BY pd.id;
+        ORDER BY rp.position, pd.id;
     """
     rows = _execute_query_many(
         connection, query, {"recipe_id": recipe_id, "user_id": user_id}, commit=False
-    )
-    return _rows_to_reads(rows)
-
-
-def list_recipe_portions_by_origin(
-    connection, user_id: int, recipe_id: int, origin: PortionOrigin, origin_id: int
-) -> list[PortionDetailRead]:
-    origin = PortionOrigin(origin)
-    origin_column = _PORTION_ORIGIN_COLUMNS[origin]
-    query = sql.SQL(
-        """
-        SELECT {columns}
-        {from_clause}
-        WHERE pd.recipe_id = %(recipe_id)s AND pd.{origin_column} = %(origin_id)s
-        {owned}
-        ORDER BY pd.id;
-        """
-    ).format(
-        columns=sql.SQL(_PORTION_COLUMNS),
-        from_clause=sql.SQL(_PORTION_FROM),
-        origin_column=sql.Identifier(origin_column),
-        owned=sql.SQL(_PORTION_OWNED_BY_USER),
-    )
-    rows = _execute_query_many(
-        connection,
-        query,
-        {"recipe_id": recipe_id, "origin_id": origin_id, "user_id": user_id},
-        commit=False,
     )
     return _rows_to_reads(rows)
 
@@ -333,9 +329,10 @@ def list_viewable_recipe_portions(connection, user_id: int, recipe_id: int) -> l
     query = f"""
         SELECT {_PORTION_COLUMNS}
         {_PORTION_FROM}
+        JOIN recipe_plate rp ON rp.id = pd.recipe_plate_id
         WHERE pd.recipe_id = %(recipe_id)s
         {_PORTION_VISIBLE_RECIPE}
-        ORDER BY pd.id;
+        ORDER BY rp.position, pd.id;
     """
     rows = _execute_query_many(
         connection, query, {"recipe_id": recipe_id, "user_id": user_id}, commit=False
@@ -395,12 +392,12 @@ def update_portion_flag(connection, user_id: int, portion_id: int, field: str, v
         raise ValidationError("invalid_portion_flag")
     if field == "is_cooked_weight":
         current = get_portion_detail(connection, user_id, portion_id)
-        if current.plate_id is not None:
+        if _portion_plate_key(current) is not None:
             sibling_id = _find_preparation_sibling(
                 connection,
                 user_id,
                 current,
-                current.plate_id,
+                _portion_plate_key(current),
                 current.cooking,
                 current.conservation,
                 current.final_state,
@@ -441,10 +438,12 @@ def _find_preparation_sibling(
     final_state,
     is_cooked_weight: bool,
 ):
+    # A constant, not input: the two plate columns of the uniqueness key (4.6.4, 4.7).
+    plate_column = "recipe_plate_id" if portion.destination is PortionDestination.RECIPE else "plate_id"
     query = f"""
         SELECT pd.id
         {_PORTION_FROM}
-        WHERE pd.plate_id = %(plate_id)s
+        WHERE pd.{plate_column} = %(plate_id)s
           AND pd.id <> %(portion_id)s
           AND pd.catalog_id IS NOT DISTINCT FROM %(catalog_id)s
           AND pd.manual_intake_id IS NOT DISTINCT FROM %(manual_intake_id)s
@@ -536,12 +535,12 @@ def update_portion_detail_fields(
         return False
 
     current = get_portion_detail(connection, user_id, portion_id)
-    if current.plate_id is not None:
+    if _portion_plate_key(current) is not None:
         sibling_id = _find_preparation_sibling(
             connection,
             user_id,
             current,
-            current.plate_id,
+            _portion_plate_key(current),
             resolved.get("cooking", current.cooking),
             resolved.get("conservation", current.conservation),
             resolved.get("final_state", current.final_state),
@@ -616,6 +615,57 @@ def move_portion_to_plate(connection, user_id: int, portion_id: int, target_plat
     result = _execute_query(
         connection,
         query,
+        {"target_plate_id": target_plate_id, "portion_id": portion_id, "user_id": user_id},
+        commit=commit,
+    )
+    if not result:
+        raise NotFoundError("portion_not_found")
+
+
+def move_portion_to_recipe_plate(
+    connection, user_id: int, portion_id: int, target_plate_id: int, commit: bool = True
+) -> None:
+    """Move an ingredient to another plate of the same recipe, with the same merge
+    rule as moving between the plates of an event (4.6.4, 4.7).
+
+    Raises:
+        NotFoundError: the ingredient or the target plate is not in the user's recipe.
+    """
+    current = get_portion_detail(connection, user_id, portion_id)
+    if current.destination is not PortionDestination.RECIPE:
+        raise NotFoundError("portion_not_found")
+    if int(target_plate_id) == int(current.recipe_plate_id):
+        return
+    target = _execute_query(
+        connection,
+        "SELECT 1 AS found FROM recipe_plate rp WHERE rp.id = %(id)s AND rp.recipe_id = %(recipe_id)s;",
+        {"id": target_plate_id, "recipe_id": current.destination_id},
+        commit=False,
+    )
+    if target is None:
+        raise NotFoundError("portion_plate_not_found")
+    sibling_id = _find_preparation_sibling(
+        connection,
+        user_id,
+        current,
+        target_plate_id,
+        current.cooking,
+        current.conservation,
+        current.final_state,
+        current.is_cooked_weight,
+    )
+    if sibling_id is not None:
+        _merge_into_sibling(connection, user_id, portion_id, sibling_id, commit)
+        return
+    result = _execute_query(
+        connection,
+        f"""
+        UPDATE portion_detail pd
+        SET recipe_plate_id = %(target_plate_id)s, updated_at = NOW()
+        WHERE pd.id = %(portion_id)s
+        {_PORTION_OWNED_BY_USER}
+        RETURNING pd.id;
+        """,
         {"target_plate_id": target_plate_id, "portion_id": portion_id, "user_id": user_id},
         commit=commit,
     )

@@ -622,6 +622,24 @@ class DBSchema:
     );
     """
 
+    recipe_plate = """
+    -- Plates of a recipe (measurement_conventions.md 4.7). No offset: it is born when
+    -- the recipe enters an event. The position order is deferrable so two plates can
+    -- exchange it in one statement.
+    CREATE TABLE IF NOT EXISTS recipe_plate (
+        id SERIAL CONSTRAINT pk_recipe_plate PRIMARY KEY,
+        recipe_id INTEGER NOT NULL
+            CONSTRAINT fk_recipe_plate_recipe_id_recipe
+            REFERENCES recipe(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL CONSTRAINT ck_recipe_plate_position CHECK (position >= 1),
+        name VARCHAR(255), -- NULL = name derived from its ingredients (4.6.3)
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT uq_recipe_plate_recipe_id_position UNIQUE (recipe_id, position) DEFERRABLE INITIALLY IMMEDIATE,
+        CONSTRAINT uq_recipe_plate_recipe_id_id UNIQUE (recipe_id, id) -- target of the composite FK of portion_detail
+    );
+    """
+
     portion_detail = f"""
     CREATE TABLE IF NOT EXISTS portion_detail (
         id SERIAL CONSTRAINT pk_portion_detail PRIMARY KEY,
@@ -654,6 +672,11 @@ class DBSchema:
             REFERENCES intake_plate(id) ON DELETE RESTRICT, -- Which plate (serving) of the event this portion belongs to; deleting a plate with portions is blocked on purpose (measurement_conventions.md 4.6.5)
         CONSTRAINT ck_portion_detail_plate_only_for_event
             CHECK ((intake_event_id IS NULL) = (plate_id IS NULL)), -- An event portion must have a plate; a fridge/recipe portion must not
+        recipe_plate_id INTEGER, -- Which plate of the recipe; the composite FK guarantees it is of that same recipe (4.7)
+        CONSTRAINT ck_portion_detail_recipe_plate_only_for_recipe
+            CHECK ((recipe_id IS NULL) = (recipe_plate_id IS NULL)),
+        CONSTRAINT fk_portion_detail_recipe_plate_id_recipe_plate
+            FOREIGN KEY (recipe_id, recipe_plate_id) REFERENCES recipe_plate (recipe_id, id) ON DELETE RESTRICT,
         -- Uniqueness of a food inside a plate (measurement_conventions.md 4.6.4) is a PARTIAL unique
         -- index and therefore lives in db_init._ensure_portion_detail_schema, not here: a partial
         -- index cannot be declared inline in CREATE TABLE.

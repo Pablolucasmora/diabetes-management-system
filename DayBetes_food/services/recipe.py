@@ -2,6 +2,7 @@
 
 from DayBetes_food.database.queries import (
     create_recipe,
+    ensure_default_recipe_plate,
     get_recipe,
     list_viewable_recipe_portions,
     next_recipe_copy_name,
@@ -95,6 +96,7 @@ def save_plate_as_recipe(connection, user_id: int, plate_id: int) -> int:
             # Only possible with an invalid argument: a bug, not a user error.
             raise RuntimeError("recipe_favorite_not_saved")
 
+        recipe_plate_id = ensure_default_recipe_plate(connection, recipe_id, commit=False)
         for portion in portions:
             create_portion_detail(
                 connection,
@@ -104,6 +106,7 @@ def save_plate_as_recipe(connection, user_id: int, plate_id: int) -> int:
                     origin_id=portion.origin_id,
                     destination=PortionDestination.RECIPE,
                     destination_id=recipe_id,
+                    recipe_plate_id=recipe_plate_id,
                     amount=portion.amount,
                     cooking=portion.cooking,
                     conservation=portion.conservation,
@@ -147,6 +150,7 @@ def copy_recipe(connection, user_id: int, recipe_id: int) -> int:
         )
         if not set_user_favorite(connection, user_id, "recipe", copy_id, True, commit=False):
             raise RuntimeError("recipe_favorite_not_saved")
+        recipe_plate_id = ensure_default_recipe_plate(connection, copy_id, commit=False)
         for portion in list_viewable_recipe_portions(connection, user_id, source.id):
             create_portion_detail(
                 connection,
@@ -156,6 +160,7 @@ def copy_recipe(connection, user_id: int, recipe_id: int) -> int:
                     origin_id=portion.origin_id,
                     destination=PortionDestination.RECIPE,
                     destination_id=copy_id,
+                    recipe_plate_id=recipe_plate_id,
                     amount=portion.amount,
                     cooking=portion.cooking,
                     conservation=portion.conservation,

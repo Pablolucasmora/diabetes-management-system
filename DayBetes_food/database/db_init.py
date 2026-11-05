@@ -1102,6 +1102,72 @@ def _ensure_recipe_schema(cursor):
         cursor.execute("CREATE UNIQUE INDEX uq_recipe_published_name ON recipe (lower(name)) WHERE is_published;")
 
 
+def _ensure_recipe_plate_schema(cursor):
+    """Every recipe ingredient belongs to a plate (measurement §4.7). Idempotent.
+
+    Technical backfill (§12.7): each recipe with ingredients gets one plate, position
+    1, with a derived name, as events did in §4.6.6. A recipe without ingredients gets
+    none. Rows the new unique key would reject are merged by the §4.6.4 rule first:
+    amounts are summed in the oldest row, so the recipe's total does not change.
+    """
+    if not _has_column(cursor, "portion_detail", "recipe_plate_id"):
+        cursor.execute("ALTER TABLE portion_detail ADD COLUMN recipe_plate_id INTEGER;")
+    cursor.execute(
+        """
+        INSERT INTO recipe_plate (recipe_id, position)
+        SELECT DISTINCT pd.recipe_id, 1
+        FROM portion_detail pd
+        WHERE pd.recipe_id IS NOT NULL
+          AND pd.recipe_plate_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM recipe_plate rp WHERE rp.recipe_id = pd.recipe_id);
+        """
+    )
+    cursor.execute(
+        """
+        UPDATE portion_detail pd
+        SET recipe_plate_id = (
+            SELECT rp.id FROM recipe_plate rp WHERE rp.recipe_id = pd.recipe_id ORDER BY rp.position LIMIT 1
+        )
+        WHERE pd.recipe_id IS NOT NULL AND pd.recipe_plate_id IS NULL;
+        """
+    )
+    cursor.execute(
+        """
+        WITH duplicates AS (
+            SELECT min(id) AS keep_id, array_agg(id) AS ids, sum(amount) AS total
+            FROM portion_detail
+            WHERE recipe_plate_id IS NOT NULL
+            GROUP BY recipe_plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state, is_cooked_weight
+            HAVING count(*) > 1
+        ), summed AS (
+            UPDATE portion_detail pd SET amount = d.total, updated_at = NOW()
+            FROM duplicates d WHERE pd.id = d.keep_id
+        )
+        DELETE FROM portion_detail pd
+        USING duplicates d
+        WHERE pd.id = ANY(d.ids) AND pd.id <> d.keep_id;
+        """
+    )
+    if not _constraint_exists(cursor, "portion_detail", "ck_portion_detail_recipe_plate_only_for_recipe"):
+        cursor.execute(
+            "ALTER TABLE portion_detail ADD CONSTRAINT ck_portion_detail_recipe_plate_only_for_recipe "
+            "CHECK ((recipe_id IS NULL) = (recipe_plate_id IS NULL));"
+        )
+    if not _constraint_exists(cursor, "portion_detail", "fk_portion_detail_recipe_plate_id_recipe_plate"):
+        cursor.execute(
+            "ALTER TABLE portion_detail ADD CONSTRAINT fk_portion_detail_recipe_plate_id_recipe_plate "
+            "FOREIGN KEY (recipe_id, recipe_plate_id) REFERENCES recipe_plate (recipe_id, id) ON DELETE RESTRICT;"
+        )
+    cursor.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_portion_detail_recipe_plate_origin_preparation_cooked
+        ON portion_detail (recipe_plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state, is_cooked_weight)
+        NULLS NOT DISTINCT
+        WHERE recipe_plate_id IS NOT NULL;
+        """
+    )
+
+
 def _index_exists(cursor, name: str) -> bool:
     cursor.execute(
         "SELECT 1 AS ok FROM pg_indexes WHERE schemaname = 'public' AND indexname = %(name)s;",
@@ -2392,6 +2458,7 @@ def init_db():
             DBSchema.insulin_injections(),
             DBSchema.meal_type_schedule(),
             DBSchema.intake_plate,
+            DBSchema.recipe_plate,
             DBSchema.portion_detail,
         ]
 
@@ -2422,6 +2489,7 @@ def init_db():
         # After intake_event: portion_detail plates depend on it through a
         # foreign key, so their DDL cannot run earlier (§12.3).
         _ensure_portion_detail_schema(cur)
+        _ensure_recipe_plate_schema(cur)
         _remove_legacy_user_sessions(cur)
         _remove_legacy_user_hidden_catalog(cur)
         _remove_legacy_user_columns(cur)

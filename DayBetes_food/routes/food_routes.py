@@ -37,7 +37,7 @@ from DayBetes_food.database.queries import (
     get_manual_intake,
     get_recipe,
     get_portion_detail,
-    list_recipe_portions_by_origin,
+    ensure_default_recipe_plate,
     list_viewable_recipe_portions,
     list_portions_by_recipe,
     update_catalog_item,
@@ -305,6 +305,17 @@ def _to_int(value: str):
 
 
 _TYPED_AMOUNT_RANGE = NumericRange(0, 1_000_000)
+
+
+def _parse_optional_id(raw, label: str) -> int | None:
+    """An id from a form (§7.8). Empty is None; anything malformed is a 422, never
+    silently "no id"."""
+    text = (raw or "").strip()
+    if not text:
+        return None
+    if not re.fullmatch(r"[0-9]{1,10}", text):
+        raise ValidationError(f"Invalid {label}.")
+    return int(text)
 
 
 def _parse_typed_amount(raw) -> float | None:
@@ -1869,11 +1880,14 @@ def setup_food_routes(rt):
         return render_fragment(RecipeIngredientPickerList(recipe_id=recipe_id, foods=entries))
 
     @rt("/food/recipe/{recipe_id}/ingredients/add/{entry_type}/{entry_id}")
-    def post(request: Request, recipe_id: int, entry_type: str, entry_id: int):
+    def post(request: Request, recipe_id: int, entry_type: str, entry_id: int, recipe_plate_id: str = ""):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         try:
+            target_plate_id = _parse_optional_id(recipe_plate_id, "plate")
             origin = PortionOrigin(entry_type)
+        except ValidationError as error:
+            return app_error_response(request, ValidationError, str(error))
         except ValueError:
             # Value outside the closed set of the URL: validation_error (7.7).
             return app_error_response(request, ValidationError, "Unknown ingredient type.")
@@ -1907,33 +1921,26 @@ def setup_food_routes(rt):
             # existing one (decision 2026-09-19).
             portion_defaults = _portion_defaults(item)
 
-            existing = list_recipe_portions_by_origin(
-                connection, int(user_id), recipe_id, origin, entry_id
-            )
             try:
                 with connection.transaction():
-                    if existing:
-                        # Recipe portions have plate_id NULL and stay outside the
-                        # unique index of 4.6.4, so the same food is merged here.
-                        keep = existing[0]
-                        total_amount = sum(float(row.amount or 0.0) for row in existing) + amount_g
-                        update_portion_amount(connection, int(user_id), int(keep.id), total_amount, commit=False)
-                        for duplicate in existing[1:]:
-                            delete_portion_detail(connection, int(user_id), int(duplicate.id), commit=False)
-                    else:
-                        create_portion_detail(
-                            connection,
-                            int(user_id),
-                            PortionDetailCreate(
-                                origin=origin,
-                                origin_id=entry_id,
-                                destination=PortionDestination.RECIPE,
-                                destination_id=recipe_id,
-                                amount=amount_g,
-                                **portion_defaults,
-                            ),
-                            commit=False,
-                        )
+                    if target_plate_id is None:
+                        target_plate_id = ensure_default_recipe_plate(connection, recipe_id, commit=False)
+                    # Same preparation in that plate -> the amounts add up in the
+                    # index, and the row that was there keeps its flags (§4.6.4, §4.7).
+                    create_portion_detail(
+                        connection,
+                        int(user_id),
+                        PortionDetailCreate(
+                            origin=origin,
+                            origin_id=entry_id,
+                            destination=PortionDestination.RECIPE,
+                            destination_id=recipe_id,
+                            recipe_plate_id=target_plate_id,
+                            amount=amount_g,
+                            **portion_defaults,
+                        ),
+                        commit=False,
+                    )
             except NotFoundError:
                 return app_error_response(request, NotFoundError, "Recipe not found.")
             except ValidationError:
