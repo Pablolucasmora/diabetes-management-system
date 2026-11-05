@@ -151,6 +151,13 @@ class Nutriscore(str, Enum):
 
 
 @unique
+class PrefillSource(str, Enum):
+    # Where the create form of a catalog food got its first values (§12.1).
+    OPEN_FOOD_FACTS = "off"
+    CIQUAL = "ciqual"
+
+
+@unique
 class FoodPhysicalState(str, Enum):
     # catalog.initial_state AND portion_detail.final_state.
     SOLID = "solid"

@@ -2313,6 +2313,14 @@ def CreateCatalogPage(
     )
     form = Form(
         _form_header("New food", _name_title_input(_pv("name"), "Name of the food", CATALOG_NAME_MAX_LENGTH)),
+        *(
+            [
+                Input(type="hidden", name="prefill_source", value=_pv("prefill_source")),
+                Input(type="hidden", name="prefill_source_id", value=_pv("prefill_source_id")),
+            ]
+            if _pv("prefill_source")
+            else []
+        ),
         notices,
         existing_notice,
         _form_section(
@@ -4043,6 +4051,39 @@ def FoodCard(food):
         data_food_actions="true",
         cls="web_container food_entry rounded-2xl flex items-center justify-between cursor-pointer",
     )
+
+
+def _off_product_card(product):
+    macros = (
+        f"{product.carbs_100g:.1f} g carbs · {product.fats_100g:.1f} g fat · "
+        f"{product.proteins_100g:.1f} g protein per 100 g"
+    )
+    return Div(
+        Div(
+            H1(Span(product.name), cls="text-left text-[15px] font-semibold leading-snug"),
+            Div(Span(product.brand, cls="truncate"), cls="flex items-center text-xs text-gray-500 min-w-0") if product.brand else "",
+            P(macros, cls="text-xs text-gray-700 mt-0.5"),
+            cls="flex flex-col min-w-0",
+        ),
+        hx_get=f"/food/create/catalog/form?barcode={product.code}",
+        hx_target="#main_content",
+        hx_swap="innerHTML",
+        hx_push_url="true",
+        **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
+        cls="web_container food_entry rounded-2xl flex items-center justify-between cursor-pointer",
+    )
+
+
+def OffSearchResults(products) -> list:
+    """Products of the local copy of Open Food Facts: opening one prefills the
+    create form, so the user reviews it before saving (measurement §12.2)."""
+    if not products:
+        return []
+    return [
+        H2("From Open Food Facts", cls="web_section_label md:w-md lg:w-md w-xs mt-2"),
+        *[_off_product_card(product) for product in products],
+        off_attribution(),
+    ]
 
 
 def FoodSectionsContent(foods):

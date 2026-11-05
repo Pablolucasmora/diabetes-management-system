@@ -1,10 +1,10 @@
-"""Open Food Facts adapter (H17, measurement_conventions.md §5.1, §12.1).
+"""Open Food Facts adapter (H17, measurement_conventions.md §5.1, §12.1, §12.2).
 
-This module only builds a prefill for the create form. It never logs (the route
-logs the failure once, §8.3), it never persists anything and it has no retries:
-the user can type the data by hand. The conversion depends on the unit each
-field declares (`<field>_unit`) and never on the field name (decision
-2026-09-25).
+This module only builds a prefill for the create form, from the local copy or,
+when the product is not there, from the API. It never logs (the route logs the
+failure once, §8.3), it never persists anything and it has no retries: the user
+can type the data by hand. The conversion depends on the unit each field
+declares (`<field>_unit`) and never on the field name (decision 2026-09-25).
 """
 
 import http.client
@@ -27,6 +27,7 @@ from DayBetes_food.domain.constants import (
     FoodPhysicalState,
     Nutriscore,
 )
+from DayBetes_food.domain.off_product import OffProductRead
 from DayBetes_food.domain.nutrition import (
     ETHANOL_DENSITY_G_PER_ML,
     NUTRIENT_LIMITS,
@@ -255,6 +256,39 @@ def _prefill_from_product(barcode: str, product: dict) -> OffProductPrefill:
         nova=_off_nova(product),
         nutrients=nutrients_obj,
         alcohol_source_note=alcohol_source_note,
+    )
+
+
+def prefill_from_off_product(barcode: str, product: OffProductRead) -> OffProductPrefill:
+    """A row of the local copy in the shape of an API product, so it goes through
+    the same checks and conversions as a live answer."""
+    nutriments = {}
+    for off_field, value, unit in (
+        ("energy-kcal", product.calories_100g, "kcal"),
+        ("carbohydrates", product.carbs_100g, "g"),
+        ("sugars", product.sugars_100g, "g"),
+        ("fat", product.fats_100g, "g"),
+        ("saturated-fat", product.saturated_100g, "g"),
+        ("proteins", product.proteins_100g, "g"),
+        ("fiber", product.fiber_100g, "g"),
+        ("caffeine", product.caffeine, "mg"),
+        ("alcohol", product.alcohol_vol, "% vol"),
+    ):
+        if value is not None:
+            nutriments[f"{off_field}_100g"] = value
+            nutriments[f"{off_field}_unit"] = unit
+    return _prefill_from_product(
+        barcode,
+        {
+            "product_name": product.name,
+            "brands": product.brand,
+            "categories": product.categories,
+            "nutriscore_grade": product.nutriscore,
+            "nova_group": product.nova,
+            "serving_quantity": product.default_portion,
+            "serving_quantity_unit": "g" if product.default_portion is not None else None,
+            "nutriments": nutriments,
+        },
     )
 
 

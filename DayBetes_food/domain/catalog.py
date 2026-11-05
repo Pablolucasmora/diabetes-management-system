@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 
-from DayBetes_food.domain.constants import FoodCategory, FoodPhysicalState, Nutriscore
+from DayBetes_food.domain.constants import FoodCategory, FoodPhysicalState, Nutriscore, PrefillSource
 from DayBetes_food.domain.food import normalize_food_text
 from DayBetes_food.domain.nutrition import NutrientValues, NumericRange, parse_number
 from DayBetes_food.errors import ValidationError
@@ -19,6 +19,7 @@ from DayBetes_food.errors import ValidationError
 CATALOG_NAME_MAX_LENGTH = 255  # = VARCHAR(255)
 CATALOG_BARCODE_MIN_LENGTH = 8
 CATALOG_BARCODE_MAX_LENGTH = 48  # = VARCHAR(48)
+CATALOG_PREFILL_SOURCE_ID_MAX_LENGTH = 64  # = VARCHAR(64)
 
 CATALOG_COOKING_FACTOR_RANGE = NumericRange(0, 10, minimum_exclusive=True)
 
@@ -49,6 +50,22 @@ def parse_barcode(raw) -> str | None:
             fields={"barcode": "format"},
         )
     return barcode
+
+
+def parse_prefill_reference(raw_source, raw_source_id) -> tuple[PrefillSource | None, str | None]:
+    """Both or neither (ck_catalog_prefill_reference). They arrive as hidden
+    fields, so they are validated like any other input."""
+    source = str(raw_source or "").strip()
+    source_id = str(raw_source_id or "").strip()
+    if not source and not source_id:
+        return None, None
+    try:
+        parsed_source = PrefillSource(source)
+    except ValueError as exc:
+        raise ValidationError("Invalid prefill source.", fields={"prefill_source": "invalid"}) from exc
+    if not source_id or len(source_id) > CATALOG_PREFILL_SOURCE_ID_MAX_LENGTH:
+        raise ValidationError("Invalid prefill reference.", fields={"prefill_source_id": "invalid"})
+    return parsed_source, source_id
 
 
 def parse_cooking_factor(raw) -> float | None:
@@ -124,6 +141,9 @@ class CatalogItemCreate:
     macros_quality: bool | None  # the food's data, read live by portions
     default_strictly_weighed: bool | None  # copied to each new portion
     macros_confidence: int | None  # declared, ordinal 0-2
+    # Where the form's first values came from (measurement §12.1). None = typed.
+    prefill_source: PrefillSource | None = None
+    prefill_source_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -177,3 +197,5 @@ class CatalogItemRequest:
     macros_confidence: int | None  # declared, ordinal 0-2
     favorite: bool | None
     tags: list[str] | None
+    prefill_source: PrefillSource | None = None
+    prefill_source_id: str | None = None

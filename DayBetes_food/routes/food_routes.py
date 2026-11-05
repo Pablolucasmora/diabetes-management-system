@@ -14,7 +14,9 @@ from DayBetes_food.http_errors import app_error_response, request_id
 from DayBetes_food.services.intake_event import confirm_planned_event
 from DayBetes_food.database.queries import (
     create_catalog_item,
+    get_off_product_by_code,
     list_catalog_items,
+    search_off_products,
     archive_catalog_item,
     publish_catalog_item,
     unpublish_catalog_item,
@@ -84,6 +86,7 @@ from DayBetes_food.domain.constants import (
     Nutriscore,
     NutrientEntryMode,
     PortionDestination,
+    PrefillSource,
     FoodEntryType,
     PortionOrigin,
     parse_enum,
@@ -102,6 +105,7 @@ from DayBetes_food.domain.catalog import (
     CatalogItemRequest,
     CatalogItemUpdate,
     parse_barcode,
+    parse_prefill_reference,
     parse_catalog_name,
     parse_cooking_factor,
 )
@@ -131,7 +135,7 @@ from DayBetes_food.domain.portion_detail import (
     amount_to_grams,
     parse_amount_grams,
 )
-from DayBetes_food.integrations.open_food_facts import fetch_product_prefill
+from DayBetes_food.integrations.open_food_facts import fetch_product_prefill, prefill_from_off_product
 from DayBetes_food.components.food.foods import FoodSectionsContent, FoodCard, FavoriteButton, on_after
 from DayBetes_food.components.food.food_actions import (
     FoodActionsCopyConfirm,
@@ -154,6 +158,7 @@ from DayBetes_food.components.food.foods import (
 )
 from DayBetes_food.components.food.foods import (
     CreateCatalogPage,
+    OffSearchResults,
     CreateManualPage,
     CreateRecipePage,
     EditCatalogPage,
@@ -334,6 +339,8 @@ def _parse_catalog_item_request(
     favorite=None,
     tags_json=None,
     smart_raw="",
+    prefill_source="",
+    prefill_source_id="",
     **visible_nutrients,
 ) -> CatalogItemRequest:
     """The only parser of catalog create and edit (H21, §7.1).
@@ -370,6 +377,7 @@ def _parse_catalog_item_request(
     parsed_macros_confidence = parse_declared_confidence(macros_confidence, field="macros_confidence")
     parsed_favorite = None if favorite is None else _parse_strict_bool(favorite)
     tags = _parse_tags_json(tags_json) if tags_json is not None else None
+    parsed_prefill_source, parsed_prefill_source_id = parse_prefill_reference(prefill_source, prefill_source_id)
     return CatalogItemRequest(
         name=parsed_name,
         brand_label=brand_label,
@@ -390,6 +398,8 @@ def _parse_catalog_item_request(
         macros_confidence=parsed_macros_confidence,
         favorite=parsed_favorite,
         tags=tags,
+        prefill_source=parsed_prefill_source,
+        prefill_source_id=parsed_prefill_source_id,
     )
 
 
@@ -441,6 +451,8 @@ def _catalog_create(req: CatalogItemRequest, user_id: int, brand_id, subtype) ->
         macros_quality=req.macros_quality,
         default_strictly_weighed=req.default_strictly_weighed,
         macros_confidence=req.macros_confidence,
+        prefill_source=req.prefill_source,
+        prefill_source_id=req.prefill_source_id,
     )
 
 
@@ -669,7 +681,7 @@ def _resolve_target_event(connection, user_id: int, intake_event_id: str) -> int
     )
 
 
-def _prefill_view(prefill, barcode: str) -> dict:
+def _prefill_view(prefill, barcode: str, source_id: str) -> dict:
     """OffProductPrefill -> presentation dict of the create form."""
     nutrients = prefill.nutrients
 
@@ -678,6 +690,8 @@ def _prefill_view(prefill, barcode: str) -> dict:
 
     return {
         "barcode": barcode,
+        "prefill_source": PrefillSource.OPEN_FOOD_FACTS.value,
+        "prefill_source_id": source_id,
         "name": prefill.name or "",
         "brand": prefill.brand or "",
         "category": prefill.category.value if prefill.category else "",
@@ -1420,10 +1434,20 @@ def setup_food_routes(rt):
             barcode_notice = None
         except ValidationError:
             valid_barcode, barcode_notice = None, "Invalid barcode: it must contain only digits (8 to 48)."
-        prefill, off_notice = None, None
+        prefill, off_notice, prefill_source_id = None, None, None
+        local_product = None
         if valid_barcode:
+            with get_connection() as connection:
+                local_product = get_off_product_by_code(connection, valid_barcode)
+        if local_product:
+            prefill = prefill_from_off_product(valid_barcode, local_product)
+            prefill_source_id = local_product.code
+        elif valid_barcode:
+            # Not in the local copy, which has a date and a scope: the API may
+            # still know it (measurement §12.2).
             try:
                 prefill = fetch_product_prefill(valid_barcode)
+                prefill_source_id = valid_barcode
             except ExternalServiceError as error:
                 # str(error) is the adapter's internal reason (off_network_error,
                 # off_status...), never user data (error_conventions.md §10.3).
@@ -1449,7 +1473,7 @@ def setup_food_routes(rt):
             tags = get_tag_suggestions(connection, search="", limit=500)
         if valid_barcode and prefill is None and off_notice is None and not existing_item_id:
             off_notice = "Product not found. You can fill the form by hand."
-        prefill_view = _prefill_view(prefill, valid_barcode) if prefill else {"barcode": clean}
+        prefill_view = _prefill_view(prefill, valid_barcode, prefill_source_id) if prefill else {"barcode": clean}
         subtype_prefill = (prefill_view.get("subtype") or "").strip()
         if subtype_prefill:
             prefill_view["subtype"] = _closest_option(subtype_prefill, subtypes)
@@ -2720,8 +2744,19 @@ def setup_food_routes(rt):
                     filter_value=filter,
                     entry_type=selected_entry_type,
                 )
+            # Only with the first page, after its load-more node: the user's next
+            # pages replace that node, so they stay above this section (§12.2).
+            off_nodes = []
+            user_id = get_current_user_id()
+            if (
+                page == 1
+                and clean_search
+                and user_id
+                and (filter == "all" or (filter == "food" and food_mode_norm == "catalog"))
+            ):
+                off_nodes = OffSearchResults(search_off_products(connection, int(user_id), clean_search))
 
-        if not entries:
+        if not entries and not off_nodes:
             return render_fragment(H2("No items", cls="text-gray-600"))
 
         start = (page - 1) * LIST_PAGE_SIZE
@@ -2743,7 +2778,7 @@ def setup_food_routes(rt):
                         page + 1,
                     )
                 )
-            return render_fragment(tuple(nodes))
+            return render_fragment(tuple(nodes + off_nodes))
 
         if filter == "all" and mode == "global":
             if page == 1:
@@ -2762,7 +2797,7 @@ def setup_food_routes(rt):
                         page + 1,
                     )
                 )
-            return render_fragment(tuple(nodes))
+            return render_fragment(tuple(nodes + off_nodes))
 
         if page == 1:
             nodes = list(FoodSectionsContent(chunk))
@@ -2778,7 +2813,7 @@ def setup_food_routes(rt):
                         page + 1,
                     )
                 )
-            return render_fragment(tuple(nodes))
+            return render_fragment(tuple(nodes + off_nodes))
 
         nodes = [FoodCard(item) for item in chunk]
         if has_more:
@@ -2793,7 +2828,7 @@ def setup_food_routes(rt):
                     page + 1,
                 )
             )
-        return render_fragment(tuple(nodes))
+        return render_fragment(tuple(nodes + off_nodes))
 
     @rt("/search_food")
     def get(request: Request, search: str = ""):
@@ -3320,6 +3355,8 @@ def setup_food_routes(rt):
         favorite: str = "",
         tags_json: str | None = None,
         catalog_smart_macros_raw: str = "",
+        prefill_source: str = "",
+        prefill_source_id: str = "",
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -3350,6 +3387,8 @@ def setup_food_routes(rt):
                 favorite=favorite,
                 tags_json=tags_json,
                 smart_raw=catalog_smart_macros_raw,
+                prefill_source=prefill_source,
+                prefill_source_id=prefill_source_id,
             )
         except ValidationError as error:
             return _error_msg(str(error))
