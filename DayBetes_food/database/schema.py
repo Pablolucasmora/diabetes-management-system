@@ -502,7 +502,7 @@ class DBSchema:
             CONSTRAINT ck_intake_event_amount_confidence
             CHECK (amount_confidence >= 0 AND amount_confidence <= 1), -- Weighted average based on each food's amount and whether it was strictly weighed: (amount1 * strictly_weighed1 + amount2 * strictly_weighed2) divided by the live sum of portion_detail.amount for the event (total_amount is not a column; see cart_shared.calculate_macro_summary_metrics, decision 2026-09-10)
 
-        -- quality_confidence and the six *_uncertainty are not stored: they depend on
+        -- quality_confidence and the six *_coverage are not stored: they depend on
         -- the food's macros and macros_quality, so they are computed live from the
         -- portions (measurement_conventions.md §6.9.4).
 

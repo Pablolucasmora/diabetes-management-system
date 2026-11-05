@@ -50,7 +50,7 @@ El proyecto se plantea en dos fases.
 
 El Trabajo de Fin de Grado se centra en **una sola persona, el autor**, y tiene tres objetivos:
 
-1. **Construir un sistema de registro de calidad**: comidas con sus porciones, macronutrientes, momento de cada plato, dosis de insulina, zona de inyección y tipo de comida. Cada dato lleva su nivel de confianza y su incertidumbre.
+1. **Construir un sistema de registro de calidad**: comidas con sus porciones, macronutrientes, momento de cada plato, dosis de insulina, zona de inyección y tipo de comida. Cada dato lleva su nivel de confianza y su cobertura.
 2. **Cruzar esos registros con otras fuentes de datos**:
    - la **glucosa** del sensor continuo, importada de LibreView;
    - los datos de **Apple Health y el Apple Watch**: ejercicio, sueño, frecuencia cardiaca, su variabilidad... En esta fase se exportan y se cruzan **en el análisis, fuera de la app**. Integrarlos dentro de la aplicación es trabajo de la fase 2.
@@ -80,7 +80,7 @@ La aplicación está **en producción y se usa a diario**. La parte de registro 
 |---|---|
 | Catálogo de alimentos, recetas e ingestas manuales | ✅ Implementado |
 | Eventos de comida: planificar, ajustar platos y porciones, confirmar lo comido | ✅ Implementado |
-| Confianza e incertidumbre de los macronutrientes | ✅ Implementado |
+| Confianza y cobertura de los macronutrientes | ✅ Implementado |
 | Registro de inyecciones de insulina, con zona de inyección | ✅ Implementado |
 | Escáner de código de barras + Open Food Facts | ✅ Implementado |
 | Comidas de rescate (hipoglucemia) | ✅ Implementado |
@@ -123,12 +123,14 @@ Cada comida es un **evento de ingesta**: se **planifica**, se ajusta y se **conf
 - **Datos del evento**: tipo de comida (asignado automáticamente según el horario configurado), hora, si se comió fuera, dosis de insulina, zona de inyección y notas.
 - **Confirmación**: al confirmar, se registra lo que se comió de verdad y se guarda la **confianza en la cantidad**.
 
-### 4.3 Confianza e incertidumbre
+### 4.3 Confianza y cobertura
 
-Es una de las piezas diferenciales del proyecto. Para cada evento se calculan las métricas siguientes. La confianza en la cantidad se guarda al confirmar. La confianza en la calidad y las incertidumbres dependen de los datos del alimento, así que se calculan siempre en vivo y siguen a sus valores actuales, también en las comidas ya confirmadas:
+Es una de las piezas diferenciales del proyecto. Para cada evento se calculan las métricas siguientes. La confianza en la cantidad se guarda al confirmar. La confianza en la calidad y las coberturas dependen de los datos del alimento, así que se calculan siempre en vivo y siguen a sus valores actuales, también en las comidas ya confirmadas:
 - la **confianza en la cantidad** (`amount_confidence`): cuánto se sabe de lo que se comió realmente;
 - la **confianza en la calidad** (`quality_confidence`): cuánto se sabe de la composición de lo comido;
-- la **incertidumbre de cada nutriente** (hidratos, azúcares, grasas, saturadas, proteínas, fibra), entre 0 y 1, ponderada por la cantidad de cada ingrediente y por si su dato es conocido o estimado.
+- la **cobertura de cada nutriente** (hidratos, azúcares, grasas, saturadas, proteínas, fibra): qué parte de lo comido tiene ese nutriente registrado.
+
+Las tres se miden entre 0 y 1, ponderadas por la cantidad de cada ingrediente, y en las tres más alto es mejor.
 
 Así, el análisis posterior puede **distinguir un dato fiable de uno aproximado**, en lugar de tratarlos igual. Las reglas exactas están en [`measurement_conventions.md`](conventions/measurement_conventions.md) §6.
 
@@ -180,7 +182,7 @@ DayBetes_food/
 ├── main.py              # Arranque de la app, middleware de seguridad y gestión de errores
 ├── config.py            # Toda la configuración, cargada y validada al arrancar
 ├── auth/                # Autenticación, sesiones, contraseñas y CSRF
-├── domain/              # Reglas de negocio puras: enumerados, dataclasses, nutrición e incertidumbre
+├── domain/              # Reglas de negocio puras: enumerados, dataclasses, nutrición y confianza
 ├── database/
 │   ├── schema.py        # Definición del esquema
 │   ├── db_init.py       # Bootstrap y migraciones del esquema
@@ -312,7 +314,7 @@ Desarrollo y producción usan **archivos de Compose separados** (`docker-compose
 | Documento | Contenido |
 |---|---|
 | [`code_conventions.md`](conventions/code_conventions.md) | Capas, transacciones, tipado, seguridad, configuración y esquema |
-| [`measurement_conventions.md`](conventions/measurement_conventions.md) | Unidades, cantidades, porciones, platos, confianza e incertidumbre |
+| [`measurement_conventions.md`](conventions/measurement_conventions.md) | Unidades, cantidades, porciones, platos, confianza y cobertura |
 | [`error_conventions.md`](conventions/error_conventions.md) | Tipos de error, códigos HTTP, mensajes y registros |
 | [`frontend_conventions.md`](conventions/frontend_conventions.md) | Componentes, HTMX, interfaz e idioma |
 | [`infra_conventions.md`](conventions/infra_conventions.md) | Entornos, despliegue, servidor, copias de seguridad y dependencias |

@@ -8,12 +8,12 @@ from DayBetes_food.domain.portion_detail import (  # noqa: F401
 )
 
 MACRO_KEYS = [
-    ("carbs", "Carbs", "carbs_uncertainty"),
-    ("sugars", "Sugars", "sugars_uncertainty"),
-    ("fats", "Fats", "fats_uncertainty"),
-    ("saturated", "Saturated", "saturated_uncertainty"),
-    ("proteins", "Proteins", "proteins_uncertainty"),
-    ("fiber", "Fiber", "fiber_uncertainty"),
+    ("carbs", "Carbs", "carbs_coverage"),
+    ("sugars", "Sugars", "sugars_coverage"),
+    ("fats", "Fats", "fats_coverage"),
+    ("saturated", "Saturated", "saturated_coverage"),
+    ("proteins", "Proteins", "proteins_coverage"),
+    ("fiber", "Fiber", "fiber_coverage"),
 ]
 
 CHECKBOX_CLS = """
@@ -27,13 +27,13 @@ def _clamp_01(value) -> float:
     return max(0.0, min(1.0, float(value or 0.0)))
 
 
-def macro_color(uncertainty: float, amount_confidence: float, quality_confidence: float) -> str:
-    # Blend 3 reliability signals into a single risk score.
-    # Higher score -> less trustworthy -> redder color.
-    risk_uncertainty = _clamp_01(uncertainty)
+def macro_color(coverage: float, amount_confidence: float, quality_confidence: float) -> str:
+    # Blend 3 reliability signals into a single risk score (risk = 1 - metric,
+    # measurement §6.2). Higher score -> less trustworthy -> redder color.
+    risk_coverage = 1.0 - _clamp_01(coverage)
     risk_amount = 1.0 - _clamp_01(amount_confidence)
     risk_quality = 1.0 - _clamp_01(quality_confidence)
-    value = (risk_uncertainty + risk_amount + risk_quality) / 3.0
+    value = (risk_coverage + risk_amount + risk_quality) / 3.0
 
     red = int(34 + (239 - 34) * value)
     green = int(197 + (68 - 197) * value)
@@ -41,11 +41,11 @@ def macro_color(uncertainty: float, amount_confidence: float, quality_confidence
     return f"rgb({red}, {green}, {blue})"
 
 
-def macro_text_color(uncertainty: float, amount_confidence: float, quality_confidence: float) -> str:
-    risk_uncertainty = _clamp_01(uncertainty)
+def macro_text_color(coverage: float, amount_confidence: float, quality_confidence: float) -> str:
+    risk_coverage = 1.0 - _clamp_01(coverage)
     risk_amount = 1.0 - _clamp_01(amount_confidence)
     risk_quality = 1.0 - _clamp_01(quality_confidence)
-    value = (risk_uncertainty + risk_amount + risk_quality) / 3.0
+    value = (risk_coverage + risk_amount + risk_quality) / 3.0
 
     red = int(34 + (239 - 34) * value)
     green = int(197 + (68 - 197) * value)

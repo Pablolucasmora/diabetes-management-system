@@ -1361,6 +1361,8 @@ _INTAKE_EVENT_CONSTRAINT_RENAMES = {
 
 
 # Event metrics that depend on the food and are computed live (§6.9.4).
+# These are the old column names: the live metrics are now *_coverage
+# (= 1 - *_uncertainty, measurement_conventions.md §6.1).
 _INTAKE_EVENT_LIVE_METRIC_COLUMNS = (
     "quality_confidence",
     "carbs_uncertainty",

@@ -54,7 +54,7 @@ def _current_meal_card(latest_event, portions):
         else metrics["amount_confidence"]
     )
     reliability = macro_color(
-        metrics["carbs_uncertainty"], amount_confidence, metrics["quality_confidence"]
+        metrics["carbs_coverage"], amount_confidence, metrics["quality_confidence"]
     )
     meal_time = to_local(latest_event.meal_time)
     subtitle = " · ".join(

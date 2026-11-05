@@ -152,7 +152,7 @@ desde esa misma decisión—, no se deja a cero. Constraint:
 
 `portion_detail.offset_minutes` es la diferencia en minutos entre el `meal_time` del evento y el momento en que ese ingrediente se consume, **guardada como entero literal** y fijada al crear la porción.
 
-- **No se recalcula nunca** cuando cambia el `meal_time` del evento. El offset es un dato propio de la porción, no una función del `meal_time`: el análisis obtiene la hora real restándolo al `meal_time` vigente en ese momento, de modo que si la hora del evento cambia, el resultado se mueve con ella.
+- **No se recalcula nunca** cuando cambia el `meal_time` del evento. El offset es un dato propio de la porción, no una función del `meal_time`: el análisis obtiene la hora real sumándolo al `meal_time` vigente en ese momento (`meal_time + offset_minutes`), de modo que si la hora del evento cambia, el resultado se mueve con ella. Hasta el 2026-10-25 este párrafo decía "restándolo", con el signo contrario al del código (`routes/food_routes.py`, `_event_auto_offset_minutes`).
 - Admite valores negativos y positivos. Rango: `-300 <= offset_minutes <= 300`, con `CHECK`. Es una cota de cordura para que un valor corrupto no pase por plausible, no una frontera de negocio.
 - El valor de cada porción **se hereda de la tanda** a la que se añade (§4.6.2), pero una vez escrito es independiente de ella: `intake_plate.offset_minutes` es una plantilla, no un dato clínico.
 
@@ -378,27 +378,29 @@ Decisión 2026-10-09. No es un índice glucémico medido. Es la **velocidad de a
 - Su fiabilidad se declara en `ig_confidence` (§6.10). En una fase posterior, el valor de un plato que se repite podrá ajustarse a partir de la respuesta glucémica real. Hasta entonces lo actualiza el usuario a mano.
 - `catalog` no tiene este campo (`audit/deuda_pendiente.md`, sección `manual_intake`).
 
-## 6. Confianza e incertidumbre
+## 6. Confianza y cobertura
 
 ### 6.1 Valores entre cero y uno
 
-Los campos de confianza e incertidumbre usan una escala normalizada entre `0` y `1`:
+Las métricas de confianza y cobertura usan una escala normalizada entre `0` y `1`, y todas van en el mismo sentido:
 
 ```text
-0.0 = ausencia total de confianza / máxima incertidumbre
-1.0 = confianza total / ausencia de incertidumbre
+0.0 = nada del peso servido cumple la condición (peor caso)
+1.0 = todo el peso servido la cumple (mejor caso)
 ```
 
 Esto aplica a:
 
 - `amount_confidence`;
 - `quality_confidence`;
-- `carbs_uncertainty`;
-- `sugars_uncertainty`;
-- `fats_uncertainty`;
-- `saturated_uncertainty`;
-- `proteins_uncertainty`;
-- `fiber_uncertainty`.
+- `carbs_coverage`;
+- `sugars_coverage`;
+- `fats_coverage`;
+- `saturated_coverage`;
+- `proteins_coverage`;
+- `fiber_coverage`.
+
+Hasta el 2026-10-24 la cobertura se expresaba al revés, como `*_uncertainty` (proporción **sin** el nutriente, `= 1 - *_coverage`). Se invirtió para que las ocho métricas se lean igual: más alto es mejor. Las columnas `*_uncertainty` que se borraron de `intake_event` el 2026-10-09 (§6.9.4) conservan su nombre antiguo en la migración y en el CSV de respaldo.
 
 No aplica a las confianzas que declara el usuario (`macros_confidence`, `ig_confidence`). Esas usan una escala ordinal propia (§6.10).
 
@@ -412,17 +414,17 @@ El porcentaje es solo una unidad de presentación. El valor almacenado sigue sie
 
 ### 6.2 Significado
 
-La confianza expresa fiabilidad del dato. La incertidumbre expresa falta de fiabilidad. No se deben intercambiar sin documentar la transformación:
+La confianza expresa fiabilidad del dato y la cobertura, que el dato existe. Ninguna de las métricas de §6.1 expresa falta de fiabilidad. Si una fórmula necesita la magnitud inversa (riesgo, incertidumbre), la deriva y lo documenta:
 
 ```text
-uncertainty = 1 - confidence
+riesgo = 1 - métrica
 ```
 
 Si una fórmula utiliza una de las dos magnitudes, debe indicarlo explícitamente.
 
 ### 6.3 Peso utilizado para los cálculos del evento
 
-Las métricas de confianza e incertidumbre de un `intake_event` se ponderan por el peso que se ha servido o se ha previsto ingerir, no por la cantidad total utilizada para preparar el ingrediente.
+Las métricas de confianza y cobertura de un `intake_event` se ponderan por el peso que se ha servido o se ha previsto ingerir, no por la cantidad total utilizada para preparar el ingrediente.
 
 El peso canónico es `portion_detail.amount`.
 
@@ -471,13 +473,13 @@ quality_confidence =
 
 Este indicador representa la calidad declarada del origen nutricional, no una probabilidad estadística. Un valor puede existir y seguir siendo estimado o poco fiable.
 
-### 6.6 Incertidumbre por nutriente
+### 6.6 Cobertura por nutriente
 
-Cada campo `*_uncertainty` se calcula de forma independiente para cada nutriente:
+Cada campo `*_coverage` se calcula de forma independiente para cada nutriente:
 
 ```text
-nutrient_uncertainty =
-    suma de amount de porciones sin valor para ese nutriente
+nutrient_coverage =
+    suma de amount de porciones con valor para ese nutriente
     ---------------------------------------------------------------
     suma de amount de todas las porciones
 ```
@@ -492,15 +494,15 @@ Ejemplo:
 
 ```text
 total = 160 g
-unknown_carbs = 60 g
-carbs_uncertainty = 60 / 160 = 0.375
+known_carbs = 100 g
+carbs_coverage = 100 / 160 = 0.625
 ```
 
-El resultado significa que el `37.5 %` del peso servido no tiene un valor de hidratos registrado. No significa que el total de hidratos tenga exactamente un `37.5 %` de error.
+El resultado significa que el `62.5 %` del peso servido tiene un valor de hidratos registrado y el `37.5 %` no. No significa que el total de hidratos tenga un `37.5 %` de error.
 
 Un nutriente con valor `0` se considera conocido. Solo se considera desconocido cuando el valor es `NULL` o no existe en la fuente aplicable.
 
-### 6.7 Diferencia entre confianza, calidad e incertidumbre
+### 6.7 Diferencia entre confianza, calidad y cobertura
 
 Las métricas tienen significados distintos:
 
@@ -508,20 +510,20 @@ Las métricas tienen significados distintos:
 |---|---|
 | `amount_confidence` | proporción pesada estrictamente |
 | `quality_confidence` | proporción con macros marcados como fiables |
-| `carbs_uncertainty` | proporción sin hidratos registrados |
-| `sugars_uncertainty` | proporción sin azúcares registrados |
-| `fats_uncertainty` | proporción sin grasas registradas |
-| `saturated_uncertainty` | proporción sin grasas saturadas registradas |
-| `proteins_uncertainty` | proporción sin proteínas registradas |
-| `fiber_uncertainty` | proporción sin fibra registrada |
+| `carbs_coverage` | proporción con hidratos registrados |
+| `sugars_coverage` | proporción con azúcares registrados |
+| `fats_coverage` | proporción con grasas registradas |
+| `saturated_coverage` | proporción con grasas saturadas registradas |
+| `proteins_coverage` | proporción con proteínas registradas |
+| `fiber_coverage` | proporción con fibra registrada |
 
 No se debe asumir automáticamente que:
 
 ```text
-quality_confidence = 1 - nutrient_uncertainty
+quality_confidence = nutrient_coverage
 ```
 
-Una porción puede tener un valor nutricional estimado: en ese caso puede reducir `quality_confidence` sin aumentar `*_uncertainty`, porque el valor existe. Del mismo modo, un nutriente puede estar ausente únicamente en una parte de la comida.
+Una porción puede tener un valor nutricional estimado: en ese caso puede reducir `quality_confidence` sin reducir `*_coverage`, porque el valor existe. Del mismo modo, un nutriente puede estar ausente únicamente en una parte de la comida.
 
 Estas métricas no son todavía intervalos estadísticos, desviaciones estándar ni márgenes de error clínicos. Son indicadores de completitud y calidad del registro para ayudar al análisis posterior.
 
@@ -543,7 +545,7 @@ leerla fuera dejaba una ventana en la que otra petición podía añadir una
 porción que se escalaría sin haber contado en `total_amount` (hallazgo 46).
 
 Un `0.0` en las métricas de un evento **histórico** sigue significando "no
-calculable", no "confianza cero" ni "incertidumbre cero": son las filas
+calculable", no "confianza cero" ni "cobertura cero": son las filas
 anteriores a esta decisión (40 eventos `consumed` con `amount_confidence = 0`),
 que se conservan como daño consumado y no se reinterpretan. Cualquier lectura
 que compare confianzas debe consultar también si el evento tiene peso válido
@@ -551,7 +553,7 @@ antes de tratar un `0.0` como una medida.
 
 ### 6.9 Momento del cálculo
 
-Las métricas se calculan a partir de las porciones actuales del evento. Solo `amount_confidence` se almacena como snapshot en `intake_event`, al confirmar, junto con `ingested_amount` (§4.4). `quality_confidence` y los seis `*_uncertainty` no se almacenan: se calculan siempre en vivo (§6.9.4).
+Las métricas se calculan a partir de las porciones actuales del evento. Solo `amount_confidence` se almacena como snapshot en `intake_event`, al confirmar, junto con `ingested_amount` (§4.4). `quality_confidence` y los seis `*_coverage` no se almacenan: se calculan siempre en vivo (§6.9.4).
 
 Si las porciones cambian antes de confirmar o si una operación posterior modifica el peso servido, las métricas deben recalcularse en la misma unidad de trabajo. No se deben mantener valores derivados antiguos después de cambiar sus datos de origen.
 
@@ -564,7 +566,7 @@ nutriente_total_evento =
 
 El redondeo se realiza únicamente en la presentación según las reglas de este documento.
 
-Mientras el evento está `planned`, nada de esto se persiste: la interfaz del carrito lee `portion_detail` en cada petición y recalcula en memoria (`total_amount`, macros, `amount_confidence`, `quality_confidence`, `*_uncertainty`). No existe ninguna escritura en `intake_event` por cada alta, baja o edición de un ingrediente del carrito.
+Mientras el evento está `planned`, nada de esto se persiste: la interfaz del carrito lee `portion_detail` en cada petición y recalcula en memoria (`total_amount`, macros, `amount_confidence`, `quality_confidence`, `*_coverage`). No existe ninguna escritura en `intake_event` por cada alta, baja o edición de un ingrediente del carrito.
 
 ### 6.9.1 Flujo de `confirm` (decisión 2026-09-10)
 
@@ -572,7 +574,7 @@ El único punto donde se persiste algo es la transición `planned -> consumed`, 
 
 1. Se leen las porciones actuales del evento (`portion_detail`, todavía sin tocar).
 2. `total_amount = SUM(amount)` de esas porciones, calculado en vivo (§4.4).
-3. `amount_confidence` (§6.3-§6.4) se calcula sobre esas porciones **antes** de escalarlas. Al ser una proporción (peso que cumple una condición / peso total), una escala uniforme de todas las porciones por el mismo factor no cambia el resultado, así que da igual calcularla antes o después del paso 5. `quality_confidence` y `*_uncertainty` no se guardan (§6.9.4).
+3. `amount_confidence` (§6.3-§6.4) se calcula sobre esas porciones **antes** de escalarlas. Al ser una proporción (peso que cumple una condición / peso total), una escala uniforme de todas las porciones por el mismo factor no cambia el resultado, así que da igual calcularla antes o después del paso 5. `quality_confidence` y `*_coverage` no se guardan (§6.9.4).
 4. Se obtiene la `fracción` (`(0, 1]`) a partir de `ingested_value`/`ingested_unit`, según la fórmula de §4.4. Fuera de rango es `422`.
 5. `UPDATE portion_detail SET amount = amount * fracción WHERE intake_event_id = ...`: una sola sentencia SQL para todas las porciones del evento, no un recálculo recursivo en Python.
 6. `intake_event.ingested_amount = total_amount (paso 2) * fracción`, junto con `amount_confidence` (paso 3) y la transición de `state`.
@@ -630,12 +632,12 @@ anotado en `audit/deuda_pendiente.md` decidir entonces qué operaciones se abren
 
 ### 6.9.4 Métricas que dependen del alimento: siempre en vivo (decisión 2026-10-09)
 
-`quality_confidence` (§6.5) y los seis `*_uncertainty` (§6.6) dependen de datos del alimento, no de la porción: su `macros_quality` y qué macros tiene registrados. Esos datos se leen en vivo, igual que los macros, así que estas métricas también se calculan en vivo, en cualquier estado del evento, a partir de las porciones actuales y de los valores actuales de cada alimento. `intake_event` no tiene columnas para ellas.
+`quality_confidence` (§6.5) y los seis `*_coverage` (§6.6) dependen de datos del alimento, no de la porción: su `macros_quality` y qué macros tiene registrados. Esos datos se leen en vivo, igual que los macros, así que estas métricas también se calculan en vivo, en cualquier estado del evento, a partir de las porciones actuales y de los valores actuales de cada alimento. `intake_event` no tiene columnas para ellas.
 
 - Si cambia la calidad o un macro de un alimento, cambian las métricas de todas las comidas que lo usan, también las confirmadas. Es lo buscado: el histórico refleja lo que hoy se sabe del alimento. Cuando exista el versionado (`portion_detail` H1), se leerán de la versión que use cada porción y cambiarán al editar esa versión.
 - No hay nada que propagar ni que recalcular al editar un alimento o una porción, porque no hay ningún valor guardado que pueda quedarse antiguo (§6.9).
 - `amount_confidence` sí se guarda (§6.9.1 y §6.9.3). Depende solo de las porciones: el `strictly_weighed` que el usuario fija en el carrito es el dato definitivo, y el `default_strictly_weighed` del alimento (§6.11) solo es el valor con el que nace la porción.
-- Las columnas `quality_confidence`, `carbs_uncertainty`, `sugars_uncertainty`, `fats_uncertainty`, `saturated_uncertainty`, `proteins_uncertainty` y `fiber_uncertainty` de `intake_event` se eliminaron el 2026-10-09 (migración destructiva aprobada, `code_conventions.md` §12.4). Sus valores locales se exportaron antes a `audit/backups/intake_event_live_metrics_2026-10-09.csv`. Los de producción están en las copias nocturnas (`infra_conventions.md`).
+- Las columnas `quality_confidence`, `carbs_uncertainty`, `sugars_uncertainty`, `fats_uncertainty`, `saturated_uncertainty`, `proteins_uncertainty` y `fiber_uncertainty` (hoy `*_coverage` invertido, §6.1) de `intake_event` se eliminaron el 2026-10-09 (migración destructiva aprobada, `code_conventions.md` §12.4). Sus valores locales se exportaron antes a `audit/backups/intake_event_live_metrics_2026-10-09.csv`. Los de producción están en las copias nocturnas (`infra_conventions.md`).
 - Un análisis que necesite estas métricas las calcula desde `portion_detail` y el alimento, con las mismas fórmulas de §6.5 y §6.6.
 
 ### 6.10 Confianza declarada por el usuario (escala ordinal 0–2)

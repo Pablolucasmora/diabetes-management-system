@@ -372,7 +372,7 @@ def MacrosSummary(event, portions, compact: bool = False):
         if compact
         else "rounded-md px-2 py-1 text-xs md:rounded-lg md:px-3 md:py-2 md:text-sm flex justify-between gap-2"
     )
-    for macro_key, label, uncertainty_key in MACRO_KEYS:
+    for macro_key, label, coverage_key in MACRO_KEYS:
         if compact and macro_key not in compact_keys:
             continue
         total = 0.0
@@ -383,7 +383,7 @@ def MacrosSummary(event, portions, compact: bool = False):
                 continue
             total += amount * float(macro_100) / 100.0
 
-        uncertainty = inferred_metrics[uncertainty_key]
+        coverage = inferred_metrics[coverage_key]
 
         label_block = Span(label, cls="font-semibold")
         if not compact:
@@ -392,8 +392,8 @@ def MacrosSummary(event, portions, compact: bool = False):
                 Button(
                     "?",
                     type="button",
-                    title=f"Uncertainty: {uncertainty * 100:.1f}%",
-                    onclick=f"alert('Uncertainty: {uncertainty * 100:.1f}%');",
+                    title=f"Coverage: {coverage * 100:.1f}%",
+                    onclick=f"alert('Coverage: {coverage * 100:.1f}%');",
                     cls="""
                         rounded-full border border-current/50 bg-white/40
                         h-4 w-4 md:h-5 md:w-5
@@ -410,12 +410,12 @@ def MacrosSummary(event, portions, compact: bool = False):
                 label_block,
                 Span(f"{total:.1f} g"),
                 style=(
-                    f"background-color: {macro_color(uncertainty, amount_confidence, quality_confidence)}; "
-                    f"color: {macro_text_color(uncertainty, amount_confidence, quality_confidence)};"
+                    f"background-color: {macro_color(coverage, amount_confidence, quality_confidence)}; "
+                    f"color: {macro_text_color(coverage, amount_confidence, quality_confidence)};"
                 ),
                 title=(
-                    f"Unknown {label.lower()} in "
-                    f"{uncertainty * 100:.1f}% of ingredient amount | "
+                    f"Known {label.lower()} in "
+                    f"{coverage * 100:.1f}% of ingredient amount | "
                     f"Strictly weighted confidence: {float(amount_confidence) * 100:.1f}% | "
                     f"Macros quality confidence: {float(quality_confidence) * 100:.1f}%"
                 ),

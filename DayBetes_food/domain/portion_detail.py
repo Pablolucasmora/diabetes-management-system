@@ -174,14 +174,14 @@ class PortionDetailUpdate:
 # Amounts and event metrics over portions
 # ============================================
 
-# Macro of the food and the event uncertainty column it feeds (measurement_conventions.md §6.6).
-MACRO_UNCERTAINTY_KEYS = (
-    ("carbs", "carbs_uncertainty"),
-    ("sugars", "sugars_uncertainty"),
-    ("fats", "fats_uncertainty"),
-    ("saturated", "saturated_uncertainty"),
-    ("proteins", "proteins_uncertainty"),
-    ("fiber", "fiber_uncertainty"),
+# Macro of the food and the event coverage metric it feeds (measurement_conventions.md §6.6).
+MACRO_COVERAGE_KEYS = (
+    ("carbs", "carbs_coverage"),
+    ("sugars", "sugars_coverage"),
+    ("fats", "fats_coverage"),
+    ("saturated", "saturated_coverage"),
+    ("proteins", "proteins_coverage"),
+    ("fiber", "fiber_coverage"),
 )
 
 
@@ -234,12 +234,12 @@ def calculate_macro_summary_metrics(portions) -> dict:
         "quality_confidence": (quality_confidence_num / total_amount) if total_amount > 0 else 0.0,
     }
 
-    for macro_key, uncertainty_key in MACRO_UNCERTAINTY_KEYS:
-        unknown_amount = 0.0
+    for macro_key, coverage_key in MACRO_COVERAGE_KEYS:
+        known_amount = 0.0
         for portion in portions:
             amount = portion_intake_amount(portion)
-            if parse_source_macro(portion, macro_key) is None:
-                unknown_amount += amount
-        metrics[uncertainty_key] = (unknown_amount / total_amount) if total_amount > 0 else 0.0
+            if parse_source_macro(portion, macro_key) is not None:
+                known_amount += amount
+        metrics[coverage_key] = (known_amount / total_amount) if total_amount > 0 else 0.0
 
     return metrics

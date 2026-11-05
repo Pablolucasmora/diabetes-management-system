@@ -323,7 +323,7 @@ def _resync_consumed_amount_confidence(connection, user_id: int, event_id: int, 
     The portions of a consumed event **are editable** (decision 2026-09-10,
     finding 48), so every write on them has to rewrite it: otherwise the
     event is left with a value that no longer matches its portions.
-    `quality_confidence` and the six `*_uncertainty` are not stored: they
+    `quality_confidence` and the six `*_coverage` are not stored: they
     depend on the food and are computed live (measurement §6.9.4).
 
     It is an amount-weighted proportion, so it is computed on the portions as
