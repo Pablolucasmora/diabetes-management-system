@@ -9,7 +9,6 @@ declares (`<field>_unit`) and never on the field name (decision 2026-09-25).
 
 import http.client
 import json
-from dataclasses import dataclass
 from urllib import request as urlrequest
 from urllib.error import HTTPError
 
@@ -18,6 +17,7 @@ from DayBetes_food.domain.catalog import CATALOG_NAME_MAX_LENGTH, parse_barcode
 from DayBetes_food.domain.food import (
     FOOD_DEFAULT_PORTION_RANGE,
     FOOD_SUBTYPE_MAX_LENGTH,
+    FoodPrefill,
     normalize_food_text,
 )
 from DayBetes_food.domain.constants import (
@@ -46,21 +46,6 @@ _MACRO_FIELDS = {
     "proteins_100g": ("proteins", "g", 1.0),
     "fiber_100g": ("fiber", "g", 1.0),
 }
-
-
-@dataclass(frozen=True)
-class OffProductPrefill:
-    barcode: str
-    name: str | None
-    brand: str | None
-    category: FoodCategory | None
-    subtype: str | None
-    initial_state: FoodPhysicalState | None
-    default_portion_g: float | None
-    nutriscore: Nutriscore | None
-    nova: int | None
-    nutrients: NutrientValues
-    alcohol_source_note: str | None
 
 
 def _off_number(value):
@@ -194,7 +179,8 @@ def _safe_check(value, field: str, limits=None):
         return None
 
 
-def _prefill_from_product(barcode: str, product: dict) -> OffProductPrefill:
+def prefill_from_record(barcode: str | None, product: dict) -> FoodPrefill:
+    """A prefill from a record in the shape of an API product, whatever its source."""
     nutriments = product.get("nutriments") or {}
     if not isinstance(nutriments, dict):
         nutriments = {}
@@ -240,7 +226,7 @@ def _prefill_from_product(barcode: str, product: dict) -> OffProductPrefill:
             FOOD_DEFAULT_PORTION_RANGE,
         )
 
-    return OffProductPrefill(
+    return FoodPrefill(
         barcode=barcode,
         name=_off_pick_name(product),
         brand=_off_pick_brand(product),
@@ -259,7 +245,7 @@ def _prefill_from_product(barcode: str, product: dict) -> OffProductPrefill:
     )
 
 
-def prefill_from_off_product(barcode: str, product: OffProductRead) -> OffProductPrefill:
+def prefill_from_off_product(barcode: str, product: OffProductRead) -> FoodPrefill:
     """A row of the local copy in the shape of an API product, so it goes through
     the same checks and conversions as a live answer."""
     nutriments = {}
@@ -277,7 +263,7 @@ def prefill_from_off_product(barcode: str, product: OffProductRead) -> OffProduc
         if value is not None:
             nutriments[f"{off_field}_100g"] = value
             nutriments[f"{off_field}_unit"] = unit
-    return _prefill_from_product(
+    return prefill_from_record(
         barcode,
         {
             "product_name": product.name,
@@ -292,7 +278,7 @@ def prefill_from_off_product(barcode: str, product: OffProductRead) -> OffProduc
     )
 
 
-def fetch_product_prefill(barcode: str) -> OffProductPrefill | None:
+def fetch_product_prefill(barcode: str) -> FoodPrefill | None:
     """None = product not found (HTTP 404 or JSON status 0).
 
     Raises ExternalServiceError on network error, timeout, unexpected status,
@@ -346,4 +332,4 @@ def fetch_product_prefill(barcode: str) -> OffProductPrefill | None:
     product = payload.get("product")
     if not isinstance(product, dict):
         raise ExternalServiceError("off_malformed_payload")
-    return _prefill_from_product(valid_barcode, product)
+    return prefill_from_record(valid_barcode, product)
