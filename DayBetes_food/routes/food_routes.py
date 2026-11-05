@@ -1467,6 +1467,7 @@ def setup_food_routes(rt):
                 off_notice=off_notice,
                 barcode_notice=barcode_notice,
                 alcohol_source_note=prefill.alcohol_source_note if prefill else None,
+                off_prefill_barcode=valid_barcode if prefill else None,
             ),
             show_cart=False,
         )

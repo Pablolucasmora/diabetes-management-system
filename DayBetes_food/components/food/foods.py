@@ -2,6 +2,7 @@ import json
 from fasthtml.common import *
 
 from DayBetes_food.components.cart.cart_shared import CHECKBOX_CLS
+from DayBetes_food.components.data_sources import off_attribution
 from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.components.navigation import back_js
 from DayBetes_food.components.food.food_actions import COPY_LABEL, COPY_QUESTION, EDIT_LABELS, FoodActionsTrigger
@@ -2264,6 +2265,7 @@ def CreateCatalogPage(
     off_notice: str | None = None,
     barcode_notice: str | None = None,
     alcohol_source_note: str | None = None,
+    off_prefill_barcode: str | None = None,
 ):
     """Name, what it is and its macros come first; the rest is folded under
     "More details" and opens by itself when the scanner prefilled any of it."""
@@ -2288,8 +2290,11 @@ def CreateCatalogPage(
         *(
             [P(barcode_notice, cls="text-xs text-amber-700")] if barcode_notice else []
         ),
+        *(
+            [off_attribution(off_prefill_barcode)] if off_prefill_barcode else []
+        ),
         cls="web_container w-full px-4 py-3 flex flex-col gap-1",
-    ) if (off_notice or barcode_notice) else None
+    ) if (off_notice or barcode_notice or off_prefill_barcode) else None
     existing_notice = (
         Div(
             P("A food with this barcode already exists.", cls="text-sm text-gray-700"),
