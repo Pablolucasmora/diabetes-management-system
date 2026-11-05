@@ -15,6 +15,7 @@ from DayBetes_food.database.queries.crud import (
     _pg_trgm_enabled,
     _set_trgm_similarity_threshold,
 )
+from DayBetes_food.domain.catalog import barcode_search_codes
 from DayBetes_food.domain.constants import PortionOrigin
 from DayBetes_food.domain.search_text import normalize_search_text
 
@@ -37,8 +38,9 @@ _NOT_IN_CATALOG = f"""
 
 
 def get_off_product_by_code(connection, code: str):
-    """A UPC-A scans as 12 digits and OFF stores it as 13, with a leading zero."""
-    codes = [code, f"0{code}"] if len(code) == 12 else [code]
+    codes = barcode_search_codes(code)
+    if not codes:
+        return None
     row = _execute_query(
         connection,
         f"SELECT {_COLUMNS} FROM off_product off WHERE off.code = ANY(%(codes)s) ORDER BY off.code DESC LIMIT 1;",
@@ -49,8 +51,23 @@ def get_off_product_by_code(connection, code: str):
 
 
 def search_off_products(connection, user_id: int, search: str) -> list:
-    """Every word must appear; if none matches, the closest by similarity, so a
-    typo still finds the product."""
+    """A barcode finds its product. Otherwise every word must appear and, if none
+    matches, the closest by similarity, so a typo still finds the product.
+    Products whose name is only a store brand stay out of the text search."""
+    codes = barcode_search_codes(search)
+    if codes:
+        rows = _execute_query_many(
+            connection,
+            f"""
+            SELECT {_COLUMNS} FROM off_product off
+            WHERE off.code = ANY(%(codes)s) AND {_NOT_IN_CATALOG}
+            ORDER BY off.code DESC
+            LIMIT 1;
+            """,
+            {"visibility_user_id": user_id, "codes": codes},
+            commit=False,
+        )
+        return [off_product_read_from_row(row) for row in rows]
     normalized = normalize_search_text(search)
     if len(normalized) < OFF_SEARCH_MIN_CHARS:
         return []

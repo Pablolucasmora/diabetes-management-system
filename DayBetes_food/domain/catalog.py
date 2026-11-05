@@ -52,6 +52,22 @@ def parse_barcode(raw) -> str | None:
     return barcode
 
 
+def barcode_search_codes(raw) -> list[str]:
+    """The codes a search term may refer to; [] if it is not a barcode.
+
+    A UPC-A scans as 12 digits and Open Food Facts stores it as 13, with a
+    leading zero, so each form also looks for the other one.
+    """
+    term = str(raw or "").strip()
+    if not _BARCODE_RE.fullmatch(term):
+        return []
+    if len(term) == 12:
+        return [term, f"0{term}"]
+    if len(term) == 13 and term.startswith("0"):
+        return [term, term[1:]]
+    return [term]
+
+
 def parse_prefill_reference(raw_source, raw_source_id) -> tuple[PrefillSource | None, str | None]:
     """Both or neither (ck_catalog_prefill_reference). They arrive as hidden
     fields, so they are validated like any other input."""

@@ -1054,6 +1054,7 @@ def _recommended_entries(connection, search: str = "", days: int = 60) -> list[d
         candidates = [item.get("name") or ""]
         if item.get("entry_type") == "catalog":
             candidates.append(item.get("brand") or "")
+            candidates.append(item.get("barcode") or "")
         elif item.get("entry_type") == "manual_intake":
             candidates.append(item.get("origin") or "")
 

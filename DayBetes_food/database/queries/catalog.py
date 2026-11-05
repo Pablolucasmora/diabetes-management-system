@@ -22,6 +22,7 @@ from DayBetes_food.domain.catalog import (
     CATALOG_NAME_MAX_LENGTH,
     CatalogItemCreate,
     CatalogItemUpdate,
+    barcode_search_codes,
 )
 from DayBetes_food.domain.constants import PortionOrigin
 from DayBetes_food.domain.food import normalize_food_text
@@ -231,9 +232,14 @@ def list_catalog_items(
         # `IN (...)`: only the array form lets the OR combine with the name
         # indexes and idx_catalog_brand_id instead of scanning `catalog`. An item
         # without brand only matches by name.
+        barcode_condition = ""
+        barcode_codes = barcode_search_codes(normalized)
+        if barcode_codes:
+            barcode_condition = " OR entity.barcode = ANY(%(catalog_barcodes)s)"
+            params["catalog_barcodes"] = barcode_codes
         conditions.append(
             f"({name_condition} OR entity.brand_id = ANY(ARRAY("
-            f"SELECT brand_search.id FROM food_brands brand_search WHERE {brand_condition})))"
+            f"SELECT brand_search.id FROM food_brands brand_search WHERE {brand_condition})){barcode_condition})"
         )
         params.update(name_params)
         params.update(brand_params)
