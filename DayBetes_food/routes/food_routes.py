@@ -38,8 +38,15 @@ from DayBetes_food.database.queries import (
     get_recipe,
     get_portion_detail,
     ensure_default_recipe_plate,
+    create_recipe_plate,
+    delete_recipe_plate,
+    get_recipe_plate,
+    list_recipe_plates,
+    move_portion_to_recipe_plate,
+    swap_recipe_plate_position,
+    update_portion_flag,
+    update_recipe_plate_name,
     list_viewable_recipe_portions,
-    list_portions_by_recipe,
     update_catalog_item,
     toggle_user_favorite,
     set_user_favorite,
@@ -175,7 +182,8 @@ from DayBetes_food.components.food.foods import (
     QuickAddPage,
     RecipeIngredientPickerList,
     RecipeIngredientPickerPage,
-    RecipeMacrosGrid,
+    RecipeIngredientsBlock,
+    RecipeSummaryOob,
     PlateSelector,
 )
 from DayBetes_food.database.connection import get_connection
@@ -183,16 +191,23 @@ from DayBetes_food.domain.constants import RESCUE_TAG_NAME, IntakeEventState, Me
 from DayBetes_food.domain.intake_event import INTAKE_EVENT_NAME_MAX_LENGTH, IntakeEventCreate, IntakeEventUpdate
 from DayBetes_food.domain.intake_plate import IntakePlateCreate, auto_offset_minutes
 from DayBetes_food.domain.recipe import (
+    PortionPreparation,
+    RecipeAddRequest,
     RecipeCreate,
     RecipeRead,
     RecipeRequest,
     RecipeUpdate,
+    parse_recipe_add_servings,
     parse_recipe_meal_type,
     parse_recipe_name,
     parse_recipe_notes,
     parse_recipe_servings,
 )
-from DayBetes_food.services.recipe import copy_recipe
+from DayBetes_food.services.recipe import add_recipe_to_meal, copy_recipe
+from DayBetes_food.domain.recipe_plate import parse_recipe_plate_name
+from DayBetes_food.domain.portion_detail import portion_macro_amount
+from DayBetes_food.components.food.recipe_add import RecipeAddForm
+from DayBetes_food.components.stats.stats_shared import MEAL_TYPE_LABELS
 from DayBetes_food.domain.meal_type_schedule import resolve_meal_type_for_time
 from DayBetes_food.time_utils import local_naive_to_utc_aware, local_now, utc_now
 from DayBetes_food.errors import (
@@ -520,6 +535,39 @@ def _parse_recipe_request(*, name, meal_type, notes, servings, favorite=None, ta
         servings=parse_recipe_servings(servings),
         favorite=None if favorite is None else _parse_strict_bool(favorite),
         tags=None if tags_json is None else _parse_tags_json(tags_json),
+    )
+
+
+_RECIPE_WITHOUT_INGREDIENTS = "This recipe has no ingredients yet."
+_MEAL_CONFIRMED = "That meal has already been confirmed."
+
+
+def _parse_recipe_add_request(form, recipe: RecipeRead) -> RecipeAddRequest:
+    """The form of the step before adding a recipe (§7.1, §7.7, §7.8). The selectors
+    use "0" for a new meal or plate. Amounts never come from the client (§7.13)."""
+    portion_ids = form.getlist("portion_id")
+    cookings = form.getlist("cooking")
+    final_states = form.getlist("final_state")
+    conservations = form.getlist("conservation")
+    if not len(portion_ids) == len(cookings) == len(final_states) == len(conservations):
+        raise ValidationError("The ingredients of the form are incomplete.")
+    preparations = {}
+    for raw_id, cooking, final_state, conservation in zip(portion_ids, cookings, final_states, conservations):
+        portion_id = _parse_optional_id(str(raw_id), "ingredient")
+        if portion_id is None:
+            raise ValidationError("Invalid ingredient.")
+        preparations[portion_id] = PortionPreparation(
+            cooking=parse_enum(CookingMethod, str(cooking), field="cooking"),
+            conservation=parse_enum(ConservationMethod, str(conservation), field="conservation"),
+            final_state=parse_enum(FoodPhysicalState, str(final_state), field="final_state"),
+        )
+    event_id = _parse_optional_id(str(form.get("intake_event_id") or ""), "meal") or None
+    plate_id = _parse_optional_id(str(form.get("plate_id") or ""), "plate") or None
+    return RecipeAddRequest(
+        event_id=event_id,
+        plate_id=plate_id if event_id else None,
+        servings=parse_recipe_add_servings(form.get("servings")) if recipe.servings else None,
+        preparations=preparations,
     )
 
 
@@ -912,38 +960,40 @@ def _build_detail_summary(entry_type: str, entry: dict, recipe_portions: list | 
     if entry_type == "catalog":
         return _catalog_detail_summary(entry)
 
-    portions = recipe_portions or []
-    total_amount = sum(float(row.amount or 0.0) for row in portions)
-    totals = {
-        "calories_100g": 0.0,
-        "carbs_100g": 0.0,
-        "sugars_100g": 0.0,
-        "fats_100g": 0.0,
-        "saturated_100g": 0.0,
-        "proteins_100g": 0.0,
-        "fiber_100g": 0.0,
-    }
-    for row in portions:
-        amount = float(row.amount or 0.0)
-        for key in list(totals.keys()):
-            macro = _macro_value(row, key.replace("_100g", ""))
-            if macro is None:
-                continue
-            totals[key] += amount * float(macro) / 100.0
+    return _recipe_summary(entry, recipe_portions or [])
 
+
+_RECIPE_MACROS = ("calories", "carbs", "sugars", "fats", "saturated", "proteins", "fiber")
+
+
+def _recipe_summary(entry: dict, portions: list) -> dict:
+    """Totals of a recipe, as the cart computes them (measurement §5.2, §6.9.4): a
+    cooked weight is converted, and an unknown macro is not 0. Without ingredients
+    there is no amount to show."""
+    total_amount = sum(float(row.amount) for row in portions)
     per100 = {}
-    for key, total in totals.items():
-        per100[key] = (total * 100.0 / total_amount) if total_amount > 0 else 0.0
-
+    partial = []
+    for macro in _RECIPE_MACROS:
+        known = [(row, value) for row in portions if (value := _macro_value(row, macro)) is not None]
+        if not known or total_amount <= 0:
+            per100[f"{macro}_100g"] = None
+            continue
+        if len(known) < len(portions):
+            partial.append(macro)
+        grams = sum(portion_macro_amount(row) * float(value) / 100.0 for row, value in known)
+        per100[f"{macro}_100g"] = grams * 100.0 / total_amount
+    servings = entry.get("servings")
     return {
         "subtitle": "Recipe",
-        "default_amount_g": total_amount or 100.0,
+        "default_amount_g": total_amount or None,
         "per100": per100,
+        "partial_macros": partial,
         "info_rows": [
-            ("Meal type", str(entry.get("meal_type") or "")),
-            ("Notes", str(entry.get("notes") or "")),
+            ("Meal type", MEAL_TYPE_LABELS.get(entry.get("meal_type"), "")),
             ("Ingredients", str(len(portions))),
-            ("Recipe amount", f"{total_amount:.1f}" if total_amount > 0 else ""),
+            ("Recipe amount", f"{total_amount:.1f} g" if total_amount > 0 else ""),
+            ("Servings", str(servings) if servings else ""),
+            ("Serving amount", f"{total_amount / servings:.1f} g" if servings and total_amount > 0 else ""),
         ],
     }
 
@@ -1157,6 +1207,18 @@ def _editable_recipe(connection, user_id, recipe_id: int) -> RecipeRead | None:
         return None
     recipe = get_recipe(connection, int(user_id), recipe_id)
     return recipe if recipe is not None and recipe.can_edit else None
+
+
+def _recipe_block_response(connection, user_id: int, recipe_id: int):
+    """The ingredients block with the summary out of band: whatever changes the
+    ingredients repaints everything that depends on them (frontend §6)."""
+    recipe = get_recipe(connection, user_id, recipe_id)
+    portions = list_viewable_recipe_portions(connection, user_id, recipe_id)
+    plates = list_recipe_plates(connection, user_id, recipe_id)
+    summary = _recipe_summary(recipe_entry_view(recipe), portions)
+    return render_fragment(
+        (RecipeIngredientsBlock(recipe_id, portions, plates, recipe.can_edit), *RecipeSummaryOob(recipe_id, summary))
+    )
 
 
 def _filtered_entries(
@@ -1826,6 +1888,7 @@ def setup_food_routes(rt):
                 raise NotFoundError("Recipe not found.")
             entry = recipe_entry_view(recipe)
             recipe_portions = list_viewable_recipe_portions(connection, int(user_id), entry_id)
+            recipe_plates = list_recipe_plates(connection, int(user_id), entry_id)
             summary = _build_detail_summary(entry_type, entry, recipe_portions=recipe_portions)
             tags = get_entry_tags(connection, entry_type, entry_id)
             can_edit = recipe.can_edit
@@ -1845,6 +1908,7 @@ def setup_food_routes(rt):
                 entry=entry,
                 summary=summary,
                 recipe_portions=recipe_portions,
+                recipe_plates=recipe_plates,
                 tags=tags,
                 events=events,
                 plate_options=plate_options,
@@ -1990,34 +2054,11 @@ def setup_food_routes(rt):
                     request, ValidationError, "The amount must be greater than 0 g and at most 100000 g."
                 )
             update_portion_amount(connection, int(user_id), portion_id, parsed_amount)
-            recipe_portions = list_portions_by_recipe(connection, int(user_id), recipe_id)
-            recipe_total_amount = sum(float(row.amount or 0.0) for row in recipe_portions)
-
-        response = render_fragment(P("Saved", cls="text-green-700"))
-        response.headers["HX-Trigger"] = json.dumps(
-            {
-                "recipe-amount-updated": {
-                    "recipe_id": recipe_id,
-                    "total_amount": recipe_total_amount,
-                }
-            }
-        )
-        return response
-
-    @rt("/food/recipe/{recipe_id}/macros")
-    def get(request: Request, recipe_id: int):
-        if request.headers.get("HX-Request") != "true":
-            return HTMLResponse(status_code=403)
-        with get_connection() as connection:
-            user_id = get_current_user_id()
-            recipe = get_recipe(connection, int(user_id), recipe_id) if user_id else None
-            if recipe is None:
-                return app_error_response(request, NotFoundError, "Recipe not found.")
-            portions = list_viewable_recipe_portions(connection, int(user_id), recipe_id)
-            summary = _build_detail_summary("recipe", recipe_entry_view(recipe), recipe_portions=portions)
-            per100 = summary.get("per100") or {}
-            total_amount = max(1.0, _to_float(str(summary.get("default_amount_g") or 0.0)) or 1.0)
-        return render_fragment(RecipeMacrosGrid(recipe_id=recipe_id, per100=per100, total_amount=total_amount))
+            recipe = get_recipe(connection, int(user_id), recipe_id)
+            summary = _recipe_summary(
+                recipe_entry_view(recipe), list_viewable_recipe_portions(connection, int(user_id), recipe_id)
+            )
+        return render_fragment((P("Saved", cls="text-green-700"), *RecipeSummaryOob(recipe_id, summary)))
 
     @rt("/food/recipe/{recipe_id}/ingredient/{portion_id}/advanced")
     def post(
@@ -2059,7 +2100,16 @@ def setup_food_routes(rt):
                 ),
             )
 
-        return render_fragment(P("Advanced saved", cls="text-green-700"))
+            try:
+                get_portion_detail(connection, int(user_id), portion_id)
+            except NotFoundError:
+                # It merged with another row of the plate (measurement §4.6.4): the row
+                # on screen no longer exists, so the whole block is repainted.
+                response = _recipe_block_response(connection, int(user_id), recipe_id)
+                response.headers["HX-Retarget"] = f"#recipe_ingredients_{recipe_id}"
+                response.headers["HX-Reswap"] = "outerHTML"
+                return response
+        return render_fragment(P("Saved", cls="text-green-700"))
 
     @rt("/food/recipe/{recipe_id}/ingredient/{portion_id}/delete")
     def post(request: Request, recipe_id: int, portion_id: int):
@@ -2077,8 +2127,152 @@ def setup_food_routes(rt):
             if portion.destination is not PortionDestination.RECIPE or int(portion.destination_id) != recipe_id:
                 return app_error_response(request, NotFoundError, "Ingredient not found.")
             delete_portion_detail(connection, int(user_id), portion_id)
+            return _recipe_block_response(connection, int(user_id), recipe_id)
 
-        return HTMLResponse("")
+    @rt("/food/recipe/{recipe_id}/ingredient/{portion_id}/cooked")
+    def post(request: Request, recipe_id: int, portion_id: int, is_cooked_weight: str = ""):
+        """`Weighed cooked` of an ingredient. It can make it equal to another row of the
+        plate, and then they merge (measurement §4.6.4). `Strictly weighted` is set in the
+        cart, not here (§4.7)."""
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        try:
+            marked = _parse_strict_bool(is_cooked_weight)
+        except ValidationError as error:
+            return app_error_response(request, ValidationError, str(error))
+        with get_connection() as connection:
+            user_id = get_current_user_id()
+            if _editable_recipe(connection, user_id, recipe_id) is None:
+                return app_error_response(request, NotFoundError, "Recipe not found.")
+            try:
+                portion = get_portion_detail(connection, int(user_id), portion_id)
+            except NotFoundError:
+                return app_error_response(request, NotFoundError, "Ingredient not found.")
+            if portion.destination is not PortionDestination.RECIPE or int(portion.destination_id) != recipe_id:
+                return app_error_response(request, NotFoundError, "Ingredient not found.")
+            if marked and (portion.origin is not PortionOrigin.CATALOG or portion.source.cooking_factor is None):
+                return app_error_response(
+                    request, ValidationError, "This food has no cooking factor, so it cannot be weighed cooked."
+                )
+            with connection.transaction():
+                update_portion_flag(connection, int(user_id), portion_id, "is_cooked_weight", marked, commit=False)
+            return _recipe_block_response(connection, int(user_id), recipe_id)
+
+    @rt("/food/recipe/{recipe_id}/ingredient/{portion_id}/plate")
+    def post(request: Request, recipe_id: int, portion_id: int, recipe_plate_id: str = ""):
+        """Move an ingredient to another plate of the recipe; same key -> they merge (§4.7)."""
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        try:
+            target = _parse_optional_id(recipe_plate_id, "plate")
+        except ValidationError as error:
+            return app_error_response(request, ValidationError, str(error))
+        if target is None:
+            return app_error_response(request, ValidationError, "Invalid plate.")
+        with get_connection() as connection:
+            user_id = get_current_user_id()
+            if _editable_recipe(connection, user_id, recipe_id) is None:
+                return app_error_response(request, NotFoundError, "Recipe not found.")
+            try:
+                portion = get_portion_detail(connection, int(user_id), portion_id)
+                if portion.destination is not PortionDestination.RECIPE or int(portion.destination_id) != recipe_id:
+                    raise NotFoundError("portion_not_found")
+                with connection.transaction():
+                    move_portion_to_recipe_plate(connection, int(user_id), portion_id, target, commit=False)
+            except NotFoundError:
+                return app_error_response(request, NotFoundError, "Ingredient or plate not found.")
+            return _recipe_block_response(connection, int(user_id), recipe_id)
+
+    @rt("/food/recipe/{recipe_id}/plate")
+    def post(request: Request, recipe_id: int):
+        """A new empty plate at the end. Repeating it adds another (§9.6)."""
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        with get_connection() as connection:
+            user_id = get_current_user_id()
+            if _editable_recipe(connection, user_id, recipe_id) is None:
+                return app_error_response(request, NotFoundError, "Recipe not found.")
+            with connection.transaction():
+                create_recipe_plate(connection, recipe_id, commit=False)
+            return _recipe_block_response(connection, int(user_id), recipe_id)
+
+    def _change_recipe_plate(request: Request, plate_id: int, change):
+        """Common contract of the actions on a plate: owner only, repaints the block."""
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        with get_connection() as connection:
+            try:
+                recipe_id = get_recipe_plate(connection, int(user_id), plate_id).recipe_id
+                with connection.transaction():
+                    change(connection, int(user_id))
+            except NotFoundError:
+                return app_error_response(request, NotFoundError, "Plate not found.")
+            except ConflictError as error:
+                return app_error_response(request, error, str(error))
+            return _recipe_block_response(connection, int(user_id), recipe_id)
+
+    @rt("/food/recipe/plate/{plate_id}/name")
+    def post(request: Request, plate_id: int, name: str = ""):
+        """Empty returns the plate to its derived name (measurement §4.6.3)."""
+        try:
+            parsed = parse_recipe_plate_name(name)
+        except ValidationError as error:
+            return app_error_response(request, ValidationError, str(error))
+        return _change_recipe_plate(
+            request,
+            plate_id,
+            lambda connection, user_id: update_recipe_plate_name(connection, user_id, plate_id, parsed, commit=False),
+        )
+
+    @rt("/food/recipe/plate/{plate_id}/up")
+    def post(request: Request, plate_id: int):
+        return _change_recipe_plate(
+            request,
+            plate_id,
+            lambda connection, user_id: swap_recipe_plate_position(connection, user_id, plate_id, up=True, commit=False),
+        )
+
+    @rt("/food/recipe/plate/{plate_id}/down")
+    def post(request: Request, plate_id: int):
+        return _change_recipe_plate(
+            request,
+            plate_id,
+            lambda connection, user_id: swap_recipe_plate_position(connection, user_id, plate_id, up=False, commit=False),
+        )
+
+    @rt("/food/recipe/plate/{plate_id}/delete")
+    def post(request: Request, plate_id: int):
+        """With ingredients it answers 409 (measurement §4.7)."""
+        return _change_recipe_plate(
+            request,
+            plate_id,
+            lambda connection, user_id: delete_recipe_plate(connection, user_id, plate_id, commit=False),
+        )
+
+    @rt("/food/recipe/{recipe_id}/add/form")
+    def get(request: Request, recipe_id: int, intake_event_id: str = "", plate_id: str = ""):
+        """The step before adding a recipe to a meal (frontend §9.7)."""
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        with get_connection() as connection:
+            recipe = get_recipe(connection, int(user_id), recipe_id)
+            if recipe is None:
+                return app_error_response(request, NotFoundError, "Recipe not found.")
+            portions = list_viewable_recipe_portions(connection, int(user_id), recipe_id)
+            groups = [
+                (plate, rows)
+                for plate in list_recipe_plates(connection, int(user_id), recipe_id)
+                if (rows := [row for row in portions if row.recipe_plate_id == plate.id])
+            ]
+        if not groups:
+            return app_error_response(request, ConflictError, _RECIPE_WITHOUT_INGREDIENTS)
+        return render_fragment(RecipeAddForm(recipe, groups, intake_event_id, plate_id))
 
     def _copy_catalog_item(request: Request, user_id: int, catalog_id: int):
         with get_connection() as connection:
@@ -2477,7 +2671,6 @@ def setup_food_routes(rt):
                 # (finding 26 of audit_intake_event).
                 return app_error_response(request, AuthenticationError, "Your session has expired.")
             origin_item = None
-            recipe_rows = []
             portion_defaults = {}
             if kind is FoodEntryType.CATALOG:
                 origin_item = get_catalog_item(connection, int(user_id), entry_id)
@@ -2503,12 +2696,8 @@ def setup_food_routes(rt):
                     return _error_msg("This dish has no serving. Use grams, lb or oz.")
                 portion_defaults = _portion_defaults(origin_item)
             else:
-                origin_item = get_recipe(connection, int(user_id), entry_id)
-                if origin_item is None:
-                    return app_error_response(request, NotFoundError, "Item not found.")
-                recipe_rows = list_viewable_recipe_portions(connection, int(user_id), entry_id)
-                summary = _build_detail_summary(entry_type, recipe_entry_view(origin_item), recipe_portions=recipe_rows)
-                serving_grams = max(1.0, float(summary.get("default_amount_g") or 100.0))
+                # A recipe goes through its own step (POST /add_recipe, frontend §9.7).
+                return app_error_response(request, ValidationError, _UNKNOWN_ENTRY_TYPE)
             try:
                 total_grams = parse_amount_grams(amount_to_grams(typed_amount, unit, serving_grams))
                 if plated_unit is AmountInputUnit.PERCENT:
@@ -2549,74 +2738,29 @@ def setup_food_routes(rt):
                     event_data = get_intake_event(connection, int(user_id), event_id)
                     offset_minutes = _event_auto_offset_minutes(event_data)
 
-                    if entry_type != "recipe":
-                        if strictly_weighed is not None:
-                            portion_defaults["strictly_weighed"] = chosen_weighed
-                        target_plate_id = _resolve_event_plate(
-                            connection, int(user_id), event_id, plate_id, offset_minutes
-                        )
-                        create_portion_detail(
-                            connection,
-                            int(user_id),
-                            PortionDetailCreate(
-                                origin=PortionOrigin(entry_type),
-                                origin_id=entry_id,
-                                destination=PortionDestination.INTAKE_EVENT,
-                                destination_id=event_id,
-                                plate_id=target_plate_id,
-                                amount=plated_grams,
-                                cooking=parsed_cooking,
-                                final_state=parsed_final_state,
-                                conservation=parsed_conservation,
-                                is_cooked_weight=(cooked_weight if kind is FoodEntryType.CATALOG else False),
-                                **portion_defaults,
-                            ),
-                            commit=False,
-                        )
-                    else:
-                        total_recipe_amount = sum(float(row.amount or 0.0) for row in recipe_rows)
-                        if total_recipe_amount <= 0:
-                            raise ValidationError("recipe_without_ingredients")
-                        factor = plated_grams / total_recipe_amount
-                        # An imported recipe goes in as its own plate, named
-                        # after the recipe (§4.6.5): it is a complete dish, not
-                        # loose ingredients to mix with the others.
-                        recipe_plate_id = create_intake_plate(
-                            connection,
-                            IntakePlateCreate(
-                                intake_event_id=event_id,
-                                name=origin_item.name,
-                                offset_minutes=offset_minutes,
-                            ),
-                            commit=False,
-                        )
-                        created = 0
-                        for row in recipe_rows:
-                            row_amount = float(row.amount or 0.0) * factor
-                            if row_amount <= 0 or row.origin_id <= 0:
-                                continue
-                            create_portion_detail(
-                                connection,
-                                int(user_id),
-                                PortionDetailCreate(
-                                    origin=row.origin,
-                                    origin_id=row.origin_id,
-                                    destination=PortionDestination.INTAKE_EVENT,
-                                    destination_id=event_id,
-                                    plate_id=recipe_plate_id,
-                                    amount=row_amount,
-                                    cooking=row.cooking,
-                                    conservation=row.conservation,
-                                    final_state=row.final_state,
-                                    # A portion copied from another keeps it (measurement §6.11).
-                                    strictly_weighed=row.strictly_weighed,
-                                    is_cooked_weight=bool(row.is_cooked_weight),
-                                ),
-                                commit=False,
-                            )
-                            created += 1
-                        if not created:
-                            raise ValidationError("recipe_without_ingredients")
+                    if strictly_weighed is not None:
+                        portion_defaults["strictly_weighed"] = chosen_weighed
+                    target_plate_id = _resolve_event_plate(
+                        connection, int(user_id), event_id, plate_id, offset_minutes
+                    )
+                    create_portion_detail(
+                        connection,
+                        int(user_id),
+                        PortionDetailCreate(
+                            origin=PortionOrigin(entry_type),
+                            origin_id=entry_id,
+                            destination=PortionDestination.INTAKE_EVENT,
+                            destination_id=event_id,
+                            plate_id=target_plate_id,
+                            amount=plated_grams,
+                            cooking=parsed_cooking,
+                            final_state=parsed_final_state,
+                            conservation=parsed_conservation,
+                            is_cooked_weight=(cooked_weight if kind is FoodEntryType.CATALOG else False),
+                            **portion_defaults,
+                        ),
+                        commit=False,
+                    )
             except NotFoundError:
                 # Another user's or an archived intake_event_id: a nonexistent
                 # resource (§5.4), not a server failure (finding 23).
@@ -2910,93 +3054,36 @@ def setup_food_routes(rt):
             return HTMLResponse("", headers={"HX-Trigger": "addSuccess"})
 
     @rt("/add_recipe/{recipe_id}")
-    def post(request: Request, recipe_id: int, intake_event_id: str = ""):
+    async def post(request: Request, recipe_id: int):
+        """Add a recipe to a meal (frontend §9.7). Repeating it adds it again: another
+        serving, not a duplicate (§9.6). Form validation answers 200 + fragment (§9.5)."""
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
-
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        form = await request.form()
         with get_connection() as connection:
-            user_id = get_current_user_id()
-            if not user_id:
-                # No session: 401 (error_conventions.md §3.3). Defense in
-                # depth; the middleware already covers these routes (finding 26).
-                return HTMLResponse(status_code=401)
-
             recipe = get_recipe(connection, int(user_id), recipe_id)
             if recipe is None:
-                return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
-
+                return app_error_response(request, NotFoundError, "Recipe not found.")
             try:
-                with connection.transaction():
-                    if intake_event_id and intake_event_id.isdigit() and int(intake_event_id) != 0:
-                        event_id = get_planned_intake_event(connection, int(user_id), int(intake_event_id))
-                    else:
-                        recipe_meal_type = recipe.meal_type
-                        # The recipe wins if it carries its own meal_type;
-                        # otherwise it falls back to the same time-slot default
-                        # as the rest of automatic creations (§7.14, decision 2026-09-11).
-                        if recipe_meal_type is None:
-                            recipe_meal_type = _default_meal_type_now(connection, int(user_id))
-                        event_id = create_intake_event(
-                            connection,
-                            IntakeEventCreate(
-                                user_id=int(user_id),
-                                state=IntakeEventState.PLANNED,
-                                meal_type=recipe_meal_type,
-                                name=recipe.name,
-                            ),
-                            commit=False,
-                        )
-
-                    event_data = get_intake_event(connection, int(user_id), event_id)
-                    offset_minutes = _event_auto_offset_minutes(event_data)
-                    # The recipe goes in as its own plate, with its name (§4.6.5).
-                    recipe_plate_id = create_intake_plate(
-                        connection,
-                        IntakePlateCreate(
-                            intake_event_id=event_id,
-                            name=recipe.name,
-                            offset_minutes=offset_minutes,
-                        ),
-                        commit=False,
-                    )
-
-                    recipe_portions = list_viewable_recipe_portions(connection, int(user_id), recipe_id)
-                    created_ids = []
-                    for row in recipe_portions:
-                        if row.origin_id <= 0:
-                            continue
-                        created_ids.append(
-                            create_portion_detail(
-                                connection,
-                                int(user_id),
-                                PortionDetailCreate(
-                                    origin=row.origin,
-                                    origin_id=row.origin_id,
-                                    destination=PortionDestination.INTAKE_EVENT,
-                                    destination_id=event_id,
-                                    plate_id=recipe_plate_id,
-                                    amount=float(row.amount or 0.0),
-                                    cooking=row.cooking,
-                                    conservation=row.conservation,
-                                    final_state=row.final_state,
-                                    # A portion copied from another keeps it (measurement §6.11).
-                                    strictly_weighed=row.strictly_weighed,
-                                    is_cooked_weight=bool(row.is_cooked_weight),
-                                ),
-                                commit=False,
-                            )
-                        )
-                    if not recipe_portions or not created_ids or not all(created_ids):
-                        raise ValueError("Could not add recipe.")
-                    ok = True
+                add_request = _parse_recipe_add_request(form, recipe)
+                event_id = add_recipe_to_meal(
+                    connection,
+                    int(user_id),
+                    recipe_id,
+                    add_request,
+                    default_meal_type=_default_meal_type_now(connection, int(user_id)),
+                )
+            except ValidationError as error:
+                return _error_msg(str(error))
             except NotFoundError:
-                return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
-            except ConflictError:
-                return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=409)
-            except ValueError:
-                ok = False
-            headers = {"HX-Trigger": "addSuccess" if ok else "addError"}
-            return HTMLResponse("", headers=headers)
+                return app_error_response(request, NotFoundError, "That meal or plate no longer exists.")
+            except ConflictError as error:
+                message = _RECIPE_WITHOUT_INGREDIENTS if str(error) == "recipe_without_ingredients" else _MEAL_CONFIRMED
+                return app_error_response(request, ConflictError, message)
+        return HTMLResponse("", headers={"HX-Trigger": json.dumps({"recipeAdded": {"event_id": event_id}})})
 
     @rt("/food/favorite/{entry_type}/{entry_id}")
     def post(request: Request, entry_type: str, entry_id: int):

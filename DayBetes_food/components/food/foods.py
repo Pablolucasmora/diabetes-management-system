@@ -22,7 +22,11 @@ from DayBetes_food.domain.food import (
     FOOD_SUBTYPE_MAX_LENGTH,
     INITIAL_AMOUNT_WITHOUT_SERVING_G,
 )
+from DayBetes_food.components.food.recipe_add import RecipeAddModal, recipe_add_open_attrs
+from DayBetes_food.components.stats.stats_shared import MEAL_TYPE_LABELS
+from DayBetes_food.domain.intake_plate import derive_plate_name
 from DayBetes_food.domain.recipe import RECIPE_MEAL_TYPES, RECIPE_NOTES_MAX_LENGTH, RecipeRead
+from DayBetes_food.domain.recipe_plate import RECIPE_PLATE_NAME_MAX_LENGTH
 from DayBetes_food.domain.manual_intake import (
     MANUAL_INTAKE_DESCRIPTION_MAX_LENGTH,
     MANUAL_INTAKE_NAME_MAX_LENGTH,
@@ -224,7 +228,14 @@ def _food_back_button(label: str = "Back"):
     )
 
 
-def MealSelector(events: list, selected_id: int = None, plate_options: list = None, selected_plate_id: int = None):
+def MealSelector(
+    events: list,
+    selected_id: int = None,
+    plate_options: list = None,
+    selected_plate_id: int = None,
+    show_plates: bool = True,
+):
+    """`show_plates=False` for a recipe with several plates, which creates its own (§7.7)."""
     options = []
     for event in events:
         local_meal_time = to_local(event.meal_time)
@@ -254,11 +265,17 @@ def MealSelector(events: list, selected_id: int = None, plate_options: list = No
             aria_label="Meal selector",
             # Changing the meal changes its plates: the plate selector is
             # redrawn with the chosen event's plates (§7.7).
-            hx_get="/food/plate_selector",
-            hx_trigger="change",
-            hx_target="#plate_selector_box",
-            hx_swap="innerHTML",
-            hx_include="this",
+            **(
+                {
+                    "hx_get": "/food/plate_selector",
+                    "hx_trigger": "change",
+                    "hx_target": "#plate_selector_box",
+                    "hx_swap": "innerHTML",
+                    "hx_include": "this",
+                }
+                if show_plates
+                else {}
+            ),
             **{
                 "hx-on:change": (
                     "var box=document.getElementById('meal_name_input');"
@@ -327,9 +344,13 @@ def MealSelector(events: list, selected_id: int = None, plate_options: list = No
             id="meal_name_input",
             cls=f"lg:w-40 md:w-40 w-32 bg-transparent {'hidden' if selected_id != 0 else ''}",
         ),
-        Div(
-            PlateSelector(plate_options or [], selected_id=selected_plate_id),
-            id="plate_selector_box",
+        (
+            Div(
+                PlateSelector(plate_options or [], selected_id=selected_plate_id),
+                id="plate_selector_box",
+            )
+            if show_plates
+            else ""
         ),
         cls="flex items-center justify-center gap-2  md:w-xl lg:w-xl w-xs mb-3",
     )
@@ -1648,11 +1669,35 @@ def _form_draft_bootstrap_script():
     )
 
 
-def RecipeMacrosGrid(recipe_id: int, per100: dict, total_amount: float):
+def RecipeMacrosGrid(recipe_id: int, summary: dict, **attrs):
+    """Totals of the recipe. A macro no ingredient knows is an em dash; one only some
+    know is the sum of those, and a line says so (measurement §2, §6.9.4)."""
+    unknown = summary.get("partial_macros") or []
     return Div(
-        *_detail_macro_tiles(per100, total_amount),
+        Div(
+            *_detail_macro_tiles(summary.get("per100") or {}, summary.get("default_amount_g") or 100.0),
+            cls="grid grid-cols-2 md:grid-cols-3 gap-2",
+        ),
+        P(f"Some ingredients have no data for: {', '.join(unknown)}.", cls="text-xs text-gray-500") if unknown else "",
         id=f"food_detail_recipe_{recipe_id}_macros",
-        cls="grid grid-cols-2 md:grid-cols-3 gap-2",
+        cls="flex flex-col gap-2",
+        **attrs,
+    )
+
+
+def RecipeDetailsGrid(recipe_id: int, summary: dict, **attrs):
+    return Div(
+        _detail_info_rows(summary.get("info_rows") or []),
+        id=f"food_detail_recipe_{recipe_id}_details",
+        **attrs,
+    )
+
+
+def RecipeSummaryOob(recipe_id: int, summary: dict) -> tuple:
+    """The summary repainted by whatever changes the ingredients (frontend §6)."""
+    return (
+        RecipeMacrosGrid(recipe_id, summary, hx_swap_oob="true"),
+        RecipeDetailsGrid(recipe_id, summary, hx_swap_oob="true"),
     )
 
 
@@ -2056,43 +2101,6 @@ def QuickCreateButtons():
         # and their panels stay sharp while everything else is blurred.
         cls="relative z-[2] w-full flex justify-end px-3 md:px-5 lg:px-5 mb-2 md:mb-0",
         data_quick_create_root="true",
-    )
-
-
-def CreateRecipePanel():
-    return Div(
-        Form(
-            Div(
-                _labeled_input("Name*", "name"),
-                _labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in RECIPE_MEAL_TYPES]),
-                Div(
-                    Label("Notes", cls="text-xs text-gray-700"),
-                    Textarea(
-                        "",
-                        name="notes",
-                        rows="3",
-                        cls="web_input border border-white rounded-lg px-2 py-1 text-xs",
-                    ),
-                    cls="flex flex-col gap-1 col-span-2",
-                ),
-                _create_flags_row(),
-                cls="grid grid-cols-2 gap-2",
-            ),
-            Button(
-                "Create recipe",
-                type="submit",
-                cls="web_button px-3 py-2 text-xs",
-            ),
-            hx_post="/food/create/recipe",
-            hx_target="#create_recipe_result",
-            hx_swap="innerHTML",
-            hx_push_url="false",
-            data_draft_key="food_form_create_recipe_panel",
-            cls="web_container p-3 rounded-2xl flex flex-col gap-3",
-        ),
-        Div(id="create_recipe_result", cls="text-xs"),
-        id="create_recipe_panel",
-        cls="hidden md:w-md lg:w-md w-xs flex flex-col gap-2",
     )
 
 
@@ -2614,13 +2622,23 @@ def QuickAddPage(events: list, plate_options: list, selected_plate_id: int | Non
     return _form_page_shell(content, result_id, Script(src=asset_busted("/js/smart_macros.js"), defer="defer"))
 
 
+def _recipe_servings_field(value: str):
+    """Optional. Adding a recipe to a meal then asks how many servings (measurement §4.7)."""
+    return Div(
+        _label_with_help("Servings", "How many servings the whole recipe makes. Optional.", for_id="field_servings"),
+        Input(type="text", id="field_servings", name="servings", inputmode="numeric", value=value, cls=FORM_FIELD_CLS),
+        cls="flex flex-col gap-1",
+    )
+
+
 def CreateRecipePage(tag_options: list[str] | None = None):
     result_id = "create_recipe_result_page"
     form = Form(
         _form_header("New recipe", _name_title_input("", "Name of the recipe")),
         _form_section(
             "About the recipe",
-            _labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in RECIPE_MEAL_TYPES], help_text="When this recipe is usually eaten."),
+            _labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in RECIPE_MEAL_TYPES], help_text="When this recipe is usually eaten.", labels=MEAL_TYPE_LABELS),
+            _recipe_servings_field(""),
             Div(
                 _label_with_help("Notes", "Optional instructions, comments, or context about this recipe.", for_id="create_recipe_notes"),
                 Textarea(
@@ -2874,7 +2892,8 @@ def EditRecipePage(
         _edit_header("recipe", _input_value(entry.get("name")), back_path, CATALOG_NAME_MAX_LENGTH),
         _form_section(
             "Basics",
-            _labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in RECIPE_MEAL_TYPES], selected_value=_input_value(entry.get("meal_type"))),
+            _labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in RECIPE_MEAL_TYPES], selected_value=_input_value(entry.get("meal_type")), labels=MEAL_TYPE_LABELS),
+            _recipe_servings_field(_input_value(entry.get("servings"))),
             Div(
                 _label_with_help("Notes", "Optional instructions, comments, or context about this recipe.", for_id="edit_recipe_notes"),
                 Textarea(
@@ -2954,7 +2973,7 @@ def AddButton(label: str = "+", include_meal_selector: bool = True, **attrs):
     return Button(
         label,
         cls=button_cls,
-        hx_swap="none",
+        hx_swap=attrs.pop("hx_swap", "none"),
         **on_after(reload_page=False),
         **attrs,
     )
@@ -3108,7 +3127,80 @@ def _recipe_portion_base_unit(portion) -> str:
     return _display_base_unit(portion.origin.value, item)
 
 
-def RecipeIngredientRow(recipe_id: int, portion):
+def _recipe_block_id(recipe_id: int) -> str:
+    return f"recipe_ingredients_{recipe_id}"
+
+
+def _recipe_portion_preparation(portion) -> str:
+    parts = [item.value for item in (portion.cooking, portion.final_state, portion.conservation) if item]
+    return " · ".join(parts)
+
+
+def RecipeIngredientReadOnlyRow(portion):
+    """What someone who cannot edit the recipe sees: they copy it or add it (§11.2.4)."""
+    preparation = _recipe_portion_preparation(portion)
+    return Div(
+        Div(
+            H3(_recipe_portion_name(portion), cls="text-left font-semibold"),
+            P(_recipe_portion_meta(portion), cls="text-sm text-gray-700"),
+            P(preparation, cls="text-xs text-gray-500") if preparation else "",
+            cls="flex flex-col gap-0.5 min-w-0",
+        ),
+        Span(f"{_float_or_zero(portion.amount):.0f} g", cls="text-sm text-gray-700 shrink-0 ml-3"),
+        cls="web_container food_entry flex items-start justify-between",
+    )
+
+
+def _recipe_cooked_weight_field(recipe_id: int, portion):
+    """Same criterion as the cart: only with a factor, or on a portion that inherited
+    the mark, so it can be removed (measurement §5.2)."""
+    if portion.origin is not PortionOrigin.CATALOG:
+        return ""
+    if portion.source.cooking_factor is None and not portion.is_cooked_weight:
+        return ""
+    return Label(
+        Input(
+            type="checkbox",
+            name="is_cooked_weight",
+            value="true",
+            checked=bool(portion.is_cooked_weight),
+            cls=CHECKBOX_CLS,
+            hx_post=f"/food/recipe/{recipe_id}/ingredient/{int(portion.id)}/cooked",
+            hx_trigger="change",
+            hx_target=f"#{_recipe_block_id(recipe_id)}",
+            hx_swap="outerHTML",
+            hx_push_url="false",
+            data_skip_page_loading="true",
+        ),
+        Span("Weighed cooked", cls="text-xs text-gray-600"),
+        cls="flex items-center gap-2",
+    )
+
+
+def _recipe_move_field(recipe_id: int, portion, plates: list, plate_labels: dict):
+    if len(plates) < 2:
+        return ""
+    return Label(
+        Span("Plate", cls="text-xs text-gray-600"),
+        Select(
+            *[
+                Option(plate_labels[plate.id], value=str(plate.id), selected=plate.id == portion.recipe_plate_id)
+                for plate in plates
+            ],
+            name="recipe_plate_id",
+            cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-xs",
+            hx_post=f"/food/recipe/{recipe_id}/ingredient/{int(portion.id)}/plate",
+            hx_trigger="change",
+            hx_target=f"#{_recipe_block_id(recipe_id)}",
+            hx_swap="outerHTML",
+            hx_push_url="false",
+            data_skip_page_loading="true",
+        ),
+        cls="flex items-center gap-2",
+    )
+
+
+def RecipeIngredientRow(recipe_id: int, portion, plates: list = (), plate_labels: dict | None = None):
     portion_id = int(portion.id or 0)
     base_amount = _recipe_portion_base_amount(portion)
     base_unit = _recipe_portion_base_unit(portion)
@@ -3124,7 +3216,6 @@ def RecipeIngredientRow(recipe_id: int, portion):
     advanced_inner_id = f"recipe_portion_advanced_inner_{portion_id}"
     advanced_content_id = f"recipe_portion_advanced_content_{portion_id}"
     persist_key = f"recipe_portion_unit_{portion_id}"
-    macros_grid_id = f"food_detail_recipe_{recipe_id}_macros"
 
     return Div(
         Div(
@@ -3175,12 +3266,6 @@ def RecipeIngredientRow(recipe_id: int, portion):
                     hx_swap="innerHTML",
                     hx_push_url="false",
                     data_skip_page_loading="true",
-                    **{
-                        "hx-on:htmx:after-request": (
-                            f"if(event.detail.successful){{htmx.ajax('GET','/food/recipe/{recipe_id}/macros',"
-                            f"{{target:'#{macros_grid_id}',swap:'outerHTML'}});}}"
-                        )
-                    },
                         cls="flex flex-col items-end gap-1",
                     ),
                     Div(
@@ -3214,9 +3299,10 @@ def RecipeIngredientRow(recipe_id: int, portion):
                         type="button",
                         cls="web_button px-2 py-1 text-[11px] border-red-300 text-red-700 hover:bg-red-50",
                         hx_post=f"/food/recipe/{recipe_id}/ingredient/{portion_id}/delete",
-                        hx_target="closest .food_entry",
+                        hx_target=f"#{_recipe_block_id(recipe_id)}",
                         hx_swap="outerHTML",
                         hx_push_url="false",
+                        hx_disabled_elt="this",
                         data_skip_page_loading="true",
                         data_no_open="true",
                     ),
@@ -3225,6 +3311,11 @@ def RecipeIngredientRow(recipe_id: int, portion):
                 cls="ml-3 flex flex-col items-end gap-1",
             ),
             cls="flex items-start justify-between",
+        ),
+        Div(
+            _recipe_cooked_weight_field(recipe_id, portion),
+            _recipe_move_field(recipe_id, portion, plates, plate_labels or {}),
+            cls="flex flex-wrap items-center justify-between gap-2 empty:hidden",
         ),
         Div(
             Form(
@@ -3284,24 +3375,127 @@ def RecipeIngredientRow(recipe_id: int, portion):
     )
 
 
-def RecipeIngredientsBlock(recipe_id: int, portions: list[dict]):
-    content = [RecipeIngredientRow(recipe_id, portion) for portion in portions] if portions else [P("No ingredients yet.", cls="text-sm text-gray-500")]
+def _recipe_add_ingredient_button(recipe_id: int, recipe_plate_id: int | None = None):
+    query = f"?recipe_plate_id={recipe_plate_id}" if recipe_plate_id else ""
+    return Button(
+        "Add ingredient",
+        type="button",
+        cls="web_button px-3 py-2 text-xs",
+        hx_get=f"/food/recipe/{recipe_id}/ingredients/form{query}",
+        hx_target="#main_content",
+        hx_swap="innerHTML",
+        hx_push_url="true",
+        **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
+    )
+
+
+def _recipe_plate_action(label: str, aria: str, path: str, recipe_id: int):
+    return Button(
+        label,
+        type="button",
+        aria_label=aria,
+        cls="web_button px-2 py-1 text-xs",
+        hx_post=path,
+        hx_target=f"#{_recipe_block_id(recipe_id)}",
+        hx_swap="outerHTML",
+        hx_push_url="false",
+        hx_disabled_elt="this",
+        data_skip_page_loading="true",
+    )
+
+
+def _recipe_plate_header(recipe_id: int, plate, label: str):
+    return Div(
+        Input(
+            type="text",
+            name="name",
+            value=plate.name or "",
+            placeholder=label,
+            maxlength=str(RECIPE_PLATE_NAME_MAX_LENGTH),
+            aria_label="Plate name",
+            cls="min-w-0 flex-1 font-semibold bg-transparent border-0 px-0 py-0 focus:outline-none",
+            hx_post=f"/food/recipe/plate/{plate.id}/name",
+            hx_trigger="change",
+            hx_target=f"#{_recipe_block_id(recipe_id)}",
+            hx_swap="outerHTML",
+            hx_push_url="false",
+            data_skip_page_loading="true",
+        ),
+        _recipe_plate_action("↑", "Move plate up", f"/food/recipe/plate/{plate.id}/up", recipe_id),
+        _recipe_plate_action("↓", "Move plate down", f"/food/recipe/plate/{plate.id}/down", recipe_id),
+        _recipe_plate_action("✕", "Delete plate", f"/food/recipe/plate/{plate.id}/delete", recipe_id),
+        cls="flex items-center gap-1.5",
+    )
+
+
+def RecipeIngredientsBlock(recipe_id: int, portions: list, plates: list = (), can_edit: bool = False):
+    """With one plate the concept does not show (§9.7). Repainted whole by every
+    action that changes the plates or their ingredients."""
+    by_plate = {plate.id: [p for p in portions if p.recipe_plate_id == plate.id] for plate in plates}
+    labels = {
+        plate.id: plate.name or derive_plate_name([_recipe_portion_name(p) for p in by_plate[plate.id]])
+        for plate in plates
+    }
+
+    def row(portion):
+        if not can_edit:
+            return RecipeIngredientReadOnlyRow(portion)
+        return RecipeIngredientRow(recipe_id, portion, plates, labels)
+
+    several = len(plates) > 1
+    sections = []
+    for plate in plates:
+        rows = by_plate[plate.id]
+        if several and not rows and not can_edit:
+            continue
+        header = ""
+        if several:
+            header = (
+                Div(
+                    _recipe_plate_header(recipe_id, plate, labels[plate.id]),
+                    _recipe_add_ingredient_button(recipe_id, plate.id),
+                    cls="flex flex-col items-start gap-1.5 [&>:first-child]:w-full",
+                )
+                if can_edit
+                else P(labels[plate.id], cls="font-semibold text-sm")
+            )
+        body = [row(portion) for portion in rows] or ([P("No ingredients in this plate.", cls="text-sm text-gray-500")] if several else [])
+        sections.append(Div(header, *body, cls="flex flex-col gap-2"))
+    if not any(by_plate.values()) and not several:
+        sections = [P("No ingredients yet.", cls="text-sm text-gray-500")]
     return Div(
         Div(
             H2("Ingredients", cls="font-semibold text-gray-900"),
-            Button(
-                "Add ingredient",
-                type="button",
-                cls="web_button px-3 py-2 text-xs",
-                hx_get=f"/food/recipe/{recipe_id}/ingredients/form",
-                hx_target="#main_content",
-                hx_swap="innerHTML",
-                hx_push_url="true",
-                **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
-            ),
+            _recipe_add_ingredient_button(recipe_id) if can_edit and not several else "",
             cls="flex items-center justify-between gap-3",
         ),
-        Div(*content, cls="flex flex-col gap-2"),
+        Div(*sections, cls="flex flex-col gap-3"),
+        (
+            Button(
+                "+ Add plate",
+                type="button",
+                cls="web_button w-full px-2 py-2 text-sm border-dashed",
+                hx_post=f"/food/recipe/{recipe_id}/plate",
+                hx_target=f"#{_recipe_block_id(recipe_id)}",
+                hx_swap="outerHTML",
+                hx_push_url="false",
+                hx_disabled_elt="this",
+                data_skip_page_loading="true",
+            )
+            if can_edit and plates
+            else ""
+        ),
+        id=_recipe_block_id(recipe_id),
+        cls="flex flex-col gap-2 w-full",
+    )
+
+
+def RecipeNotesSection(notes: str | None):
+    if not notes:
+        return ""
+    return Div(
+        H2("Notes", cls="font-semibold text-gray-900"),
+        P(notes, cls="web_container p-3 rounded-xl text-sm text-gray-900 whitespace-pre-line break-words"),
         cls="flex flex-col gap-2 w-full",
     )
 
@@ -3355,7 +3549,8 @@ def FoodDetailPage(
     entry_type: str,
     entry: dict,
     summary: dict,
-    recipe_portions: list[dict] | None = None,
+    recipe_portions: list | None = None,
+    recipe_plates: list | None = None,
     tags: list[dict] | list[str] | None = None,
     events: list | None = None,
     plate_options: list | None = None,
@@ -3421,7 +3616,7 @@ def FoodDetailPage(
     delete_question = {
         "catalog": "This food will be removed from the catalog and from everyone's searches. Anyone who already has it in favorites or in a recipe can keep using it. This cannot be undone. Continue?",
         "manual_intake": "This dish will be removed from your lists and from everyone's searches. Anyone who already has it in favorites or in a recipe can keep using it. This cannot be undone. Continue?",
-        "recipe": "Are you sure you want to delete this recipe?",
+        "recipe": "This recipe will be deleted, also from the favorites of anyone who has it. The meals you already logged do not change. Continue?",
     }.get(entry_type, "Are you sure you want to delete this item?")
 
     root_id = f"food_detail_{entry_type}_{entry['id']}"
@@ -3442,32 +3637,38 @@ def FoodDetailPage(
     persist_key = f"food_detail_amount_{entry_type}_{entry['id']}"
 
     recipe_mode = entry_type == "recipe"
-    action_button_label = "Log recipe" if recipe_mode else "Log food"
-    meal_selector = (
-        MealSelector(
-            events or [],
-            selected_id=(events[0].id if events else None),
-            plate_options=plate_options,
-            selected_plate_id=selected_plate_id,
-        )
-        if not recipe_mode
-        else ""
+    recipe_id = int(entry["id"]) if recipe_mode else 0
+    # A recipe with several plates creates its own: it cannot go into a chosen one (§7.7).
+    used_plates = {p.recipe_plate_id for p in recipe_portions or []}
+    meal_selector = MealSelector(
+        events or [],
+        selected_id=(events[0].id if events else None),
+        plate_options=plate_options,
+        selected_plate_id=selected_plate_id,
+        show_plates=not (recipe_mode and len(used_plates) > 1),
     )
-    recipe_ingredients = RecipeIngredientsBlock(int(entry.get("id") or 0), recipe_portions or []) if recipe_mode else ""
-    action_button = Button(
-        action_button_label,
-        type="button",
-        cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-black text-white border-black",
-        hx_post=f"/food/log/{entry_type}/{entry['id']}",
-        hx_target=f"#{msg_id}",
-        hx_swap="innerHTML",
-        hx_push_url="false",
-        hx_include=(
-            f"#{form_id}"
-            if recipe_mode
-            else f"#meal_selector, #plate_selector, #{form_id}, #{root_id}_weighed"
-        ),
-        data_skip_page_loading="true",
+    recipe_ingredients = (
+        RecipeIngredientsBlock(recipe_id, recipe_portions or [], recipe_plates or [], can_edit) if recipe_mode else ""
+    )
+    action_button = (
+        Button(
+            "Add to meal",
+            type="button",
+            cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-black text-white border-black",
+            **recipe_add_open_attrs(recipe_id),
+        )
+        if recipe_mode
+        else Button(
+            "Log food",
+            type="button",
+            cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-black text-white border-black",
+            hx_post=f"/food/log/{entry_type}/{entry['id']}",
+            hx_target=f"#{msg_id}",
+            hx_swap="innerHTML",
+            hx_push_url="false",
+            hx_include=f"#meal_selector, #plate_selector, #{form_id}, #{root_id}_weighed",
+            data_skip_page_loading="true",
+        )
     )
 
     return Div(
@@ -3530,7 +3731,7 @@ def FoodDetailPage(
             cls="flex flex-col gap-1 w-full",
         ),
         meal_selector,
-        Div(
+        "" if recipe_mode else Div(
             Form(
                 Div(
                     Label(
@@ -3714,7 +3915,7 @@ def FoodDetailPage(
         Div(
             H2("Macros Summary", cls="font-semibold text-gray-900"),
             (
-                RecipeMacrosGrid(int(entry.get("id") or 0), per100, default_amount)
+                RecipeMacrosGrid(recipe_id, summary)
                 if recipe_mode
                 else Div(
                     *_detail_macro_tiles(per100, default_amount),
@@ -3727,10 +3928,12 @@ def FoodDetailPage(
         ),
         Div(
             H2("Details", cls="font-semibold text-gray-900"),
-            _detail_info_rows(info_rows),
+            RecipeDetailsGrid(recipe_id, summary) if recipe_mode else _detail_info_rows(info_rows),
             cls="flex flex-col gap-2 w-full",
         ),
         recipe_ingredients,
+        RecipeNotesSection(entry.get("notes")) if recipe_mode else "",
+        *(RecipeAddModal() if recipe_mode else ()),
         Div(
             Button(
                 edit_label,
@@ -3841,7 +4044,7 @@ def FoodDetailPage(
         _searchable_autocomplete_bootstrap_script(),
         Script(src=asset_busted("/js/cart_units.js"), defer="defer"),
         Script(src=asset_busted("/js/food_detail.js"), defer="defer"),
-        data_food_detail="true",
+        data_food_detail=None if recipe_mode else "true",
         data_detail_display_id=display_id,
         data_detail_select_id=select_id,
         data_detail_grams_id=grams_id,
@@ -3974,8 +4177,6 @@ def FoodCard(food):
     add_label = "+"
     if food["entry_type"] == "manual_intake":
         add_path = f"/add_manual_intake/{food['id']}"
-    if food["entry_type"] == "recipe":
-        add_path = f"/add_recipe/{food['id']}"
 
     archived_badge = (
         Span("Archived", cls="text-[10px] font-semibold text-amber-700")
@@ -4019,7 +4220,11 @@ def FoodCard(food):
             # Shown on archived foods too: they appear because they are favorites
             # and the user must be able to remove them (§11.2.2).
             FavoriteButton(food["entry_type"], food["id"], bool(food.get("favorite"))),
-            AddButton(label=add_label, hx_post=add_path),
+            (
+                AddButton(label=add_label, **recipe_add_open_attrs(food["id"]))
+                if food["entry_type"] == "recipe"
+                else AddButton(label=add_label, hx_post=add_path)
+            ),
             cls="flex items-center gap-2 ml-3",
         ),
         FoodActionsTrigger(FoodEntryType(food["entry_type"]), food["id"]),

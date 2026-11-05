@@ -32,6 +32,7 @@ from DayBetes_food.domain.constants import (
     MealType,
     PortionOrigin,
 )
+from DayBetes_food.domain.recipe import RECIPE_NAME_MAX_LENGTH
 from DayBetes_food.domain.intake_event import (
     INTAKE_EVENT_NAME_MAX_LENGTH,
     INTAKE_EVENT_NOTES_MAX_LENGTH,
@@ -581,37 +582,44 @@ def _MoveIngredientSelect(plate, plates, plate_labels, portion_id, item_key, ing
     )
 
 
-def _SaveRecipeButton(plate, display_name, card_target):
-    """`Save as recipe` and its confirmation pop-up (§7.13, provisional).
-
-    It does not repaint the card (`hx-swap="none"`): the answer is the
-    `recipeSaved` event, which shows the success notice. The target is still
-    declared, as every cart action does (code_conventions.md §9.5).
+def _SaveRecipeButton(modal_id, label, aria_label, default_name, post_path, card_target, button_cls):
+    """`Save as recipe` of a plate or a whole meal, and its pop-up with the name to use,
+    editable (§7.13). It does not repaint the card (`hx-swap="none"`): the answer is the
+    `recipeSaved` event, which shows the success notice. The target is still declared,
+    as every cart action does (code_conventions.md §9.5).
     """
-    confirm_id = f"save_recipe_confirm_{plate.id}"
+    name_id = f"{modal_id}_name"
     return (
         Button(
-            "Save as recipe",
+            label,
             type="button",
-            aria_label="Save this plate as a recipe",
-            cls=f"{_SOFT_BUTTON_CLS} px-3 py-2 text-xs font-semibold shrink-0",
-            onclick=open_modal_js(confirm_id),
+            aria_label=aria_label,
+            cls=button_cls,
+            onclick=open_modal_js(modal_id),
         ),
         ConfirmActionModal(
-            modal_id=confirm_id,
+            modal_id=modal_id,
             title="Save as recipe",
             question=(
-                "Save this plate as the recipe ",
-                Strong(display_name),
-                "? It will be added to your recipes as a favorite.",
+                "It will be added to your recipes as a favorite. Recipe name:",
+                Input(
+                    type="text",
+                    id=name_id,
+                    name="name",
+                    value=default_name,
+                    maxlength=str(RECIPE_NAME_MAX_LENGTH),
+                    aria_label="Recipe name",
+                    cls="web_input w-full border border-line rounded-xl px-3 py-2 mt-2 text-base",
+                ),
             ),
             yes_button=modal_confirm_button(
-                "Yes",
-                hx_post=f"/cart/plate/{plate.id}/recipe",
+                "Save",
+                hx_post=post_path,
+                hx_include=f"#{name_id}",
                 hx_target=card_target,
                 hx_swap="none",
                 hx_disabled_elt="this",
-                onclick=close_modal_js(confirm_id),
+                onclick=close_modal_js(modal_id),
             ),
         ),
     )
@@ -690,7 +698,19 @@ def PlateHeader(event, plate, display_name, card_target, has_portions=False):
             ),
             Span("min", cls="text-xs text-gray-600"),
             _ApplyAllButton(plate, offset_input_id, card_target),
-            *(_SaveRecipeButton(plate, display_name, card_target) if has_portions else ()),
+            *(
+                _SaveRecipeButton(
+                    f"save_recipe_confirm_{plate.id}",
+                    "Save as recipe",
+                    "Save this plate as a recipe",
+                    display_name,
+                    f"/cart/plate/{plate.id}/recipe",
+                    card_target,
+                    f"{_SOFT_BUTTON_CLS} px-3 py-2 text-xs font-semibold shrink-0",
+                )
+                if has_portions
+                else ()
+            ),
             cls="flex items-center gap-2 flex-wrap",
         ),
         ConfirmActionModal(
@@ -1238,6 +1258,20 @@ def CartCard(event, portions, plates=()):
                 hx_post=f"/cart/event/{event.id}/plate",
                 hx_target=card_target,
                 hx_swap="outerHTML",
+            ),
+            # With one plate its own button already saves the same thing (§7.13).
+            *(
+                _SaveRecipeButton(
+                    f"save_meal_recipe_confirm_{event.id}",
+                    "Save meal as recipe",
+                    "Save this whole meal as a recipe",
+                    event.name or next((plate_labels[p.id] for p in plates if portions_by_plate.get(p.id)), ""),
+                    f"/cart/event/{event.id}/recipe",
+                    card_target,
+                    f"{_SOFT_BUTTON_CLS} w-full px-2 py-2 text-sm",
+                )
+                if sum(1 for p in plates if portions_by_plate.get(p.id)) >= 2
+                else ()
             ),
             cls="flex flex-col gap-2",
         ),

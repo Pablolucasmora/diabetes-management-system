@@ -15,6 +15,9 @@ from DayBetes_food.database.queries import (
 )
 
 
+from DayBetes_food.components.food.recipe_add import RecipeAddModal
+
+
 def plate_selector_options(connection, user_id: int, event_id: int):
     """Plates of an event as `(id, label)` pairs for the selector (§7.7).
 
@@ -105,6 +108,7 @@ def food_main(connection):
         ),
         # Outside #food-list, so a new search does not remove an open pop-up.
         FoodActionsModal(),
+        *RecipeAddModal(),
         id="food_list_wrapper",
         cls="""md:mb-50 lg:mb-50 mb-36""",
     )

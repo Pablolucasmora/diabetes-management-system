@@ -7,7 +7,13 @@ conversion lives in DayBetes_food/database/mappers.py.
 from dataclasses import dataclass
 from datetime import datetime
 
-from DayBetes_food.domain.constants import MealType, parse_enum
+from DayBetes_food.domain.constants import (
+    ConservationMethod,
+    CookingMethod,
+    FoodPhysicalState,
+    MealType,
+    parse_enum,
+)
 from DayBetes_food.domain.food import normalize_food_text
 from DayBetes_food.domain.nutrition import NumericRange, parse_number
 from DayBetes_food.errors import ValidationError
@@ -17,6 +23,8 @@ RECIPE_NAME_MAX_LENGTH = 255  # = VARCHAR(255)
 # notes can hold the whole preparation of the dish.
 RECIPE_NOTES_MAX_LENGTH = 20000
 RECIPE_SERVINGS_RANGE = NumericRange(1, 100)
+# What is added to a meal can be half a serving (measurement_conventions.md §4.7).
+RECIPE_ADD_SERVINGS_RANGE = NumericRange(0, 100, minimum_exclusive=True)
 
 # Rescue has its own flow and never carries insulin, so it is not a recipe type
 # (frontend_conventions.md §9.6).
@@ -62,6 +70,25 @@ def parse_recipe_servings(raw) -> int | None:
     except ValidationError as error:
         raise ValidationError("Servings must be a whole number from 1 to 100.", fields=error.fields) from error
     return None if servings is None else int(servings)
+
+
+def parse_recipe_add_servings(raw) -> float:
+    """Required decimal greater than 0, at most 100."""
+    try:
+        servings = parse_number(raw, "servings", RECIPE_ADD_SERVINGS_RANGE)
+    except ValidationError as error:
+        raise ValidationError("Servings must be a number greater than 0 and at most 100.", fields=error.fields) from error
+    if servings is None:
+        raise ValidationError("Choose how many servings to add.", fields={"servings": "required"})
+    return servings
+
+
+def scaled_recipe_amount(amount: float, chosen_servings: float | None, recipe_servings: int | None) -> float:
+    """Grams of an ingredient for the chosen servings (§4.7). The server computes it
+    from the recipe, never from an amount the client sends (§7.13)."""
+    if chosen_servings is None or recipe_servings is None:
+        return amount
+    return amount * chosen_servings / recipe_servings
 
 
 def recipe_meal_type_from_event(meal_type: MealType | None) -> MealType | None:
@@ -119,3 +146,22 @@ class RecipeRequest:
     servings: int | None
     favorite: bool | None  # None = field absent (edit form)
     tags: list[str] | None  # None = field absent
+
+
+@dataclass(frozen=True)
+class PortionPreparation:
+    """Preparation of an ingredient for this meal; it is not written to the recipe."""
+
+    cooking: CookingMethod | None
+    conservation: ConservationMethod | None
+    final_state: FoodPhysicalState | None
+
+
+@dataclass(frozen=True)
+class RecipeAddRequest:
+    """The step before adding a recipe to a meal, already parsed (§3.1, §7.11)."""
+
+    event_id: int | None  # None = a new meal
+    plate_id: int | None  # None = new plate; only applies to a recipe with one plate
+    servings: float | None  # None = field absent: the recipe has no servings
+    preparations: dict[int, PortionPreparation]  # by the recipe portion's id

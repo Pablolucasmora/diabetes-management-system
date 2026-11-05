@@ -27,7 +27,6 @@ from DayBetes_food.database.queries import (
     get_intake_plate,
     list_intake_plates,
     list_intake_plates_by_events,
-    update_intake_plate,
     update_intake_plate_name,
     set_injection_zone,
     delete_intake_event,
@@ -64,12 +63,12 @@ from DayBetes_food.domain.intake_plate import (
     INTAKE_PLATE_OFFSET_MAX_MINUTES,
     INTAKE_PLATE_OFFSET_MIN_MINUTES,
     IntakePlateCreate,
-    IntakePlateUpdate,
 )
 from DayBetes_food.domain.portion_detail import PortionDetailUpdate, amount_to_grams
 from DayBetes_food.http_errors import app_error_response
 from DayBetes_food.services.intake_event import confirm_planned_event
-from DayBetes_food.services.recipe import save_plate_as_recipe
+from DayBetes_food.domain.recipe import parse_recipe_name
+from DayBetes_food.services.recipe import save_event_as_recipe, save_plate_as_recipe
 from DayBetes_food.errors import (
     AuthenticationError,
     AuthorizationError,
@@ -365,11 +364,11 @@ _PLATE_NOT_EMPTY = "Move or delete its ingredients before removing the plate."
 _PLATE_FAILED = "The plate could not be updated."
 # Public message per conflict of save_plate_as_recipe (services/recipe.py).
 _SAVE_RECIPE_CONFLICTS = {
-    "plate_without_portions": "Add some food to the plate before saving it as a recipe.",
-    "plate_has_quick_add": "This plate has a quick add, which cannot be saved in a recipe.",
-    "recipe_name_taken": "You already have a recipe with this name. Rename the plate to save it.",
+    "recipe_without_portions": "Add some food before saving it as a recipe.",
+    "recipe_has_quick_add": "A quick add cannot be saved in a recipe.",
+    "recipe_name_taken": "You already have a recipe with this name. Choose another one.",
+    "event_not_planned": "That meal has already been confirmed.",
 }
-_RECIPE_NAME_TOO_LONG = "The plate name is too long for a recipe name."
 
 
 def setup_cart_routes(rt):
@@ -1073,10 +1072,8 @@ def setup_cart_routes(rt):
                 return _error(request, ConflictError, _PLATE_NOT_EMPTY)
             return _card_response(request, connection, int(user_id), event_id)
 
-    @rt("/cart/plate/{plate_id}/recipe")
-    def post(request: Request, plate_id: int):
-        """Save the plate as a new personal recipe, in favorites (provisional,
-        frontend_conventions.md §7.13).
+    def _save_as_recipe(request: Request, name: str, gone_message: str, save):
+        """Common contract of saving a plate or a meal as a recipe (frontend §7.13).
 
         Nothing in the card changes, so the answer is an empty body and the
         `recipeSaved` event, which shows the success notice (cart contract,
@@ -1088,20 +1085,43 @@ def setup_cart_routes(rt):
         user_id = get_current_user_id()
         if not user_id:
             return _error(request, AuthenticationError, _NO_SESSION)
+        try:
+            parsed_name = parse_recipe_name(name)
+        except ValidationError as error:
+            return _error(request, ValidationError, str(error))
         with get_connection() as connection:
             try:
-                save_plate_as_recipe(connection, int(user_id), plate_id)
+                save(connection, int(user_id), parsed_name)
             except NotFoundError:
-                return _error(request, NotFoundError, _PLATE_GONE)
+                return _error(request, NotFoundError, gone_message)
             except ConflictError as error:
                 return _error(
                     request,
                     ConflictError,
                     _SAVE_RECIPE_CONFLICTS.get(str(error), ConflictError.public_message),
                 )
-            except ValidationError:
-                return _error(request, ValidationError, _RECIPE_NAME_TOO_LONG)
         return HTMLResponse("", headers={"HX-Trigger": "recipeSaved"})
+
+    @rt("/cart/plate/{plate_id}/recipe")
+    def post(request: Request, plate_id: int, name: str = ""):
+        """Save the plate as a new personal recipe, in favorites."""
+        return _save_as_recipe(
+            request,
+            name,
+            _PLATE_GONE,
+            lambda connection, user_id, parsed: save_plate_as_recipe(connection, user_id, plate_id, parsed),
+        )
+
+    @rt("/cart/event/{event_id}/recipe")
+    def post(request: Request, event_id: int, name: str = ""):
+        """Save the whole meal as a new personal recipe, in favorites."""
+        return _save_as_recipe(
+            request,
+            name,
+            _EVENT_GONE,
+            lambda connection, user_id, parsed: save_event_as_recipe(connection, user_id, event_id, parsed),
+        )
+
 
     @rt("/cart/event/{event_id}/confirm")
     def post(
