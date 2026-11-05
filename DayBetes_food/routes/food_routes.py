@@ -1390,8 +1390,8 @@ def _error_msg(text: str, status_code: int = 200):
 
 
 LIST_PAGE_SIZE = 15
-
 SEARCH_PAGE_SIZE = 8  # Short, so the Open Food Facts section stays close (frontend §9.3).
+
 
 def _search_load_more_node(
     search: str,
@@ -1411,7 +1411,6 @@ def _search_load_more_node(
         "recipes_mode": recipes_mode,
         "page": next_page,
     })
-    return Div(
     if search:
         # A button, not on scroll: below it comes the Open Food Facts section,
         # which automatic loading would keep pushing down (frontend §9.3).
@@ -1425,6 +1424,7 @@ def _search_load_more_node(
             data_skip_page_loading="true",
             cls="web_button rounded-full px-4 py-1.5 mt-1 text-xs font-semibold text-muted",
         )
+    return Div(
         "Loading more...",
         hx_get=f"/food/list?{query}",
         hx_trigger="revealed",
@@ -1492,9 +1492,13 @@ def setup_food_routes(rt):
         subtype_prefill = (prefill_view.get("subtype") or "").strip()
         if subtype_prefill:
             prefill_view["subtype"] = _closest_option(subtype_prefill, subtypes)
+            # A value the prefill brought counts as added: the user reviews it
+            # before saving, and without this the form rejects it (measurement §12.2).
+            prefill_view["subtype_is_new"] = prefill_view["subtype"] not in subtypes
         brand_prefill = (prefill_view.get("brand") or "").strip()
         if brand_prefill:
             prefill_view["brand"] = _closest_option(brand_prefill, brands)
+            prefill_view["brand_is_new"] = prefill_view["brand"] not in brands
         return render_page(
             request,
             lambda _: CreateCatalogPage(
