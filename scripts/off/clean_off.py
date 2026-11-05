@@ -30,6 +30,9 @@ NUTRIENTS = {
 }
 NAME_MAX_LENGTH = 255
 BRAND_MAX_LENGTH = 255
+# A name equal to a brand this big is a contributor's mistake, not a product name:
+# "hacendado" is an error, while "Coca-Cola" or "Nesquik" are real names.
+STORE_BRAND_MIN_PRODUCTS = 1000
 # Filtering on the STRUCTs of `nutriments` crashes DuckDB 2.0, so each nutrient
 # becomes plain columns first: <alias> ("100g", already normalized) and <alias>_unit.
 FLATTEN_SQL = """
@@ -125,6 +128,10 @@ def report(con) -> None:
     ).fetchone()
     print(f"products: {total}, without kcal: {no_kcal}, without brand: {no_brand}, "
           f"with serving: {serving}, with Ciqual code: {ciqual}")
+    named_as_brand = con.execute(
+        "SELECT lower(name), count(*) FROM candidates WHERE name_is_store_brand GROUP BY 1 ORDER BY 2 DESC"
+    ).fetchall()
+    print(f"out of the text search, named as a store brand: {sum(n for _, n in named_as_brand)} {named_as_brand}")
     if total == 0:
         raise SystemExit("No product passed the filters: the export changed its shape.")
 
@@ -148,6 +155,16 @@ def main() -> None:
                 name_max=NAME_MAX_LENGTH,
                 export_date=args.export_date.isoformat(),
             )
+        )
+        con.execute(
+            f"""
+            ALTER TABLE candidates ADD COLUMN name_is_store_brand BOOLEAN DEFAULT FALSE;
+            UPDATE candidates SET name_is_store_brand = TRUE
+            WHERE lower(name) IN (
+                SELECT lower(brand) FROM candidates WHERE brand IS NOT NULL
+                GROUP BY 1 HAVING count(*) >= {STORE_BRAND_MIN_PRODUCTS}
+            );
+            """
         )
         report(con)
         con.execute(f"COPY candidates TO '{args.output}' (FORMAT CSV, HEADER, COMPRESSION GZIP)")

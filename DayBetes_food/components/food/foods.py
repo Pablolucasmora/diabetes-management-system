@@ -953,6 +953,7 @@ def _searchable_autocomplete_input(
     value: str | None = None,
     case_mode: str = "lower",
     maxlength=None,
+    added: bool = False,
 ):
     normalized_options = sorted({(opt or "").strip() for opt in (options or []) if (opt or "").strip()})
     options_json = json.dumps(normalized_options)
@@ -962,7 +963,7 @@ def _searchable_autocomplete_input(
     return Div(
         _label_with_help(label, help_value, for_id=input_id),
         Div(
-            (Input(type="hidden", name=f"{name}__added", value="0", data_searchable_added_flag="true") if allow_add else None),
+            (Input(type="hidden", name=f"{name}__added", value="1" if added else "0", data_searchable_added_flag="true") if allow_add else None),
             Input(
                 type="text",
                 id=input_id,
@@ -1046,7 +1047,7 @@ def _searchable_compact_input(
     )
 
 
-def _brand_autocomplete_input(brand_options: list[str] | None = None, value: str | None = None):
+def _brand_autocomplete_input(brand_options: list[str] | None = None, value: str | None = None, added: bool = False):
     return _searchable_autocomplete_input(
         label="Brand",
         name="brand",
@@ -1056,6 +1057,7 @@ def _brand_autocomplete_input(brand_options: list[str] | None = None, value: str
         allow_add=True,
         value=value,
         case_mode="title",
+        added=added,
     )
 
 
@@ -2325,7 +2327,9 @@ def CreateCatalogPage(
         existing_notice,
         _form_section(
             "What is it?",
-            _brand_autocomplete_input(brand_options=brand_options, value=_pv("brand")),
+            _brand_autocomplete_input(
+                brand_options=brand_options, value=_pv("brand"), added=bool(data.get("brand_is_new"))
+            ),
             _searchable_autocomplete_input(
                 "Category*",
                 "category",
@@ -2342,6 +2346,7 @@ def CreateCatalogPage(
                 allow_add=True,
                 value=_pv("subtype"),
                 maxlength=FOOD_SUBTYPE_MAX_LENGTH,
+                added=bool(data.get("subtype_is_new")),
             ),
             step=1,
         ),

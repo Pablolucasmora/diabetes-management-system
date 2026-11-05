@@ -1054,6 +1054,7 @@ def _recommended_entries(connection, search: str = "", days: int = 60) -> list[d
         candidates = [item.get("name") or ""]
         if item.get("entry_type") == "catalog":
             candidates.append(item.get("brand") or "")
+            candidates.append(item.get("barcode") or "")
         elif item.get("entry_type") == "manual_intake":
             candidates.append(item.get("origin") or "")
 
@@ -1389,6 +1390,7 @@ def _error_msg(text: str, status_code: int = 200):
 
 
 LIST_PAGE_SIZE = 15
+SEARCH_PAGE_SIZE = 8  # Short, so the Open Food Facts section stays close (frontend §9.3).
 
 
 def _search_load_more_node(
@@ -1409,6 +1411,19 @@ def _search_load_more_node(
         "recipes_mode": recipes_mode,
         "page": next_page,
     })
+    if search:
+        # A button, not on scroll: below it comes the Open Food Facts section,
+        # which automatic loading would keep pushing down (frontend §9.3).
+        return Button(
+            "Load more",
+            type="button",
+            hx_get=f"/food/list?{query}",
+            hx_swap="outerHTML",
+            hx_target="this",
+            hx_disabled_elt="this",
+            data_skip_page_loading="true",
+            cls="web_button rounded-full px-4 py-1.5 mt-1 text-xs font-semibold text-muted",
+        )
     return Div(
         "Loading more...",
         hx_get=f"/food/list?{query}",
@@ -1477,9 +1492,13 @@ def setup_food_routes(rt):
         subtype_prefill = (prefill_view.get("subtype") or "").strip()
         if subtype_prefill:
             prefill_view["subtype"] = _closest_option(subtype_prefill, subtypes)
+            # A value the prefill brought counts as added: the user reviews it
+            # before saving, and without this the form rejects it (measurement §12.2).
+            prefill_view["subtype_is_new"] = prefill_view["subtype"] not in subtypes
         brand_prefill = (prefill_view.get("brand") or "").strip()
         if brand_prefill:
             prefill_view["brand"] = _closest_option(brand_prefill, brands)
+            prefill_view["brand_is_new"] = prefill_view["brand"] not in brands
         return render_page(
             request,
             lambda _: CreateCatalogPage(
@@ -2759,8 +2778,9 @@ def setup_food_routes(rt):
         if not entries and not off_nodes:
             return render_fragment(H2("No items", cls="text-gray-600"))
 
-        start = (page - 1) * LIST_PAGE_SIZE
-        end = start + LIST_PAGE_SIZE
+        page_size = SEARCH_PAGE_SIZE if clean_search else LIST_PAGE_SIZE
+        start = (page - 1) * page_size
+        end = start + page_size
         chunk = entries[start:end]
         has_more = end < len(entries)
 

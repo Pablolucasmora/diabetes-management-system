@@ -1146,6 +1146,11 @@ def _ensure_food_filter_indexes(cursor):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_visibility ON recipe (is_published, users_id);")
 
 
+def _ensure_off_product_schema(cursor):
+    if not _has_column(cursor, "off_product", "name_is_store_brand"):
+        cursor.execute("ALTER TABLE off_product ADD COLUMN name_is_store_brand BOOLEAN NOT NULL DEFAULT FALSE;")
+
+
 def _ensure_food_search_indexes(cursor):
     # After _ensure_catalog_schema, which creates catalog.search_name on old
     # installs. Tolerated like _ensure_trgm_search: without pg_trgm the searches
@@ -2344,6 +2349,7 @@ def init_db():
         # After the publication step: its unique index filters on is_published.
         _ensure_recipe_schema(cur)
         _ensure_catalog_schema(cur)
+        _ensure_off_product_schema(cur)
         _ensure_food_search_indexes(cur)
         # After the publication and copy-origin steps: its indexes use
         # is_published and origin_root_id, which they create on old installs.
