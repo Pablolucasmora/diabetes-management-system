@@ -952,11 +952,22 @@ Un valor que falta queda vacío; nunca se convierte en cero. Las fotos no forman
 
 **Escáner.** El código se busca primero en la copia local; un código de 12 dígitos se busca también con un cero delante, porque OFF guarda así los UPC-A (y al revés). Si no está, se consulta la API de OFF para ese código, porque la copia es de una fecha concreta y puede no incluir productos nuevos o de otros países. Si tampoco aparece, el formulario se abre vacío, con el código y el aviso "Product not found".
 
-**Buscador.** Con al menos 3 caracteres, debajo de los alimentos del usuario aparece la sección "From Open Food Facts", con un máximo de 20 productos, su atribución y sin los códigos que el usuario ya ve en `catalog`. Al pulsar uno se abre el formulario precargado, que se revisa antes de guardar. Una marca o un subtipo nuevos que traiga la precarga cuentan como añadidos, sin tener que pulsar `Add`.
+**Buscador.** Con al menos 3 caracteres, debajo de los alimentos del usuario aparece la sección "From Open Food Facts", con 8 productos por página, su propio `Load more`, su atribución y sin los códigos que el usuario ya ve en `catalog`. Al pulsar uno se abre el formulario precargado, que se revisa antes de guardar. Una marca o un subtipo nuevos que traiga la precarga cuentan como añadidos, sin tener que pulsar `Add`.
 
 **Búsqueda por código.** Un término de solo dígitos, de 8 a 48, se busca también como código de barras: en `catalog`, además de por nombre y marca, y en `off_product`, solo por código. Hay que escribir el código completo. Si un código tiene 12 dígitos, o 13 con un cero inicial, se busca también en la otra forma (UPC-A). El buscador no llama a la API de OFF; para eso está el escáner, que también admite escribir el código a mano.
 
 **Carga.** No forma parte del despliegue, se hace solo al actualizar los datos. `scripts/off/clean_off.py` genera en el ordenador del desarrollador un CSV comprimido con los filtros anteriores, con su propio `requirements.txt` porque DuckDB no entra en la imagen de la app. `scripts/off/load_off.sh` lo carga en el servidor, reemplazando la tabla en una transacción. La tabla no entra con filas en la copia de seguridad (`infra_conventions.md` §12).
+
+### 12.3 Ciqual: alimentos genéricos
+
+Decisión del usuario del 2026-11-05, tras comparar con USDA y BLS 4.0. Ciqual 2025 es la fuente de alimentos genéricos, en la tabla `ciqual_food`, separada de `off_product`. Licencia abierta: se cita "Anses. 2025. Ciqual French food composition table" en los resultados, en el formulario y en Ajustes.
+
+- **Qué se carga.** Los alimentos con hidratos, grasa y proteína, sin el grupo de alimentación infantil. `scripts/ciqual/clean_ciqual.py` genera el archivo y `load_ciqual.sh` lo carga. La tabla no entra con filas en la copia de seguridad.
+- **Nombres en español.** Los genera el script: primero nombres completos de `overrides_es.csv` y después frases y palabras de `glossary_es.csv`, con el nombre delante y los adjetivos concordados. Es una traducción aproximada, sin revisión experta; una palabra sin traducir queda en inglés y su tramo conserva el orden original. No se usa traducción automática: en la prueba con Argos cambiaba el alimento sin que se notara (`date` como «fecha», `pollock` como «pollo»). Se corrige añadiendo el nombre a `overrides_es.csv`. La búsqueda mira también el nombre en inglés.
+- **Valores `traces` y `< x`.** Se precargan como 0 con un aviso que muestra el original. No son valores que faltan. Un valor que falta (`-`) queda vacío o, si es hidratos, grasa o proteína, descarta el alimento.
+- **Fiabilidad.** El formulario muestra las notas A–D de Ciqual. No rellenan `macros_confidence`, que declara el usuario.
+- **Peso.** Los valores son por 100 g de parte comestible: se pesa lo que se come. Con una entrada cocida no se marca peso en cocido, para no convertir dos veces. Arroz, pasta y legumbres se pesan preferiblemente en crudo, porque es donde más discrepan las tablas.
+- **Procedencia.** `prefill_source = ciqual` y su código (§12.1). Lo ya copiado no se vuelve a ofrecer.
 
 ## 13. Datos originales y derivados
 

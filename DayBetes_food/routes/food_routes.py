@@ -17,6 +17,8 @@ from DayBetes_food.database.queries import (
     get_off_product_by_code,
     list_catalog_items,
     search_off_products,
+    get_ciqual_food,
+    search_ciqual_foods,
     archive_catalog_item,
     publish_catalog_item,
     unpublish_catalog_item,
@@ -135,6 +137,8 @@ from DayBetes_food.domain.portion_detail import (
     amount_to_grams,
     parse_amount_grams,
 )
+from DayBetes_food.components.data_sources import ciqual_attribution, off_attribution
+from DayBetes_food.integrations.ciqual import prefill_from_ciqual_food, reliability_note
 from DayBetes_food.integrations.open_food_facts import fetch_product_prefill, prefill_from_off_product
 from DayBetes_food.components.food.foods import FoodSectionsContent, FoodCard, FavoriteButton, on_after
 from DayBetes_food.components.food.food_actions import (
@@ -158,7 +162,9 @@ from DayBetes_food.components.food.foods import (
 )
 from DayBetes_food.components.food.foods import (
     CreateCatalogPage,
-    OffSearchResults,
+    ExternalFoodSection,
+    ciqual_food_cards,
+    off_product_cards,
     CreateManualPage,
     CreateRecipePage,
     EditCatalogPage,
@@ -681,7 +687,7 @@ def _resolve_target_event(connection, user_id: int, intake_event_id: str) -> int
     )
 
 
-def _prefill_view(prefill, barcode: str, source_id: str) -> dict:
+def _prefill_view(prefill, barcode: str, source_id: str, source: PrefillSource = PrefillSource.OPEN_FOOD_FACTS) -> dict:
     """OffProductPrefill -> presentation dict of the create form."""
     nutrients = prefill.nutrients
 
@@ -690,7 +696,7 @@ def _prefill_view(prefill, barcode: str, source_id: str) -> dict:
 
     return {
         "barcode": barcode,
-        "prefill_source": PrefillSource.OPEN_FOOD_FACTS.value,
+        "prefill_source": source.value,
         "prefill_source_id": source_id,
         "name": prefill.name or "",
         "brand": prefill.brand or "",
@@ -1435,6 +1441,33 @@ def _search_load_more_node(
     )
 
 
+def _external_load_more(source: str, search: str, next_page: int):
+    query = urlencode({"source": source, "search": search, "page": next_page})
+    return Button(
+        "Load more",
+        type="button",
+        hx_get=f"/food/list/external?{query}",
+        hx_swap="outerHTML",
+        hx_target="this",
+        hx_disabled_elt="this",
+        data_skip_page_loading="true",
+        cls="web_button rounded-full px-4 py-1.5 mt-1 text-xs font-semibold text-muted",
+    )
+
+
+def _external_page(connection, user_id: int, source: str, search: str, page: int):
+    """(cards, next page's button) of one source. One row more than a page tells
+    whether there is a next one."""
+    search_fn, cards_fn = (
+        (search_ciqual_foods, ciqual_food_cards) if source == "ciqual" else (search_off_products, off_product_cards)
+    )
+    rows = search_fn(
+        connection, user_id, search, limit=SEARCH_PAGE_SIZE + 1, offset=(page - 1) * SEARCH_PAGE_SIZE
+    )
+    load_more = _external_load_more(source, search, page + 1) if len(rows) > SEARCH_PAGE_SIZE else None
+    return cards_fn(rows[:SEARCH_PAGE_SIZE]), load_more
+
+
 def setup_food_routes(rt):
     
     @rt("/food")
@@ -1442,8 +1475,12 @@ def setup_food_routes(rt):
         return render_page(request, food_main)
 
     @rt("/food/create/catalog/form")
-    def get(request: Request, barcode: str = "", existing_id: str = ""):
+    def get(request: Request, barcode: str = "", existing_id: str = "", ciqual: str = ""):
         clean = (barcode or "").strip()
+        ciqual_food = None
+        if ciqual.isdigit():
+            with get_connection() as connection:
+                ciqual_food = get_ciqual_food(connection, int(ciqual))
         try:
             valid_barcode = parse_barcode(clean) if clean else None
             barcode_notice = None
@@ -1489,6 +1526,9 @@ def setup_food_routes(rt):
         if valid_barcode and prefill is None and off_notice is None and not existing_item_id:
             off_notice = "Product not found. You can fill the form by hand."
         prefill_view = _prefill_view(prefill, valid_barcode, prefill_source_id) if prefill else {"barcode": clean}
+        if ciqual_food:
+            prefill = prefill_from_ciqual_food(ciqual_food)
+            prefill_view = _prefill_view(prefill, "", str(ciqual_food.code), PrefillSource.CIQUAL)
         subtype_prefill = (prefill_view.get("subtype") or "").strip()
         if subtype_prefill:
             prefill_view["subtype"] = _closest_option(subtype_prefill, subtypes)
@@ -1510,7 +1550,8 @@ def setup_food_routes(rt):
                 off_notice=off_notice,
                 barcode_notice=barcode_notice,
                 alcohol_source_note=prefill.alcohol_source_note if prefill else None,
-                off_prefill_barcode=valid_barcode if prefill else None,
+                off_prefill_barcode=valid_barcode if prefill and not ciqual_food else None,
+                ciqual_note=reliability_note(ciqual_food) if ciqual_food else None,
             ),
             show_cart=False,
         )
@@ -2773,7 +2814,18 @@ def setup_food_routes(rt):
                 and user_id
                 and (filter == "all" or (filter == "food" and food_mode_norm == "catalog"))
             ):
-                off_nodes = OffSearchResults(search_off_products(connection, int(user_id), clean_search))
+                off_nodes = [
+                    *ExternalFoodSection(
+                        "From Ciqual",
+                        *_external_page(connection, int(user_id), "ciqual", clean_search, 1),
+                        ciqual_attribution(),
+                    ),
+                    *ExternalFoodSection(
+                        "From Open Food Facts",
+                        *_external_page(connection, int(user_id), "off", clean_search, 1),
+                        off_attribution(),
+                    ),
+                ]
 
         if not entries and not off_nodes:
             return render_fragment(H2("No items", cls="text-gray-600"))
@@ -2849,6 +2901,19 @@ def setup_food_routes(rt):
                 )
             )
         return render_fragment(tuple(nodes + off_nodes))
+
+    @rt("/food/list/external")
+    def get(request: Request, source: str = "", search: str = "", page: int = 1):
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        if source not in ("ciqual", "off"):
+            return HTMLResponse(status_code=422)
+        with get_connection() as connection:
+            cards, load_more = _external_page(connection, int(user_id), source, (search or "").strip(), max(1, int(page or 1)))
+        return render_fragment(tuple(cards + ([load_more] if load_more is not None else [])))
 
     @rt("/search_food")
     def get(request: Request, search: str = ""):

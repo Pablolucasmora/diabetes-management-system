@@ -23,3 +23,12 @@ def off_attribution(barcode: str | None = None):
         ".",
         cls="text-xs text-gray-500 text-center",
     )
+
+
+def ciqual_attribution():
+    return P(
+        "Source: ",
+        _external_link("Anses. 2025. Ciqual French food composition table", "https://ciqual.anses.fr/"),
+        ". Spanish names translated for DayBetes.",
+        cls="text-xs text-gray-500 text-center",
+    )

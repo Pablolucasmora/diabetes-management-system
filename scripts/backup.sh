@@ -45,9 +45,9 @@ roles="$BACKUP_DIR/daybetes_roles_${stamp}.sql.age"
 
 # Written to .tmp and renamed when done: a half-written file never has the
 # name of a valid backup.
-# off_product keeps its structure but not its rows: they are public and can be
-# loaded again from scripts/off (measurement_conventions.md §12.2).
-docker exec "$DB_CONTAINER" pg_dump -U "$DB_SUPERUSER" -Fc --exclude-table-data=off_product "$DB_NAME" \
+# off_product and ciqual_food keep their structure but not their rows: they are public and can be
+# loaded again from scripts/off and scripts/ciqual (measurement_conventions.md §12).
+docker exec "$DB_CONTAINER" pg_dump -U "$DB_SUPERUSER" -Fc --exclude-table-data=off_product --exclude-table-data=ciqual_food "$DB_NAME" \
   | age -r "$AGE_RECIPIENT" > "$data.tmp"
 docker exec "$DB_CONTAINER" pg_dumpall -U "$DB_SUPERUSER" --roles-only \
   | age -r "$AGE_RECIPIENT" > "$roles.tmp"

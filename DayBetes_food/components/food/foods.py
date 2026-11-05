@@ -2,7 +2,7 @@ import json
 from fasthtml.common import *
 
 from DayBetes_food.components.cart.cart_shared import CHECKBOX_CLS
-from DayBetes_food.components.data_sources import off_attribution
+from DayBetes_food.components.data_sources import ciqual_attribution, off_attribution
 from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.components.navigation import back_js
 from DayBetes_food.components.food.food_actions import COPY_LABEL, COPY_QUESTION, EDIT_LABELS, FoodActionsTrigger
@@ -2268,6 +2268,7 @@ def CreateCatalogPage(
     barcode_notice: str | None = None,
     alcohol_source_note: str | None = None,
     off_prefill_barcode: str | None = None,
+    ciqual_note: str | None = None,
 ):
     """Name, what it is and its macros come first; the rest is folded under
     "More details" and opens by itself when the scanner prefilled any of it."""
@@ -2295,8 +2296,11 @@ def CreateCatalogPage(
         *(
             [off_attribution(off_prefill_barcode)] if off_prefill_barcode else []
         ),
+        *(
+            [P(ciqual_note, cls="text-xs text-gray-700"), ciqual_attribution()] if ciqual_note else []
+        ),
         cls="web_container w-full px-4 py-3 flex flex-col gap-1",
-    ) if (off_notice or barcode_notice or off_prefill_barcode) else None
+    ) if (off_notice or barcode_notice or off_prefill_barcode or ciqual_note) else None
     existing_notice = (
         Div(
             P("A food with this barcode already exists.", cls="text-sm text-gray-700"),
@@ -4058,19 +4062,16 @@ def FoodCard(food):
     )
 
 
-def _off_product_card(product):
-    macros = (
-        f"{product.carbs_100g:.1f} g carbs · {product.fats_100g:.1f} g fat · "
-        f"{product.proteins_100g:.1f} g protein per 100 g"
-    )
+def _external_food_card(name, subtitle, carbs, fats, proteins, form_query):
+    macros = f"{carbs:.1f} g carbs · {fats:.1f} g fat · {proteins:.1f} g protein per 100 g"
     return Div(
         Div(
-            H1(Span(product.name), cls="text-left text-[15px] font-semibold leading-snug"),
-            Div(Span(product.brand, cls="truncate"), cls="flex items-center text-xs text-gray-500 min-w-0") if product.brand else "",
+            H1(Span(name), cls="text-left text-[15px] font-semibold leading-snug"),
+            Div(Span(subtitle, cls="truncate"), cls="flex items-center text-xs text-gray-500 min-w-0") if subtitle else "",
             P(macros, cls="text-xs text-gray-700 mt-0.5"),
             cls="flex flex-col min-w-0",
         ),
-        hx_get=f"/food/create/catalog/form?barcode={product.code}",
+        hx_get=f"/food/create/catalog/form?{form_query}",
         hx_target="#main_content",
         hx_swap="innerHTML",
         hx_push_url="true",
@@ -4079,15 +4080,34 @@ def _off_product_card(product):
     )
 
 
-def OffSearchResults(products) -> list:
-    """Products of the local copy of Open Food Facts: opening one prefills the
-    create form, so the user reviews it before saving (measurement §12.2)."""
-    if not products:
+def off_product_cards(products) -> list:
+    return [
+        _external_food_card(
+            p.name, p.brand, p.carbs_100g, p.fats_100g, p.proteins_100g, f"barcode={p.code}"
+        )
+        for p in products
+    ]
+
+
+def ciqual_food_cards(foods) -> list:
+    return [
+        _external_food_card(
+            f.name_es, None, f.carbs_100g, f.fats_100g, f.proteins_100g, f"ciqual={f.code}"
+        )
+        for f in foods
+    ]
+
+
+def ExternalFoodSection(title: str, cards: list, load_more, attribution) -> list:
+    """A source's results with their own button, so loading more never pushes
+    the next section away (frontend §9.3)."""
+    if not cards:
         return []
     return [
-        H2("From Open Food Facts", cls="web_section_label md:w-md lg:w-md w-xs mt-2"),
-        *[_off_product_card(product) for product in products],
-        off_attribution(),
+        H2(title, cls="web_section_label md:w-md lg:w-md w-xs mt-2"),
+        *cards,
+        *([load_more] if load_more is not None else []),
+        attribution,
     ]
 
 

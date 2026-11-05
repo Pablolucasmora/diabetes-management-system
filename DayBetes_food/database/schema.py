@@ -402,6 +402,36 @@ class DBSchema:
     """
 
     @classmethod
+    def ciqual_food(cls):
+        """Local copy of Ciqual (measurement_conventions.md §12.3)."""
+        return f"""
+    -- Reference data with no owner, read-only for the app (db_init revokes its
+    -- writes). Each load replaces the whole table (scripts/ciqual/load_ciqual.sh).
+    CREATE TABLE IF NOT EXISTS ciqual_food (
+        code INTEGER CONSTRAINT pk_ciqual_food PRIMARY KEY,
+        name_es VARCHAR(255) NOT NULL,
+        name_en VARCHAR(255) NOT NULL,
+        name_fr VARCHAR(255) NOT NULL,
+        category_hint VARCHAR(255),
+        subtype VARCHAR(100),
+        calories_100g REAL,
+        carbs_100g REAL NOT NULL,
+        sugars_100g REAL,
+        fats_100g REAL NOT NULL,
+        saturated_100g REAL,
+        proteins_100g REAL NOT NULL,
+        fiber_100g REAL,
+        alcohol REAL,
+        carbs_confidence VARCHAR(1),
+        fats_confidence VARCHAR(1),
+        proteins_confidence VARCHAR(1),
+        value_notes VARCHAR(255), -- original "traces" or "< x" of a value stored as 0
+        export_date DATE NOT NULL,
+        search_text TEXT GENERATED ALWAYS AS ({search_text_sql("name_es || ' ' || name_en")}) STORED
+    );
+    """
+
+    @classmethod
     def off_product(cls):
         """Local copy of Open Food Facts (measurement_conventions.md §12.2)."""
         return f"""

@@ -10,6 +10,7 @@ venv/
 
 # Raw data files
 *.csv
+!scripts/ciqual/*.csv
 *.xlsx
 
 # Python temporary files
