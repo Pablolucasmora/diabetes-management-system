@@ -150,7 +150,7 @@ desde esa misma decisión—, no se deja a cero. Constraint:
 
 ### 4.5 Offset de una porción respecto al evento (decisión 2026-09-18)
 
-`portion_detail.offset_minutes` es la diferencia en minutos entre el `meal_time` del evento y el momento en que ese ingrediente se consume, **guardada como entero literal** y fijada al crear la porción.
+`portion_detail.offset_minutes` es el momento en que ese ingrediente se consume menos el `meal_time` del evento, en minutos, **guardado como entero literal** y fijado al crear la porción. Es positivo si el ingrediente se come después de `meal_time` y negativo si se come antes.
 
 - **No se recalcula nunca** cuando cambia el `meal_time` del evento. El offset es un dato propio de la porción, no una función del `meal_time`: el análisis obtiene la hora real sumándolo al `meal_time` vigente en ese momento (`meal_time + offset_minutes`), de modo que si la hora del evento cambia, el resultado se mueve con ella. Hasta el 2026-10-25 este párrafo decía "restándolo", con el signo contrario al del código (`routes/food_routes.py`, `_event_auto_offset_minutes`).
 - Admite valores negativos y positivos. Rango: `-300 <= offset_minutes <= 300`, con `CHECK`. Es una cota de cordura para que un valor corrupto no pase por plausible, no una frontera de negocio.
@@ -785,7 +785,20 @@ El offset numérico no sustituye a la zona IANA. Puede conservarse adicionalment
 | `shot_time` | hora de administración de insulina |
 | `expires_at` | momento en que deja de ser válida una sesión |
 
-No utilizar `created_at` como sustituto de `meal_time`, ni `meal_time` como sustituto de la hora real de consumo. Si se necesita el momento real, se añadirá un campo independiente.
+No utilizar `created_at` como sustituto de `meal_time`, ni `meal_time` como sustituto de la hora real de consumo. La hora real de consumo de cada porción es `meal_time + offset_minutes` (§4.5).
+
+**Qué instante es `meal_time` en un `intake_event`** (2026-10-25). Es el instante de referencia del evento, y depende de si la comida lleva insulina rápida:
+
+- **Con bolo** (`insulin_dose = TRUE`): la hora del **primer bolo** de esa comida.
+- **Sin bolo** (`insulin_dose = FALSE`): la hora del **primer bocado**.
+
+Consecuencias:
+
+- El primer bocado es `meal_time` más el menor `offset_minutes` de las porciones del evento.
+- En un evento con bolo, ese menor offset es el tiempo entre el bolo y el primer bocado. No se guarda en otra columna: se deriva de las porciones.
+- Si se come algo antes de pincharse, esa porción tiene offset negativo.
+- La inyección que se crea al confirmar un evento con bolo toma `shot_time = meal_time` (§8.2). Es coherente con esta regla: las dos horas son la del primer bolo.
+- Un bolo posterior de la misma comida (por ejemplo, uno tardío por grasas) es otra fila de `insulin_injections` asociada al evento, con su propio `shot_time`. No cambia `meal_time`.
 
 ## 10. Porcentajes, ratios y escalas
 
