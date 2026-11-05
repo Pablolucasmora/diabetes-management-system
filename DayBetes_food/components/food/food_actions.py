@@ -139,18 +139,17 @@ def FoodActionsMenu(entry_type: FoodEntryType, entry_id: int, entry: FoodEntrySu
 def FoodActionsRecipes(entry_type: FoodEntryType, entry_id: int, entry: FoodEntrySummary, recipes: list[dict]):
     """Second view: the user's recipes. Picking one adds the food with the
     usual initial amount and closes the pop-up (static/js/food_actions.js).
-    `recipes` are rows of `get_all_recipes`, still dicts until the `recipe`
-    audit."""
+    `recipes` are RecipeRead."""
     if recipes:
         content = Div(
             *[
                 _option(
-                    str(recipe.get("name") or "Unnamed"),
-                    hx_post=f"/food/recipe/{recipe['id']}/ingredients/add/{entry_type.value}/{entry_id}",
+                    recipe.name,
+                    hx_post=f"/food/recipe/{recipe.id}/ingredients/add/{entry_type.value}/{entry_id}",
                     hx_swap="none",
                     hx_push_url="false",
                     data_skip_page_loading="true",
-                    data_food_actions_recipe=str(recipe.get("name") or "the recipe"),
+                    data_food_actions_recipe=recipe.name,
                 )
                 for recipe in recipes
             ],

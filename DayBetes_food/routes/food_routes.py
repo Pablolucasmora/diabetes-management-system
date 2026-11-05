@@ -29,7 +29,8 @@ from DayBetes_food.database.queries import (
     publish_manual_intake,
     unpublish_manual_intake,
     next_manual_intake_copy_name,
-    get_all_recipes,
+    list_recipes,
+    create_recipe,
     create_portion_detail,
     get_catalog_item,
     get_catalog_item_by_barcode,
@@ -45,7 +46,6 @@ from DayBetes_food.database.queries import (
     update_manual_intake,
     update_recipe,
     delete_recipe,
-    add_recipe,
     create_food_brand,
     get_food_brand_id_by_label,
     get_food_brand_suggestions,
@@ -154,7 +154,7 @@ from DayBetes_food.components.food.rescue import (
     RescueMarkButton,
     RescueOptions,
 )
-from DayBetes_food.components.food.foods import catalog_entry_view, manual_intake_entry_view
+from DayBetes_food.components.food.foods import catalog_entry_view, manual_intake_entry_view, recipe_entry_view
 from DayBetes_food.components.food.foods import (
     CONFIDENCE_LABELS,
     GLYCEMIC_INDEX_LABELS,
@@ -182,6 +182,17 @@ from DayBetes_food.database.connection import get_connection
 from DayBetes_food.domain.constants import RESCUE_TAG_NAME, IntakeEventState, MealType
 from DayBetes_food.domain.intake_event import INTAKE_EVENT_NAME_MAX_LENGTH, IntakeEventCreate, IntakeEventUpdate
 from DayBetes_food.domain.intake_plate import IntakePlateCreate, auto_offset_minutes
+from DayBetes_food.domain.recipe import (
+    RecipeCreate,
+    RecipeRead,
+    RecipeRequest,
+    RecipeUpdate,
+    parse_recipe_meal_type,
+    parse_recipe_name,
+    parse_recipe_notes,
+    parse_recipe_servings,
+)
+from DayBetes_food.services.recipe import copy_recipe
 from DayBetes_food.domain.meal_type_schedule import resolve_meal_type_for_time
 from DayBetes_food.time_utils import local_naive_to_utc_aware, local_now, utc_now
 from DayBetes_food.errors import (
@@ -189,7 +200,6 @@ from DayBetes_food.errors import (
     AuthorizationError,
     ConflictError,
     ExternalServiceError,
-    InfrastructureError,
     NotFoundError,
     ValidationError,
 )
@@ -294,8 +304,16 @@ def _to_int(value: str):
         return None
 
 
-def _to_bool(value: str):
-    return (value or "").strip().lower() in ("1", "true", "on", "yes")
+_TYPED_AMOUNT_RANGE = NumericRange(0, 1_000_000)
+
+
+def _parse_typed_amount(raw) -> float | None:
+    """A typed amount through the common number parser (§7.5), or None if it is not
+    one, so "1e3" or "1_0" are not amounts. Its unit and limits are checked after."""
+    try:
+        return parse_number(raw, "amount", _TYPED_AMOUNT_RANGE)
+    except ValidationError:
+        return None
 
 
 def _parse_hhmm(value: str):
@@ -480,6 +498,18 @@ def _parse_optional_bool(raw: str | None) -> bool | None:
     """Tri-state select of the dish defaults (frontend §6): '' -> None
     ("unknown"); otherwise _parse_strict_bool (unknown value -> ValidationError, §7.6)."""
     return None if (raw or "").strip() == "" else _parse_strict_bool(raw)
+
+
+def _parse_recipe_request(*, name, meal_type, notes, servings, favorite=None, tags_json=None) -> RecipeRequest:
+    """The only parser of the recipe create and edit forms (§7.1, §7.11)."""
+    return RecipeRequest(
+        name=parse_recipe_name(name),
+        meal_type=parse_recipe_meal_type(meal_type),
+        notes=parse_recipe_notes(notes),
+        servings=parse_recipe_servings(servings),
+        favorite=None if favorite is None else _parse_strict_bool(favorite),
+        tags=None if tags_json is None else _parse_tags_json(tags_json),
+    )
 
 
 def _parse_manual_intake_request(
@@ -760,32 +790,6 @@ def _is_allowed_choice(value: str, options: list[str] | None) -> bool:
     return _normalize_text(text) in allowed
 
 
-def _coerce_choice(
-    value: str,
-    *,
-    options: list[str] | None,
-    allow_add: bool,
-    added: bool,
-    required: bool,
-    label: str,
-) -> tuple[str | None, str | None]:
-    text = (value or "").strip()
-    if not text:
-        if required:
-            return None, f"{label} is required."
-        return None, None
-
-    if _is_allowed_choice(text, options):
-        resolved = _closest_option(text, options or [])
-        return (resolved or text), None
-
-    if allow_add and added:
-        return text, None
-
-    action_hint = "Use Add to create a new value." if allow_add else "Choose one of the available options."
-    return None, f"Invalid {label.lower()}. {action_hint}"
-
-
 def _parse_tags_json(raw: str) -> list[str]:
     """Parse the tags field. Empty clears the tags; malformed JSON is a 422 (§7.2)."""
     text = (raw or "").strip()
@@ -937,11 +941,7 @@ def _sorted_food_entries(catalog_items, manual_items, recipes, viewer_user_id: i
     def _is_owned(entry_type: str, item: dict) -> bool:
         if not viewer_user_id:
             return False
-        raw_owner = item.get("created_by") if entry_type in ("catalog", "manual_intake") else item.get("users_id")
-        try:
-            return int(raw_owner) == int(viewer_user_id)
-        except (TypeError, ValueError):
-            return False
+        return item.get("created_by") == int(viewer_user_id)
 
     entries = []
     for item in catalog_items:
@@ -965,11 +965,7 @@ def _sorted_food_entries(catalog_items, manual_items, recipes, viewer_user_id: i
 def _is_owned_by_viewer(entry_type: str, item: dict, viewer_user_id: int | None) -> bool:
     if not viewer_user_id:
         return False
-    raw_owner = item.get("created_by") if entry_type in ("catalog", "manual_intake") else item.get("users_id")
-    try:
-        return int(raw_owner) == int(viewer_user_id)
-    except (TypeError, ValueError):
-        return False
+    return item.get("created_by") == int(viewer_user_id)
 
 
 def _community_entries(connection, search: str = "") -> list[dict]:
@@ -1025,14 +1021,9 @@ def _recommended_entries(connection, search: str = "", days: int = 60) -> list[d
         if viewer_user_id
         else []
     )
-    recipes = get_all_recipes(
-        connection,
-        search=search_value,
-        viewer_user_id=(viewer_user_id if viewer_user_id else -1),
-    )
-
     if not viewer_user_id:
         return []
+    recipes = _recipe_views(connection, viewer_user_id, search=search_value)
 
     rankings = get_consumed_food_usage_rankings(connection, users_id=viewer_user_id, days=days)
     usage_by_entry = {}
@@ -1110,23 +1101,21 @@ def _recommended_entries(connection, search: str = "", days: int = 60) -> list[d
     return entries
 
 
+def _recipe_views(connection, user_id, **filters) -> list[dict]:
+    """Recipes the viewer may see, for the shared food components. Without a
+    session there are none: the middleware already requires one."""
+    if not user_id:
+        return []
+    return [recipe_entry_view(item) for item in list_recipes(connection, int(user_id), **filters)]
+
+
 def _recipes_entries(connection, search: str = "", recipes_mode: str = "mine") -> list[dict]:
     user_id = get_current_user_id()
-    viewer_id = user_id if user_id else -1
     clean_search = (search or "").strip() or None
-    mode = (recipes_mode or "mine").strip().lower()
-
-    if mode == "discover":
-        recipes = get_all_recipes(connection, search=clean_search, viewer_user_id=viewer_id)
-        if user_id:
-            recipes = [item for item in recipes if not _is_owned_by_viewer("recipe", item, user_id)]
+    if (recipes_mode or "mine").strip().lower() == "discover":
+        recipes = _recipe_views(connection, user_id, search=clean_search, others_only=True)
     else:
-        mode = "mine"
-        if not user_id:
-            recipes = []
-        else:
-            recipes = get_all_recipes(connection, users_id=user_id, search=clean_search, viewer_user_id=viewer_id)
-
+        recipes = _recipe_views(connection, user_id, search=clean_search, owned_only=True)
     return _sorted_food_entries([], [], recipes, viewer_user_id=user_id)
 
 
@@ -1150,83 +1139,23 @@ def _community_sections_content(entries: list[dict]):
     return nodes
 
 
-def _entry_owner_id(entry_type: str, entry: dict) -> int | None:
-    """Owner of a `recipe` row, the only entry type still read as a dict.
-
-    `catalog` and `manual_intake` resolve visibility and ownership in SQL
-    (`_food_visibility_sql`, `_OWNER_WRITABLE`), so any other type has no
-    owner here and every permission built on it is denied.
-    """
-    if not entry or entry_type != "recipe":
+def _editable_recipe(connection, user_id, recipe_id: int) -> RecipeRead | None:
+    """The recipe if this user can edit it. None covers "no session", "does not
+    exist" and "not yours": ingredient routes answer them all with 404 (§5.4)."""
+    if not user_id:
         return None
-    raw = entry.get("users_id")
-    try:
-        return int(raw) if raw is not None else None
-    except (TypeError, ValueError):
-        return None
-
-
-def _can_view_entry(entry_type: str, entry: dict, viewer_user_id: int | None) -> bool:
-    """Viewability of a `recipe` row; any other type is denied (see `_entry_owner_id`)."""
-    if entry_type != "recipe":
-        return False
-    if not entry:
-        return False
-    if bool(entry.get("is_published")):
-        return True
-    owner_id = _entry_owner_id(entry_type, entry)
-    return bool(viewer_user_id and owner_id == viewer_user_id)
-
-
-def _can_toggle_published(entry_type: str, entry: dict, viewer_user_id: int | None) -> bool:
-    owner_id = _entry_owner_id(entry_type, entry)
-    return bool(viewer_user_id and owner_id and owner_id == viewer_user_id)
-
-
-def _can_edit_entry(entry_type: str, entry: dict, viewer_user_id: int | None) -> bool:
-    owner_id = _entry_owner_id(entry_type, entry)
-    return bool(viewer_user_id and owner_id and owner_id == viewer_user_id)
-
-
-def _copy_root_id(entry: dict) -> int | None:
-    raw = entry.get("origin_root_id")
-    try:
-        return int(raw) if raw is not None else None
-    except (TypeError, ValueError):
-        return None
-
-
-def _next_copy_name(connection, entry_type: str, base_name: str, owner_user_id: int) -> str:
-    """Copy-name helper for `recipe` only.
-
-    `catalog` and `manual_intake` use next_catalog_copy_name and
-    next_manual_intake_copy_name (queries layer). Rewriting this one into the
-    queries layer belongs to the `recipe` audit.
-    """
-    base = (base_name or "").strip() or "Untitled"
-    for index in range(1, 5000):
-        suffix = " (copy)" if index == 1 else f" (copy {index})"
-        candidate = f"{base}{suffix}"
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT 1 FROM recipe WHERE users_id = %(user_id)s AND lower(name) = lower(%(name)s) LIMIT 1;",
-                {"user_id": owner_user_id, "name": candidate},
-            )
-            if cursor.fetchone() is None:
-                return candidate
-    return f"{base} (copy {datetime.now().strftime('%Y%m%d%H%M%S')})"
+    recipe = get_recipe(connection, int(user_id), recipe_id)
+    return recipe if recipe is not None and recipe.can_edit else None
 
 
 def _filtered_entries(
     connection,
     search: str = "",
     filter_value: str = "all",
-    include_recipes: bool = True,
     entry_type: str | None = None,
 ):
     user_id = get_current_user_id()
     has_search = bool((search or "").strip())
-    viewer_id = user_id if user_id else -1
 
     def _unique_by_id(items: list[dict]) -> list[dict]:
         seen = set()
@@ -1291,15 +1220,6 @@ def _filtered_entries(
                     _manual(favorites_only=True, include_retained=True) + _manual(owned_only=True)
                 )
         entries = _sorted_food_entries(catalog_items, manual_items, [], viewer_user_id=user_id)
-    elif filter_value == "recipes":
-        if has_search:
-            recipes = get_all_recipes(connection, search=search or None, viewer_user_id=viewer_id) if include_recipes else []
-        else:
-            recipes = _unique_by_id(
-                (get_all_recipes(connection, favorite=True, viewer_user_id=viewer_id) if include_recipes else [])
-                + (get_all_recipes(connection, users_id=user_id, viewer_user_id=viewer_id) if include_recipes and user_id else [])
-            )
-        entries = _sorted_food_entries([], [], recipes, viewer_user_id=user_id)
     elif filter_value == "favs":
         selected_types = {"catalog", "manual_intake", "recipe"} if entry_type is None else {entry_type}
         catalog_items = (
@@ -1313,8 +1233,8 @@ def _filtered_entries(
             else []
         )
         recipes = (
-            get_all_recipes(connection, search=search or None, favorite=True, viewer_user_id=viewer_id)
-            if include_recipes and "recipe" in selected_types
+            _recipe_views(connection, user_id, search=search or None, favorites_only=True)
+            if "recipe" in selected_types
             else []
         )
         entries = _sorted_food_entries(catalog_items, manual_items, recipes, viewer_user_id=user_id)
@@ -1322,7 +1242,7 @@ def _filtered_entries(
         if has_search:
             catalog_items = _catalog(search or None)
             manual_items = _manual(search or None)
-            recipes = get_all_recipes(connection, search=search or None, viewer_user_id=viewer_id) if include_recipes else []
+            recipes = _recipe_views(connection, user_id, search=search or None)
         else:
             catalog_items = _unique_by_id(
                 _catalog(favorites_only=True, include_retained=True) + _catalog(owned_only=True)
@@ -1331,8 +1251,7 @@ def _filtered_entries(
                 _manual(favorites_only=True, include_retained=True) + _manual(owned_only=True)
             )
             recipes = _unique_by_id(
-                (get_all_recipes(connection, favorite=True, viewer_user_id=viewer_id) if include_recipes else [])
-                + (get_all_recipes(connection, users_id=user_id, viewer_user_id=viewer_id) if include_recipes and user_id else [])
+                _recipe_views(connection, user_id, favorites_only=True) + _recipe_views(connection, user_id, owned_only=True)
             )
         entries = _sorted_food_entries(catalog_items, manual_items, recipes, viewer_user_id=user_id)
 
@@ -1368,14 +1287,10 @@ def _food_entry_summary(connection, user_id: int, entry_type: FoodEntryType, ent
         return FoodEntrySummary(
             name=manual_item.name, subtitle=(manual_item.origin or "").strip(), can_edit=manual_item.can_edit
         )
-    recipe = get_recipe(connection, entry_id, viewer_user_id=user_id)
-    if not recipe or not _can_view_entry(entry_type.value, recipe, user_id):
+    recipe = get_recipe(connection, user_id, entry_id)
+    if recipe is None:
         return None
-    return FoodEntrySummary(
-        name=str(recipe.get("name") or ""),
-        subtitle="Recipe",
-        can_edit=_can_edit_entry(entry_type.value, recipe, user_id),
-    )
+    return FoodEntrySummary(name=recipe.name, subtitle="Recipe", can_edit=recipe.can_edit)
 
 
 def _error_msg(text: str, status_code: int = 200):
@@ -1801,7 +1716,7 @@ def setup_food_routes(rt):
             if entry is None:
                 return app_error_response(request, NotFoundError, "Food not found.")
             # Only the user's own recipes: the only ones they can edit.
-            recipes = get_all_recipes(connection, users_id=int(user_id), viewer_user_id=int(user_id))
+            recipes = list_recipes(connection, int(user_id), owned_only=True)
         return render_fragment(FoodActionsRecipes(kind, entry_id, entry, recipes))
 
     @rt("/food/actions/{entry_type}/{entry_id}/copy")
@@ -1895,13 +1810,14 @@ def setup_food_routes(rt):
                     ),
                     show_cart=False,
                 )
-            entry = get_recipe(connection, entry_id, viewer_user_id=user_id)
-            recipe_portions = list_viewable_recipe_portions(connection, int(user_id), entry_id) if entry else []
-            if not entry or not _can_view_entry(entry_type, entry, user_id):
+            recipe = get_recipe(connection, int(user_id), entry_id)
+            if recipe is None:
                 raise NotFoundError("Recipe not found.")
+            entry = recipe_entry_view(recipe)
+            recipe_portions = list_viewable_recipe_portions(connection, int(user_id), entry_id)
             summary = _build_detail_summary(entry_type, entry, recipe_portions=recipe_portions)
             tags = get_entry_tags(connection, entry_type, entry_id)
-            can_edit = _can_edit_entry(entry_type, entry, user_id)
+            can_edit = recipe.can_edit
             can_delete = can_edit
             events = list_planned_intake_events(connection, int(user_id)) if user_id else []
             # The event's plates the selector will show as selected (§7.7):
@@ -1933,11 +1849,13 @@ def setup_food_routes(rt):
     def get(request: Request, recipe_id: int):
         with get_connection() as connection:
             user_id = get_current_user_id()
-            recipe = get_recipe(connection, recipe_id)
-            if not recipe or not _can_edit_entry("recipe", recipe, user_id):
-                return HTMLResponse(status_code=404)
-            entries = _filtered_entries(connection, search="", filter_value="food", include_recipes=False)
-        return render_page(request, lambda _: RecipeIngredientPickerPage(recipe_entry=recipe, foods=entries), show_cart=False)
+            recipe = _editable_recipe(connection, user_id, recipe_id)
+            if recipe is None:
+                raise NotFoundError("Recipe not found.")
+            entries = _filtered_entries(connection, search="", filter_value="food")
+        return render_page(
+            request, lambda _: RecipeIngredientPickerPage(recipe_entry=recipe_entry_view(recipe), foods=entries), show_cart=False
+        )
 
     @rt("/food/recipe/{recipe_id}/ingredients/list")
     def get(request: Request, recipe_id: int, search: str = ""):
@@ -1945,10 +1863,9 @@ def setup_food_routes(rt):
             return HTMLResponse(status_code=403)
         with get_connection() as connection:
             user_id = get_current_user_id()
-            recipe = get_recipe(connection, recipe_id)
-            if not recipe or not _can_edit_entry("recipe", recipe, user_id):
-                return HTMLResponse(status_code=404)
-            entries = _filtered_entries(connection, search=search, filter_value="food", include_recipes=False)
+            if _editable_recipe(connection, user_id, recipe_id) is None:
+                return app_error_response(request, NotFoundError, "Recipe not found.")
+            entries = _filtered_entries(connection, search=search, filter_value="food")
         return render_fragment(RecipeIngredientPickerList(recipe_id=recipe_id, foods=entries))
 
     @rt("/food/recipe/{recipe_id}/ingredients/add/{entry_type}/{entry_id}")
@@ -1963,8 +1880,7 @@ def setup_food_routes(rt):
 
         with get_connection() as connection:
             user_id = get_current_user_id()
-            recipe = get_recipe(connection, recipe_id)
-            if not recipe or not _can_edit_entry("recipe", recipe, user_id):
+            if _editable_recipe(connection, user_id, recipe_id) is None:
                 return app_error_response(request, NotFoundError, "Recipe not found.")
 
             if origin is PortionOrigin.CATALOG:
@@ -2042,12 +1958,11 @@ def setup_food_routes(rt):
             unit = AmountInputUnit((amount_unit or "").strip())
         except ValueError:
             return app_error_response(request, ValidationError, "Unknown amount unit.")
-        typed_amount = _to_float(amount_value)
+        typed_amount = _parse_typed_amount(amount_value)
 
         with get_connection() as connection:
             user_id = get_current_user_id()
-            recipe = get_recipe(connection, recipe_id)
-            if not recipe or not _can_edit_entry("recipe", recipe, user_id):
+            if _editable_recipe(connection, user_id, recipe_id) is None:
                 return app_error_response(request, NotFoundError, "Recipe not found.")
             try:
                 portion = get_portion_detail(connection, int(user_id), portion_id)
@@ -2088,11 +2003,11 @@ def setup_food_routes(rt):
             return HTMLResponse(status_code=403)
         with get_connection() as connection:
             user_id = get_current_user_id()
-            recipe = get_recipe(connection, recipe_id)
-            if not recipe or not _can_view_entry("recipe", recipe, user_id):
-                return HTMLResponse(status_code=404)
+            recipe = get_recipe(connection, int(user_id), recipe_id) if user_id else None
+            if recipe is None:
+                return app_error_response(request, NotFoundError, "Recipe not found.")
             portions = list_viewable_recipe_portions(connection, int(user_id), recipe_id)
-            summary = _build_detail_summary("recipe", recipe, recipe_portions=portions)
+            summary = _build_detail_summary("recipe", recipe_entry_view(recipe), recipe_portions=portions)
             per100 = summary.get("per100") or {}
             total_amount = max(1.0, _to_float(str(summary.get("default_amount_g") or 0.0)) or 1.0)
         return render_fragment(RecipeMacrosGrid(recipe_id=recipe_id, per100=per100, total_amount=total_amount))
@@ -2113,12 +2028,12 @@ def setup_food_routes(rt):
             parsed_final_state = parse_enum(FoodPhysicalState, final_state, field="final_state")
             parsed_conservation = parse_enum(ConservationMethod, conservation, field="conservation")
         except ValidationError as error:
-            return render_fragment(P(str(error), cls="text-red-700"))
+            # A control that saves itself has no form to show it in (error_conventions.md §7.1).
+            return app_error_response(request, ValidationError, str(error))
 
         with get_connection() as connection:
             user_id = get_current_user_id()
-            recipe = get_recipe(connection, recipe_id)
-            if not recipe or not _can_edit_entry("recipe", recipe, user_id):
+            if _editable_recipe(connection, user_id, recipe_id) is None:
                 return app_error_response(request, NotFoundError, "Recipe not found.")
             try:
                 portion = get_portion_detail(connection, int(user_id), portion_id)
@@ -2146,8 +2061,7 @@ def setup_food_routes(rt):
 
         with get_connection() as connection:
             user_id = get_current_user_id()
-            recipe = get_recipe(connection, recipe_id)
-            if not recipe or not _can_edit_entry("recipe", recipe, user_id):
+            if _editable_recipe(connection, user_id, recipe_id) is None:
                 return app_error_response(request, NotFoundError, "Recipe not found.")
             try:
                 portion = get_portion_detail(connection, int(user_id), portion_id)
@@ -2272,54 +2186,13 @@ def setup_food_routes(rt):
             return _copy_manual_intake(request, int(user_id), entry_id)
 
         with get_connection() as connection:
-            source = get_recipe(connection, entry_id)
-
-            if not source or not _can_view_entry(entry_type, source, user_id):
-                return app_error_response(request, NotFoundError, "Item not found.")
-
-            root_id = _copy_root_id(source) or int(source["id"])
-            copy_name = _next_copy_name(connection, entry_type, str(source.get("name") or ""), int(user_id))
-
             try:
-                with connection.transaction():
-                    created_id = add_recipe(
-                        connection,
-                        users_id=int(user_id),
-                        origin_root_id=root_id,
-                        name=copy_name,
-                        meal_type=source.get("meal_type"),
-                        notes=source.get("notes"),
-                        commit=False,
-                    )
-                    if not created_id:
-                        raise ValueError("Could not create editable copy.")
-                    source_portions = list_viewable_recipe_portions(connection, int(user_id), int(source["id"]))
-                    for portion in source_portions:
-                        amount_g = float(portion.amount or 0.0)
-                        if portion.origin_id <= 0 or amount_g <= 0:
-                            continue
-                        create_portion_detail(
-                            connection,
-                            int(user_id),
-                            PortionDetailCreate(
-                                origin=portion.origin,
-                                origin_id=portion.origin_id,
-                                destination=PortionDestination.RECIPE,
-                                destination_id=int(created_id),
-                                amount=amount_g,
-                                cooking=portion.cooking,
-                                conservation=portion.conservation,
-                                final_state=portion.final_state,
-                                strictly_weighed=portion.strictly_weighed,
-                                is_cooked_weight=bool(portion.is_cooked_weight),
-                            ),
-                            commit=False,
-                        )
-            except ValueError as error:
-                return app_error_response(request, InfrastructureError, str(error))
+                created_id = copy_recipe(connection, int(user_id), entry_id)
+            except NotFoundError:
+                return app_error_response(request, NotFoundError, "Item not found.")
             except ConflictError as error:
-                # uq_recipe_personal_name: only if another request took the
-                # copy name between _next_copy_name and the insert.
+                # uq_recipe_personal_name: only if another request took the copy's
+                # name between next_recipe_copy_name and the insert.
                 return app_error_response(request, error, str(error))
         return HTMLResponse("", headers={"HX-Redirect": f"/food/edit/recipe/{created_id}/form"})
 
@@ -2378,18 +2251,18 @@ def setup_food_routes(rt):
                     ),
                     show_cart=False,
                 )
-            entry = get_recipe(connection, entry_id, viewer_user_id=user_id)
-            if not entry or not _can_view_entry("recipe", entry, user_id):
+            recipe = get_recipe(connection, int(user_id), entry_id) if user_id else None
+            if recipe is None:
                 raise NotFoundError("Recipe not found.")
-            if not _can_edit_entry("recipe", entry, user_id):
+            if not recipe.can_edit:
                 raise AuthorizationError("Only the owner can edit this recipe. Create a copy to edit it.")
+            entry = recipe_entry_view(recipe)
             tags = get_tag_suggestions(connection, search="", limit=500)
             selected_tags = [str(row.get("name") or "") for row in get_entry_tags(connection, "recipe", entry_id)]
             return render_page(
                 request,
                 lambda _: EditRecipePage(
                     entry=entry,
-                    show_published=_can_toggle_published("recipe", entry, user_id),
                     tag_options=tags,
                     selected_tags=selected_tags,
                 ),
@@ -2515,15 +2388,15 @@ def setup_food_routes(rt):
             return app_error_response(request, AuthenticationError, "Your session has expired.")
 
         with get_connection() as connection:
-            current = get_recipe(connection, recipe_id)
-            if not current or not _can_view_entry("recipe", current, user_id):
+            current = get_recipe(connection, int(user_id), recipe_id)
+            if current is None:
                 return app_error_response(request, NotFoundError, "Recipe not found.")
-            if not _can_edit_entry("recipe", current, user_id):
+            if not current.can_edit:
                 return app_error_response(request, AuthorizationError, "Only the owner can delete this item.")
-            if not delete_recipe(connection, recipe_id):
-                return app_error_response(
-                    request, NotFoundError, "Could not delete this item. It may not exist or you may not own it."
-                )
+            try:
+                delete_recipe(connection, int(user_id), recipe_id)
+            except NotFoundError:
+                return app_error_response(request, NotFoundError, "Recipe not found.")
             return HTMLResponse("", headers={"HX-Redirect": "/food"})
 
     @rt("/food/log/{entry_type}/{entry_id}")
@@ -2579,8 +2452,8 @@ def setup_food_routes(rt):
             return render_fragment(P("Choose a valid unit.", cls="text-red-700"))
         if unit is AmountInputUnit.PERCENT or plated_unit not in (AmountInputUnit.PERCENT, AmountInputUnit.GRAMS):
             return render_fragment(P("Choose a valid unit.", cls="text-red-700"))
-        typed_amount = _to_float(amount_value)
-        typed_plate = _to_float(plate_value)
+        typed_amount = _parse_typed_amount(amount_value)
+        typed_plate = _parse_typed_amount(plate_value)
         if typed_amount is None or typed_plate is None:
             return render_fragment(P("Amount must be a number.", cls="text-red-700"))
         try:
@@ -2623,11 +2496,11 @@ def setup_food_routes(rt):
                     return _error_msg("This dish has no serving. Use grams, lb or oz.")
                 portion_defaults = _portion_defaults(origin_item)
             else:
-                origin_item = get_recipe(connection, entry_id)
-                if not origin_item or not _can_view_entry("recipe", origin_item, user_id):
+                origin_item = get_recipe(connection, int(user_id), entry_id)
+                if origin_item is None:
                     return app_error_response(request, NotFoundError, "Item not found.")
                 recipe_rows = list_viewable_recipe_portions(connection, int(user_id), entry_id)
-                summary = _build_detail_summary(entry_type, origin_item, recipe_portions=recipe_rows)
+                summary = _build_detail_summary(entry_type, recipe_entry_view(origin_item), recipe_portions=recipe_rows)
                 serving_grams = max(1.0, float(summary.get("default_amount_g") or 100.0))
             try:
                 total_grams = parse_amount_grams(amount_to_grams(typed_amount, unit, serving_grams))
@@ -2705,7 +2578,7 @@ def setup_food_routes(rt):
                             connection,
                             IntakePlateCreate(
                                 intake_event_id=event_id,
-                                name=(origin_item.get("name") or None),
+                                name=origin_item.name,
                                 offset_minutes=offset_minutes,
                             ),
                             commit=False,
@@ -3041,8 +2914,8 @@ def setup_food_routes(rt):
                 # depth; the middleware already covers these routes (finding 26).
                 return HTMLResponse(status_code=401)
 
-            recipe = get_recipe(connection, recipe_id)
-            if not recipe or not _can_view_entry("recipe", recipe, user_id):
+            recipe = get_recipe(connection, int(user_id), recipe_id)
+            if recipe is None:
                 return HTMLResponse("", headers={"HX-Trigger": "addError"}, status_code=404)
 
             try:
@@ -3050,10 +2923,7 @@ def setup_food_routes(rt):
                     if intake_event_id and intake_event_id.isdigit() and int(intake_event_id) != 0:
                         event_id = get_planned_intake_event(connection, int(user_id), int(intake_event_id))
                     else:
-                        try:
-                            recipe_meal_type = MealType(recipe["meal_type"]) if recipe.get("meal_type") else None
-                        except ValueError:
-                            recipe_meal_type = None
+                        recipe_meal_type = recipe.meal_type
                         # The recipe wins if it carries its own meal_type;
                         # otherwise it falls back to the same time-slot default
                         # as the rest of automatic creations (§7.14, decision 2026-09-11).
@@ -3065,7 +2935,7 @@ def setup_food_routes(rt):
                                 user_id=int(user_id),
                                 state=IntakeEventState.PLANNED,
                                 meal_type=recipe_meal_type,
-                                name=recipe.get("name"),
+                                name=recipe.name,
                             ),
                             commit=False,
                         )
@@ -3077,7 +2947,7 @@ def setup_food_routes(rt):
                         connection,
                         IntakePlateCreate(
                             intake_event_id=event_id,
-                            name=(recipe.get("name") or None),
+                            name=recipe.name,
                             offset_minutes=offset_minutes,
                         ),
                         commit=False,
@@ -3167,8 +3037,8 @@ def setup_food_routes(rt):
                 return render_fragment(FavoriteButton(entry_type, entry_id, new_favorite))
 
             new_favorite = None
-            current = get_recipe(connection, entry_id, viewer_user_id=user_id)
-            if current and _can_view_entry("recipe", current, user_id):
+            current = get_recipe(connection, int(user_id), entry_id) if user_id else None
+            if current is not None:
                 new_favorite = toggle_user_favorite(connection, user_id, entry_type, entry_id)
             if new_favorite is None:
                 return app_error_response(request, NotFoundError, "Recipe not found.")
@@ -3348,74 +3218,52 @@ def setup_food_routes(rt):
                 return app_error_response(request, error, str(error))
         return HTMLResponse("", headers={"HX-Redirect": f"/food/item/manual_intake/{manual_intake_id}"})
 
-    @rt("/food/edit/recipe/{entry_id}")
+    @rt("/food/edit/recipe/{recipe_id}")
     def post(
         request: Request,
-        entry_id: int,
+        recipe_id: int,
         name: str = "",
         meal_type: str = "",
         notes: str = "",
-        favorite: str = "",
-        is_published: str = "",
-        tags_json: str = "",
+        servings: str = "",
+        tags_json: str | None = None,
     ):
+        """Full replacement (§3.4): an empty optional field is stored as NULL. There
+        is no way to publish from here until phase 2 (§11.4.1)."""
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
-        clean_name = (name or "").strip()
-        if not clean_name:
-            return _error_msg("Recipe name is required.")
-        with get_connection() as connection:
-            user_id = get_current_user_id()
-            current = get_recipe(connection, entry_id)
-            if not current or not _can_view_entry("recipe", current, user_id):
-                return _error_msg("Recipe not found.")
-            if not _can_edit_entry("recipe", current, user_id):
-                return _error_msg("Only the owner can edit this item. Create a copy to edit it.")
-            clean_meal_type, meal_type_error = _coerce_choice(
-                meal_type,
-                options=[meal_type.value for meal_type in MealType],
-                allow_add=False,
-                added=False,
-                required=False,
-                label="Meal type",
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        try:
+            req = _parse_recipe_request(
+                name=name, meal_type=meal_type, notes=notes, servings=servings, tags_json=tags_json
             )
-            if meal_type_error:
-                return _error_msg(meal_type_error)
-            can_toggle_published = _can_toggle_published("recipe", current, user_id)
+        except ValidationError as error:
+            # Form validation: 200 + fragment inside the form (§9.5).
+            return _error_msg(str(error))
+        with get_connection() as connection:
+            current = get_recipe(connection, int(user_id), recipe_id)
+            if current is None:
+                return app_error_response(request, NotFoundError, "Recipe not found.")
+            if not current.can_edit:
+                return app_error_response(request, AuthorizationError, "Only the owner can edit this recipe.")
             try:
                 with connection.transaction():
-                    if not update_recipe(
-                        connection,
-                        entry_id,
-                        name=clean_name,
-                        meal_type=clean_meal_type,
-                        notes=notes.strip() or None,
-                        is_published=_parse_strict_bool(is_published) if can_toggle_published else None,
-                        commit=False,
-                    ):
-                        raise ValueError("Recipe could not be updated.")
-                    if (favorite or "").strip() != "" and not set_user_favorite(
+                    update_recipe(
                         connection,
                         int(user_id),
-                        "recipe",
-                        entry_id,
-                        _to_bool(favorite),
+                        recipe_id,
+                        RecipeUpdate(name=req.name, meal_type=req.meal_type, notes=req.notes, servings=req.servings),
                         commit=False,
-                    ):
-                        raise ValueError("Could not save the favorite status.")
-                    if (tags_json or "").strip() and not set_entry_tags(
-                        connection,
-                        "recipe",
-                        entry_id,
-                        _parse_tags_json(tags_json),
-                        commit=False,
-                    ):
-                        raise ValueError("Could not save the tags.")
-            except (ValueError, ValidationError) as error:
-                return _error_msg(str(error))
+                    )
+                    if req.tags is not None:
+                        set_entry_tags(connection, "recipe", recipe_id, req.tags, commit=False)
+            except NotFoundError:
+                return app_error_response(request, NotFoundError, "Recipe not found.")
             except ConflictError as error:
                 return app_error_response(request, error, str(error))
-            return HTMLResponse("", headers={"HX-Redirect": f"/food/item/recipe/{entry_id}"})
+        return HTMLResponse("", headers={"HX-Redirect": f"/food/item/recipe/{recipe_id}"})
 
     @rt("/food/create/catalog")
     def post(
@@ -3657,64 +3505,43 @@ def setup_food_routes(rt):
         name: str = "",
         meal_type: str = "",
         notes: str = "",
+        servings: str = "",
         favorite: str = "",
-        tags_json: str = "",
+        tags_json: str | None = None,
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
-        clean_name = (name or "").strip()
-        if not clean_name:
-            return _error_msg("Recipe name is required.")
-
-        with get_connection() as connection:
-            user_id = get_current_user_id()
-            if not user_id:
-                return _error_msg("No users found.")
-            clean_meal_type, meal_type_error = _coerce_choice(
-                meal_type,
-                options=[meal_type.value for meal_type in MealType],
-                allow_add=False,
-                added=False,
-                required=False,
-                label="Meal type",
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        try:
+            req = _parse_recipe_request(
+                name=name, meal_type=meal_type, notes=notes, servings=servings, favorite=favorite, tags_json=tags_json
             )
-            if meal_type_error:
-                return _error_msg(meal_type_error)
+        except ValidationError as error:
+            return _error_msg(str(error))
+        with get_connection() as connection:
             try:
                 with connection.transaction():
-                    created_id = add_recipe(
+                    created_id = create_recipe(
                         connection,
-                        users_id=user_id,
-                        name=clean_name,
-                        meal_type=clean_meal_type,
-                        notes=notes.strip() or None,
+                        RecipeCreate(
+                            user_id=int(user_id),
+                            origin_root_id=None,
+                            name=req.name,
+                            meal_type=req.meal_type,
+                            notes=req.notes,
+                            servings=req.servings,
+                        ),
                         commit=False,
                     )
-                    if not created_id:
-                        raise ValueError("Recipe could not be created.")
-                    if not set_user_favorite(
-                        connection,
-                        int(user_id),
-                        "recipe",
-                        int(created_id),
-                        _to_bool(favorite),
-                        commit=False,
-                    ):
-                        raise ValueError("Recipe favorite could not be saved.")
-                    if (tags_json or "").strip() and not set_entry_tags(
-                        connection,
-                        "recipe",
-                        int(created_id),
-                        _parse_tags_json(tags_json),
-                        commit=False,
-                    ):
-                        raise ValueError("Recipe tags could not be saved.")
-            except (ValueError, ValidationError) as error:
-                return _error_msg(str(error))
+                    set_user_favorite(connection, int(user_id), "recipe", created_id, bool(req.favorite), commit=False)
+                    if req.tags:
+                        set_entry_tags(connection, "recipe", created_id, req.tags, commit=False)
             except ConflictError as error:
                 return app_error_response(request, error, str(error))
-            return HTMLResponse("", headers={"HX-Redirect": f"/food/item/recipe/{created_id}"})
-    
+        return HTMLResponse("", headers={"HX-Redirect": f"/food/item/recipe/{created_id}"})
+
     @rt("/meal_selector_input")
     def get(request: Request, intake_event_id: str):
         if intake_event_id != "0":

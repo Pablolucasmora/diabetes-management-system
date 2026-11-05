@@ -35,6 +35,7 @@ from DayBetes_food.domain.food import (
 )
 from DayBetes_food.domain.meal_type_schedule import AUTO_ASSIGNABLE_MEAL_TYPES
 from DayBetes_food.domain.nutrition import NUTRIENT_LIMITS, NumericRange
+from DayBetes_food.domain.recipe import RECIPE_MEAL_TYPES, RECIPE_SERVINGS_RANGE
 
 _PORTION_PREPARATION_LISTS = {
     "cooking": sql_in_list(CookingMethod),
@@ -120,6 +121,16 @@ def manual_intake_check_constraints() -> dict[str, str]:
     for field, limits in NUTRIENT_LIMITS.items():
         checks[f"ck_manual_intake_{field}_range"] = _range_check(field, limits)
     return checks
+
+
+def recipe_check_constraints() -> dict[str, str]:
+    """CHECK name -> expression of `recipe`, generated from the enums and the limits
+    (§4.4, §12.1). The same list feeds the CREATE TABLE and db_init._ensure_recipe_schema."""
+    return {
+        "ck_recipe_meal_type": f"meal_type IS NULL OR meal_type IN ({sql_in_list(RECIPE_MEAL_TYPES)})",
+        "ck_recipe_name_normalized": r"name <> '' AND name = regexp_replace(btrim(name), '\s+', ' ', 'g')",
+        "ck_recipe_servings": _range_check("servings", RECIPE_SERVINGS_RANGE),
+    }
 
 
 class DBSchema:
@@ -486,22 +497,31 @@ class DBSchema:
     );
     """
 
-    recipe = """
+    @classmethod
+    def recipe(cls):
+        """Lifecycle and contract: code_conventions.md §11.2.4."""
+        check_lines = ",\n".join(
+            f"        CONSTRAINT {name} CHECK ({expression})" for name, expression in recipe_check_constraints().items()
+        )
+        return f"""
+    -- Uniqueness: partial unique indexes uq_recipe_* live in db_init._ensure_recipe_schema.
     CREATE TABLE IF NOT EXISTS recipe (
-        id SERIAL PRIMARY KEY, 
-        users_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        origin_root_id INTEGER REFERENCES recipe(id) ON DELETE SET NULL,
-        meal_type VARCHAR(50) CHECK (
-            meal_type IN (
-                'breakfast', 'brunch', 'lunch',
-                'afternoon_snack', 'dinner', 'snack', 'rescue'
-            )
-        ), -- Used to set this as the default value in intake_event, making it easier to reuse
-        name VARCHAR(255) NOT NULL, -- Max length in domain/recipe.py (RECIPE_NAME_MAX_LENGTH)
-        notes TEXT,
-        is_published BOOLEAN NOT NULL DEFAULT FALSE -- True: visible to everyone; FALSE: only owner can view it
-        -- Personal-name uniqueness (uq_recipe_personal_name) is a PARTIAL unique
-        -- index and therefore lives in db_init._ensure_recipe_schema, not here.
+        id SERIAL CONSTRAINT pk_recipe PRIMARY KEY,
+        users_id INTEGER NOT NULL
+            CONSTRAINT fk_recipe_users_id_users
+            REFERENCES users(id) ON DELETE CASCADE,
+        origin_root_id INTEGER
+            CONSTRAINT fk_recipe_origin_root_id_recipe
+            REFERENCES recipe(id) ON DELETE SET NULL,
+        meal_type VARCHAR(50), -- default meal type of the event the recipe creates; never rescue
+        name VARCHAR(255) NOT NULL, -- stored normalized (domain/food.normalize_food_text)
+        notes TEXT, -- free text; domain limit RECIPE_NOTES_MAX_LENGTH (§7.3)
+        servings INTEGER, -- NULL = the recipe is added whole (measurement §4.7)
+        is_published BOOLEAN NOT NULL DEFAULT FALSE, -- no interface writes it until phase 2 (§11.4.1)
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        search_name TEXT GENERATED ALWAYS AS ({search_text_sql("name")}) STORED,
+{check_lines}
     );
     """
 

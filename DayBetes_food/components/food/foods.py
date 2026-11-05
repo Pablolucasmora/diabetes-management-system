@@ -22,6 +22,7 @@ from DayBetes_food.domain.food import (
     FOOD_SUBTYPE_MAX_LENGTH,
     INITIAL_AMOUNT_WITHOUT_SERVING_G,
 )
+from DayBetes_food.domain.recipe import RECIPE_MEAL_TYPES, RECIPE_NOTES_MAX_LENGTH, RecipeRead
 from DayBetes_food.domain.manual_intake import (
     MANUAL_INTAKE_DESCRIPTION_MAX_LENGTH,
     MANUAL_INTAKE_NAME_MAX_LENGTH,
@@ -40,7 +41,6 @@ from DayBetes_food.domain.constants import (
     FoodEntryType,
     FoodPhysicalState,
     GlycemicIndex,
-    MealType,
     Nutriscore,
     NutrientEntryMode,
     PortionOrigin,
@@ -122,6 +122,24 @@ def manual_intake_entry_view(item: ManualIntakeRead) -> dict:
         "favorite": item.is_favorite,
         "can_edit": item.can_edit,
         "is_listable": item.is_listable,
+    }
+
+
+def recipe_entry_view(item: RecipeRead) -> dict:
+    """The only adapter from RecipeRead to the dict the shared food components
+    expect (same debt as catalog_entry_view)."""
+    return {
+        "entry_type": "recipe",
+        "id": item.id,
+        "created_by": item.user_id,
+        "origin_root_id": item.origin_root_id,
+        "name": item.name,
+        "meal_type": item.meal_type.value if item.meal_type else None,
+        "notes": item.notes,
+        "servings": item.servings,
+        "is_published": item.is_published,
+        "favorite": item.is_favorite,
+        "can_edit": item.can_edit,
     }
 
 
@@ -1807,50 +1825,6 @@ def _favorite_checkbox(name: str = "favorite", checked: bool = True, centered: b
     )
 
 
-def _published_checkbox(name: str = "is_published", checked: bool = False, centered: bool = False):
-    checkbox_id = f"field_{name}"
-    return Div(
-        Label(
-            Input(
-                type="checkbox",
-                id=checkbox_id,
-                name=name,
-                value="true",
-                checked=checked,
-                cls=CHECKBOX_CLS,
-            ),
-            Span(
-                Svg(
-                    Path(
-                        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z",
-                        fill_rule="evenodd",
-                        clip_rule="evenodd",
-                    ),
-                    xmlns="http://www.w3.org/2000/svg",
-                    cls="h-3.5 w-3.5",
-                    viewBox="0 0 20 20",
-                    fill="currentColor",
-                    stroke="currentColor",
-                    stroke_width="1",
-                ),
-                cls="""
-                    absolute text-white opacity-0 peer-checked:opacity-100
-                    top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2
-                    pointer-events-none
-                """,
-            ),
-            cls="flex items-center cursor-pointer relative h-5 w-5",
-        ),
-        Label("Published", cls="text-xs text-gray-700 cursor-pointer", **{"for": checkbox_id}),
-        _help_icon("If enabled, everyone can find it. If disabled, it is personal: only you can see it."),
-        cls=(
-            "flex items-center justify-center gap-2 col-span-1 md:col-span-2"
-            if centered
-            else "flex items-center justify-end gap-2 col-span-1 md:col-span-2"
-        ),
-    )
-
-
 def _create_flags_row(favorite_checked: bool = True):
     # R5: the create forms do not offer to publish. Everything is born personal.
     return Div(
@@ -2090,7 +2064,7 @@ def CreateRecipePanel():
         Form(
             Div(
                 _labeled_input("Name*", "name"),
-                _labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in MealType]),
+                _labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in RECIPE_MEAL_TYPES]),
                 Div(
                     Label("Notes", cls="text-xs text-gray-700"),
                     Textarea(
@@ -2646,14 +2620,15 @@ def CreateRecipePage(tag_options: list[str] | None = None):
         _form_header("New recipe", _name_title_input("", "Name of the recipe")),
         _form_section(
             "About the recipe",
-            _labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in MealType], help_text="When this recipe is usually eaten."),
+            _labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in RECIPE_MEAL_TYPES], help_text="When this recipe is usually eaten."),
             Div(
                 _label_with_help("Notes", "Optional instructions, comments, or context about this recipe.", for_id="create_recipe_notes"),
                 Textarea(
                     "",
                     id="create_recipe_notes",
                     name="notes",
-                    rows="3",
+                    rows="8",
+                    maxlength=str(RECIPE_NOTES_MAX_LENGTH),
                     cls=FORM_FIELD_CLS,
                 ),
                 cls="flex flex-col gap-1 md:col-span-2",
@@ -2890,7 +2865,6 @@ def EditManualPage(
 
 def EditRecipePage(
     entry: dict,
-    show_published: bool = False,
     tag_options: list[str] | None = None,
     selected_tags: list[str] | None = None,
 ):
@@ -2900,20 +2874,19 @@ def EditRecipePage(
         _edit_header("recipe", _input_value(entry.get("name")), back_path, CATALOG_NAME_MAX_LENGTH),
         _form_section(
             "Basics",
-            _labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in MealType], selected_value=_input_value(entry.get("meal_type"))),
+            _labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in RECIPE_MEAL_TYPES], selected_value=_input_value(entry.get("meal_type"))),
             Div(
                 _label_with_help("Notes", "Optional instructions, comments, or context about this recipe.", for_id="edit_recipe_notes"),
                 Textarea(
                     _input_value(entry.get("notes")),
                     id="edit_recipe_notes",
                     name="notes",
-                    rows="3",
-                    onclick="this.select()",
+                    rows="8",
+                    maxlength=str(RECIPE_NOTES_MAX_LENGTH),
                     cls=FORM_FIELD_CLS,
                 ),
                 cls="flex flex-col gap-1 md:col-span-2",
             ),
-            _published_checkbox(checked=bool(entry.get("is_published"))) if show_published else "",
         ),
         _edit_tags(tag_options, selected_tags),
         _edit_actions(back_path),

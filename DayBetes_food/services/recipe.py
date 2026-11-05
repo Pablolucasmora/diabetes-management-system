@@ -1,7 +1,10 @@
 """Use cases of `recipe` that combine several queries (code_conventions.md §1.2)."""
 
 from DayBetes_food.database.queries import (
-    add_recipe,
+    create_recipe,
+    get_recipe,
+    list_viewable_recipe_portions,
+    next_recipe_copy_name,
     create_portion_detail,
     get_intake_event,
     get_intake_plate,
@@ -12,7 +15,7 @@ from DayBetes_food.domain.constants import PortionDestination
 from DayBetes_food.domain.food import normalize_food_text
 from DayBetes_food.domain.intake_plate import derive_plate_name
 from DayBetes_food.domain.portion_detail import PortionDetailCreate
-from DayBetes_food.domain.recipe import RECIPE_NAME_MAX_LENGTH
+from DayBetes_food.domain.recipe import RECIPE_NAME_MAX_LENGTH, RecipeCreate, recipe_meal_type_from_event
 from DayBetes_food.errors import ConflictError, NotFoundError, ValidationError
 
 
@@ -73,11 +76,16 @@ def save_plate_as_recipe(connection, user_id: int, plate_id: int) -> int:
             raise ValidationError("recipe_name_too_long")
 
         try:
-            recipe_id = add_recipe(
+            recipe_id = create_recipe(
                 connection,
-                users_id=user_id,
-                name=name,
-                meal_type=event.meal_type.value if event.meal_type is not None else None,
+                RecipeCreate(
+                    user_id=user_id,
+                    origin_root_id=None,
+                    name=name,
+                    meal_type=recipe_meal_type_from_event(event.meal_type),
+                    notes=None,
+                    servings=None,
+                ),
                 commit=False,
             )
         except ConflictError as exc:
@@ -106,3 +114,55 @@ def save_plate_as_recipe(connection, user_id: int, plate_id: int) -> int:
                 commit=False,
             )
     return recipe_id
+
+
+def copy_recipe(connection, user_id: int, recipe_id: int) -> int:
+    """Copy a recipe the viewer may see as their own personal, editable recipe,
+    in their favorites (code_conventions.md §11.2.2).
+
+    It copies the notes, the servings and each ingredient with its amount,
+    preparation, strictly_weighed and is_cooked_weight (measurement §6.11). The
+    tags are not copied, as in the other food tables. Repeating it makes another
+    copy, also as in the other food tables.
+
+    Raises:
+        NotFoundError: the recipe does not exist or the viewer cannot see it.
+        ConflictError: another request took the copy's name.
+    """
+    with connection.transaction():
+        source = get_recipe(connection, user_id, recipe_id)
+        if source is None:
+            raise NotFoundError("Recipe not found.")
+        copy_id = create_recipe(
+            connection,
+            RecipeCreate(
+                user_id=user_id,
+                origin_root_id=source.origin_root_id or source.id,
+                name=next_recipe_copy_name(connection, user_id, source.name),
+                meal_type=source.meal_type,
+                notes=source.notes,
+                servings=source.servings,
+            ),
+            commit=False,
+        )
+        if not set_user_favorite(connection, user_id, "recipe", copy_id, True, commit=False):
+            raise RuntimeError("recipe_favorite_not_saved")
+        for portion in list_viewable_recipe_portions(connection, user_id, source.id):
+            create_portion_detail(
+                connection,
+                user_id,
+                PortionDetailCreate(
+                    origin=portion.origin,
+                    origin_id=portion.origin_id,
+                    destination=PortionDestination.RECIPE,
+                    destination_id=copy_id,
+                    amount=portion.amount,
+                    cooking=portion.cooking,
+                    conservation=portion.conservation,
+                    final_state=portion.final_state,
+                    strictly_weighed=portion.strictly_weighed,
+                    is_cooked_weight=portion.is_cooked_weight,
+                ),
+                commit=False,
+            )
+    return copy_id

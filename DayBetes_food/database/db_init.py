@@ -12,6 +12,7 @@ from DayBetes_food.database.schema import (
     DBSchema,
     catalog_check_constraints,
     manual_intake_check_constraints,
+    recipe_check_constraints,
 )
 from DayBetes_food.domain.catalog import CATALOG_BARCODE_MAX_LENGTH, CATALOG_BARCODE_MIN_LENGTH
 from DayBetes_food.domain.search_text import search_text_sql
@@ -1016,48 +1017,89 @@ def _ensure_copy_origin_schema(cursor):
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_manual_intake_origin_root_id ON manual_intake (origin_root_id);"
     )
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_origin_root ON recipe (origin_root_id);")
+    if _index_exists(cursor, "idx_recipe_origin_root") and not _index_exists(cursor, "idx_recipe_origin_root_id"):
+        cursor.execute("ALTER INDEX idx_recipe_origin_root RENAME TO idx_recipe_origin_root_id;")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_origin_root_id ON recipe (origin_root_id);")
 
 
-def _ensure_recipe_schema(cursor):
-    """Personal-name uniqueness of `recipe` (§6.1, §11.4.1).
+# Automatic names of older installs -> canonical names (§11.6).
+_RECIPE_CONSTRAINT_RENAMES = {
+    "recipe_pkey": "pk_recipe",
+    "recipe_users_id_fkey": "fk_recipe_users_id_users",
+    "recipe_origin_root_id_fkey": "fk_recipe_origin_root_id_recipe",
+}
 
-    Brought forward from the pending `recipe` audit for saving a cart plate as
-    a recipe (frontend_conventions.md §7.13): the 409 for a name the owner
-    already uses comes from this index, never from a check in Python. The
-    published-recipes index stays pending for the audit.
 
-    Without btrim, like the other food tables: the writer normalizes the name
-    (normalize_food_text) before inserting it. The table has no deleted_at
-    (recipes are deleted physically), so there is no archived filter.
-
-    Existing duplicates stop the migration (§12.2, §12.7): which recipe keeps
-    the name is a decision, not something to resolve here.
-    """
+def _stop_on_recipe_name_duplicates(cursor, group_sql: str, where_sql: str, index_name: str) -> None:
+    """Existing duplicates stop the migration (§12.2, §12.7): which recipe keeps
+    the name is a decision, not something to resolve here. The arguments are constants."""
     cursor.execute(
-        """
-        SELECT r.users_id, lower(r.name) AS name, count(*) AS total
-        FROM recipe r
-        WHERE NOT r.is_published
-        GROUP BY r.users_id, lower(r.name)
-        HAVING count(*) > 1;
-        """
+        f"SELECT {group_sql} AS owner_and_name, count(*) AS total FROM recipe r "
+        f"WHERE {where_sql} GROUP BY 1 HAVING count(*) > 1;"
     )
     duplicates = cursor.fetchall() or []
     if duplicates:
-        detail = ", ".join(
-            f"user {row['users_id']}: {row['total']} x '{row['name']}'" for row in duplicates
+        detail = ", ".join(f"{row['total']} x '{row['owner_and_name']}'" for row in duplicates)
+        raise RuntimeError(f"Recipes with a repeated name block {index_name}; rename or delete them first: {detail}")
+
+
+def _ensure_recipe_schema(cursor):
+    """`recipe`: canonical columns, constraints and unique indexes (§11.2.4). Idempotent.
+
+    Nothing is dropped and recreated on each start: that takes an exclusive lock on
+    the table for no reason (§12.2). A change to a generated CHECK therefore needs
+    its own explicit migration.
+    """
+    # slug existed only in the real database and no code uses it (approved
+    # destructive step, §12.4).
+    cursor.execute("DROP INDEX IF EXISTS idx_recipe_slug;")
+    if _has_column(cursor, "recipe", "slug"):
+        cursor.execute("ALTER TABLE recipe DROP COLUMN slug;")
+
+    for column in ("created_at", "updated_at"):
+        if not _has_column(cursor, "recipe", column):
+            # Existing rows get the date of this migration, never an inferred one (§12.7).
+            cursor.execute(
+                sql.SQL("ALTER TABLE recipe ADD COLUMN {} TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;").format(
+                    sql.Identifier(column)
+                )
+            )
+    if not _has_column(cursor, "recipe", "servings"):
+        cursor.execute("ALTER TABLE recipe ADD COLUMN servings INTEGER;")
+    if not _has_column(cursor, "recipe", "search_name"):
+        cursor.execute(
+            f"ALTER TABLE recipe ADD COLUMN search_name TEXT "
+            f"GENERATED ALWAYS AS ({search_text_sql('name')}) STORED;"
         )
-        raise RuntimeError(
-            "Personal recipes with a repeated name block uq_recipe_personal_name; "
-            f"rename or delete them first: {detail}"
+    # Fails on its own if a recipe has no owner: there is no general recipe library.
+    cursor.execute("ALTER TABLE recipe ALTER COLUMN users_id SET NOT NULL;")
+
+    for old_name, new_name in _RECIPE_CONSTRAINT_RENAMES.items():
+        if _constraint_exists(cursor, "recipe", old_name) and not _constraint_exists(cursor, "recipe", new_name):
+            cursor.execute(
+                sql.SQL("ALTER TABLE recipe RENAME CONSTRAINT {} TO {};").format(
+                    sql.Identifier(old_name), sql.Identifier(new_name)
+                )
+            )
+    cursor.execute("ALTER TABLE recipe DROP CONSTRAINT IF EXISTS recipe_meal_type_check;")
+    for name, expression in recipe_check_constraints().items():
+        if not _constraint_exists(cursor, "recipe", name):
+            cursor.execute(
+                sql.SQL("ALTER TABLE recipe ADD CONSTRAINT {} CHECK ({});").format(
+                    sql.Identifier(name), sql.SQL(expression)
+                )
+            )
+
+    if not _index_exists(cursor, "uq_recipe_personal_name"):
+        _stop_on_recipe_name_duplicates(
+            cursor, "r.users_id::text || ': ' || lower(r.name)", "NOT r.is_published", "uq_recipe_personal_name"
         )
-    cursor.execute("DROP INDEX IF EXISTS uq_recipe_personal_name;")
-    cursor.execute(
-        "CREATE UNIQUE INDEX uq_recipe_personal_name "
-        "ON recipe (users_id, lower(name)) "
-        "WHERE NOT is_published;"
-    )
+        cursor.execute(
+            "CREATE UNIQUE INDEX uq_recipe_personal_name ON recipe (users_id, lower(name)) WHERE NOT is_published;"
+        )
+    if not _index_exists(cursor, "uq_recipe_published_name"):
+        _stop_on_recipe_name_duplicates(cursor, "lower(r.name)", "r.is_published", "uq_recipe_published_name")
+        cursor.execute("CREATE UNIQUE INDEX uq_recipe_published_name ON recipe (lower(name)) WHERE is_published;")
 
 
 def _index_exists(cursor, name: str) -> bool:
@@ -1071,7 +1113,6 @@ _FUZZY_COMPACT_INDEXED_COLUMNS = (
     ("catalog", "name"),
     ("manual_intake", "name"),
     ("manual_intake", "origin"),
-    ("recipe", "name"),
     ("food_brands", "label"),
 )
 
@@ -1090,10 +1131,6 @@ def _ensure_trgm_search(cursor):
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_manual_intake_name_trgm "
             "ON manual_intake USING gin (lower(name) gin_trgm_ops);"
-        )
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_recipe_name_trgm "
-            "ON recipe USING gin (lower(name) gin_trgm_ops);"
         )
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_food_brands_label_trgm "
@@ -1147,7 +1184,8 @@ def _ensure_food_filter_indexes(cursor):
     # Backs the owner filter and the cascade from users.
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_intake_created_by ON manual_intake (created_by);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_users_id ON recipe (users_id);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_visibility ON recipe (is_published, users_id);")
+    # No query uses it: the owner index and the partial unique indexes cover the filter.
+    cursor.execute("DROP INDEX IF EXISTS idx_recipe_visibility;")
 
 
 def _ensure_off_product_schema(cursor):
@@ -1167,6 +1205,18 @@ def _ensure_food_search_indexes(cursor):
         )
         cursor.execute(
             sql.SQL("CREATE INDEX IF NOT EXISTS idx_catalog_search_name_compact_trgm ON catalog USING gin ({} gin_trgm_ops);").format(
+                sql.SQL(fuzzy_compact_sql("search_name"))
+            )
+        )
+        # recipe searches search_name since 2026-11-05 (§11.7).
+        cursor.execute("DROP INDEX IF EXISTS idx_recipe_name_trgm;")
+        cursor.execute("DROP INDEX IF EXISTS idx_recipe_name_compact_trgm;")
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_recipe_search_name_trgm "
+            "ON recipe USING gin (lower(search_name) gin_trgm_ops);"
+        )
+        cursor.execute(
+            sql.SQL("CREATE INDEX IF NOT EXISTS idx_recipe_search_name_compact_trgm ON recipe USING gin ({} gin_trgm_ops);").format(
                 sql.SQL(fuzzy_compact_sql("search_name"))
             )
         )
@@ -2335,7 +2385,7 @@ def init_db():
             DBSchema.ciqual_food(),
             DBSchema.fridge,
             DBSchema.tags,
-            DBSchema.recipe,
+            DBSchema.recipe(),
             DBSchema.user_favorites,
             DBSchema.linked_tags,
             DBSchema.intake_event(),

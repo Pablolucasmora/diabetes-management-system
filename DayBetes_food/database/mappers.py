@@ -27,6 +27,7 @@ from DayBetes_food.domain.intake_event import IntakeEventRead
 from DayBetes_food.domain.intake_plate import IntakePlateRead
 from DayBetes_food.domain.manual_intake import ManualIntakeRead
 from DayBetes_food.domain.off_product import OffProductRead
+from DayBetes_food.domain.recipe import RecipeRead
 from DayBetes_food.domain.portion_detail import PortionDetailRead, PortionSourceRead
 from DayBetes_food.errors import InfrastructureError
 
@@ -41,6 +42,29 @@ def _enum_from_row(row: dict, key: str, enum_cls):
         raise InfrastructureError(
             f"Invalid {key} '{raw}' in database row"
         ) from exc
+
+
+def recipe_read_from_row(row: dict) -> RecipeRead:
+    """Convert a SQL row from _RECIPE_COLUMNS to RecipeRead (§3.2). An unknown
+    meal_type raises InfrastructureError (§4.3); is_favorite and can_edit come from
+    the query."""
+    try:
+        return RecipeRead(
+            id=row["id"],
+            user_id=row["users_id"],
+            origin_root_id=row.get("origin_root_id"),
+            name=row["name"],
+            meal_type=MealType(row["meal_type"]) if row.get("meal_type") else None,
+            notes=row.get("notes"),
+            servings=row.get("servings"),
+            is_published=row["is_published"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            is_favorite=row["is_favorite"],
+            can_edit=row["can_edit"],
+        )
+    except (KeyError, ValueError) as exc:
+        raise InfrastructureError(f"Invalid recipe row: {exc}") from exc
 
 
 def ciqual_food_read_from_row(row: dict) -> CiqualFoodRead:

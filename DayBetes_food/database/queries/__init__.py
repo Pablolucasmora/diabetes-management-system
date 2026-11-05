@@ -56,11 +56,12 @@ from DayBetes_food.database.queries.manual_intake import (
     next_manual_intake_copy_name,
 )
 from DayBetes_food.database.queries.recipe import (
-    add_recipe,
+    create_recipe,
     get_recipe,
-    get_all_recipes,
+    list_recipes,
     update_recipe,
     delete_recipe,
+    next_recipe_copy_name,
 )
 from DayBetes_food.database.queries.tags import (
     get_tag_suggestions,
@@ -183,11 +184,12 @@ __all__ = [
     "publish_manual_intake",
     "unpublish_manual_intake",
     "next_manual_intake_copy_name",
-    "add_recipe",
+    "create_recipe",
     "get_recipe",
-    "get_all_recipes",
+    "list_recipes",
     "update_recipe",
     "delete_recipe",
+    "next_recipe_copy_name",
     "get_tag_suggestions",
     "ensure_tag",
     "get_all_tags",
