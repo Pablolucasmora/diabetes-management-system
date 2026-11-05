@@ -111,7 +111,7 @@ La interfaz se organiza en cuatro secciones, a las que se accede desde una barra
   - **ingestas manuales**, para comidas de fuera o sin información exacta.
 - **Búsqueda en tiempo real** (HTMX), filtros, favoritos y etiquetas.
 - **Creación rápida con "smart macros"**: se escribe `120kcal 30hc 12az 20prot` y el sistema rellena los campos. Usa una gramática estricta, que rechaza lo que no entiende en lugar de adivinar. El navegador muestra una vista previa, pero quien decide es siempre el servidor.
-- **Escáner de código de barras**: busca el producto en **Open Food Facts** y rellena el formulario de alta, conservando de qué fuente procede cada dato.
+- **Escáner de código de barras**: busca el producto en **Open Food Facts** y rellena el formulario de alta para revisarlo antes de guardar.
 - **Biblioteca personal y publicada**: un alimento es privado de quien lo crea hasta que se publica.
 - **Comidas de rescate**: un registro rápido de lo que se toma para tratar una hipoglucemia, con sus propias opciones y su propio tipo de comida.
 
@@ -200,6 +200,10 @@ DayBetes_food/
 - **Dos identidades de base de datos.** La app trabaja con un rol **sin permisos para modificar el esquema**. El esquema solo lo cambia una identidad de migraciones, que no se usa nunca en tiempo de ejecución.
 - **La propiedad de los datos se comprueba en SQL.** Cada consulta filtra por usuario, de modo que un fallo en una ruta no puede exponer datos de otra persona.
 - **Errores tipados y uniformes.** Un único formato de error, códigos HTTP con significado y mensajes que no revelan información interna.
+
+### 6.4 Datos de terceros
+
+DayBetes usa datos de [Open Food Facts](https://world.openfoodfacts.org), disponibles bajo la [Open Database License](https://opendatacommons.org/licenses/odbl/1-0/) (ODbL). Sus contenidos individuales están bajo la [Database Contents License](https://opendatacommons.org/licenses/dbcl/1-0/). Son datos colaborativos y orientativos, sin garantía de exactitud. El detalle está en [`measurement_conventions.md`](conventions/measurement_conventions.md) §12.2.
 
 ---
 

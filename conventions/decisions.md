@@ -914,3 +914,17 @@ En los datos reales, `manual_intake` tiene 4 de 5 filas privadas. Los motivos re
 - Dividirlo en dos despliegues: primero el código que ya no lee esas columnas, con columnas puente, y después el borrado y los renombrados.
 **Decisión**: se acepta la excepción, solo para este despliegue. Con un solo usuario, unos segundos de errores no compensan reescribir la migración. Condiciones previas al merge: comprobaciones de solo lectura en producción, export de las siete columnas que se borran, `pg_dump`, y un merge en un momento sin uso. Los ejecuta el usuario por SSH.
 **Convención actualizada**: `infra_conventions.md` sección 14
+
+## 2026-11-05 — Open Food Facts como fuente de productos envasados, con copia local
+
+**Origen**: n/a
+**Contexto**: añadir alimentos es lento cuando no se tienen ya en el catálogo, y se quiere buscar productos de supermercado sin haberlos creado antes, de cara al estudio y a la fase 2. La API de OFF no tiene búsqueda de texto libre en v2 y limita las búsquedas a 10 por minuto. Esta decisión amplía la del 2026-09-25 (adaptador de OFF y precarga revisada), que sigue vigente: el usuario revisa los valores antes de guardar.
+**Alternativas consideradas**:
+- Copia local desde una exportación de OFF.
+- Búsqueda en directo con la API de OFF: sus límites no permiten usarla mientras se escribe.
+- FatSecret Premier: tiene búsqueda y datos de España, pero con precio a consultar, datos almacenables limitados a identificadores salvo permiso a medida y una cláusula contra el consejo nutricional o de salud.
+- FoodBase: búsqueda de pago compilada principalmente desde OFF y USDA.
+- Nutriinfo: solo Mercadona, con datos leídos de etiquetas con IA, actualización obligatoria y borrado al terminar el plan.
+- Scraping de webs de supermercados: frágil, y sin revisar sus condiciones.
+**Decisión**: DayBetes usa OFF mediante una copia local limpia, generada desde una exportación completa y cargada en el VPS. Se aceptan las condiciones de la ODbL: atribución visible en la interfaz; oferta de la base derivada, o de un método que describa sus cambios, antes de cualquier uso público; y datos de OFF en tabla propia, sin mezclarlos con fuentes de licencia incompatible. La advertencia de OFF contra los fines médicos queda como cuestión abierta para las recomendaciones de la fase 2. El esquema de la tabla, los productos que se cargan, la procedencia en `catalog`, el papel futuro de la API en el escáner y las copias de seguridad quedan pendientes de acordar.
+**Convención actualizada**: `measurement_conventions.md` sección 12.2
