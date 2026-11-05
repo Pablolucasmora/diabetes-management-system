@@ -17,7 +17,7 @@ fi
 
 columns="code, name, brand, categories, calories_100g, carbs_100g, sugars_100g, fats_100g, saturated_100g,
   proteins_100g, fiber_100g, caffeine, alcohol_vol, default_portion, nutriscore, nova, ciqual_food_code,
-  unique_scans_n, source_modified_at, export_date"
+  unique_scans_n, source_modified_at, export_date, name_is_store_brand"
 
 {
   printf 'BEGIN;\nTRUNCATE off_product;\nCOPY off_product (%s) FROM STDIN WITH (FORMAT csv, HEADER);\n' "$columns"

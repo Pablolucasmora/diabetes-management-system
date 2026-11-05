@@ -429,6 +429,7 @@ class DBSchema:
         unique_scans_n INTEGER,
         source_modified_at TIMESTAMPTZ,
         export_date DATE NOT NULL,
+        name_is_store_brand BOOLEAN NOT NULL DEFAULT FALSE, -- out of the text search, still found by barcode (measurement §12.2)
         search_text TEXT GENERATED ALWAYS AS ({search_text_sql("name || ' ' || coalesce(brand, '')")}) STORED,
         CONSTRAINT ck_off_product_code_format
             CHECK (code ~ '^[0-9]{{{CATALOG_BARCODE_MIN_LENGTH},{CATALOG_BARCODE_MAX_LENGTH}}}$')

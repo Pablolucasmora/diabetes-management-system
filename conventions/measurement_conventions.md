@@ -946,6 +946,7 @@ Un valor que falta queda vacío; nunca se convierte en cero. Las fotos no forman
 - Código de 8 a 48 dígitos y nombre no vacío, sin caracteres de control. Un código repetido conserva su fila modificada más recientemente.
 - Hidratos, grasa y proteína obligatorios: en gramos, entre 0 y 100 y con suma de hasta 105. Se descartan los productos con azúcares mayores que los hidratos o saturadas mayores que la grasa.
 - Las kcal se conservan solo si están entre 0 y 900 y difieren de `4 × hidratos + 9 × grasa + 4 × proteína + 2 × fibra` como máximo en el mayor de estos dos márgenes: 25 % o 20 kcal. Si no, las kcal quedan vacías y el producto se conserva.
+- Un producto cuyo nombre es exactamente una marca con al menos 1.000 productos en la copia, como "hacendado", es un error del contribuidor. Se conserva, para que se encuentre por código, pero queda fuera de la búsqueda por texto (`name_is_store_brand`). Los nombres que coinciden con una marca más pequeña, como "Coca-Cola" o "Nesquik", suelen ser correctos y no se marcan.
 
 **Tabla.** La copia vive en `off_product`, con las mismas columnas y unidades que `catalog`, salvo el alcohol: se guarda en `% vol` (`alcohol_vol`) y se convierte al precargar, con el mismo adaptador que una respuesta de la API (`prefill_from_off_product`). Sin datos cargados, el escáner usa la API y el buscador solo muestra los alimentos del usuario.
 

@@ -84,7 +84,7 @@ def search_off_products(connection, user_id: int, search: str) -> list:
         connection,
         f"""
         SELECT {_COLUMNS} FROM off_product off
-        WHERE off.search_text LIKE ALL(%(patterns)s) AND {_NOT_IN_CATALOG}
+        WHERE off.search_text LIKE ALL(%(patterns)s) AND NOT off.name_is_store_brand AND {_NOT_IN_CATALOG}
         ORDER BY (off.search_text LIKE %(first_prefix)s) DESC,
                  (off.search_text ~ %(first_word_start)s) DESC,
                  off.unique_scans_n DESC NULLS LAST, off.name, off.code
@@ -99,7 +99,7 @@ def search_off_products(connection, user_id: int, search: str) -> list:
             connection,
             f"""
             SELECT {_COLUMNS} FROM off_product off
-            WHERE off.search_text %% %(term)s AND {_NOT_IN_CATALOG}
+            WHERE off.search_text %% %(term)s AND NOT off.name_is_store_brand AND {_NOT_IN_CATALOG}
             ORDER BY similarity(off.search_text, %(term)s) DESC, off.unique_scans_n DESC NULLS LAST, off.code
             LIMIT %(limit)s;
             """,
