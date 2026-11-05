@@ -111,7 +111,8 @@ La interfaz se organiza en cuatro secciones, a las que se accede desde una barra
   - **ingestas manuales**, para comidas de fuera o sin información exacta.
 - **Búsqueda en tiempo real** (HTMX), filtros, favoritos y etiquetas.
 - **Creación rápida con "smart macros"**: se escribe `120kcal 30hc 12az 20prot` y el sistema rellena los campos. Usa una gramática estricta, que rechaza lo que no entiende en lugar de adivinar. El navegador muestra una vista previa, pero quien decide es siempre el servidor.
-- **Escáner de código de barras**: busca el producto en **Open Food Facts** y rellena el formulario de alta para revisarlo antes de guardar.
+- **Escáner de código de barras**: busca el producto en una copia local de **Open Food Facts** y, si no está, en su API, y rellena el formulario de alta para revisarlo antes de guardar.
+- **Productos de supermercado en el buscador**: debajo de los alimentos propios aparecen productos de esa copia local; al pulsar uno se abre el mismo formulario relleno.
 - **Biblioteca personal y publicada**: un alimento es privado de quien lo crea hasta que se publica.
 - **Comidas de rescate**: un registro rápido de lo que se toma para tratar una hipoglucemia, con sus propias opciones y su propio tipo de comida.
 

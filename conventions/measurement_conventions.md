@@ -900,7 +900,9 @@ Reglas:
 
 `source`, `measured_at`, `imported_at` y `request_id` pertenecen a la trazabilidad de mediciones, datos clínicos importados o transformaciones relevantes. No son campos obligatorios de las cuentas de usuario ni deben añadirse a `users` por defecto.
 
-**Caso en que el modelo no lo permite: `catalog`** (decisión 2026-09-25). Open Food Facts solo precarga el formulario de alta; el usuario revisa y corrige los valores antes de guardar, así que el valor guardado es suyo y no se marca como `imported`. `catalog` no tiene columnas de procedencia. No es un hallazgo de auditoría mientras la importación siga siendo una precarga revisada y no una escritura directa.
+**Caso en que el modelo no lo permite: `catalog`** (decisión 2026-09-25). Open Food Facts solo precarga el formulario de alta; el usuario revisa y corrige los valores antes de guardar, así que el valor guardado es suyo y no se marca como `imported`. No es un hallazgo de auditoría mientras la importación siga siendo una precarga revisada y no una escritura directa.
+
+Desde el 2026-11-05, `catalog.prefill_source` y `catalog.prefill_source_id` (opcionales, los dos o ninguno) indican de dónde salió la precarga, no de dónde salen los valores guardados, que siguen siendo del usuario. Sirven para no volver a ofrecer lo que ya se copió y para separar esas filas si la ODbL obliga a compartirlas (§12.2). Una copia de un alimento y los alimentos anteriores a esa fecha los tienen vacíos.
 
 ### 12.2 Open Food Facts: copia local y licencia
 
@@ -945,9 +947,13 @@ Un valor que falta queda vacío; nunca se convierte en cero. Las fotos no forman
 - Hidratos, grasa y proteína obligatorios: en gramos, entre 0 y 100 y con suma de hasta 105. Se descartan los productos con azúcares mayores que los hidratos o saturadas mayores que la grasa.
 - Las kcal se conservan solo si están entre 0 y 900 y difieren de `4 × hidratos + 9 × grasa + 4 × proteína + 2 × fibra` como máximo en el mayor de estos dos márgenes: 25 % o 20 kcal. Si no, las kcal quedan vacías y el producto se conserva.
 
-**Escáner.** Cuando exista la copia local, el código se busca primero en ella. Si no está, se consulta la API de OFF para ese código, porque la copia es de una fecha concreta y puede no incluir productos nuevos o de otros países. Si tampoco aparece, el formulario se abre vacío, con el código y el aviso "Product not found". Hasta entonces, el escáner solo usa la API.
+**Tabla.** La copia vive en `off_product`, con las mismas columnas y unidades que `catalog`, salvo el alcohol: se guarda en `% vol` (`alcohol_vol`) y se convierte al precargar, con el mismo adaptador que una respuesta de la API (`prefill_from_off_product`). Sin datos cargados, el escáner usa la API y el buscador solo muestra los alimentos del usuario.
 
-**Pendiente de acordar** antes de implementar el buscador y la carga: nombre y esquema de la tabla y su fila en el registro de `code_conventions.md` §11.2.1; si `catalog` guarda la fuente y el identificador del producto, lo que modificaría la decisión de §12.1; y si la tabla entra en la copia de seguridad nocturna (`infra_conventions.md` §12), porque no son datos personales y se puede regenerar.
+**Escáner.** El código se busca primero en la copia local; un código de 12 dígitos se busca también con un cero delante, porque OFF guarda así los UPC-A. Si no está, se consulta la API de OFF para ese código, porque la copia es de una fecha concreta y puede no incluir productos nuevos o de otros países. Si tampoco aparece, el formulario se abre vacío, con el código y el aviso "Product not found".
+
+**Buscador.** Con al menos 3 caracteres, debajo de los alimentos del usuario aparece la sección "From Open Food Facts", con un máximo de 20 productos, su atribución y sin los códigos que el usuario ya ve en `catalog`. Al pulsar uno se abre el formulario precargado, que se revisa antes de guardar.
+
+**Carga.** No forma parte del despliegue, se hace solo al actualizar los datos. `scripts/off/clean_off.py` genera en el ordenador del desarrollador un CSV comprimido con los filtros anteriores, con su propio `requirements.txt` porque DuckDB no entra en la imagen de la app. `scripts/off/load_off.sh` lo carga en el servidor, reemplazando la tabla en una transacción. La tabla no entra con filas en la copia de seguridad (`infra_conventions.md` §12).
 
 ## 13. Datos originales y derivados
 
