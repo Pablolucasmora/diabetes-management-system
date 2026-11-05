@@ -1072,7 +1072,12 @@ def _ensure_recipe_schema(cursor):
             f"GENERATED ALWAYS AS ({search_text_sql('name')}) STORED;"
         )
     # Fails on its own if a recipe has no owner: there is no general recipe library.
-    cursor.execute("ALTER TABLE recipe ALTER COLUMN users_id SET NOT NULL;")
+    cursor.execute(
+        "SELECT is_nullable FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'recipe' AND column_name = 'users_id';"
+    )
+    if cursor.fetchone()["is_nullable"] == "YES":
+        cursor.execute("ALTER TABLE recipe ALTER COLUMN users_id SET NOT NULL;")
 
     for old_name, new_name in _RECIPE_CONSTRAINT_RENAMES.items():
         if _constraint_exists(cursor, "recipe", old_name) and not _constraint_exists(cursor, "recipe", new_name):
@@ -1081,7 +1086,8 @@ def _ensure_recipe_schema(cursor):
                     sql.Identifier(old_name), sql.Identifier(new_name)
                 )
             )
-    cursor.execute("ALTER TABLE recipe DROP CONSTRAINT IF EXISTS recipe_meal_type_check;")
+    if _constraint_exists(cursor, "recipe", "recipe_meal_type_check"):
+        cursor.execute("ALTER TABLE recipe DROP CONSTRAINT recipe_meal_type_check;")
     for name, expression in recipe_check_constraints().items():
         if not _constraint_exists(cursor, "recipe", name):
             cursor.execute(
