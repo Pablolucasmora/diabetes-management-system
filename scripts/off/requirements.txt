@@ -1,0 +1,2 @@
+# Only for clean_off.py, on the developer's computer: not part of the app image.
+duckdb==2.0.0
