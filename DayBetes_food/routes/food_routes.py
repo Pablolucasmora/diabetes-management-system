@@ -3067,16 +3067,6 @@ def setup_food_routes(rt):
             )
         return render_fragment(tuple(cards + ([load_more] if load_more is not None else [])))
 
-    @rt("/search_food")
-    def get(request: Request, search: str = ""):
-        if request.headers.get("HX-Request") != "true":
-            return HTMLResponse(status_code=403)
-        with get_connection() as connection:
-            entries = _filtered_entries(connection, search=search, filter_value="all")
-        if not entries:
-            return render_fragment(H2("No items", cls="text-gray-600"))
-        return render_fragment(tuple(FoodSectionsContent(entries)))
-
     @rt("/add_food/{food_id}")
     def post(request: Request, food_id: int, intake_event_id: str = "", plate_id: str = ""):
         if request.headers.get("HX-Request") != "true":

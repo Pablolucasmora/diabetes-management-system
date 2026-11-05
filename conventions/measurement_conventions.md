@@ -258,7 +258,7 @@ con otra de la misma tanda, y entonces se fusionan con esta misma regla.
 - **Borrar el evento** borra sus tandas (`ON DELETE CASCADE`) y, por la cascada ya existente de `portion_detail.intake_event_id`, sus porciones.
 - **Borrar una tanda que tiene porciones está bloqueado** (`ON DELETE RESTRICT`). La interfaz obliga a mover o borrar sus ingredientes antes. Es deliberado: arrastrar las filas a otra tanda automáticamente haría que un click se llevara por delante la mitad de la comida sin que se note.
 - **Mover un ingrediente de tanda** es un `UPDATE` de `plate_id`. No modifica su `offset_minutes`: el offset heredado en su día sigue siendo lo que se comió, y si debe cambiar, se cambia explícitamente.
-- **Importar una receta a un evento** crea una **tanda nueva** con los ingredientes de la receta dentro.
+- **Añadir una receta a un evento** (decisión 2026-11-05; sustituye a "crea siempre una tanda nueva"). Una receta de una tanda entra en la tanda elegida o, sin elegir, en una tanda nueva con el nombre de la receta. Una receta de varias tandas crea siempre una tanda por cada una con ingredientes, en su orden y con sus nombres, y no se puede añadir a una tanda concreta. Se detalla en §4.7.
 
 #### 4.6.6 Migración de los datos existentes
 
@@ -269,6 +269,39 @@ La columna `portion_detail.split_group_id` se elimina en la misma migración (`D
 **Consolidación de los duplicados históricos.** La clave única de §4.6.4 no puede crearse sobre datos que ya la violan (§12.7 de `code_conventions.md`). Verificado el 2026-09-19 sobre la base real: 11 grupos, 24 filas, todos dentro de un mismo evento y clones exactos entre sí —misma cantidad, mismo offset, mismos tres booleanos, `plate_amount` nulo en todas—, producto de añadir el mismo alimento dos o tres veces sin editar después la cantidad. Se consolidan con la misma regla de fusión de §4.6.4: una fila por grupo, con la suma de las cantidades y el resto de campos de la **fila más antigua**. El total de cada comida no cambia, de modo que `ingested_amount`, los macros y las confianzas de los eventos ya confirmados siguen siendo válidos sin recalcularlos.
 
 `plate_amount` se trata aparte porque en el histórico es nulo y la lectura viva usa `COALESCE(plate_amount, amount_g)`: si todas las filas del grupo lo tienen nulo, la fila consolidada lo conserva nulo; si alguna tiene valor, se guarda la suma de `COALESCE(plate_amount, amount_g)`. En los dos casos la cantidad que el código calcula hoy es idéntica antes y después.
+
+### 4.7 Tandas y raciones de una receta (decisión 2026-11-05)
+
+Una receta tiene una o más tandas, en `recipe_plate`. No hay dos tipos de receta.
+
+```text
+recipe_plate
+  id
+  recipe_id   -> recipe  ON DELETE CASCADE
+  position    INTEGER >= 1, único por receta (DEFERRABLE, para intercambiar en una sentencia)
+  name        VARCHAR(255)  -- NULL = nombre derivado (4.6.3)
+  created_at / updated_at
+
+portion_detail
+  recipe_plate_id, con FK compuesta (recipe_id, recipe_plate_id) -> recipe_plate (recipe_id, id)
+                   ON DELETE RESTRICT; obligatorio si y solo si tiene recipe_id
+```
+
+- **La FK compuesta** garantiza en la base que la tanda es de esa misma receta.
+- **Sin offset.** Nace cuando la receta entra en un evento (§4.5). Por eso una tanda de receta tiene `position`: el orden es manual, con subir y bajar, en vez de derivarse del offset (§4.6.1).
+- **Una receta sin ingredientes no tiene tandas.** La primera nace con el primer ingrediente, como en un evento. La migración creó una tanda por cada receta con ingredientes.
+- **Borrar una tanda con ingredientes está bloqueado** (§4.6.5).
+- **Unicidad.** La de §4.6.4 sobre `recipe_plate_id`, con el índice `uq_portion_detail_recipe_plate_origin_preparation_cooked` y la misma regla de fusión: al añadir, editar la preparación o la pesada, o mover de tanda, las filas con la misma clave suman sus cantidades.
+
+**Raciones.** `recipe.servings` es opcional, un entero de 1 a 100, y son las raciones que salen de la receta entera. La ración es el total de la receta entre `servings`, con las proporciones de cada ingrediente.
+
+**Añadir una receta a una comida.** Lo hace un solo servicio, `add_recipe_to_meal`, en una transacción, tras un paso previo (`frontend_conventions.md` §9.7):
+
+- Con `servings`, se eligen las raciones, decimales mayores que 0 y hasta 100, con `1` por defecto: `amount = amount_receta * raciones / servings`. El servidor lo calcula con los datos de la receta (`code_conventions.md` §7.13). Sin `servings`, se añade la receta entera.
+- La preparación se puede cambiar para esa comida, ya rellena con la de la receta, y no se escribe en la receta.
+- `strictly_weighed` e `is_cooked_weight` se copian de la porción de la receta (§6.11). No hay `strictly_weighed = TRUE` por defecto: venir de una receta no demuestra que hoy se haya pesado. `Weighed cooked` se ajusta en la receta y `Strictly weighted` en el carrito.
+- Sin evento elegido se crea uno, con el nombre de la receta y su tipo de comida o, si no tiene, el de la franja horaria (§7.14 de `code_conventions.md`).
+- El offset de cada tanda nueva es el automático (§4.5). Lo demás (offset, hora, inyección) se ajusta en el carrito, donde se pueden añadir más alimentos.
 
 ## 5. Información nutricional
 

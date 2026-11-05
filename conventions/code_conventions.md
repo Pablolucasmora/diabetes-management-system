@@ -79,7 +79,7 @@ Un CRUD:
 
 #### 1.3.1 Organización de archivos en `database/queries/`
 
-`database/queries/` no es un único archivo: un módulo por tabla física, nombrado como la tabla (`users.py`, `catalog.py`, `manual_intake.py`, `recipe.py`, `tags.py`, `linked_tags.py`, `user_favorites.py`, `food_brands.py`, `intake_event.py`, `insulin_injections.py`, `portion_detail.py`, `meal_type_schedule.py`, `auth_sessions.py`, `auth_rate_limits.py`, ...).
+`database/queries/` no es un único archivo: un módulo por tabla física, nombrado como la tabla (`users.py`, `catalog.py`, `manual_intake.py`, `recipe.py`, `recipe_plate.py`, `tags.py`, `linked_tags.py`, `user_favorites.py`, `food_brands.py`, `intake_event.py`, `insulin_injections.py`, `portion_detail.py`, `meal_type_schedule.py`, `auth_sessions.py`, `auth_rate_limits.py`, ...).
 
 - **`crud.py`** contiene únicamente helpers genéricos compartidos por varios módulos de tabla: ejecución de queries (`_execute_query`, `_execute_query_many`), el constructor seguro de `UPDATE` dinámico (`_build_update_query` y su whitelist), búsqueda difusa (`_build_fuzzy_search`, `_add_fuzzy_name_condition`) y los filtros de ownership/favorito reutilizados por varias tablas (`_add_entity_filters`, `_favorite_filter_sql`). No contiene CRUD de ninguna tabla. Un helper usado por más de un módulo de tabla vive en `crud.py`, aunque físicamente resida hoy dentro del bloque de una tabla concreta; no se decide por dónde está escrito hoy sino por quién lo usa.
 - Una función va en el archivo de la tabla sobre la que ejecuta su SQL. Si su `FROM`/`UPDATE`/`INSERT` principal toca la tabla puente de una relación N:M (`linked_tags`, `user_favorites`), va en el archivo de esa tabla puente, no en el de las tablas que relaciona.
@@ -233,7 +233,6 @@ class RecipeUpdate:
     name: str | None = None
     meal_type: str | None = None
     notes: str | None = None
-    is_published: bool | None = None
 ```
 
 ### 3.2 Acceso a filas SQL
@@ -1101,7 +1100,7 @@ petición y el swap `outerHTML` lo destruye.
 | `POST /cart/portion/{portion_id}/is_cooked_weight` | `#macros_summary_event_{id}` | `outerHTML` | `Div(MacrosSummary(...), id="macros_summary_event_{id}")` |
 | `POST /cart/event/{id}/plate`, `POST /cart/plate/{plate_id}/name`, `…/offset`, `…/apply_offset`, `…/delete` | `#cart_card_event_{id}` | `outerHTML` | `CartCard(event, portions, plates)` |
 | `delete`, `confirm` | `#cart_card_event_{id}` | `outerHTML` | cuerpo vacío (la tarjeta desaparece) y, si no queda ningún evento planificado, swap OOB de `#cart_body` con el carrito vacío |
-| `POST /cart/plate/{plate_id}/recipe` (guardar la tanda como receta, provisional, `frontend_conventions.md` §7.13) | `#cart_card_event_{id}`, declarado pero sin swap | `none` | cuerpo vacío y el evento `recipeSaved` (`HX-Trigger`); `static/js/cart_units.js` muestra el aviso de éxito `Recipe saved`. La tarjeta no cambia |
+| `POST /cart/event/{event_id}/recipe` y `POST /cart/plate/{plate_id}/recipe` (guardar la comida o la tanda como receta, `frontend_conventions.md` §7.13) | `#cart_card_event_{id}`, declarado pero sin swap | `none` | cuerpo vacío y el evento `recipeSaved` (`HX-Trigger`); `static/js/cart_units.js` muestra el aviso de éxito `Recipe saved`. La tarjeta no cambia |
 | `archive`, `restore` | página completa del carrito | `outerHTML` | `cart_main(...)`; no están enlazadas desde ninguna tarjeta todavía |
 
 Los dos flags de tres estados se repintan **fuera de banda** junto al resumen: el control lleva
@@ -1119,7 +1118,7 @@ no un formulario de guardado, así que **no** aplican la excepción de `200` +
 fragmento de esta misma sección: conservan el status semántico de su categoría
 y el aviso viaja por el canal de error visible definido en
 `error_conventions.md` §7. Eventos `HX-Trigger`: `appError` y, en el éxito de
-guardar una tanda como receta, `recipeSaved`.
+guardar una tanda o una comida como receta, `recipeSaved`.
 
 Añadir un botón nuevo al carrito obliga a elegir una de las filas de esta
 tabla o a añadir una nueva; no se deja el `hx-target` implícito.
@@ -1300,6 +1299,8 @@ La clasificación de cada tabla se declara en este registro, que es el sitio ún
 | `insulin_injections` | **Historical**. Pendiente decidir si es archivable (`deleted_at`) o no archivable con borrado físico documentado. | Físico (statu quo). | `audit/audit_insulin_injections.md`; `audit/deuda_pendiente.md`, "Clasificación archivable / no archivable". |
 | `intake_event` | **Híbrida por `state`**: `planned` no archivable, `consumed` archivable. | Físico en `planned`; `deleted_at` en `consumed`. | Decisión 2026-09-08. |
 | `manual_intake` | **Archivable**, irreversible (sin `restore_`), con el mismo contrato que `catalog`. Contrato completo en §11.2.3. | Solo `deleted_at`; nunca físico (porciones de eventos consumidos y, si se publica, favoritos y recetas de otros usuarios apuntan al plato). | `audit/audits/audit_manual_intake.md`, hallazgos 5 y 14; decisiones 2026-10-09. |
+| `recipe` | **Non-archivable**, con borrado físico solo por su propietario. Contrato completo en §11.2.4. | Físico: lo consumido no referencia la receta. Se revisa en la fase 2. | Decisión del usuario (2026-11-05), `audit/audits/audit_recipe.md`. |
+| `recipe_plate` | **Dependent** de `recipe`. | `CASCADE` desde `recipe`; borrar una tanda con ingredientes está bloqueado. | `measurement_conventions.md` §4.7. |
 | `off_product` | **Datos de referencia**, sin propietario: los ven todos los usuarios y la app no los escribe (`init_db` le retira esos permisos). | Físico: cada carga reemplaza la tabla entera, en una transacción (`scripts/off/load_off.sh`). | `measurement_conventions.md` §12.2. |
 | `ciqual_food` | **Datos de referencia**, igual que `off_product`. | Físico: cada carga reemplaza la tabla (`scripts/ciqual/load_ciqual.sh`). | `measurement_conventions.md` §12.3. |
 | `portion_detail` | **Dependent** de su destino (`intake_event`, `recipe` o `fridge`); hereda su propietario y su ciclo de vida. | `CASCADE` desde el destino. El borrado físico es apropiado en recetas y en eventos `planned`; en un evento `consumed` es histórico clínico y hoy lo impide la ruta, no la query (limitación declarada). | `audit/audit_portion_detail.md`; `measurement_conventions.md` §6.9.3; `audit/deuda_pendiente.md`, `portion_detail` H27. |
@@ -1376,6 +1377,20 @@ Decisiones 2026-10-09 (`conventions/decisions.md`). Las unidades, la entrada de 
   - Cambiar la cantidad de la porción escala los macros (§5.2), como en `catalog`.
   - `strictly_weighed` nace con el `default_strictly_weighed` del plato; `macros_quality` no se guarda en la porción, se lee en vivo del plato (`measurement_conventions.md` §6.11).
 
+#### 11.2.4 Contrato de `recipe`
+
+Decisión del usuario del 2026-11-05. Una receta es una comida o un plato recurrente que se reutiliza para añadirlo rápido al carrito. Solo hay un tipo de receta, con una o más tandas (`measurement_conventions.md` §4.7). Una comida de base fija que varía cada día es una receta con la base, y lo del día se añade en el carrito.
+
+- **No es histórico.** Lo confirmado referencia a los alimentos, nunca a la receta: cambiarla o borrarla no toca ninguna comida. Tampoco guarda datos del estudio.
+- **Propietario y visibilidad.** `users_id` es el propietario y es `NOT NULL`; en Python se expone como `user_id` (§3.5). La lee quien la posee o quien la ve publicada. Solo el propietario la edita o la borra. Todo va en SQL: `get_recipe` y `list_recipes` llevan la visibilidad en el `WHERE`, y `update_recipe` y `delete_recipe` al propietario.
+- **Quien no es propietario** la usa, la marca como favorita, la copia y la añade a su carrito. No ve controles de edición (§9.4 de `frontend_conventions.md`).
+- **Campos.** `name` normalizado (`normalize_food_text`, `ck_recipe_name_normalized`); `notes`, texto libre del usuario de hasta `RECIPE_NOTES_MAX_LENGTH` que puede contener toda la preparación; `meal_type` opcional, sin `rescue`, que tiene su propio flujo; `servings` opcional, entero de 1 a 100; `created_at` y `updated_at`. La preparación de cada ingrediente son campos de su porción, no notas.
+- **Editar** es una sustitución completa: un opcional vacío se guarda como `NULL` (§3.4). Gana la última escritura (§6.7, §6.10).
+- **Unicidad.** `uq_recipe_personal_name` por propietario y `uq_recipe_published_name` entre publicadas, sobre `lower(name)`. Una receta no tiene marca, así que el duplicado es solo el nombre. Se puede llamar igual que la receta publicada de otra persona.
+- **Copiar** (§11.2.2) crea una receta personal y editable, en favoritos, con sus notas, raciones, tandas con ingredientes e ingredientes. No copia etiquetas. La original no se toca.
+- **Borrar** es físico y lo hace solo el propietario: `CASCADE` a tandas, porciones y favoritos, y `SET NULL` en las copias. Quien la tuviera en favoritos la pierde.
+- **Auditoría de cambios** (§11.10): no se requiere, porque no es dato clínico.
+
 ### 11.3 Soft-delete
 
 Una entidad archivable utiliza un campo nullable `deleted_at`.
@@ -1449,10 +1464,9 @@ Los formularios de alta de las tres tablas no ofrecen publicar (decisión 2026-0
 
 A diferencia de archivar, **se puede volver a publicar**, con la misma comprobación de `409`, y el propietario lo sigue viendo y editando con normalidad. Los datos del alimento siguen siendo visibles dentro de las recetas publicadas que lo contienen.
 
-**Publicar una receta** exige que sus ingredientes estén publicados.
-- Si la receta contiene alimentos personales del propietario, un popup los enumera y avisa de que **se publicarán también** ("Esta receta usa 2 alimentos personales: A, B. Al publicarla se publicarán también").
-- Al confirmar, se publican la receta y esos alimentos **en una sola transacción**.
-- Si alguno da `409`, no se publica nada y se indica cuál choca, para que el usuario lo renombre o lo sustituya por el publicado.
+**Publicar una receta** (decisión 2026-11-05; sustituye al popup que publicaba los ingredientes, de la decisión 2026-09-24).
+- Hasta la fase 2 la interfaz no publica ni despublica recetas: ninguna ruta escribe `recipe.is_published`. La columna y las recetas ya publicadas se conservan, y se siguen viendo, usando y copiando.
+- En la fase 2, un ingrediente personal seguirá sin publicar y solo será visible dentro de esa receta, con un aviso antes de publicar. Así no llena la búsqueda pública. Queda por decidir qué ocurre con él al copiar la receta (`audit/deuda_pendiente.md`).
 - Quien ve una receta publicada ve sus ingredientes.
 
 ### 11.5 Unicidad y soft-delete
@@ -1492,7 +1506,7 @@ Los constraints nuevos tienen nombres explícitos y siguen estos patrones:
 Ejemplo correcto:
 
 ```text
-fk_recipe_user_id_users
+fk_recipe_users_id_users
 ```
 
 Un constraint debe coincidir con la validación Python.
@@ -1517,7 +1531,9 @@ Los índices deben seguir `idx_<tabla>_<columnas>` o `uq_<tabla>_<columnas>` y d
 
 Cada columna buscada tiene dos índices GIN trigram: `idx_<tabla>_<columna>_trgm` sobre `lower(col)` e `idx_<tabla>_<columna>_compact_trgm` sobre `fuzzy_compact_sql(col)`. La expresión del índice y la de la consulta salen de la misma función. La columna se pasa sin envolver: un `COALESCE` o cualquier otra función rompe la coincidencia con el índice. Si la búsqueda se hace sobre una tabla relacionada, sus ids se resuelven aparte, con `= ANY(ARRAY(SELECT ...))` y no con `IN (...)`, porque solo así el `OR` puede combinarse con los demás índices (marca de `catalog`).
 
-**Texto sin acentos** (2026-11-05). `catalog` se busca por `search_name`, una columna generada con el nombre en minúsculas y sin acentos, y el término se normaliza igual, así que "limon" encuentra "Limón". El mapa de caracteres vive en `domain/search_text.py`, que da tanto la expresión SQL de la columna como la normalización del término. No es el antiguo `catalog.slug`, eliminado el 2026-09-25: aquel era un dato aplicado a mano y sin uso, y este lo calcula PostgreSQL y lo usa la búsqueda. Las demás tablas siguen buscando por su columna original.
+**Texto sin acentos** (2026-11-05). `catalog` se busca por `search_name`, una columna generada con el nombre en minúsculas y sin acentos, y el término se normaliza igual, así que "limon" encuentra "Limón". El mapa de caracteres vive en `domain/search_text.py`, que da tanto la expresión SQL de la columna como la normalización del término. No es el antiguo `catalog.slug`, eliminado el 2026-09-25: aquel era un dato aplicado a mano y sin uso, y este lo calcula PostgreSQL y lo usa la búsqueda. `recipe` hace lo mismo desde el 2026-11-05. Las demás tablas siguen buscando por su columna original.
+
+**Búsqueda de recetas** (2026-11-05). Por `recipe.search_name`, igual que `catalog`, o por el nombre de un ingrediente, con `= ANY(ARRAY(SELECT ...))`: `catalog.search_name` y `manual_intake.name`. Solo filtra recetas que el usuario ya puede ver, así que no revela nada nuevo. Una receta encontrada por un ingrediente queda detrás en la relevancia, que mira solo el nombre. Se puede filtrar por tipo de comida, con `parse_enum`. Las favoritas van primero y no hay orden por uso, porque lo consumido no referencia la receta.
 
 **Excepción: `off_product` y `ciqual_food`** (2026-11-05). Las dos tablas comparten `_search_reference_foods` (`queries/crud.py`), con los mismos criterios, y no usan `_build_fuzzy_search`, porque compara el término entero y "hacendado gazpacho" devolvía cualquier producto de Hacendado. Cada palabra debe aparecer en `search_text`, sin acentos: nombre y marca en `off_product`, y nombre en español e inglés en `ciqual_food`. Se ordena primero por los que empiezan por la primera palabra, después por los que tienen una palabra que empieza por ella y, por último, por el desempate de cada tabla: escaneos, nombre y código en `off_product`; crudos, nombre más corto y código en `ciqual_food`, que no tiene escaneos. Solo si ninguna fila de la tabla contiene todas las palabras, aunque ya se le ofrezcan al usuario por otra vía, se busca por similitud, para tolerar erratas, con el mismo desempate. Así todas las páginas de una búsqueda siguen el mismo modo y no salen parecidos de algo que el usuario ya tiene. Cada tabla tiene un único índice GIN trigram sobre `search_text`: `idx_<tabla>_search_text_trgm`.
 

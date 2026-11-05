@@ -1666,6 +1666,13 @@ def _form_draft_bootstrap_script():
             form.addEventListener("change", function () { saveForm(form); });
             form.addEventListener("input", function () { saveForm(form); });
             form.addEventListener("submit", function () { saveForm(form); });
+            // Saved: the draft is done, or it would fill a field emptied on purpose
+            // the next time the form opens. A validation error keeps it.
+            form.addEventListener("htmx:beforeOnLoad", function (event) {
+              var xhr = event && event.detail ? event.detail.xhr : null;
+              if (!xhr || xhr.status >= 400 || !xhr.getResponseHeader("HX-Redirect")) return;
+              try { window.localStorage.removeItem(form.getAttribute("data-draft-key")); } catch (_) {}
+            });
           }
 
           function bindAll(scope) {
