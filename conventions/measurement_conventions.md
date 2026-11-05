@@ -154,6 +154,8 @@ desde esa misma decisión—, no se deja a cero. Constraint:
 
 - **No se recalcula nunca** cuando cambia el `meal_time` del evento. El offset es un dato propio de la porción, no una función del `meal_time`: el análisis obtiene la hora real sumándolo al `meal_time` vigente en ese momento (`meal_time + offset_minutes`), de modo que si la hora del evento cambia, el resultado se mueve con ella. Hasta el 2026-10-25 este párrafo decía "restándolo", con el signo contrario al del código (`routes/food_routes.py`, `_event_auto_offset_minutes`).
 - Admite valores negativos y positivos. Rango: `-300 <= offset_minutes <= 300`, con `CHECK`. Es una cota de cordura para que un valor corrupto no pase por plausible, no una frontera de negocio.
+- **Admite `NULL`, que significa desconocido** (decisión 2026-11-05). El análisis no lo trata como `0`. El usuario puede vaciar en el carrito el offset de una tanda o de un ingrediente, y `Apply all` con el campo vacío vacía los de toda la tanda.
+- **Offset automático fuera de rango** (decisión 2026-11-05). Si la diferencia entre `meal_time` y el instante de añadir queda fuera de `-300..300`, en cualquiera de los dos sentidos, la tanda nace con `NULL`, sin recortarlo ni rechazar la petición: no se sabe cuándo se come, y `±300` sería un dato inventado. Se calcula en un solo sitio, `auto_offset_minutes` (`domain/intake_plate.py`). Dentro del rango se sigue guardando, también si es negativo, como una comida planificada para más tarde.
 - El valor de cada porción **se hereda de la tanda** a la que se añade (§4.6.2), pero una vez escrito es independiente de ella: `intake_plate.offset_minutes` es una plantilla, no un dato clínico.
 
 ### 4.6 Tandas (platos) dentro de un evento (decisión 2026-09-19)
@@ -191,7 +193,7 @@ La tabla **no tiene columna de posición**. El orden de las tandas dentro de un 
 - La propagación a las filas existentes es una acción **explícita** del usuario (`Apply all`, `frontend_conventions.md` §7): fija el offset de la tanda y lo escribe en todas sus porciones.
 - Si se borrase `intake_plate.offset_minutes`, no se perdería ningún dato del estudio, solo la comodidad. Esa es la prueba de que no es un dato de la comida.
 
-La tanda creada implícitamente con el primer alimento nace con el offset autocalculado de ese alimento (diferencia entre `meal_time` y el instante de añadirlo, §4.5).
+La tanda creada implícitamente con el primer alimento nace con el offset autocalculado de ese alimento (diferencia entre `meal_time` y el instante de añadirlo, §4.5), o con `NULL` si queda fuera de rango. Sus porciones lo heredan igual.
 
 #### 4.6.3 Nombre de la tanda
 

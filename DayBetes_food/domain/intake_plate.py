@@ -84,6 +84,21 @@ class IntakePlateUpdate:
     offset_minutes: int | None = None
 
 
+def auto_offset_minutes(meal_time: datetime | None, now: datetime) -> int | None:
+    """Offset a new plate is born with: minutes from `meal_time` to `now`.
+
+    Outside the sanity bound it is None, in both directions: nobody knows when
+    that plate is eaten, and a clamped value would be an invented one
+    (measurement_conventions.md §4.5). Without a `meal_time` it is 0.
+    """
+    if meal_time is None:
+        return 0
+    offset = int((now - meal_time).total_seconds() // 60)
+    if not INTAKE_PLATE_OFFSET_MIN_MINUTES <= offset <= INTAKE_PLATE_OFFSET_MAX_MINUTES:
+        return None
+    return offset
+
+
 def derive_plate_name(ingredient_names: list[str]) -> str:
     """Name shown for a plate without its own name (§4.6.3).
 

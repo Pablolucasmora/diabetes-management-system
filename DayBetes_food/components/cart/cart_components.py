@@ -629,7 +629,7 @@ def PlateHeader(event, plate, display_name, card_target, has_portions=False):
     name_input_id = f"plate_name_{plate.id}"
     offset_input_id = f"plate_offset_{plate.id}"
     confirm_id = f"delete_plate_confirm_{plate.id}"
-    offset_value = plate.offset_minutes if plate.offset_minutes is not None else 0
+    offset_value = "" if plate.offset_minutes is None else plate.offset_minutes
 
     return Div(
         Div(
@@ -807,7 +807,7 @@ def IngredientSettingsModal(event, plate, sample, item_key, ingredient_name, pla
     portion_id = int(sample.id)
     modal_id = f"ingredient_settings_{item_key}"
     offset_input_id = f"offset_input_{item_key}"
-    offset_value = int(sample.offset_minutes) if sample.offset_minutes is not None else 0
+    offset_value = "" if sample.offset_minutes is None else int(sample.offset_minutes)
     shows_cooked_weight = sample.origin is PortionOrigin.CATALOG and (
         sample.source.cooking_factor is not None or sample.is_cooked_weight
     )

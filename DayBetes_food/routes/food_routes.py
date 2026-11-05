@@ -181,7 +181,7 @@ from DayBetes_food.components.food.foods import (
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.domain.constants import RESCUE_TAG_NAME, IntakeEventState, MealType
 from DayBetes_food.domain.intake_event import INTAKE_EVENT_NAME_MAX_LENGTH, IntakeEventCreate, IntakeEventUpdate
-from DayBetes_food.domain.intake_plate import IntakePlateCreate
+from DayBetes_food.domain.intake_plate import IntakePlateCreate, auto_offset_minutes
 from DayBetes_food.domain.meal_type_schedule import resolve_meal_type_for_time
 from DayBetes_food.time_utils import local_naive_to_utc_aware, local_now, utc_now
 from DayBetes_food.errors import (
@@ -214,20 +214,13 @@ def _default_meal_type_now(connection, user_id: int) -> MealType | None:
     return resolve_meal_type_for_time(local_now().time(), overrides)
 
 
-def _event_auto_offset_minutes(event_data) -> int:
-    """Auto-computed offset of a new plate (measurement_conventions.md §4.5).
-
-    Difference in minutes between the event's `meal_time` and this instant. It
-    is the value the plate is born with; from then on its portions inherit it,
-    which is what avoids correcting it ingredient by ingredient (§4.6.2).
-    """
-    if not event_data or not event_data.meal_time:
-        return 0
-    delta = utc_now() - event_data.meal_time
-    return int(delta.total_seconds() // 60)
+def _event_auto_offset_minutes(event_data) -> int | None:
+    """Offset of a new plate (measurement_conventions.md §4.5, §4.6.2). From then
+    on its portions inherit it, which avoids correcting them one by one."""
+    return auto_offset_minutes(event_data.meal_time if event_data else None, utc_now())
 
 
-def _resolve_event_plate(connection, user_id: int, event_id: int, plate_id: str, offset_minutes: int) -> int:
+def _resolve_event_plate(connection, user_id: int, event_id: int, plate_id: str, offset_minutes: int | None) -> int:
     """Plate a food added to an event goes to (§4.6.1, §7.7).
 
     - A specific id: that plate, checking inside the SQL that it belongs to

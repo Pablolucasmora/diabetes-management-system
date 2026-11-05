@@ -20,6 +20,7 @@ from DayBetes_food.database.queries import (
     update_portion_detail_fields,
     update_portion_flag,
     update_portion_offset,
+    update_intake_plate_offset,
     apply_plate_offset_to_portions,
     create_intake_plate,
     delete_intake_plate,
@@ -218,19 +219,23 @@ def _to_float(value: str):
     return float(normalized)
 
 
-def _parse_offset_minutes(raw_value: str) -> int:
-    """Validate an offset in minutes at the boundary (§7.5).
+def _parse_offset_minutes(raw_value: str) -> int | None:
+    """Validate an offset in minutes at the boundary (§7.4, §7.5).
 
-    An integer within the sanity bound of measurement_conventions.md §4.5
-    (`-300..300`), the same one the `intake_plate` CHECK declares: writing
-    out of range would give a database error instead of a 422.
+    Empty is None: the offset is unknown, and it clears the stored value. Anything
+    else is an integer within the sanity bound of measurement_conventions.md §4.5
+    (`-300..300`), the same one the `intake_plate` CHECK declares: writing out of
+    range would give a database error instead of a 422.
 
     Raises:
         ValidationError: it is not an integer or is out of range.
     """
+    text = (raw_value or "").strip()
+    if not text:
+        return None
     try:
-        value = int((raw_value or "").strip())
-    except (TypeError, ValueError) as exc:
+        value = int(text)
+    except ValueError as exc:
         raise ValidationError("The offset must be a whole number of minutes.") from exc
     if not (INTAKE_PLATE_OFFSET_MIN_MINUTES <= value <= INTAKE_PLATE_OFFSET_MAX_MINUTES):
         raise ValidationError(
@@ -1016,7 +1021,7 @@ def setup_cart_routes(rt):
         with get_connection() as connection:
             try:
                 event_id = _plate_event_id(connection, int(user_id), plate_id, require_planned=False)
-                update_intake_plate(connection, plate_id, IntakePlateUpdate(offset_minutes=value))
+                update_intake_plate_offset(connection, plate_id, value)
             except NotFoundError:
                 return _error(request, NotFoundError, _PLATE_GONE)
             return _card_response(request, connection, int(user_id), event_id)

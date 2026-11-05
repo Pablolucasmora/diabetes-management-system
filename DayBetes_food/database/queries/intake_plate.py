@@ -194,10 +194,32 @@ def update_intake_plate_name(
         raise
 
 
+def update_intake_plate_offset(
+    connection, plate_id: int, offset_minutes: int | None, *, commit: bool = True
+) -> None:
+    """Write the plate's template offset, or clear it with `offset_minutes=None`.
+
+    A dedicated function for the same reason as `update_intake_plate_name`.
+
+    Raises:
+        NotFoundError: the plate does not exist.
+    """
+    query = """
+        UPDATE intake_plate
+        SET offset_minutes = %(offset_minutes)s,
+            updated_at = NOW()
+        WHERE id = %(plate_id)s
+        RETURNING id;
+    """
+    row = _execute_query(connection, query, {"plate_id": plate_id, "offset_minutes": offset_minutes}, commit=commit)
+    if row is None:
+        raise NotFoundError(f"Intake plate {plate_id} not found")
+
+
 def apply_plate_offset_to_portions(
     connection,
     plate_id: int,
-    offset_minutes: int,
+    offset_minutes: int | None,
     *,
     commit: bool = True,
 ) -> bool:
