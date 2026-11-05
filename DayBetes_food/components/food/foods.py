@@ -409,7 +409,7 @@ def Filters():
                 hx_get="/food/list",
                 hx_target="#food-list",
                 hx_swap="innerHTML",
-                hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
+                hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
                 **{
                     "hx-on:click": (
                         f"document.getElementById('food_filter').value='{value}';"
@@ -485,7 +485,7 @@ def Filters():
                     hx_get="/food/list",
                     hx_target="#food-list",
                     hx_swap="innerHTML",
-                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
+                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
                     **{
                         "hx-on:click": (
                             "var mode='recommended';"
@@ -517,7 +517,7 @@ def Filters():
                     hx_get="/food/list",
                     hx_target="#food-list",
                     hx_swap="innerHTML",
-                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
+                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
                     **{
                         "hx-on:click": (
                             "var mode='global';"
@@ -553,7 +553,7 @@ def Filters():
                     hx_get="/food/list",
                     hx_target="#food-list",
                     hx_swap="innerHTML",
-                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
+                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
                     **{
                         "hx-on:click": (
                             "var mode='catalog';"
@@ -585,7 +585,7 @@ def Filters():
                     hx_get="/food/list",
                     hx_target="#food-list",
                     hx_swap="innerHTML",
-                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
+                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
                     **{
                         "hx-on:click": (
                             "var mode='manual';"
@@ -621,7 +621,7 @@ def Filters():
                     hx_get="/food/list",
                     hx_target="#food-list",
                     hx_swap="innerHTML",
-                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
+                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
                     **{
                         "hx-on:click": (
                             "var mode='mine';"
@@ -653,7 +653,7 @@ def Filters():
                     hx_get="/food/list",
                     hx_target="#food-list",
                     hx_swap="innerHTML",
-                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
+                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
                     **{
                         "hx-on:click": (
                             "var mode='discover';"
@@ -673,6 +673,20 @@ def Filters():
                 ),
                 cls="w-1/2 flex items-end justify-center",
             ),
+            Select(
+                Option("All meals", value=""),
+                *[Option(MEAL_TYPE_LABELS.get(meal.value, meal.value), value=meal.value) for meal in RECIPE_MEAL_TYPES],
+                id="food_recipes_meal",
+                name="meal_type",
+                aria_label="Filter recipes by meal type",
+                data_skip_page_loading="true",
+                hx_get="/food/list",
+                hx_target="#food-list",
+                hx_swap="innerHTML",
+                hx_trigger="change",
+                hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
+                cls="bg-white border border-line px-2 py-1 text-xs rounded-lg shrink-0 ml-2 cursor-pointer",
+            ),
             id="food_recipes_tabs",
             cls="hidden w-full flex items-end justify-between mt-2",
         ),
@@ -689,7 +703,7 @@ def Filters():
                     hx_get="/food/list",
                     hx_target="#food-list",
                     hx_swap="innerHTML",
-                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
+                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
                     **{
                         "hx-on:click": (
                             "var mode='catalog';"
@@ -721,7 +735,7 @@ def Filters():
                     hx_get="/food/list",
                     hx_target="#food-list",
                     hx_swap="innerHTML",
-                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
+                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
                     **{
                         "hx-on:click": (
                             "var mode='manual';"
@@ -753,7 +767,7 @@ def Filters():
                     hx_get="/food/list",
                     hx_target="#food-list",
                     hx_swap="innerHTML",
-                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
+                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
                     **{
                         "hx-on:click": (
                             "var mode='recipes';"
@@ -799,9 +813,13 @@ def SearchInput():
         hx_get="/food/list",
         hx_target="#food-list",
         hx_trigger="keyup changed delay:500ms",
-        hx_include="#food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
+        hx_include="#food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
         hx_swap="innerHTML",
     )
+
+
+def _recipe_picker_plate_input(recipe_plate_id: int | None):
+    return Input(type="hidden", id="recipe_ingredient_plate", name="recipe_plate_id", value=str(recipe_plate_id or ""))
 
 
 def RecipeIngredientSearchInput(recipe_id: int):
@@ -823,6 +841,7 @@ def RecipeIngredientSearchInput(recipe_id: int):
         hx_get=f"/food/recipe/{recipe_id}/ingredients/list",
         hx_target="#recipe-ingredient-list",
         hx_trigger="keyup changed delay:300ms",
+        hx_include="#recipe_ingredient_filter, #recipe_ingredient_plate",
         hx_swap="innerHTML",
     )
 
@@ -2251,6 +2270,7 @@ def CreateCatalogPage(
     alcohol_source_note: str | None = None,
     off_prefill_barcode: str | None = None,
     ciqual_note: str | None = None,
+    add_to_recipe: tuple[int, int | None] | None = None,
 ):
     """Name, what it is and its macros come first; the rest is folded under
     "More details" and opens by itself when the scanner prefilled any of it."""
@@ -2307,6 +2327,15 @@ def CreateCatalogPage(
                 Input(type="hidden", name="prefill_source_id", value=_pv("prefill_source_id")),
             ]
             if _pv("prefill_source")
+            else []
+        ),
+        # The food was chosen from a recipe's ingredient search: it goes in when saved (§9.7).
+        *(
+            [
+                Input(type="hidden", name="add_to_recipe", value=str(add_to_recipe[0])),
+                Input(type="hidden", name="add_to_recipe_plate", value=str(add_to_recipe[1] or "")),
+            ]
+            if add_to_recipe
             else []
         ),
         notices,
@@ -2974,7 +3003,7 @@ def AddButton(label: str = "+", include_meal_selector: bool = True, **attrs):
         label,
         cls=button_cls,
         hx_swap=attrs.pop("hx_swap", "none"),
-        **on_after(reload_page=False),
+        **{key: value + attrs.pop(key, "") for key, value in on_after(reload_page=False).items()},
         **attrs,
     )
 
@@ -4077,69 +4106,83 @@ def FoodDetailPage(
     )
 
 
-def RecipeIngredientPickerCard(food: dict, recipe_id: int):
-    add_path = f"/food/recipe/{recipe_id}/ingredients/add/{food['entry_type']}/{food['id']}"
+def RecipeIngredientPickerCard(food: dict, recipe_id: int, recipe_name: str, recipe_plate_id: int | None = None):
+    query = f"?recipe_plate_id={recipe_plate_id}" if recipe_plate_id else ""
+    add_path = f"/food/recipe/{recipe_id}/ingredients/add/{food['entry_type']}/{food['id']}{query}"
     subtitle = ""
     if food.get("entry_type") == "catalog":
         subtitle = (food.get("brand") or "").strip()
     elif food.get("entry_type") == "manual_intake":
         subtitle = (food.get("origin") or "").strip()
-
-    title_node = H1(
-        Span(food["name"]),
-        Span(f"({subtitle})", cls="text-xs text-gray-500 font-medium") if subtitle else "",
-        cls="text-left font-semibold flex flex-wrap items-baseline gap-1",
-    )
     return Div(
         Div(
-            title_node,
-            Div(_entry_meta(food), cls="text-sm text-gray-700"),
-            cls="flex flex-col gap-0.5 min-w-0",
+            H1(Span(food["name"]), cls="text-left text-[15px] font-semibold leading-snug"),
+            Div(Span(subtitle, cls="truncate"), cls="flex items-center text-xs text-gray-500 min-w-0") if subtitle else "",
+            P(_entry_meta(food), cls="text-xs text-gray-700 mt-0.5"),
+            cls="flex flex-col min-w-0",
         ),
         Div(
             AddButton(
-                label="Add food",
+                label="+",
                 include_meal_selector=False,
                 hx_post=add_path,
-                cls="""
-                    web_button
-                    rounded-lg
-                    border-gray-500/30 shadow-none
-                    hover:bg-gray-500/20
-                    px-3 h-8
-                    flex items-center justify-center
-                    transition-colors duration-300
-                    text-xs
-                """,
+                hx_disabled_elt="this",
+                data_recipe_name=recipe_name,
+                **{
+                    "hx-on:htmx:after-request": (
+                        "if(event.detail.successful&&window.dbShowAppNotice)"
+                        "window.dbShowAppNotice('Added to '+this.dataset.recipeName);"
+                    )
+                },
             ),
             cls="flex items-center gap-2 ml-3",
         ),
-        cls="web_container food_entry flex items-center justify-between",
+        cls="web_container food_entry rounded-2xl flex items-center justify-between",
     )
 
 
-def RecipeIngredientPickerList(recipe_id: int, foods: list[dict]):
-    grouped = {"catalog": [], "manual_intake": []}
-    for food in foods:
-        entry_type = food.get("entry_type")
-        if entry_type in grouped:
-            grouped[entry_type].append(food)
+def _recipe_picker_filters(recipe_id: int):
+    """`Food` and `Favs`: the same two lists of Food, without recipes (frontend §9.7)."""
+    buttons = []
+    for text, value in (("Food", "food"), ("Favs", "favs")):
+        buttons.append(
+            Button(
+                text,
+                type="button",
+                cls=f"{FILTER_ITEM_CLS} {'bg-black text-white shadow-md' if value == 'food' else 'bg-transparent text-gray-700'}",
+                data_recipe_picker_filter="true",
+                data_skip_page_loading="true",
+                hx_get=f"/food/recipe/{recipe_id}/ingredients/list",
+                hx_target="#recipe-ingredient-list",
+                hx_swap="innerHTML",
+                hx_include="#recipe_ingredient_search_input, #recipe_ingredient_filter, #recipe_ingredient_plate",
+                **{
+                    "hx-on:click": (
+                        f"document.getElementById('recipe_ingredient_filter').value='{value}';"
+                        "document.querySelectorAll('[data-recipe-picker-filter]').forEach(function(btn){"
+                        "btn.classList.remove('bg-black','text-white','shadow-md');"
+                        "btn.classList.add('bg-transparent','text-gray-700');"
+                        "});"
+                        "this.classList.remove('bg-transparent','text-gray-700');"
+                        "this.classList.add('bg-black','text-white','shadow-md');"
+                    )
+                },
+            )
+        )
+    return Div(
+        Input(type="hidden", id="recipe_ingredient_filter", name="filter", value="food"),
+        *buttons,
+        cls="flex items-center gap-1.5",
+    )
 
-    nodes = []
-    for entry_type, title in (("catalog", "Food"), ("manual_intake", "Manual intake")):
-        if not grouped[entry_type]:
-            continue
-        nodes.append(H2(title, cls="text-gray-700"))
-        nodes.extend(RecipeIngredientPickerCard(item, recipe_id) for item in grouped[entry_type])
 
-    if not nodes:
-        return Div(H2("No items", cls="text-gray-600"), cls="flex flex-col items-center")
-    return Div(*nodes, cls="flex flex-col items-center md:gap-3 lg:gap-3 gap-2 mt-4")
-
-
-def RecipeIngredientPickerPage(recipe_entry: dict, foods: list[dict]):
+def RecipeIngredientPickerPage(recipe_entry: dict, list_nodes: list, recipe_plate_id: int | None = None):
+    """The search of Food to pick ingredients, without the island or the buttons to
+    create or scan: only foods, never recipes (frontend_conventions.md §9.7)."""
     recipe_id = int(recipe_entry.get("id") or 0)
     return Div(
+        # Inside the page, so the island comes back on its own when the page is left.
+        Style("#floating_island{display:none}"),
         Div(
             Button(
                 "Back to recipe",
@@ -4149,16 +4192,14 @@ def RecipeIngredientPickerPage(recipe_entry: dict, foods: list[dict]):
             ),
             cls="w-full flex justify-start",
         ),
-        Div(
-            H1(f"Add ingredient to {recipe_entry.get('name') or 'recipe'}", cls="text-xl font-bold text-gray-900"),
-            P("Search in your Food and Manual intake lists.", cls="text-sm text-gray-600"),
-            cls="flex flex-col gap-1 w-full",
-        ),
+        H1(f"Add ingredient to {recipe_entry.get('name') or 'recipe'}", cls="text-xl font-bold text-gray-900 w-full"),
         RecipeIngredientSearchInput(recipe_id),
+        _recipe_picker_filters(recipe_id),
+        _recipe_picker_plate_input(recipe_plate_id),
         Div(
-            RecipeIngredientPickerList(recipe_id, foods),
+            *list_nodes,
             id="recipe-ingredient-list",
-            cls="w-full",
+            cls="w-full flex flex-col items-center gap-2",
         ),
         data_hide_cart="true",
         cls="""
@@ -4258,19 +4299,20 @@ def _external_food_card(name, subtitle, carbs, fats, proteins, form_query):
     )
 
 
-def off_product_cards(products) -> list:
+def off_product_cards(products, extra_query: str = "") -> list:
+    """`extra_query` keeps the recipe the food will go into (frontend §9.7)."""
     return [
         _external_food_card(
-            p.name, p.brand, p.carbs_100g, p.fats_100g, p.proteins_100g, f"barcode={p.code}"
+            p.name, p.brand, p.carbs_100g, p.fats_100g, p.proteins_100g, f"barcode={p.code}{extra_query}"
         )
         for p in products
     ]
 
 
-def ciqual_food_cards(foods) -> list:
+def ciqual_food_cards(foods, extra_query: str = "") -> list:
     return [
         _external_food_card(
-            f.name_es, None, f.carbs_100g, f.fats_100g, f.proteins_100g, f"ciqual={f.code}"
+            f.name_es, None, f.carbs_100g, f.fats_100g, f.proteins_100g, f"ciqual={f.code}{extra_query}"
         )
         for f in foods
     ]

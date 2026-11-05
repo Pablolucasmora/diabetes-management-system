@@ -136,20 +136,32 @@ def FoodActionsMenu(entry_type: FoodEntryType, entry_id: int, entry: FoodEntrySu
     )
 
 
-def FoodActionsRecipes(entry_type: FoodEntryType, entry_id: int, entry: FoodEntrySummary, recipes: list[dict]):
+def FoodActionsRecipes(
+    entry_type: FoodEntryType, entry_id: int, entry: FoodEntrySummary, recipes: list, several_plates: set[int] = frozenset()
+):
     """Second view: the user's recipes. Picking one adds the food with the
     usual initial amount and closes the pop-up (static/js/food_actions.js).
-    `recipes` are RecipeRead."""
+    `recipes` are RecipeRead; one in `several_plates` first asks which plate (§9.3.1)."""
     if recipes:
         content = Div(
             *[
-                _option(
-                    recipe.name,
-                    hx_post=f"/food/recipe/{recipe.id}/ingredients/add/{entry_type.value}/{entry_id}",
-                    hx_swap="none",
-                    hx_push_url="false",
-                    data_skip_page_loading="true",
-                    data_food_actions_recipe=recipe.name,
+                (
+                    _option(
+                        recipe.name,
+                        chevron=True,
+                        **_view_link_attrs(
+                            f"{food_actions_url(entry_type, entry_id)}/recipes/{recipe.id}/plates"
+                        ),
+                    )
+                    if recipe.id in several_plates
+                    else _option(
+                        recipe.name,
+                        hx_post=f"/food/recipe/{recipe.id}/ingredients/add/{entry_type.value}/{entry_id}",
+                        hx_swap="none",
+                        hx_push_url="false",
+                        data_skip_page_loading="true",
+                        data_food_actions_recipe=recipe.name,
+                    )
                 )
                 for recipe in recipes
             ],
@@ -160,6 +172,33 @@ def FoodActionsRecipes(entry_type: FoodEntryType, entry_id: int, entry: FoodEntr
     return Div(
         _header("Add to recipe", entry.name or "Unnamed", back_url=food_actions_url(entry_type, entry_id)),
         content,
+        cls="flex flex-col gap-3",
+    )
+
+
+def FoodActionsRecipePlates(
+    entry_type: FoodEntryType, entry_id: int, entry: FoodEntrySummary, recipe, plates: list[tuple[int, str]]
+):
+    """Third view, for a recipe with several plates: which one (§9.3.1)."""
+    return Div(
+        _header(recipe.name, entry.name or "Unnamed", back_url=f"{food_actions_url(entry_type, entry_id)}/recipes"),
+        Div(
+            *[
+                _option(
+                    label,
+                    hx_post=(
+                        f"/food/recipe/{recipe.id}/ingredients/add/{entry_type.value}/{entry_id}"
+                        f"?recipe_plate_id={plate_id}"
+                    ),
+                    hx_swap="none",
+                    hx_push_url="false",
+                    data_skip_page_loading="true",
+                    data_food_actions_recipe=recipe.name,
+                )
+                for plate_id, label in plates
+            ],
+            cls="flex flex-col gap-1.5 max-h-[50vh] overflow-y-auto",
+        ),
         cls="flex flex-col gap-3",
     )
 

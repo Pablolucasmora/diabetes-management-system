@@ -153,6 +153,7 @@ from DayBetes_food.components.food.food_actions import (
     FoodActionsCopyConfirm,
     FoodActionsMenu,
     FoodActionsRecipes,
+    FoodActionsRecipePlates,
 )
 from DayBetes_food.components.food.rescue import (
     RescueForm,
@@ -180,7 +181,7 @@ from DayBetes_food.components.food.foods import (
     EditRecipePage,
     FoodDetailPage,
     QuickAddPage,
-    RecipeIngredientPickerList,
+    RecipeIngredientPickerCard,
     RecipeIngredientPickerPage,
     RecipeIngredientsBlock,
     RecipeSummaryOob,
@@ -189,7 +190,7 @@ from DayBetes_food.components.food.foods import (
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.domain.constants import RESCUE_TAG_NAME, IntakeEventState, MealType
 from DayBetes_food.domain.intake_event import INTAKE_EVENT_NAME_MAX_LENGTH, IntakeEventCreate, IntakeEventUpdate
-from DayBetes_food.domain.intake_plate import IntakePlateCreate, auto_offset_minutes
+from DayBetes_food.domain.intake_plate import IntakePlateCreate, auto_offset_minutes, derive_plate_name
 from DayBetes_food.domain.recipe import (
     PortionPreparation,
     RecipeAddRequest,
@@ -1170,13 +1171,13 @@ def _recipe_views(connection, user_id, **filters) -> list[dict]:
     return [recipe_entry_view(item) for item in list_recipes(connection, int(user_id), **filters)]
 
 
-def _recipes_entries(connection, search: str = "", recipes_mode: str = "mine") -> list[dict]:
+def _recipes_entries(connection, search: str = "", recipes_mode: str = "mine", meal_type=None) -> list[dict]:
     user_id = get_current_user_id()
-    clean_search = (search or "").strip() or None
+    filters = {"search": (search or "").strip() or None, "meal_type": meal_type}
     if (recipes_mode or "mine").strip().lower() == "discover":
-        recipes = _recipe_views(connection, user_id, search=clean_search, others_only=True)
+        recipes = _recipe_views(connection, user_id, others_only=True, **filters)
     else:
-        recipes = _recipe_views(connection, user_id, search=clean_search, owned_only=True)
+        recipes = _recipe_views(connection, user_id, owned_only=True, **filters)
     return _sorted_food_entries([], [], recipes, viewer_user_id=user_id)
 
 
@@ -1207,6 +1208,27 @@ def _editable_recipe(connection, user_id, recipe_id: int) -> RecipeRead | None:
         return None
     recipe = get_recipe(connection, int(user_id), recipe_id)
     return recipe if recipe is not None and recipe.can_edit else None
+
+
+def _add_ingredient(connection, user_id: int, recipe_id: int, plate_id: int | None, origin: PortionOrigin, item) -> None:
+    """A food into a plate of a recipe, or its last plate. No serving -> the initial
+    100 g of a one-click add (R3). Same preparation in that plate -> the amounts add
+    up in the index, and the row that was there keeps its flags (§4.6.4, §4.7)."""
+    target_plate_id = plate_id or ensure_default_recipe_plate(connection, recipe_id, commit=False)
+    create_portion_detail(
+        connection,
+        user_id,
+        PortionDetailCreate(
+            origin=origin,
+            origin_id=item.id,
+            destination=PortionDestination.RECIPE,
+            destination_id=recipe_id,
+            recipe_plate_id=target_plate_id,
+            amount=item.default_portion if item.default_portion is not None else INITIAL_AMOUNT_WITHOUT_SERVING_G,
+            **_portion_defaults(item),
+        ),
+        commit=False,
+    )
 
 
 def _recipe_block_response(connection, user_id: int, recipe_id: int):
@@ -1388,6 +1410,7 @@ def _search_load_more_node(
     food_mode: str,
     favs_mode: str,
     recipes_mode: str,
+    meal_type: str,
     next_page: int,
 ):
     query = urlencode({
@@ -1397,6 +1420,7 @@ def _search_load_more_node(
         "food_mode": food_mode,
         "favs_mode": favs_mode,
         "recipes_mode": recipes_mode,
+        "meal_type": meal_type,
         "page": next_page,
     })
     if search:
@@ -1423,8 +1447,15 @@ def _search_load_more_node(
     )
 
 
-def _external_load_more(source: PrefillSource, search: str, next_page: int):
-    query = urlencode({"source": source.value, "search": search, "page": next_page})
+def _recipe_query(recipe_id: int | None, recipe_plate_id: int | None) -> str:
+    """What a result of the ingredient search carries to its create form (§9.7)."""
+    if recipe_id is None:
+        return ""
+    return "&" + urlencode({"add_to_recipe": recipe_id, "recipe_plate_id": recipe_plate_id or ""})
+
+
+def _external_load_more(source: PrefillSource, search: str, next_page: int, recipe_query: str = ""):
+    query = recipe_query.lstrip("&") + "&" * bool(recipe_query) + urlencode({"source": source.value, "search": search, "page": next_page})
     return Button(
         "Load more",
         type="button",
@@ -1437,7 +1468,7 @@ def _external_load_more(source: PrefillSource, search: str, next_page: int):
     )
 
 
-def _external_page(connection, user_id: int, source: PrefillSource, search: str, page: int):
+def _external_page(connection, user_id: int, source: PrefillSource, search: str, page: int, recipe_query: str = ""):
     """(cards, next page's button) of one source. One row more than a page tells
     whether there is a next one."""
     search_fn, cards_fn = (
@@ -1448,8 +1479,54 @@ def _external_page(connection, user_id: int, source: PrefillSource, search: str,
     rows = search_fn(
         connection, user_id, search, limit=SEARCH_PAGE_SIZE + 1, offset=(page - 1) * SEARCH_PAGE_SIZE
     )
-    load_more = _external_load_more(source, search, page + 1) if len(rows) > SEARCH_PAGE_SIZE else None
-    return cards_fn(rows[:SEARCH_PAGE_SIZE]), load_more
+    load_more = _external_load_more(source, search, page + 1, recipe_query) if len(rows) > SEARCH_PAGE_SIZE else None
+    return cards_fn(rows[:SEARCH_PAGE_SIZE], recipe_query), load_more
+
+
+def _recipe_ingredient_nodes(
+    connection, user_id: int, recipe: RecipeRead, *, search: str, filter_value: str, page: int, recipe_plate_id: int | None
+) -> list:
+    """One page of the ingredient search (frontend §9.7): the same lists as Food, without
+    recipes, and on the first page of a search the external sources too."""
+    entries = [
+        entry
+        for entry in _filtered_entries(connection, search=search, filter_value=filter_value)
+        if entry.get("entry_type") != FoodEntryType.RECIPE.value
+    ]
+    start = (page - 1) * SEARCH_PAGE_SIZE
+    nodes = [
+        RecipeIngredientPickerCard(entry, recipe.id, recipe.name, recipe_plate_id)
+        for entry in entries[start : start + SEARCH_PAGE_SIZE]
+    ]
+    if len(entries) > start + SEARCH_PAGE_SIZE:
+        query = urlencode(
+            {"search": search, "filter": filter_value, "recipe_plate_id": recipe_plate_id or "", "page": page + 1}
+        )
+        nodes.append(
+            Button(
+                "Load more",
+                type="button",
+                hx_get=f"/food/recipe/{recipe.id}/ingredients/list?{query}",
+                hx_swap="outerHTML",
+                hx_target="this",
+                hx_disabled_elt="this",
+                data_skip_page_loading="true",
+                cls="web_button rounded-full px-4 py-1.5 mt-1 text-xs font-semibold text-muted",
+            )
+        )
+    if page == 1 and search and filter_value == "food":
+        recipe_query = _recipe_query(recipe.id, recipe_plate_id)
+        nodes += ExternalFoodSection(
+            "From Ciqual",
+            *_external_page(connection, user_id, PrefillSource.CIQUAL, search, 1, recipe_query),
+            ciqual_attribution(),
+        )
+        nodes += ExternalFoodSection(
+            "From Open Food Facts",
+            *_external_page(connection, user_id, PrefillSource.OPEN_FOOD_FACTS, search, 1, recipe_query),
+            off_attribution(),
+        )
+    return nodes or [H2("No items", cls="text-gray-600")]
 
 
 def setup_food_routes(rt):
@@ -1459,8 +1536,17 @@ def setup_food_routes(rt):
         return render_page(request, food_main)
 
     @rt("/food/create/catalog/form")
-    def get(request: Request, barcode: str = "", existing_id: str = "", ciqual: str = ""):
+    def get(
+        request: Request,
+        barcode: str = "",
+        existing_id: str = "",
+        ciqual: str = "",
+        add_to_recipe: str = "",
+        recipe_plate_id: str = "",
+    ):
         clean = (barcode or "").strip()
+        target_recipe_id = _parse_optional_id(add_to_recipe, "recipe")
+        target_plate_id = _parse_optional_id(recipe_plate_id, "plate")
         ciqual_food = None
         ciqual_code = parse_ciqual_code(ciqual)
         if ciqual_code is not None:
@@ -1539,6 +1625,7 @@ def setup_food_routes(rt):
                 alcohol_source_note=prefill.alcohol_source_note if prefill else None,
                 off_prefill_barcode=valid_barcode if prefill and not ciqual_food else None,
                 ciqual_note=reliability_note(ciqual_food) if ciqual_food else None,
+                add_to_recipe=(target_recipe_id, target_plate_id) if target_recipe_id else None,
             ),
             show_cart=False,
         )
@@ -1790,7 +1877,38 @@ def setup_food_routes(rt):
                 return app_error_response(request, NotFoundError, "Food not found.")
             # Only the user's own recipes: the only ones they can edit.
             recipes = list_recipes(connection, int(user_id), owned_only=True)
-        return render_fragment(FoodActionsRecipes(kind, entry_id, entry, recipes))
+            several_plates = {
+                recipe.id for recipe in recipes if len(list_recipe_plates(connection, int(user_id), recipe.id)) > 1
+            }
+        return render_fragment(FoodActionsRecipes(kind, entry_id, entry, recipes, several_plates))
+
+    @rt("/food/actions/{entry_type}/{entry_id}/recipes/{recipe_id}/plates")
+    def get(request: Request, entry_type: str, entry_id: int, recipe_id: int):
+        """Which plate, for a recipe with several (frontend §9.3.1)."""
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        kind = _parse_food_entry_type(entry_type)
+        if kind is None or kind is FoodEntryType.RECIPE:
+            return app_error_response(request, ValidationError, _UNKNOWN_ENTRY_TYPE)
+        with get_connection() as connection:
+            entry = _food_entry_summary(connection, int(user_id), kind, entry_id)
+            recipe = _editable_recipe(connection, user_id, recipe_id)
+            if entry is None or recipe is None:
+                return app_error_response(request, NotFoundError, "Food not found.")
+            portions = list_viewable_recipe_portions(connection, int(user_id), recipe_id)
+            plates = [
+                (
+                    plate.id,
+                    plate.name or derive_plate_name(
+                        [row.source.name for row in portions if row.recipe_plate_id == plate.id]
+                    ),
+                )
+                for plate in list_recipe_plates(connection, int(user_id), recipe_id)
+            ]
+        return render_fragment(FoodActionsRecipePlates(kind, entry_id, entry, recipe, plates))
 
     @rt("/food/actions/{entry_type}/{entry_id}/copy")
     def get(request: Request, entry_type: str, entry_id: int):
@@ -1921,27 +2039,49 @@ def setup_food_routes(rt):
         )
 
     @rt("/food/recipe/{recipe_id}/ingredients/form")
-    def get(request: Request, recipe_id: int):
+    def get(request: Request, recipe_id: int, recipe_plate_id: str = ""):
+        target_plate_id = _parse_optional_id(recipe_plate_id, "plate")
         with get_connection() as connection:
             user_id = get_current_user_id()
             recipe = _editable_recipe(connection, user_id, recipe_id)
             if recipe is None:
                 raise NotFoundError("Recipe not found.")
-            entries = _filtered_entries(connection, search="", filter_value="food")
+            nodes = _recipe_ingredient_nodes(
+                connection, int(user_id), recipe, search="", filter_value="food", page=1, recipe_plate_id=target_plate_id
+            )
         return render_page(
-            request, lambda _: RecipeIngredientPickerPage(recipe_entry=recipe_entry_view(recipe), foods=entries), show_cart=False
+            request,
+            lambda _: RecipeIngredientPickerPage(recipe_entry_view(recipe), nodes, target_plate_id),
+            show_cart=False,
         )
 
     @rt("/food/recipe/{recipe_id}/ingredients/list")
-    def get(request: Request, recipe_id: int, search: str = ""):
+    def get(
+        request: Request, recipe_id: int, search: str = "", filter: str = "food", recipe_plate_id: str = "", page: int = 1
+    ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
+        if filter not in ("food", "favs"):
+            return app_error_response(request, ValidationError, "Unknown filter.")
+        try:
+            target_plate_id = _parse_optional_id(recipe_plate_id, "plate")
+        except ValidationError as error:
+            return app_error_response(request, ValidationError, str(error))
         with get_connection() as connection:
             user_id = get_current_user_id()
-            if _editable_recipe(connection, user_id, recipe_id) is None:
+            recipe = _editable_recipe(connection, user_id, recipe_id)
+            if recipe is None:
                 return app_error_response(request, NotFoundError, "Recipe not found.")
-            entries = _filtered_entries(connection, search=search, filter_value="food")
-        return render_fragment(RecipeIngredientPickerList(recipe_id=recipe_id, foods=entries))
+            nodes = _recipe_ingredient_nodes(
+                connection,
+                int(user_id),
+                recipe,
+                search=(search or "").strip(),
+                filter_value=filter,
+                page=max(1, page),
+                recipe_plate_id=target_plate_id,
+            )
+        return render_fragment(tuple(nodes))
 
     @rt("/food/recipe/{recipe_id}/ingredients/add/{entry_type}/{entry_id}")
     def post(request: Request, recipe_id: int, entry_type: str, entry_id: int, recipe_plate_id: str = ""):
@@ -1961,50 +2101,16 @@ def setup_food_routes(rt):
             if _editable_recipe(connection, user_id, recipe_id) is None:
                 return app_error_response(request, NotFoundError, "Recipe not found.")
 
-            if origin is PortionOrigin.CATALOG:
-                item = get_catalog_item(connection, int(user_id), entry_id)
-                if item is None:
-                    return app_error_response(request, NotFoundError, "Food not found.")
-                # R3: no serving -> 100 g initial amount for a one-click add.
-                amount_g = (
-                    item.default_portion
-                    if item.default_portion is not None
-                    else INITIAL_AMOUNT_WITHOUT_SERVING_G
-                )
-            else:
-                item = get_manual_intake(connection, int(user_id), entry_id)
-                if item is None:
-                    return app_error_response(request, NotFoundError, "Food not found.")
-                # Same rule as catalog (R3): no serving -> 100 g initial amount.
-                amount_g = (
-                    item.default_portion
-                    if item.default_portion is not None
-                    else INITIAL_AMOUNT_WITHOUT_SERVING_G
-                )
-            # measurement §6.11; a merge with an existing portion keeps the
-            # existing one (decision 2026-09-19).
-            portion_defaults = _portion_defaults(item)
-
+            item = (
+                get_catalog_item(connection, int(user_id), entry_id)
+                if origin is PortionOrigin.CATALOG
+                else get_manual_intake(connection, int(user_id), entry_id)
+            )
+            if item is None:
+                return app_error_response(request, NotFoundError, "Food not found.")
             try:
                 with connection.transaction():
-                    if target_plate_id is None:
-                        target_plate_id = ensure_default_recipe_plate(connection, recipe_id, commit=False)
-                    # Same preparation in that plate -> the amounts add up in the
-                    # index, and the row that was there keeps its flags (§4.6.4, §4.7).
-                    create_portion_detail(
-                        connection,
-                        int(user_id),
-                        PortionDetailCreate(
-                            origin=origin,
-                            origin_id=entry_id,
-                            destination=PortionDestination.RECIPE,
-                            destination_id=recipe_id,
-                            recipe_plate_id=target_plate_id,
-                            amount=amount_g,
-                            **portion_defaults,
-                        ),
-                        commit=False,
-                    )
+                    _add_ingredient(connection, int(user_id), recipe_id, target_plate_id, origin, item)
             except NotFoundError:
                 return app_error_response(request, NotFoundError, "Recipe not found.")
             except ValidationError:
@@ -2783,10 +2889,15 @@ def setup_food_routes(rt):
         food_mode: str = "catalog",
         favs_mode: str = "catalog",
         recipes_mode: str = "mine",
+        meal_type: str = "",
         page: int = 1,
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
+        try:
+            recipe_meal_type = parse_recipe_meal_type(meal_type)
+        except ValidationError as error:
+            return app_error_response(request, ValidationError, str(error))
 
         clean_search = (search or "").strip()
         page = max(1, int(page or 1))
@@ -2809,7 +2920,9 @@ def setup_food_routes(rt):
                     entries = _recommended_entries(connection, search=clean_search, days=60)
             elif filter == "recipes":
                 mode = (search_mode or "recommended").strip().lower()
-                entries = _recipes_entries(connection, search=clean_search, recipes_mode=recipes_mode_norm)
+                entries = _recipes_entries(
+                    connection, search=clean_search, recipes_mode=recipes_mode_norm, meal_type=recipe_meal_type
+                )
             else:
                 mode = (search_mode or "recommended").strip().lower()
                 selected_entry_type = None
@@ -2870,6 +2983,7 @@ def setup_food_routes(rt):
                         food_mode_norm,
                         favs_mode_norm,
                         recipes_mode_norm,
+                        meal_type,
                         page + 1,
                     )
                 )
@@ -2889,6 +3003,7 @@ def setup_food_routes(rt):
                         food_mode_norm,
                         favs_mode_norm,
                         recipes_mode_norm,
+                        meal_type,
                         page + 1,
                     )
                 )
@@ -2905,6 +3020,7 @@ def setup_food_routes(rt):
                         food_mode_norm,
                         favs_mode_norm,
                         recipes_mode_norm,
+                        meal_type,
                         page + 1,
                     )
                 )
@@ -2920,13 +3036,16 @@ def setup_food_routes(rt):
                     food_mode_norm,
                     favs_mode_norm,
                     recipes_mode_norm,
+                    meal_type,
                     page + 1,
                 )
             )
         return render_fragment(tuple(nodes + off_nodes))
 
     @rt("/food/list/external")
-    def get(request: Request, source: str = "", search: str = "", page: int = 1):
+    def get(
+        request: Request, source: str = "", search: str = "", page: int = 1, add_to_recipe: str = "", recipe_plate_id: str = ""
+    ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()
@@ -2937,7 +3056,15 @@ def setup_food_routes(rt):
         except ValueError:
             return app_error_response(request, ValidationError, "Unknown food source.")
         with get_connection() as connection:
-            cards, load_more = _external_page(connection, int(user_id), prefill_source, (search or "").strip(), max(1, page))
+            try:
+                recipe_query = _recipe_query(
+                    _parse_optional_id(add_to_recipe, "recipe"), _parse_optional_id(recipe_plate_id, "plate")
+                )
+            except ValidationError as error:
+                return app_error_response(request, ValidationError, str(error))
+            cards, load_more = _external_page(
+                connection, int(user_id), prefill_source, (search or "").strip(), max(1, page), recipe_query
+            )
         return render_fragment(tuple(cards + ([load_more] if load_more is not None else [])))
 
     @rt("/search_food")
@@ -3385,6 +3512,8 @@ def setup_food_routes(rt):
         catalog_smart_macros_raw: str = "",
         prefill_source: str = "",
         prefill_source_id: str = "",
+        add_to_recipe: str = "",
+        add_to_recipe_plate: str = "",
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -3418,6 +3547,8 @@ def setup_food_routes(rt):
                 prefill_source=prefill_source,
                 prefill_source_id=prefill_source_id,
             )
+            target_recipe_id = _parse_optional_id(add_to_recipe, "recipe")
+            target_plate_id = _parse_optional_id(add_to_recipe_plate, "plate")
         except ValidationError as error:
             return _error_msg(str(error))
 
@@ -3434,10 +3565,29 @@ def setup_food_routes(rt):
                     set_user_favorite(connection, int(user_id), "catalog", created_id, bool(req.favorite), commit=False)
                     if req.tags is not None:
                         set_entry_tags(connection, "catalog", created_id, req.tags, commit=False)
+                    if target_recipe_id is not None:
+                        # Chosen from a recipe's ingredient search (frontend §9.7).
+                        if _editable_recipe(connection, user_id, target_recipe_id) is None:
+                            raise NotFoundError("Recipe not found.")
+                        _add_ingredient(
+                            connection,
+                            int(user_id),
+                            target_recipe_id,
+                            target_plate_id,
+                            PortionOrigin.CATALOG,
+                            get_catalog_item(connection, int(user_id), created_id),
+                        )
             except ValidationError as error:
                 return _error_msg(str(error))
+            except NotFoundError:
+                return app_error_response(request, NotFoundError, "Recipe not found.")
             except ConflictError as error:
                 return app_error_response(request, error, str(error))
+        if target_recipe_id is not None:
+            query = f"?recipe_plate_id={target_plate_id}" if target_plate_id else ""
+            return HTMLResponse(
+                "", headers={"HX-Redirect": f"/food/recipe/{target_recipe_id}/ingredients/form{query}"}
+            )
         return HTMLResponse("", headers={"HX-Redirect": "/food"})
 
     @rt("/food/create/manual_intake")
