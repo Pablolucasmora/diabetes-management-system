@@ -625,6 +625,9 @@
   .max-w-md {
     max-width: var(--container-md);
   }
+  .max-w-xs {
+    max-width: var(--container-xs);
+  }
   .min-w-0 {
     min-width: 0px;
   }
@@ -1631,6 +1634,9 @@
     }
     .md\:w-xl {
       width: var(--container-xl);
+    }
+    .md\:max-w-md {
+      max-width: var(--container-md);
     }
     .md\:translate-x-29 {
       --tw-translate-x: calc(var(--spacing) * 29);

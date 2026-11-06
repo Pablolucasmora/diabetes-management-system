@@ -12,6 +12,10 @@ def _external_link(text: str, href: str):
     return A(text, href=href, target="_blank", rel="noopener noreferrer", cls="underline")
 
 
+# Never wider than the cards and buttons around it (`food_entry`).
+_ATTRIBUTION_CLS = "w-full max-w-xs md:max-w-md mx-auto text-xs text-gray-500 text-center"
+
+
 def off_attribution(barcode: str | None = None):
     """With a barcode, the link points to that product's page, as OFF asks."""
     source_url = f"{OPEN_FOOD_FACTS_BASE_URL}/product/{barcode}" if barcode else OPEN_FOOD_FACTS_BASE_URL
@@ -21,7 +25,7 @@ def off_attribution(barcode: str | None = None):
         ", available under the ",
         _external_link("Open Database License", ODBL_URL),
         ".",
-        cls="text-xs text-gray-500 text-center",
+        cls=_ATTRIBUTION_CLS,
     )
 
 
@@ -30,5 +34,5 @@ def ciqual_attribution():
         "Source: ",
         _external_link("Anses. 2025. Ciqual French food composition table", "https://ciqual.anses.fr/"),
         ". Spanish names translated for DayBetes.",
-        cls="text-xs text-gray-500 text-center",
+        cls=_ATTRIBUTION_CLS,
     )
