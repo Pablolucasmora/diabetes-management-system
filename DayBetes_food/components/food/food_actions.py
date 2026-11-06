@@ -5,8 +5,11 @@ Holding a row of the Food list (or a right click on it) opens one
 options follow what the user can do with that food now. Its views (the
 menu, the recipe picker and the copy confirmation) are swapped inside the
 same body; static/js/food_actions.js detects the gesture, opens the layer,
-animates the change of view and closes it after an add.
+animates the change of view and closes it after an add. The star of a row
+uses the same pop-up to confirm a removal that loses access (§9.3.2).
 """
+
+import json
 
 from fasthtml.common import *
 
@@ -40,6 +43,14 @@ _OPTION_CLS = """
     transition-colors flex items-center justify-between gap-3
     text-sm font-medium text-gray-900
 """
+
+
+def food_card_id(entry_type: FoodEntryType, entry_id: int) -> str:
+    return f"food_card_{entry_type.value}_{entry_id}"
+
+
+def favorite_button_id(entry_type: FoodEntryType, entry_id: int) -> str:
+    return f"favorite_{entry_type.value}_{entry_id}"
 
 
 def food_actions_url(entry_type: FoodEntryType, entry_id: int) -> str:
@@ -214,6 +225,36 @@ def FoodActionsCopyConfirm(entry_type: FoodEntryType, entry_id: int, entry: Food
                 "Yes",
                 hx_post=f"/food/copy/{entry_type.value}/{entry_id}",
                 hx_swap="none",
+                hx_push_url="false",
+                data_skip_page_loading="true",
+                onclick=close_modal_js(FOOD_ACTIONS_MODAL_ID),
+                cls="w-full",
+            ),
+            cls="grid grid-cols-2 gap-2",
+        ),
+        cls="flex flex-col gap-3",
+    )
+
+
+def FoodActionsFavoriteConfirm(entry_type: FoodEntryType, entry_id: int, entry: FoodEntrySummary):
+    """Asked only when the favorite is all that keeps the food visible (§9.3.2)."""
+    noun = "dish" if entry_type is FoodEntryType.MANUAL_INTAKE else "food"
+    return Div(
+        _header("Remove from favorites", entry.name or "Unnamed"),
+        P(
+            f"This {noun} is no longer available. If you remove it from your favorites, "
+            "you will lose access to it. Make a copy first if you want to keep using it.",
+            cls="text-sm text-gray-700",
+        ),
+        Div(
+            modal_secondary_button("Keep it", onclick=close_modal_js(FOOD_ACTIONS_MODAL_ID), cls="w-full"),
+            modal_confirm_button(
+                "Remove",
+                danger=True,
+                hx_post=f"/food/favorite/{entry_type.value}/{entry_id}",
+                hx_vals=json.dumps({"favorite": "false", "confirmed": "true"}),
+                hx_target=f"#{favorite_button_id(entry_type, entry_id)}",
+                hx_swap="outerHTML",
                 hx_push_url="false",
                 data_skip_page_loading="true",
                 onclick=close_modal_js(FOOD_ACTIONS_MODAL_ID),

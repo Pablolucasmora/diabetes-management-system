@@ -1300,6 +1300,7 @@ La clasificación de cada tabla se declara en este registro, que es el sitio ún
 | `intake_event` | **Híbrida por `state`**: `planned` no archivable, `consumed` archivable. | Físico en `planned`; `deleted_at` en `consumed`. | Decisión 2026-09-08. |
 | `manual_intake` | **Archivable**, irreversible (sin `restore_`), con el mismo contrato que `catalog`. Contrato completo en §11.2.3. | Solo `deleted_at`; nunca físico (porciones de eventos consumidos y, si se publica, favoritos y recetas de otros usuarios apuntan al plato). | `audit/audits/audit_manual_intake.md`, hallazgos 5 y 14; decisiones 2026-10-09. |
 | `recipe` | **Non-archivable**, con borrado físico solo por su propietario. Contrato completo en §11.2.4. | Físico: lo consumido no referencia la receta. Se revisa en la fase 2. | Decisión del usuario (2026-11-05), `audit/audits/audit_recipe.md`. |
+| `user_favorites` | **Dependent** de su usuario y de su alimento, plato o receta. Una fila también concede visibilidad sobre lo retenido. Contrato completo en §11.2.5. | Físico: al quitar el favorito, y `CASCADE` desde `users`, `catalog`, `manual_intake` y `recipe`. Sin auditoría de cambios. | Decisión del usuario (2026-11-06), `audit/audits/audit_user_favorites.md`. |
 | `recipe_plate` | **Dependent** de `recipe`. | `CASCADE` desde `recipe`; borrar una tanda con ingredientes está bloqueado. | `measurement_conventions.md` §4.7. |
 | `off_product` | **Datos de referencia**, sin propietario: los ven todos los usuarios y la app no los escribe (`init_db` le retira esos permisos). | Físico: cada carga reemplaza la tabla entera, en una transacción (`scripts/off/load_off.sh`). | `measurement_conventions.md` §12.2. |
 | `ciqual_food` | **Datos de referencia**, igual que `off_product`. | Físico: cada carga reemplaza la tabla (`scripts/ciqual/load_ciqual.sh`). | `measurement_conventions.md` §12.3. |
@@ -1327,7 +1328,7 @@ Decisión 2026-09-24 (`conventions/decisions.md`). Cuando un contrato no cabe en
 - **Copiar**:
   - Crea una **fila nueva** con su propio `id`, `created_by` = quien copia y `origin_root_id` = el alimento raíz de la familia. Una copia de una copia también apunta a la raíz.
   - Duplica los datos y es independiente del original: archivar o cambiar uno no afecta al otro.
-  - Lo puede copiar cualquiera que vea el alimento, **también su propietario**, por ejemplo para partir de él y crear una variante (decisión 2026-10-27). Hasta entonces, copiar un alimento propio y activo abría su edición en vez de copiarlo. La copia se llama `<nombre> (copy)` y se abre en edición. Lo mismo vale para `manual_intake` (§11.2.3) y `recipe`.
+  - Lo puede copiar cualquiera que vea el alimento, **también su propietario**, por ejemplo para partir de él y crear una variante (decisión 2026-10-27). Hasta entonces, copiar un alimento propio y activo abría su edición en vez de copiarlo. La copia se llama `<nombre> (copy)`, queda en favoritos de quien copia y se abre en edición. Lo mismo vale para `manual_intake` (§11.2.3) y `recipe`.
   - Con el versionado, además guarda `origin_version_id` y crea su propia v1. **Copiar solo hace falta para tener valores distintos**: las fechas de vigencia son de cada usuario y se gestionan sobre cualquier alimento visible, sin copiarlo (decisión 2026-09-24, versionado).
   - Los alimentos con el mismo `COALESCE(origin_root_id, id)` forman una **familia**.
 - **Versionado**: los valores son del dueño del alimento y la línea de tiempo de vigencias es de cada usuario (decisión 2026-09-24). El diseño está pendiente de implementar y se detalla en `audit/deuda_pendiente.md`, `portion_detail` H1. Mientras no exista, el alimento se comporta como si tuviera una única versión.
@@ -1390,6 +1391,20 @@ Decisión del usuario del 2026-11-05. Una receta es una comida o un plato recurr
 - **Copiar** (§11.2.2) crea una receta personal y editable, en favoritos, con sus tipos de comida, notas, raciones, tandas con ingredientes e ingredientes. No copia etiquetas. La original no se toca.
 - **Borrar** es físico y lo hace solo el propietario: `CASCADE` a tandas, porciones y favoritos, y `SET NULL` en las copias. Quien la tuviera en favoritos la pierde.
 - **Auditoría de cambios** (§11.10): no se requiere, porque no es dato clínico.
+
+#### 11.2.5 Contrato de `user_favorites`
+
+Decisión del usuario del 2026-11-06. Es la tabla puente entre un usuario y sus favoritos: exactamente un alimento (`catalog`), un plato (`manual_intake`) o una receta (`recipe`) por fila. Es una preferencia, no un dato clínico: las comidas confirmadas no la leen.
+
+- **Propietario.** `user_id`, `NOT NULL`, que es propietario y actor a la vez; no hay transferencias. Es privada: cada usuario solo lee y escribe sus filas. El propietario del alimento no interviene, salvo al archivar (§11.2.2).
+- **Una fila también concede visibilidad.** Quien tiene en favoritos un alimento o plato despublicado o archivado lo sigue viendo y usando (§11.2.2, §11.4.1). Por eso añadir una fila es una decisión de autorización, y su condición va en el SQL (§5.3).
+- **Escritura.** `set_user_favorite(value)`, nunca un toggle (§6.3). Cada petición dice el estado que quiere, y repetirla es un no-op.
+- **Añadir.** Solo lo que el usuario puede listar. Si no lo ve, `NotFoundError`; si lo ve porque está retenido, `ConflictError`; si ya es favorito, no-op (`CreationResult.ALREADY_EXISTED`). Quien crea o copia un alimento lo añade en la misma transacción, y al archivar el propietario pierde su propio favorito; los demás lo conservan.
+- **Quitar.** Se puede siempre, sin pedir visibilidad, y es un `DELETE`: volver a marcarlo crea otra fila igual, así que un `deleted_at` no aportaría nada. Si el favorito era lo único que daba acceso, un despublicado solo se recupera si el propietario vuelve a publicarlo, y un archivado no se recupera nunca. Por eso la interfaz lo confirma antes (§9.3.2 de `frontend_conventions.md`); si el alimento también está en una receta propia, sigue visible y no se pregunta.
+- **Borrado.** Las cuatro FK son `CASCADE`, porque un favorito no significa nada sin sus dos extremos y no destruye ningún histórico. Hoy solo se dispara desde `recipe`: nadie borra usuarios, y alimentos y platos se archivan.
+- **Recetas.** Borrar o despublicar una receta no tiene retención: quien la tiene en favoritos la pierde, aunque la fila de una receta despublicada se puede quitar. Se revisa en la fase 2, con la propuesta anotada en `audit/deuda_pendiente.md`: conservarla como los alimentos archivados, porque un aviso tras un borrado físico llega tarde.
+- **Timestamps.** Solo `created_at`: las filas nunca se actualizan, así que un `updated_at` no cambiaría nunca. En las filas anteriores a esta decisión es la fecha de la migración (§12.7).
+- **Auditoría de cambios** (§11.10): no se requiere, porque no es dato clínico ni alimenta modelos.
 
 ### 11.3 Soft-delete
 

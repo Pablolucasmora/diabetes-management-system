@@ -88,6 +88,13 @@ class FoodEntryType(str, Enum):
 
 
 @unique
+class CreationResult(str, Enum):
+    """Outcome of an insert that can find an equivalent row (§6.2)."""
+    CREATED = "created"
+    ALREADY_EXISTED = "already_existed"
+
+
+@unique
 class PortionOrigin(str, Enum):
     """Where the food of a portion comes from (`portion_detail` origin arc)."""
     CATALOG = "catalog"

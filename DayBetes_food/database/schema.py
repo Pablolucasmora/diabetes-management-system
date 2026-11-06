@@ -533,21 +533,25 @@ class DBSchema:
     );
     """
 
+    # Dependent of its user and its food (code_conventions.md §11.2.5): a favorite
+    # means nothing without either, so all the foreign keys cascade, and nothing
+    # clinical reads this table. Rows are never updated: only created_at. The
+    # unique indexes are in _ensure_user_favorites_schema, which checks first:
+    # CREATE INDEX IF NOT EXISTS locks the table on every start (§12.2).
     user_favorites = """
     CREATE TABLE IF NOT EXISTS user_favorites (
-        id BIGSERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        catalog_id INTEGER REFERENCES catalog(id) ON DELETE CASCADE,
-        manual_intake_id INTEGER REFERENCES manual_intake(id) ON DELETE CASCADE,
-        recipe_id INTEGER REFERENCES recipe(id) ON DELETE CASCADE,
-        CHECK (num_nonnulls(catalog_id, manual_intake_id, recipe_id) = 1)
+        id BIGSERIAL CONSTRAINT pk_user_favorites PRIMARY KEY,
+        user_id INTEGER NOT NULL
+            CONSTRAINT fk_user_favorites_user_id_users REFERENCES users(id) ON DELETE CASCADE,
+        catalog_id INTEGER
+            CONSTRAINT fk_user_favorites_catalog_id_catalog REFERENCES catalog(id) ON DELETE CASCADE,
+        manual_intake_id INTEGER
+            CONSTRAINT fk_user_favorites_manual_intake_id_manual_intake REFERENCES manual_intake(id) ON DELETE CASCADE,
+        recipe_id INTEGER
+            CONSTRAINT fk_user_favorites_recipe_id_recipe REFERENCES recipe(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT ck_user_favorites_one_entry CHECK (num_nonnulls(catalog_id, manual_intake_id, recipe_id) = 1)
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_user_favorites_catalog
-        ON user_favorites(user_id, catalog_id) WHERE catalog_id IS NOT NULL;
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_user_favorites_manual
-        ON user_favorites(user_id, manual_intake_id) WHERE manual_intake_id IS NOT NULL;
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_user_favorites_recipe
-        ON user_favorites(user_id, recipe_id) WHERE recipe_id IS NOT NULL;
     """
 
     linked_tags = """

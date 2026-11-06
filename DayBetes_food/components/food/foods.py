@@ -5,7 +5,14 @@ from DayBetes_food.components.cart.cart_shared import CHECKBOX_CLS
 from DayBetes_food.components.data_sources import ciqual_attribution, off_attribution
 from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.components.navigation import back_js
-from DayBetes_food.components.food.food_actions import COPY_LABEL, COPY_QUESTION, EDIT_LABELS, FoodActionsTrigger
+from DayBetes_food.components.food.food_actions import (
+    COPY_LABEL,
+    COPY_QUESTION,
+    EDIT_LABELS,
+    FoodActionsTrigger,
+    favorite_button_id,
+    food_card_id,
+)
 from DayBetes_food.components.food.rescue import RescueMarkButton, RescueModal, rescue_open_attrs
 from DayBetes_food.components.modal import (
     ModalLayer,
@@ -1729,7 +1736,7 @@ def _form_draft_bootstrap_script():
                 if (type === "checkbox" && Array.isArray(value)) {
                   if (!el.checked) el.checked = value.indexOf(el.value) !== -1;
                 } else if (type === "checkbox") {
-                  if (!el.checked) el.checked = !!value;
+                  el.checked = !!value;
                 } else if (type === "radio") {
                   if (!el.checked) el.checked = String(el.value) === String(value);
                 } else if (value != null) {
@@ -1976,14 +1983,6 @@ def _favorite_checkbox(name: str = "favorite", checked: bool = True, centered: b
             if centered
             else "flex items-center justify-end gap-2 col-span-1 md:col-span-2"
         ),
-    )
-
-
-def _create_flags_row(favorite_checked: bool = True):
-    # R5: the create forms do not offer to publish. Everything is born personal.
-    return Div(
-        _favorite_checkbox(checked=favorite_checked, centered=True),
-        cls="col-span-1 md:col-span-2 flex items-center justify-between gap-2",
     )
 
 
@@ -3055,13 +3054,17 @@ def EditRecipePage(
     return _form_page_shell(form, result_id)
 
 
-def FavoriteButton(entry_type: str, entry_id: int, favorite: bool):
+def FavoriteButton(entry_type: FoodEntryType, entry_id: int, favorite: bool):
+    """The star says the state it asks for, worked out here from the saved row,
+    so repeating a request cannot undo it (frontend §9.3.2)."""
     icon = "/images/content/fav_icon.svg" if favorite else "/images/content/not_fav_icon.svg"
+    label = "Remove from favorites" if favorite else "Add to favorites"
     return Button(
         Img(src=icon, cls="w-4 h-4", alt=""),
+        id=favorite_button_id(entry_type, entry_id),
         type="button",
-        aria_label="Toggle favorite",
-        title="Toggle favorite",
+        aria_label=label,
+        title=label,
         cls="""
             web_button p-2
             bg-transparent border-transparent shadow-none
@@ -3069,11 +3072,13 @@ def FavoriteButton(entry_type: str, entry_id: int, favorite: bool):
             flex items-center justify-center
             hover:bg-control
         """,
-        hx_post=f"/food/favorite/{entry_type}/{entry_id}",
+        hx_post=f"/food/favorite/{entry_type.value}/{entry_id}",
+        hx_vals=json.dumps({"favorite": "false" if favorite else "true"}),
         hx_target="this",
         hx_swap="outerHTML",
         hx_trigger="click consume",
         hx_push_url="false",
+        hx_disabled_elt="this",
         **{"hx-on:click": "event.stopPropagation();"},
         data_skip_page_loading="true",
         data_no_open="true",
@@ -4320,6 +4325,7 @@ def RecipeIngredientPickerPage(recipe_entry: dict, list_nodes: list, recipe_plat
 
 
 def FoodCard(food):
+    entry_type = FoodEntryType(food["entry_type"])
     add_path = f"/add_food/{food['id']}"
     add_label = "+"
     if food["entry_type"] == "manual_intake":
@@ -4366,7 +4372,7 @@ def FoodCard(food):
         Div(
             # Shown on archived foods too: they appear because they are favorites
             # and the user must be able to remove them (§11.2.2).
-            FavoriteButton(food["entry_type"], food["id"], bool(food.get("favorite"))),
+            FavoriteButton(entry_type, food["id"], bool(food.get("favorite"))),
             (
                 AddButton(label=add_label, **recipe_add_open_attrs(food["id"]))
                 if food["entry_type"] == "recipe"
@@ -4374,7 +4380,8 @@ def FoodCard(food):
             ),
             cls="flex items-center gap-2 ml-3",
         ),
-        FoodActionsTrigger(FoodEntryType(food["entry_type"]), food["id"]),
+        FoodActionsTrigger(entry_type, food["id"]),
+        id=food_card_id(entry_type, food["id"]),
         hx_get=f"/food/item/{food['entry_type']}/{food['id']}",
         hx_target="#main_content",
         hx_swap="innerHTML",

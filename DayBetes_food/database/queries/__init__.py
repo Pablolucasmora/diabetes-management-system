@@ -86,7 +86,7 @@ from DayBetes_food.database.queries.linked_tags import (
     remove_entry_tag,
 )
 from DayBetes_food.database.queries.user_favorites import (
-    toggle_user_favorite,
+    get_user_favorite_access,
     set_user_favorite,
 )
 from DayBetes_food.database.queries.entries import (
@@ -213,7 +213,7 @@ __all__ = [
     "entry_has_tag",
     "add_entry_tag",
     "remove_entry_tag",
-    "toggle_user_favorite",
+    "get_user_favorite_access",
     "set_user_favorite",
     "get_subtype_suggestions",
     "get_subtype_label",

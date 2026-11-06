@@ -30,6 +30,7 @@ from DayBetes_food.domain.off_product import OffProductRead
 from DayBetes_food.domain.recipe import RecipeRead
 from DayBetes_food.domain.recipe_plate import RecipePlateRead
 from DayBetes_food.domain.portion_detail import PortionDetailRead, PortionSourceRead
+from DayBetes_food.domain.user_favorite import UserFavoriteAccess
 from DayBetes_food.errors import InfrastructureError
 
 
@@ -172,9 +173,9 @@ def catalog_item_read_from_row(row: dict) -> CatalogItemRead:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             deleted_at=row.get("deleted_at"),
-            is_favorite=bool(row.get("is_favorite")),
-            can_edit=bool(row.get("can_edit")),
-            is_listable=bool(row.get("is_listable")),
+            is_favorite=bool(row["is_favorite"]),
+            can_edit=bool(row["can_edit"]),
+            is_listable=bool(row["is_listable"]),
         )
     except ValueError as exc:
         raise InfrastructureError(f"Invalid catalog category in database row: {exc}") from exc
@@ -219,12 +220,22 @@ def manual_intake_read_from_row(row: dict) -> ManualIntakeRead:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             deleted_at=row.get("deleted_at"),
-            is_favorite=bool(row.get("is_favorite")),
-            can_edit=bool(row.get("can_edit")),
-            is_listable=bool(row.get("is_listable")),
+            is_favorite=bool(row["is_favorite"]),
+            can_edit=bool(row["can_edit"]),
+            is_listable=bool(row["is_listable"]),
         )
     except (KeyError, TypeError) as exc:
         raise InfrastructureError(f"Missing required field {exc} in manual_intake row") from exc
+
+
+def user_favorite_access_from_row(row: dict) -> UserFavoriteAccess:
+    try:
+        return UserFavoriteAccess(
+            is_favorite=bool(row["is_favorite"]),
+            is_only_access=bool(row["is_only_access"]),
+        )
+    except KeyError as exc:
+        raise InfrastructureError(f"Missing required field {exc} in user_favorites row") from exc
 
 
 def insulin_injection_read_from_row(row: dict) -> InsulinInjectionRead:
