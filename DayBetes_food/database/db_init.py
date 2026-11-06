@@ -1128,6 +1128,10 @@ def _ensure_trgm_search(cursor):
 
 def _ensure_food_filter_indexes(cursor):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_catalog_created_by ON catalog (created_by);")
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_catalog_prefill_source "
+        "ON catalog (created_by, prefill_source, prefill_source_id) WHERE prefill_source IS NOT NULL;"
+    )
     # idx_catalog_visibility is dropped and not recreated: no real query uses it
     # (0 scans) and the partial unique indexes cover the visibility filter.
     cursor.execute("DROP INDEX IF EXISTS idx_catalog_visibility;")

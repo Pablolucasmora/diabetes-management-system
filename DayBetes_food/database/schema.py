@@ -425,7 +425,7 @@ class DBSchema:
         carbs_confidence VARCHAR(1),
         fats_confidence VARCHAR(1),
         proteins_confidence VARCHAR(1),
-        value_notes VARCHAR(255), -- original "traces" or "< x" of a value stored as 0
+        value_notes VARCHAR(255), -- original "traces" (stored as 0) or "< x" (stored as x/2)
         export_date DATE NOT NULL,
         search_text TEXT GENERATED ALWAYS AS ({search_text_sql("name_es || ' ' || name_en")}) STORED
     );

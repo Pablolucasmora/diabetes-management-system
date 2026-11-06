@@ -8,7 +8,8 @@ This module no longer holds per-table CRUD functions (see code_conventions.md
 - the safe dynamic UPDATE builder (`_build_update_query` and its
   validation/whitelist helpers);
 - fuzzy-search helpers shared by several table modules
-  (`_build_fuzzy_search`, `_add_fuzzy_name_condition`);
+  (`_build_fuzzy_search`, `_add_fuzzy_name_condition`), and the word search of
+  the reference tables (`_search_reference_foods`);
 - ownership/favorite filter helpers used by `recipe.py`
   (`_add_entity_filters`, `_favorite_filter_sql`);
 - the visibility rule of `catalog` and `manual_intake`, shared by
@@ -32,8 +33,10 @@ from typing import Optional, Any
 from psycopg import sql
 
 from DayBetes_food.domain.constants import PortionOrigin
+from DayBetes_food.domain.search_text import normalize_search_text
 
 TRGM_SIMILARITY_THRESHOLD = 0.25
+REFERENCE_SEARCH_MIN_CHARS = 3
 _HAS_PG_TRGM = None
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _ALLOWED_UPDATE_TABLES = {
@@ -255,6 +258,80 @@ def _set_trgm_similarity_threshold(connection) -> None:
             "SELECT set_config('pg_trgm.similarity_threshold', %(threshold)s, false);",
             {"threshold": str(TRGM_SIMILARITY_THRESHOLD)},
         )
+
+
+def _search_reference_foods(
+    connection,
+    search: str,
+    *,
+    table_sql: str,
+    alias: str,
+    columns_sql: str,
+    not_offered_sql: str,
+    tiebreak_sql: str,
+    params: dict,
+    limit: int,
+    offset: int,
+    searchable_sql: str = "TRUE",
+) -> list[dict]:
+    """Word search of the read-only reference tables (§11.7).
+
+    Every word must appear in `search_text`: names that start with the first
+    word come first, then those with a word starting with it, then the table's
+    own `tiebreak_sql`. If no food has every word, the closest by similarity, so
+    a typo still finds the food. The SQL fragments are constants of the calling module.
+    """
+    normalized = normalize_search_text(search)
+    if len(normalized) < REFERENCE_SEARCH_MIN_CHARS:
+        return []
+    words = normalized.split()
+    patterns = [f"%{_escape_like(word)}%" for word in words]
+    page = {**params, "limit": limit, "offset": offset}
+    rows = _execute_query_many(
+        connection,
+        f"""
+        SELECT {columns_sql} FROM {table_sql}
+        WHERE {alias}.search_text LIKE ALL(%(patterns)s) AND {searchable_sql} AND {not_offered_sql}
+        ORDER BY ({alias}.search_text LIKE %(first_prefix)s) DESC,
+                 ({alias}.search_text ~ %(first_word_start)s) DESC,
+                 {tiebreak_sql}
+        LIMIT %(limit)s OFFSET %(offset)s;
+        """,
+        {
+            **page,
+            "patterns": patterns,
+            "first_prefix": f"{_escape_like(words[0])}%",
+            "first_word_start": rf"\m{re.escape(words[0])}",
+        },
+        commit=False,
+    )
+    # Similarity only when no food has every word, even one already offered
+    # elsewhere: this keeps every page of a search in the same mode.
+    words_match = bool(rows) or _execute_query(
+        connection,
+        f"SELECT 1 AS found FROM {table_sql} "
+        f"WHERE {alias}.search_text LIKE ALL(%(patterns)s) AND {searchable_sql} LIMIT 1;",
+        {"patterns": patterns},
+        commit=False,
+    )
+    if words_match or not _pg_trgm_enabled(connection):
+        return rows
+    _set_trgm_similarity_threshold(connection)
+    return _execute_query_many(
+        connection,
+        f"""
+        SELECT {columns_sql} FROM {table_sql}
+        WHERE {alias}.search_text %% %(term)s AND {searchable_sql} AND {not_offered_sql}
+        ORDER BY similarity({alias}.search_text, %(term)s) DESC, {tiebreak_sql}
+        LIMIT %(limit)s OFFSET %(offset)s;
+        """,
+        {**page, "term": normalized},
+        commit=False,
+    )
+
+
+def _escape_like(word: str) -> str:
+    return word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _build_fuzzy_search(

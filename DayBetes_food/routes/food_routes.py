@@ -138,6 +138,7 @@ from DayBetes_food.domain.portion_detail import (
     parse_amount_grams,
 )
 from DayBetes_food.components.data_sources import ciqual_attribution, off_attribution
+from DayBetes_food.domain.ciqual_food import parse_ciqual_code
 from DayBetes_food.integrations.ciqual import prefill_from_ciqual_food, reliability_note
 from DayBetes_food.integrations.open_food_facts import fetch_product_prefill, prefill_from_off_product
 from DayBetes_food.components.food.foods import FoodSectionsContent, FoodCard, FavoriteButton, on_after
@@ -688,7 +689,7 @@ def _resolve_target_event(connection, user_id: int, intake_event_id: str) -> int
 
 
 def _prefill_view(prefill, barcode: str, source_id: str, source: PrefillSource = PrefillSource.OPEN_FOOD_FACTS) -> dict:
-    """OffProductPrefill -> presentation dict of the create form."""
+    """FoodPrefill -> presentation dict of the create form."""
     nutrients = prefill.nutrients
 
     def text_or_empty(value):
@@ -1441,8 +1442,8 @@ def _search_load_more_node(
     )
 
 
-def _external_load_more(source: str, search: str, next_page: int):
-    query = urlencode({"source": source, "search": search, "page": next_page})
+def _external_load_more(source: PrefillSource, search: str, next_page: int):
+    query = urlencode({"source": source.value, "search": search, "page": next_page})
     return Button(
         "Load more",
         type="button",
@@ -1455,11 +1456,13 @@ def _external_load_more(source: str, search: str, next_page: int):
     )
 
 
-def _external_page(connection, user_id: int, source: str, search: str, page: int):
+def _external_page(connection, user_id: int, source: PrefillSource, search: str, page: int):
     """(cards, next page's button) of one source. One row more than a page tells
     whether there is a next one."""
     search_fn, cards_fn = (
-        (search_ciqual_foods, ciqual_food_cards) if source == "ciqual" else (search_off_products, off_product_cards)
+        (search_ciqual_foods, ciqual_food_cards)
+        if source is PrefillSource.CIQUAL
+        else (search_off_products, off_product_cards)
     )
     rows = search_fn(
         connection, user_id, search, limit=SEARCH_PAGE_SIZE + 1, offset=(page - 1) * SEARCH_PAGE_SIZE
@@ -1478,9 +1481,12 @@ def setup_food_routes(rt):
     def get(request: Request, barcode: str = "", existing_id: str = "", ciqual: str = ""):
         clean = (barcode or "").strip()
         ciqual_food = None
-        if ciqual.isdigit():
+        ciqual_code = parse_ciqual_code(ciqual)
+        if ciqual_code is not None:
             with get_connection() as connection:
-                ciqual_food = get_ciqual_food(connection, int(ciqual))
+                ciqual_food = get_ciqual_food(connection, ciqual_code)
+            if ciqual_food is None:
+                raise NotFoundError("Ciqual food not found.")
         try:
             valid_barcode = parse_barcode(clean) if clean else None
             barcode_notice = None
@@ -2817,12 +2823,12 @@ def setup_food_routes(rt):
                 off_nodes = [
                     *ExternalFoodSection(
                         "From Ciqual",
-                        *_external_page(connection, int(user_id), "ciqual", clean_search, 1),
+                        *_external_page(connection, int(user_id), PrefillSource.CIQUAL, clean_search, 1),
                         ciqual_attribution(),
                     ),
                     *ExternalFoodSection(
                         "From Open Food Facts",
-                        *_external_page(connection, int(user_id), "off", clean_search, 1),
+                        *_external_page(connection, int(user_id), PrefillSource.OPEN_FOOD_FACTS, clean_search, 1),
                         off_attribution(),
                     ),
                 ]
@@ -2909,10 +2915,12 @@ def setup_food_routes(rt):
         user_id = get_current_user_id()
         if not user_id:
             return app_error_response(request, AuthenticationError, "Your session has expired.")
-        if source not in ("ciqual", "off"):
-            return HTMLResponse(status_code=422)
+        try:
+            prefill_source = PrefillSource(source)
+        except ValueError:
+            return app_error_response(request, ValidationError, "Unknown food source.")
         with get_connection() as connection:
-            cards, load_more = _external_page(connection, int(user_id), source, (search or "").strip(), max(1, int(page or 1)))
+            cards, load_more = _external_page(connection, int(user_id), prefill_source, (search or "").strip(), max(1, page))
         return render_fragment(tuple(cards + ([load_more] if load_more is not None else [])))
 
     @rt("/search_food")

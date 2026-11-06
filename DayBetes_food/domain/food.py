@@ -7,8 +7,29 @@ default serving and the declared-confidence scale, which both entities share.
 An entity never imports rules from another entity's module.
 """
 
-from DayBetes_food.domain.nutrition import NumericRange, parse_number
+from dataclasses import dataclass
+
+from DayBetes_food.domain.constants import FoodCategory, FoodPhysicalState, Nutriscore
+from DayBetes_food.domain.nutrition import NumericRange, NutrientValues, parse_number
 from DayBetes_food.errors import ValidationError
+
+
+@dataclass(frozen=True)
+class FoodPrefill:
+    """First values of the create form, from any external source (measurement §12.1)."""
+
+    barcode: str | None
+    name: str | None
+    brand: str | None
+    category: FoodCategory | None
+    subtype: str | None
+    initial_state: FoodPhysicalState | None
+    default_portion_g: float | None
+    nutriscore: Nutriscore | None
+    nova: int | None
+    nutrients: NutrientValues
+    alcohol_source_note: str | None
+
 
 FOOD_SUBTYPE_MAX_LENGTH = 100  # = VARCHAR(100) in catalog and manual_intake
 

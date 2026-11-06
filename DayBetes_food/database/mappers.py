@@ -45,7 +45,25 @@ def _enum_from_row(row: dict, key: str, enum_cls):
 
 def ciqual_food_read_from_row(row: dict) -> CiqualFoodRead:
     try:
-        return CiqualFoodRead(**{field: row[field] for field in CiqualFoodRead.__dataclass_fields__})
+        return CiqualFoodRead(
+            code=row["code"],
+            name_es=row["name_es"],
+            name_en=row["name_en"],
+            category_hint=row.get("category_hint"),
+            subtype=row.get("subtype"),
+            calories_100g=row.get("calories_100g"),
+            carbs_100g=row["carbs_100g"],
+            sugars_100g=row.get("sugars_100g"),
+            fats_100g=row["fats_100g"],
+            saturated_100g=row.get("saturated_100g"),
+            proteins_100g=row["proteins_100g"],
+            fiber_100g=row.get("fiber_100g"),
+            alcohol=row.get("alcohol"),
+            carbs_confidence=row.get("carbs_confidence"),
+            fats_confidence=row.get("fats_confidence"),
+            proteins_confidence=row.get("proteins_confidence"),
+            value_notes=row.get("value_notes"),
+        )
     except KeyError as exc:
         raise InfrastructureError(f"Missing required field {exc} in ciqual_food row") from exc
 

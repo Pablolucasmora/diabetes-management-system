@@ -18,10 +18,13 @@ import csv
 import gzip
 import re
 import xml.etree.ElementTree as ET
+from datetime import date
 from pathlib import Path
 
 VERSION = "2025_11_03"
 BABY_FOOD_GROUP = "11"
+SUBTYPE_MAX_LENGTH = 100
+KCAL_MAX = 900
 HERE = Path(__file__).resolve().parent
 COMPONENTS = {
     "kcal": lambda n: "kcal/100" in n and "1169" in n,
@@ -59,6 +62,10 @@ FEMININE = frozenset({"leche", "carne", "sal", "miel", "piel", "col", "coliflor"
 CONNECTOR = re.compile(r"(?<![\w'-])(and/or|with|without|from|in|of|for|on|and|or|to|not)(?![\w'-])(?![^()]*\))", re.IGNORECASE)
 PARENTHESES = re.compile(r"(\s\([^()]*\))")
 TOP_LEVEL_COMMA = re.compile(r",(?![^()]*\))")
+NOTE_LABELS = (
+    ("kcal", "kcal"), ("carbs", "carbs"), ("sugars", "sugars"), ("fat", "fat"), ("saturated", "saturated"),
+    ("proteins", "protein"), ("fiber", "fiber"), ("alcohol", "alcohol"),
+)
 COLUMNS = [
     "code", "name_es", "name_en", "name_fr", "category_hint", "subtype", "calories_100g", "carbs_100g",
     "sugars_100g", "fats_100g", "saturated_100g", "proteins_100g", "fiber_100g", "alcohol",
@@ -72,12 +79,15 @@ def rows(folder: Path, name: str, tag: str):
 
 
 def parse_value(raw: str):
-    """(number, note). Missing is None, never zero; traces and "< x" are 0 with a note."""
+    """(number, note). Missing is None, never zero. Traces are 0 and "< x" is half of
+    x, the substitution Anses uses for these values; the note keeps the original."""
     text = (raw or "").strip()
     if not text or text == "-":
         return None, None
-    if text.lower() == "traces" or text.startswith("<"):
+    if text.lower() == "traces":
         return 0.0, text
+    if text.startswith("<"):
+        return float(text[1:].strip().replace(",", ".")) / 2, text
     return float(text.replace(",", ".")), None
 
 
@@ -164,15 +174,10 @@ class Translator:
         return text[:1].upper() + text[1:]
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("folder", type=Path)
-    parser.add_argument("output", type=Path)
-    parser.add_argument("--export-date", required=True)
-    args = parser.parse_args()
-
+def component_codes(folder: Path) -> dict:
+    """Ciqual's component code -> our key."""
     codes = {}
-    for row in rows(args.folder, "const", "CONST"):
+    for row in rows(folder, "const", "CONST"):
         name = row["const_nom_eng"].lower()
         for key, matches in COMPONENTS.items():
             if key not in codes and matches(name):
@@ -180,49 +185,75 @@ def main() -> None:
     missing = set(COMPONENTS) - set(codes)
     if missing:
         raise SystemExit(f"Components not found: {missing}")
-    by_code = {code: key for key, code in codes.items()}
+    return {code: key for key, code in codes.items()}
 
-    subgroups = {}
-    for row in rows(args.folder, "alim_grp", "ALIM_GRP"):
-        subgroups[row["alim_ssgrp_code"]] = row.get("alim_ssgrp_nom_eng", "")
+
+def food_values(folder: Path, by_code: dict) -> dict:
+    """Food code -> our key -> (raw value, confidence)."""
     values = {}
-    for row in rows(args.folder, "compo", "COMPO"):
+    for row in rows(folder, "compo", "COMPO"):
         key = by_code.get(row["const_code"])
         if key:
             values.setdefault(row["alim_code"], {})[key] = (row["teneur"], row.get("code_confiance") or None)
+    return values
 
+
+def check_limits(code: str, number: dict) -> None:
+    """A value outside its physical range means the source changed: stop, never load it."""
+    for key, value in number.items():
+        if value is not None and not 0 <= value <= (KCAL_MAX if key == "kcal" else 100):
+            raise SystemExit(f"Food {code}: {key} = {value} is outside its range.")
+
+
+def build_row(food: dict, raw_values: dict, hint: str, translate, export_date: date) -> list | None:
+    """The CSV row of a food, or None if it does not enter the copy (§12.3)."""
+    parsed = {key: parse_value(raw_values.get(key, ("",))[0]) for key in COMPONENTS}
+    if food["alim_grp_code"] == BABY_FOOD_GROUP or any(parsed[key][0] is None for key in ("carbs", "fat", "proteins")):
+        return None
+    number = {key: parsed[key][0] for key in COMPONENTS}
+    check_limits(food["alim_code"], number)
+    # The catalog rejects sugars above carbs and saturated above fat.
+    if number["sugars"] is not None:
+        number["sugars"] = min(number["sugars"], number["carbs"])
+    if number["saturated"] is not None:
+        number["saturated"] = min(number["saturated"], number["fat"])
+    notes = "; ".join(
+        f"{label} {parsed[key][1]}"
+        for key, label in NOTE_LABELS
+        if parsed[key][1]
+    )
+    subtype = translate(hint).lower()
+    return [
+        food["alim_code"], translate(food["alim_nom_eng"]), food["alim_nom_eng"], food["alim_nom_fr"],
+        hint, subtype if len(subtype) <= SUBTYPE_MAX_LENGTH else None, number["kcal"], number["carbs"],
+        number["sugars"], number["fat"], number["saturated"], number["proteins"], number["fiber"], number["alcohol"],
+        raw_values["carbs"][1], raw_values["fat"][1], raw_values["proteins"][1],
+        notes or None, export_date.isoformat(),
+    ]
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("folder", type=Path)
+    parser.add_argument("output", type=Path)
+    parser.add_argument("--export-date", required=True, type=date.fromisoformat)
+    args = parser.parse_args()
+
+    by_code = component_codes(args.folder)
+    subgroups = {row["alim_ssgrp_code"]: row.get("alim_ssgrp_nom_eng", "") for row in rows(args.folder, "alim_grp", "ALIM_GRP")}
+    values = food_values(args.folder, by_code)
     translate = Translator()
     written = skipped = 0
     with gzip.open(args.output, "wt", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle, lineterminator="\n")
         writer.writerow(COLUMNS)
         for food in rows(args.folder, "alim", "ALIM"):
-            food_values = values.get(food["alim_code"], {})
-            parsed = {key: parse_value(food_values.get(key, ("",))[0]) for key in COMPONENTS}
-            if food["alim_grp_code"] == BABY_FOOD_GROUP or any(
-                parsed[key][0] is None for key in ("carbs", "fat", "proteins")
-            ):
+            hint = subgroups.get(food["alim_ssgrp_code"], "")
+            row = build_row(food, values.get(food["alim_code"], {}), hint, translate, args.export_date)
+            if row is None:
                 skipped += 1
                 continue
-            number = {key: parsed[key][0] for key in COMPONENTS}
-            # The catalog rejects sugars above carbs and saturated above fat.
-            if number["sugars"] is not None:
-                number["sugars"] = min(number["sugars"], number["carbs"])
-            if number["saturated"] is not None:
-                number["saturated"] = min(number["saturated"], number["fat"])
-            notes = "; ".join(
-                f"{label} {parsed[key][1]}"
-                for key, label in (("carbs", "carbs"), ("fat", "fat"), ("proteins", "protein"))
-                if parsed[key][1]
-            )
-            hint = subgroups.get(food["alim_ssgrp_code"], "")
-            writer.writerow([
-                food["alim_code"], translate(food["alim_nom_eng"]), food["alim_nom_eng"], food["alim_nom_fr"],
-                hint, translate(hint).lower()[:100], number["kcal"], number["carbs"], number["sugars"], number["fat"],
-                number["saturated"], number["proteins"], number["fiber"], number["alcohol"],
-                food_values["carbs"][1], food_values["fat"][1], food_values["proteins"][1],
-                notes or None, args.export_date,
-            ])
+            writer.writerow(row)
             written += 1
     print(f"written: {written}, skipped: {skipped}")
 
