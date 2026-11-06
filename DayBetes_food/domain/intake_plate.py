@@ -71,17 +71,19 @@ class IntakePlateCreate:
     offset_minutes: int | None = None
 
 
-@dataclass(frozen=True)
-class IntakePlateUpdate:
-    """Payload to update a plate (§3.1). Editable fields only.
+def auto_offset_minutes(meal_time: datetime | None, now: datetime) -> int | None:
+    """Offset a new plate is born with: minutes from `meal_time` to `now`.
 
-    A field set to None means "leave untouched", like the rest of the
-    project's update payloads. To clear the own name and return the plate to
-    its derived name there is `update_intake_plate_name`, for the same reason
-    as `update_intake_event_name` (§7.4).
+    Outside the sanity bound it is None, in both directions: nobody knows when
+    that plate is eaten, and a clamped value would be an invented one
+    (measurement_conventions.md §4.5). Without a `meal_time` it is 0.
     """
-    name: str | None = None
-    offset_minutes: int | None = None
+    if meal_time is None:
+        return 0
+    offset = int((now - meal_time).total_seconds() // 60)
+    if not INTAKE_PLATE_OFFSET_MIN_MINUTES <= offset <= INTAKE_PLATE_OFFSET_MAX_MINUTES:
+        return None
+    return offset
 
 
 def derive_plate_name(ingredient_names: list[str]) -> str:

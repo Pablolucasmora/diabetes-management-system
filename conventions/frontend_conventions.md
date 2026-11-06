@@ -55,6 +55,7 @@ Los inputs cuyo control visual lo dibuja el navegador (`type="time"`, `type="dat
   - Para saber si hay página de la web detrás, cada entrada que añade htmx guarda en `history.state` cuántas hay (`dbDepth`). `history.length` no sirve, porque cuenta también otros sitios y las páginas de delante.
   - `#main_content` lleva `hx-history-elt`. La copia que htmx guarda al salir de una página y la petición que hace si al volver no la encuentra usan ese elemento, así que una página restaurada es el mismo fragmento que devuelven las rutas.
   - `dbBack` también pone el scroll arriba, como pide esta sección.
+  - Una página cuya página hija escribe datos que ella pinta no guarda copia: lleva `hx-history="false"`, y al volver se pide de nuevo. Por ahora, solo la ficha de receta, por su buscador de ingredientes (§6, §9.7; decisión 2026-11-06).
 - **Excepción**: una navegación concreta puede conservar la posición de scroll (o aterrizar en otro punto) **solo si el usuario lo pide explícitamente para ese caso**. Cuando eso ocurra, se documenta aquí el caso y el motivo, siguiendo el procedimiento de "Convenciones faltantes" de `CLAUDE.md`. No es una excepción que pueda decidirse componente a componente.
 - No se consideran cambio de página, y por tanto **no** resetean el scroll, los refrescos parciales que reemplazan solo un bloque de la página actual sin cambiar de pantalla (por ejemplo `hx_target="#food-list"` al escribir en un buscador, o el re-render de una fila tras editarla).
 
@@ -126,7 +127,7 @@ Hasta el 2026-10-10 la cabecera solo se mostraba con dos o más tandas o con una
 De izquierda a derecha: **título**, **offset de la tanda**, **`Apply all`**, **`Save as recipe`** (solo si la tanda tiene ingredientes, §7.13), y las acciones de editar nombre y borrar tanda.
 
 - El **título** es el nombre de la tanda (propio o derivado, §4.6.3) y se edita igual que el nombre del evento, con el mismo control.
-- El **offset de la tanda** es un input numérico editable en la propia cabecera. Es el valor que heredarán los alimentos que se añadan después a esa tanda.
+- El **offset de la tanda** es un input numérico editable en la propia cabecera. Es el valor que heredarán los alimentos que se añadan después a esa tanda. Se puede dejar vacío, igual que el de un ingrediente: significa offset desconocido (`measurement_conventions.md` §4.5). Un offset sin valor se muestra como campo vacío, nunca como `0`.
 - **`Apply all`** propaga ese offset a **todas las porciones de la tanda**. Existe porque cambiar el offset de la tanda no reescribe sus filas (§4.6.2): es la acción explícita para decir "esta tanda entera se comió 15 minutos más tarde". Va destacado con color, junto al input de offset.
 - **Borrar tanda** está bloqueado mientras tenga ingredientes (§4.6.5); la interfaz pide moverlos o borrarlos antes, no los arrastra a otra tanda por su cuenta.
 
@@ -152,6 +153,8 @@ En la pantalla de añadir alimento, **junto al selector de comida (meal selector
 - **Se muestra siempre que el evento tenga al menos una tanda**, aunque sea una sola y sin nombre (decisión 2026-09-19, corrige el criterio inicial de ocultarlo en ese caso): con una sola tanda sigue siendo el único sitio desde el que mandar el alimento a una tanda nueva. Solo queda vacío cuando no hay evento del que listar tandas —ninguno seleccionado, `New Meal`, o un evento que ya no está en el carrito—.
 - **Se pinta ya en la carga de la página**, con las tandas del evento que el selector de comida muestra seleccionado, y se repinta al cambiar de comida. Si solo se rellenara al cambiar de comida, el selector estaría vacío justo en el caso más común: entrar y añadir un alimento a la comida que ya venía elegida.
 - El selector viaja en el `hx-include` de los botones de añadir, junto al de comida: un alimento tiene que saber a qué tanda va, no solo a qué evento. Si no se está mostrando, la petición sale sin `plate_id` y eso significa exactamente "la tanda por defecto".
+
+- **Con una receta** (decisión 2026-11-05). Una receta de una tanda se puede añadir a la tanda elegida. Una de varias tandas crea las suyas: en su ficha no se dibuja el selector de tanda y, desde la lista de Food, el paso previo avisa de que entra como tandas nuevas e ignora la elegida (§9.7).
 
 ### 7.8 Agrupación de filas iguales
 
@@ -198,34 +201,31 @@ Toda la interfaz de la web se escribe **en inglés** (`Plates`, `Apply all`, `Mo
 
 Queda **pendiente de decisión** la internacionalización de la web (español/inglés a elección del usuario): no existe convención de i18n, los literales están incrustados en los componentes, y la parte cara no es traducir la interfaz sino decidir qué pasa con el contenido (nombres del catálogo, métodos de cocción, tipos de comida). Escribir los literales nuevos en inglés no cierra ninguna puerta a esa decisión.
 
-### 7.13 Guardar una tanda como receta (provisional)
+### 7.13 Guardar una tanda o una comida como receta
 
-Decisión 2026-10-18. Es **provisional** hasta la auditoría de `recipe`, que puede cambiarla o completarla. Responde a la entrada "Add recipe to plate functionality" de `audit/deuda_pendiente.md`.
+Decisión 2026-11-05; sustituye a la versión provisional del 2026-10-18.
 
 **Dónde está**
 
-- En la cabecera de cada tanda, en la fila del offset y detrás de `Apply all`, hay un botón `Save as recipe` (§7.3). En el móvil, si no cabe, la fila envuelve (§7.9).
-- Solo aparece si la tanda tiene ingredientes. Una tanda vacía no tiene nada que guardar.
-- Al pulsarlo se abre un pop-up de confirmación (`ConfirmActionModal`, §8) que dice con qué nombre se guardará la receta y que entrará en favoritos. El botón de confirmar es `ink`, porque no borra nada.
+- `Save as recipe` en la cabecera de cada tanda con ingredientes (§7.3). Una tanda vacía no tiene nada que guardar.
+- `Save meal as recipe` en la tarjeta de la comida, debajo de `+ Add plate`, solo con dos o más tandas con ingredientes. Con una, el botón de la tanda ya guarda lo mismo.
+- Los dos abren un pop-up con el nombre editable, ya relleno: el nombre visible de la tanda o, en la comida, el suyo o el de su primera tanda con ingredientes. Si el nombre está repetido, el pop-up se ha cerrado al pulsar y sale el aviso; al reabrirlo conserva lo escrito, para corregirlo.
 
-**Qué se guarda** (`services/recipe.py`, `save_plate_as_recipe`)
+**Qué se guarda** (`services/recipe.py`), en una transacción
 
-- Una receta nueva, en una sola transacción (`code_conventions.md` §2.3):
-  - **Nombre**: el nombre visible de la tanda, el propio o el derivado (`measurement_conventions.md` §4.6.3), normalizado con `normalize_food_text`. Como cualquier límite de longitud, el exceso sobre `RECIPE_NAME_MAX_LENGTH` se rechaza con `422`, sin truncar.
-  - **Tipo de comida**: el `meal_type` del evento.
-  - **Visibilidad**: nace personal (`code_conventions.md` §11.4.1) y **en favoritos** del usuario.
-  - **Ingredientes**: una porción por cada porción de la tanda, con su cantidad actual, su preparación (`cooking`, `conservation`, `final_state`), `strictly_weighed` e `is_cooked_weight`, como al copiar una receta (`measurement_conventions.md` §5.2 y §6.11). El offset no se copia, porque una porción de receta no puede tenerlo (`ck_portion_detail_offset_only_for_event`).
-- La tanda y la comida no cambian.
+- Una receta personal (`code_conventions.md` §11.4.1) en favoritos, con el `meal_type` del evento. Un rescate lo deja vacío, porque una receta no puede ser de rescate.
+- La tanda da una receta de una tanda. La comida da una tanda por cada una con ingredientes, en el orden de `measurement_conventions.md` §4.6.1 y con su nombre, y omite las vacías.
+- Cada porción con su cantidad, preparación, `strictly_weighed` e `is_cooked_weight`. El offset no se copia. La tanda y la comida no cambian.
 
 **Cuándo no se guarda** (todas con su status por el canal de errores, `error_conventions.md` §7.1)
 
-- Si la tanda tiene un **añadido rápido**, no se guarda nada (`409`). Un añadido rápido no se reutiliza ni puede ser ingrediente de receta (`code_conventions.md` §11.2.3).
-- Si el usuario ya tiene una **receta personal con ese nombre**, la respuesta es `409` y el aviso pide renombrar la tanda. La garantía es el índice único parcial `uq_recipe_personal_name`, `(users_id, lower(name)) WHERE NOT is_published` (`code_conventions.md` §6.1 y §11.4.1). Se adelantó de la auditoría de `recipe`, y el índice de las recetas publicadas sigue pendiente en ella. Desde que existe, crear, editar o copiar una receta con un nombre personal repetido también responde `409`.
-- Si la tanda está vacía o ya no existe, la respuesta es `409` o `404`.
+- Si hay un **añadido rápido**, no se guarda nada (`409`): no se reutiliza ni puede ser ingrediente (`code_conventions.md` §11.2.3).
+- Si el usuario ya tiene una **receta personal con ese nombre** (`409`), un nombre vacío o demasiado largo (`422`), si no hay ingredientes (`409`) o si ya no existe (`404`).
+- Si la comida ya está confirmada (`409`). El carrito solo muestra comidas `planned`.
 
-**Al repetirlo**: la segunda petición choca con el nombre que tomó la primera y responde `409`. Nunca crea dos recetas iguales.
+**Al repetirlo**: la segunda petición choca con el nombre que tomó la primera y responde `409`.
 
-**Después de guardar** el usuario se queda en el carrito: se cierra el pop-up y sale el aviso de éxito `Recipe saved` (`dbShowAppNotice`, desde `static/js/cart_units.js`). La respuesta HTMX está en el contrato del carrito (`code_conventions.md` §9.5).
+**Después de guardar** el usuario se queda en el carrito: se cierra el pop-up y sale el aviso `Recipe saved`.
 
 ## 8. Superficies, contraste y colores
 
@@ -287,6 +287,8 @@ Arriba, el saludo con el nombre de usuario (`Hi <usuario>`). Debajo, en este ord
 ### 9.3 Food
 
 - La cabecera es fija arriba (`sticky`) y usa `web_glass_strong` (§8). Lleva el botón del rayo, que abre el pop-up de rescate (§9.6), el menú "+", el buscador, los filtros y el selector de comida (*Add to*). Mientras el menú "+" está abierto, la capa `#food_menu_scrim` desenfoca el resto de la página (§8).
+- **Filtros** (decisión 2026-11-06). Se ajustan con un botón negro dentro del buscador, a la derecha, que abre un pop-up (`ModalLayer`, §8, id `food_filters_modal`) con `Cancel` y `Confirm`, y `Reset` arriba a la derecha, que quita todos los filtros. Lo elegido es un borrador, también el `Reset`: solo `Confirm` lo aplica y refresca la lista; `Cancel` o pulsar fuera lo descartan. El botón solo aparece en las listas que tienen algo que filtrar y lleva una marca mientras hay un filtro activo, porque desde fuera del pop-up no se vería. Por ahora, solo `Recipes`, con el tipo de comida: una selección múltiple de píldoras, que busca entre todos los elegidos (`code_conventions.md` §11.7). Un filtro nuevo es un control en el pop-up y un campo oculto que incluyen las peticiones de la lista.
+- El `+` de una receta abre el paso previo (§9.7).
 - Cada alimento de la lista es una tarjeta con el nombre, la marca u origen debajo y los carbohidratos por 100 g. Los propios llevan la etiqueta `Mine` y los archivados, `Archived`. Las listas van agrupadas bajo etiquetas de sección (`web_section_label`).
 - Sin búsqueda, la lista muestra 15 resultados y carga la página siguiente al llegar al final. Con búsqueda muestra 8 y las páginas siguientes, también de 8, se piden con un botón `Load more`, pequeño y centrado, porque debajo está la sección de Open Food Facts (`measurement_conventions.md` §12.2) y la carga automática no dejaría llegar a ella. Debajo van `From Ciqual` y `From Open Food Facts`, con 8 resultados cada una y su propio `Load more` (`/food/list/external`).
 
@@ -299,7 +301,7 @@ Decisión 2026-10-27, acordada con el usuario como prueba de diseño.
 - **Opciones.** Cada una aparece solo si el usuario tiene permiso, con el mismo criterio que el detalle (§9.4):
   - `Edit food` / `Edit manual` / `Edit recipe`: solo si es suyo y está activo. Abre la página de editar.
   - `Make a copy`: siempre, también en lo propio (decisión 2026-10-27, `code_conventions.md` §11.2.2). Pide la misma confirmación que el detalle, usa `POST /food/copy/...` y abre la edición de la copia.
-  - `Add to recipe`: solo para alimentos y platos (`catalog`, `manual_intake`), porque una receta no puede ser ingrediente. Lista las recetas propias del usuario. Al elegir una, se añade con la cantidad inicial de siempre (una ración, o 100 g si no tiene) usando la ruta de añadir ingrediente que ya existe, que suma la cantidad si el alimento ya estaba en esa receta. El pop-up se cierra y aparece el aviso `Added to <receta>` (`dbShowAppNotice`).
+  - `Add to recipe`: solo para alimentos y platos (`catalog`, `manual_intake`), porque una receta no puede ser ingrediente. Lista las recetas propias del usuario. Al elegir una, se añade con la cantidad inicial de siempre (una ración, o 100 g si no tiene) usando la ruta de añadir ingrediente que ya existe, que suma la cantidad solo si el alimento ya estaba en esa tanda con la misma preparación (`measurement_conventions.md` §4.7). Si la receta tiene dos o más tandas, una vista más pregunta a cuál (decisión 2026-11-05). El pop-up se cierra y aparece el aviso `Added to <receta>` (`dbShowAppNotice`).
 
 **Respuestas HTMX**
 
@@ -312,6 +314,9 @@ Decisión 2026-10-27, acordada con el usuario como prueba de diseño.
 Todas exigen el header `HX-Request` (`403` si falta).
 
 ### 9.4 Detalle de un alimento, plato o receta
+
+**Receta** (decisión 2026-11-05). De arriba abajo: el nombre, *Add to*, *Macros Summary*, *Details*, los ingredientes y las notas, con sus saltos de línea. No hay cantidad ni `To plate`: `Add to meal` abre el paso previo (§9.7). Quien no es propietario ve los ingredientes en filas de solo lectura y solo puede copiarla y añadirla. Un macro que ningún ingrediente conoce se pinta `—`, y si solo lo conocen algunos se pinta su suma con una línea que lo dice (`measurement_conventions.md` §6.9.4). Lo que cambia los ingredientes repinta también el resumen (§6).
+
 
 De arriba abajo: el nombre y sus datos, *Add to*, la cantidad (con *Advanced* para la preparación), `Strictly weighted` (§7.1, `measurement_conventions.md` §6.11), *Macros Summary* y *Details*. Debajo, las acciones: `Edit` y `Log`; si el usuario no puede editarlo, `Make a copy` ocupa el sitio de `Edit`. Si puede editarlo, `Make a copy` va en su propia fila debajo, encima de `Publish` (decisión 2026-10-27). Copiar pide confirmación y abre la edición de la copia. Entra bloque a bloque (§10). En un alimento o plato propio y activo aparece además el botón `Rescue` (§9.6).
 
@@ -378,6 +383,37 @@ Todas exigen el header `HX-Request` (`403` si falta).
 - Solo aparece si el usuario puede editar el alimento: es suyo y no está archivado. Es el mismo permiso que hoy permite cambiar sus etiquetas. Solo existe para `catalog` y `manual_intake`, no para recetas. Un alimento de la biblioteca general o de otro usuario se usa una vez buscándolo, y desde entonces sale por el historial.
 - La etiqueta es global: si se marca un alimento publicado, también aparece como rescate a los demás usuarios. Se acepta mientras dure la medida provisional.
 - Cuando vuelva la interfaz de etiquetas, el botón se quita y la etiqueta se gestiona con el selector normal (`audit/deuda_pendiente.md`).
+
+### 9.7 Recetas: paso previo, tandas e ingredientes
+
+Decisión 2026-11-05. El modelo está en `measurement_conventions.md` §4.7 y el contrato en `code_conventions.md` §11.2.4.
+
+**Paso previo al añadir a una comida**
+
+- El `+` de la fila y `Add to meal` de la ficha abren el pop-up `recipe_add_modal`. Su contenido se pide al servidor (`GET /food/recipe/{id}/add/form`) con la comida y la tanda elegidas, y `static/js/recipe_add.js` lo abre cuando llega, como en el rescate (§9.6).
+- Con `servings`, un campo `Servings` con `1`. Sin él, no aparece, pero el paso sigue, para ajustar la preparación.
+- Una línea por ingrediente, con su cantidad por ración. Se despliega para cambiar `cooking`, `final_state` y `conservation`, ya rellenos con lo de la receta. Con varias tandas, agrupadas y con un aviso de que entran como tandas nuevas.
+- `POST /add_recipe/{id}` recibe la comida, la tanda, las raciones y la preparación por ingrediente, nunca cantidades. Validación: `200` + fragmento en `#recipe_add_error`. Una comida o tanda que no existe, `404`; una comida ya confirmada o una receta sin ingredientes, `409`. Al terminar, el evento `recipeAdded` cierra el pop-up y muestra `Added to the meal`.
+- Repetirlo añade la receta otra vez: es otra ración, no un duplicado (§9.6 de `code_conventions.md`). El botón se deshabilita durante la petición.
+
+**Tandas en la ficha**
+
+- Con una tanda el concepto no se ve: solo `Add ingredient` y un `+ Add plate` discreto debajo, que no aparece hasta que la receta tiene una tanda. Es distinto del carrito, donde la cabecera sale siempre (§7.2), porque aquí no hay offset común que mostrar.
+- Con dos o más, cada tanda lleva una cabecera con su nombre editable (vacío, el derivado), subir, bajar y borrar, y su propio `Add ingredient`. Cada ingrediente tiene un selector para moverlo de tanda.
+- Borrar una tanda con ingredientes responde `409` y pide moverlos o borrarlos.
+- Toda acción repinta el bloque `#recipe_ingredients_{id}` y, fuera de banda, el resumen.
+
+**Por ingrediente**: cantidad, preparación y `Weighed cooked`, con el mismo criterio que el carrito (§7.4). `Strictly weighted` se ajusta en el carrito.
+
+**Buscador de ingredientes** (`/food/recipe/{id}/ingredients/form`)
+
+- Es el de Food sin isla, sin menú "+", sin selector de comida y sin menú de pulsación larga. Solo alimentos: nunca ofrece recetas. La isla se oculta con un `Style` dentro de la propia página, que desaparece con ella.
+- Filtros `Food` y `Favs`, y la misma paginación de Food por bloques de 8, con `Load more`. Cada `+` añade a la tanda desde la que se entró, o a la última, y muestra `Added to <receta>`.
+- Con búsqueda, en `Food`, salen también Ciqual y Open Food Facts (`measurement_conventions.md` §12). Al pulsar uno se abre su formulario precargado: al guardar, el alimento se añade a la receta y se vuelve al buscador. Nunca se crea un alimento sin revisarlo.
+
+**Tipos de comida**: el formulario tiene el tipo principal (`Meal type`) y, en píldoras, los adicionales (`Also for`). El principal es el que toma una comida creada desde la receta; los adicionales solo sirven para encontrarla con el filtro (decisión 2026-11-06). Elegir adicionales sin principal da un error de validación.
+
+**Notas**: texto libre del usuario, con una caja de 8 filas que no selecciona el texto al tocarla y hasta `RECIPE_NOTES_MAX_LENGTH` caracteres. Un borrador se descarta al guardar con éxito, para que no vuelva a rellenar un campo vaciado a propósito (en los tres formularios de alimentos).
 
 ## 10. Movimiento
 

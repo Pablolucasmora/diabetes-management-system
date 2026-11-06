@@ -410,31 +410,6 @@
     syncCartVisibility();
   });
 
-  document.body.addEventListener("recipe-amount-updated", function (event) {
-    var detail = event && event.detail ? event.detail : {};
-    var recipeId = Number(detail.recipe_id || 0);
-    if (!recipeId) return;
-    var root = byId("food_detail_recipe_" + String(recipeId));
-    if (!root) return;
-    var refs = getRefs(root);
-    if (!refs || !refs.gramsInput || !refs.select) return;
-
-    var totalAmount = Number(detail.total_amount || 0);
-    if (!Number.isFinite(totalAmount) || totalAmount <= 0) return;
-
-    refs.gramsInput.value = String(totalAmount);
-    if (refs.select.options && refs.select.options.length > 0) {
-      var opt = refs.select.options[0];
-      if (opt && opt.value === "portion") {
-        var unit = root.getAttribute("data-detail-base-unit") || "g";
-        var rounded = Math.max(1, Math.round(totalAmount));
-        opt.setAttribute("data-factor", String(totalAmount));
-        opt.textContent = "serving (" + String(rounded) + unit + ")";
-      }
-    }
-    syncDisplayFromGrams(root, refs);
-    persist(root, refs);
-  });
 })();
 
 // Tri-state check of the food page (`_weighed_tristate_field` in

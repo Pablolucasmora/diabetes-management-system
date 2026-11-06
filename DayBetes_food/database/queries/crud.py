@@ -8,10 +8,8 @@ This module no longer holds per-table CRUD functions (see code_conventions.md
 - the safe dynamic UPDATE builder (`_build_update_query` and its
   validation/whitelist helpers);
 - fuzzy-search helpers shared by several table modules
-  (`_build_fuzzy_search`, `_add_fuzzy_name_condition`), and the word search of
+  (`_build_fuzzy_search`), and the word search of
   the reference tables (`_search_reference_foods`);
-- ownership/favorite filter helpers used by `recipe.py`
-  (`_add_entity_filters`, `_favorite_filter_sql`);
 - the visibility rule of `catalog` and `manual_intake`, shared by
   `catalog.py`, `manual_intake.py` and `entries.py` (`_food_visibility_sql`);
 - tag normalization helpers shared by `tags.py` and `linked_tags.py`
@@ -19,7 +17,7 @@ This module no longer holds per-table CRUD functions (see code_conventions.md
 - constants shared across table modules (`TRGM_SIMILARITY_THRESHOLD`).
 
 Table-specific queries live in one module per table
-(`users.py`, `catalog.py`, `manual_intake.py`, `recipe.py`, `tags.py`,
+(`users.py`, `catalog.py`, `manual_intake.py`, `recipe.py`, `recipe_plate.py`, `tags.py`,
 `linked_tags.py`, `user_favorites.py`, `food_brands.py`, `intake_event.py`,
 `portion_detail.py`) plus `entries.py` for reads that span more than one
 table with no single owning table. All of them are re-exported from
@@ -390,60 +388,6 @@ def _build_fuzzy_search(
         )
 
     return condition, params, order
-
-
-def _add_fuzzy_name_condition(
-    connection,
-    conditions: list,
-    params: dict,
-    column: str,
-    search: Optional[str],
-    param_prefix: str = "search",
-) -> None:
-    condition, search_params, _ = _build_fuzzy_search(connection, column, search, param_prefix=param_prefix)
-    if not condition:
-        return
-    conditions.append(condition)
-    params.update(search_params)
-
-
-# ============================================
-# ENTITY-LEVEL FILTER HELPERS
-# (used by recipe.py)
-# ============================================
-
-def _add_entity_filters(
-    conditions: list,
-    params: dict,
-    owner_column: str,
-    users_id: int = None,
-    favorite_condition: str = None,
-    viewer_user_id: int = None,
-) -> None:
-    # Conditions are qualified with the `entity` alias: every call to this
-    # function comes from queries that alias their main table that way
-    # (FROM catalog entity / FROM manual_intake entity / FROM recipe entity).
-    # Unqualified, a JOIN with a table that has a column with the same
-    # name (e.g. food_brands.created_by) makes the reference ambiguous.
-    if users_id:
-        conditions.append(f"entity.{owner_column} = %(users_id)s")
-        params["users_id"] = users_id
-    if favorite_condition:
-        conditions.append(favorite_condition)
-    if viewer_user_id is not None:
-        conditions.append(f"(entity.is_published OR entity.{owner_column} = %(viewer_user_id)s)")
-        params["viewer_user_id"] = viewer_user_id
-
-
-def _favorite_filter_sql(target_column: str, favorite: bool, params: dict, viewer_user_id: int = None) -> str:
-    params["favorite_filter_user_id"] = viewer_user_id
-    operator = "EXISTS" if favorite else "NOT EXISTS"
-    return (
-        f"{operator} ("
-        "SELECT 1 FROM user_favorites uf "
-        f"WHERE uf.user_id = %(favorite_filter_user_id)s AND uf.{target_column} = entity.id"
-        ")"
-    )
 
 
 _FOOD_VISIBILITY_COLUMNS = {  # technical whitelist (§4.6): user_favorites / portion_detail columns

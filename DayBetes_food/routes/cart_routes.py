@@ -1,3 +1,5 @@
+import re
+
 from fasthtml.common import *
 from DayBetes_food.components.cart.cart_main import cart_main, cart_events_list
 from DayBetes_food.components.cart.cart_components import CartCard, MacrosSummary, PortionTriStateFlag
@@ -20,13 +22,13 @@ from DayBetes_food.database.queries import (
     update_portion_detail_fields,
     update_portion_flag,
     update_portion_offset,
+    update_intake_plate_offset,
     apply_plate_offset_to_portions,
     create_intake_plate,
     delete_intake_plate,
     get_intake_plate,
     list_intake_plates,
     list_intake_plates_by_events,
-    update_intake_plate,
     update_intake_plate_name,
     set_injection_zone,
     delete_intake_event,
@@ -51,6 +53,7 @@ from DayBetes_food.domain.constants import (
     PortionDestination,
     PortionOrigin,
     parse_enum,
+    parse_optional_id,
 )
 from DayBetes_food.domain.intake_event import (
     INTAKE_EVENT_INGESTED_UNITS,
@@ -63,12 +66,12 @@ from DayBetes_food.domain.intake_plate import (
     INTAKE_PLATE_OFFSET_MAX_MINUTES,
     INTAKE_PLATE_OFFSET_MIN_MINUTES,
     IntakePlateCreate,
-    IntakePlateUpdate,
 )
 from DayBetes_food.domain.portion_detail import PortionDetailUpdate, amount_to_grams
 from DayBetes_food.http_errors import app_error_response
 from DayBetes_food.services.intake_event import confirm_planned_event
-from DayBetes_food.services.recipe import save_plate_as_recipe
+from DayBetes_food.domain.recipe import parse_recipe_name
+from DayBetes_food.services.recipe import save_event_as_recipe, save_plate_as_recipe
 from DayBetes_food.errors import (
     AuthenticationError,
     AuthorizationError,
@@ -218,20 +221,24 @@ def _to_float(value: str):
     return float(normalized)
 
 
-def _parse_offset_minutes(raw_value: str) -> int:
-    """Validate an offset in minutes at the boundary (§7.5).
+def _parse_offset_minutes(raw_value: str) -> int | None:
+    """Validate an offset in minutes at the boundary (§7.4, §7.5).
 
-    An integer within the sanity bound of measurement_conventions.md §4.5
-    (`-300..300`), the same one the `intake_plate` CHECK declares: writing
-    out of range would give a database error instead of a 422.
+    Empty is None: the offset is unknown, and it clears the stored value. Anything
+    else is an integer within the sanity bound of measurement_conventions.md §4.5
+    (`-300..300`), the same one the `intake_plate` CHECK declares: writing out of
+    range would give a database error instead of a 422.
 
     Raises:
         ValidationError: it is not an integer or is out of range.
     """
-    try:
-        value = int((raw_value or "").strip())
-    except (TypeError, ValueError) as exc:
-        raise ValidationError("The offset must be a whole number of minutes.") from exc
+    text = (raw_value or "").strip()
+    if not text:
+        return None
+    # Only ASCII digits: int() would also take "1_0" or other scripts' digits (§7.5).
+    if not re.fullmatch(r"-?[0-9]{1,4}", text):
+        raise ValidationError("The offset must be a whole number of minutes.")
+    value = int(text)
     if not (INTAKE_PLATE_OFFSET_MIN_MINUTES <= value <= INTAKE_PLATE_OFFSET_MAX_MINUTES):
         raise ValidationError(
             f"The offset must be between {INTAKE_PLATE_OFFSET_MIN_MINUTES} and "
@@ -360,11 +367,11 @@ _PLATE_NOT_EMPTY = "Move or delete its ingredients before removing the plate."
 _PLATE_FAILED = "The plate could not be updated."
 # Public message per conflict of save_plate_as_recipe (services/recipe.py).
 _SAVE_RECIPE_CONFLICTS = {
-    "plate_without_portions": "Add some food to the plate before saving it as a recipe.",
-    "plate_has_quick_add": "This plate has a quick add, which cannot be saved in a recipe.",
-    "recipe_name_taken": "You already have a recipe with this name. Rename the plate to save it.",
+    "recipe_without_portions": "Add some food before saving it as a recipe.",
+    "recipe_has_quick_add": "A quick add cannot be saved in a recipe.",
+    "recipe_name_taken": "You already have a recipe with this name. Choose another one.",
+    "event_not_planned": "That meal has already been confirmed.",
 }
-_RECIPE_NAME_TOO_LONG = "The plate name is too long for a recipe name."
 
 
 def setup_cart_routes(rt):
@@ -774,12 +781,13 @@ def setup_cart_routes(rt):
             except ConflictError:
                 return _error(request, ConflictError, _EVENT_NOT_PLANNED)
 
-            raw_target = (target_plate_id or "").strip()
+            try:
+                target_id = parse_optional_id(target_plate_id, "plate")
+            except ValidationError as error:
+                return _error(request, ValidationError, str(error))
             try:
                 with connection.transaction():
-                    if raw_target.isdigit() and int(raw_target) != 0:
-                        target_id = int(raw_target)
-                    else:
+                    if not target_id:
                         target_id = create_intake_plate(
                             connection,
                             IntakePlateCreate(
@@ -874,6 +882,9 @@ def setup_cart_routes(rt):
                         _resync_consumed_amount_confidence(connection, int(user_id), event_id, portions)
             except NotFoundError:
                 return _error(request, NotFoundError, _INGREDIENT_GONE)
+            except ValidationError as error:
+                # A merge over the limit (measurement §4.6.4).
+                return _error(request, ValidationError, str(error))
             if field_name == "is_cooked_weight":
                 # Part of the uniqueness key (4.6.4, decision 2026-09-23):
                 # toggling it can merge the row into another one or change the
@@ -947,6 +958,9 @@ def setup_cart_routes(rt):
                 return _error(request, NotFoundError, _INGREDIENT_GONE)
             except ConflictError:
                 return _error(request, ConflictError, _EVENT_NOT_PLANNED)
+            except ValidationError as error:
+                # A merge over the limit (measurement §4.6.4).
+                return _error(request, ValidationError, str(error))
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/plate")
@@ -1016,7 +1030,7 @@ def setup_cart_routes(rt):
         with get_connection() as connection:
             try:
                 event_id = _plate_event_id(connection, int(user_id), plate_id, require_planned=False)
-                update_intake_plate(connection, plate_id, IntakePlateUpdate(offset_minutes=value))
+                update_intake_plate_offset(connection, plate_id, value)
             except NotFoundError:
                 return _error(request, NotFoundError, _PLATE_GONE)
             return _card_response(request, connection, int(user_id), event_id)
@@ -1068,10 +1082,8 @@ def setup_cart_routes(rt):
                 return _error(request, ConflictError, _PLATE_NOT_EMPTY)
             return _card_response(request, connection, int(user_id), event_id)
 
-    @rt("/cart/plate/{plate_id}/recipe")
-    def post(request: Request, plate_id: int):
-        """Save the plate as a new personal recipe, in favorites (provisional,
-        frontend_conventions.md §7.13).
+    def _save_as_recipe(request: Request, name: str, gone_message: str, save):
+        """Common contract of saving a plate or a meal as a recipe (frontend §7.13).
 
         Nothing in the card changes, so the answer is an empty body and the
         `recipeSaved` event, which shows the success notice (cart contract,
@@ -1083,20 +1095,43 @@ def setup_cart_routes(rt):
         user_id = get_current_user_id()
         if not user_id:
             return _error(request, AuthenticationError, _NO_SESSION)
+        try:
+            parsed_name = parse_recipe_name(name)
+        except ValidationError as error:
+            return _error(request, ValidationError, str(error))
         with get_connection() as connection:
             try:
-                save_plate_as_recipe(connection, int(user_id), plate_id)
+                save(connection, int(user_id), parsed_name)
             except NotFoundError:
-                return _error(request, NotFoundError, _PLATE_GONE)
+                return _error(request, NotFoundError, gone_message)
             except ConflictError as error:
                 return _error(
                     request,
                     ConflictError,
                     _SAVE_RECIPE_CONFLICTS.get(str(error), ConflictError.public_message),
                 )
-            except ValidationError:
-                return _error(request, ValidationError, _RECIPE_NAME_TOO_LONG)
         return HTMLResponse("", headers={"HX-Trigger": "recipeSaved"})
+
+    @rt("/cart/plate/{plate_id}/recipe")
+    def post(request: Request, plate_id: int, name: str = ""):
+        """Save the plate as a new personal recipe, in favorites."""
+        return _save_as_recipe(
+            request,
+            name,
+            _PLATE_GONE,
+            lambda connection, user_id, parsed: save_plate_as_recipe(connection, user_id, plate_id, parsed),
+        )
+
+    @rt("/cart/event/{event_id}/recipe")
+    def post(request: Request, event_id: int, name: str = ""):
+        """Save the whole meal as a new personal recipe, in favorites."""
+        return _save_as_recipe(
+            request,
+            name,
+            _EVENT_GONE,
+            lambda connection, user_id, parsed: save_event_as_recipe(connection, user_id, event_id, parsed),
+        )
+
 
     @rt("/cart/event/{event_id}/confirm")
     def post(

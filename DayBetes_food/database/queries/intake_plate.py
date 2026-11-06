@@ -4,18 +4,15 @@ Model and rules: conventions/measurement_conventions.md §4.6
 (decision 2026-09-19).
 """
 
-from dataclasses import fields as dataclass_fields
 
 from psycopg.errors import ForeignKeyViolation
 
 from DayBetes_food.database.mappers import intake_plate_read_from_row
 from DayBetes_food.database.queries.crud import (
-    RawSQL,
-    _build_update_query,
     _execute_query,
     _execute_query_many,
 )
-from DayBetes_food.domain.intake_plate import IntakePlateCreate, IntakePlateRead, IntakePlateUpdate
+from DayBetes_food.domain.intake_plate import IntakePlateCreate, IntakePlateRead
 from DayBetes_food.errors import ConflictError, InfrastructureError, NotFoundError
 
 # Read columns of the table. Explicit list, never `SELECT *` (§3.2): adding a
@@ -115,60 +112,14 @@ def get_intake_plate(connection, user_id: int, plate_id: int) -> IntakePlateRead
     return intake_plate_read_from_row(row)
 
 
-def update_intake_plate(
-    connection,
-    plate_id: int,
-    data: IntakePlateUpdate,
-    *,
-    commit: bool = True,
-) -> None:
-    """Update fields of a plate (§3.1).
-
-    Fields set to None are ignored (behaviour of `_build_update_query`); to
-    set `name` to NULL —returning the plate to its derived name— there is
-    `update_intake_plate_name`, as in intake_event.
-
-    Ownership is not checked here: the route has already resolved the plate
-    with `get_intake_plate`, which JOINs the event and the user (§5.3).
-
-    Raises:
-        NotFoundError: the plate does not exist.
-    """
-    payload = {
-        field.name: getattr(data, field.name)
-        for field in dataclass_fields(data)
-        if getattr(data, field.name) is not None
-    }
-    if not payload:
-        return None
-
-    params = {**payload, "id": plate_id}
-    query = _build_update_query("intake_plate", params, raw_fields={"updated_at": RawSQL.NOW})
-    if query is None:
-        return None
-
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(query, params)
-            row = cursor.fetchone()
-        if row is None:
-            raise NotFoundError(f"Intake plate {plate_id} not found")
-        if commit:
-            connection.commit()
-    except Exception:
-        if commit:
-            connection.rollback()
-        raise
-
-
 def update_intake_plate_name(
     connection, plate_id: int, name: str | None, *, commit: bool = True
 ) -> None:
     """Write the plate's own name, or clear it with `name=None`.
 
     A dedicated function, like `update_intake_event_name` and for the same
-    reason: `IntakePlateUpdate` reads None as "leave untouched", so clearing
-    the name —and going back to the §4.6.3 derived one— cannot be done that way.
+    reason: a generic update reads None as "leave untouched", so clearing the
+    name —and going back to the §4.6.3 derived one— cannot be done that way.
 
     Raises:
         NotFoundError: the plate does not exist.
@@ -194,10 +145,32 @@ def update_intake_plate_name(
         raise
 
 
+def update_intake_plate_offset(
+    connection, plate_id: int, offset_minutes: int | None, *, commit: bool = True
+) -> None:
+    """Write the plate's template offset, or clear it with `offset_minutes=None`.
+
+    A dedicated function for the same reason as `update_intake_plate_name`.
+
+    Raises:
+        NotFoundError: the plate does not exist.
+    """
+    query = """
+        UPDATE intake_plate
+        SET offset_minutes = %(offset_minutes)s,
+            updated_at = NOW()
+        WHERE id = %(plate_id)s
+        RETURNING id;
+    """
+    row = _execute_query(connection, query, {"plate_id": plate_id, "offset_minutes": offset_minutes}, commit=commit)
+    if row is None:
+        raise NotFoundError(f"Intake plate {plate_id} not found")
+
+
 def apply_plate_offset_to_portions(
     connection,
     plate_id: int,
-    offset_minutes: int,
+    offset_minutes: int | None,
     *,
     commit: bool = True,
 ) -> bool:

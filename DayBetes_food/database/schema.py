@@ -35,6 +35,7 @@ from DayBetes_food.domain.food import (
 )
 from DayBetes_food.domain.meal_type_schedule import AUTO_ASSIGNABLE_MEAL_TYPES
 from DayBetes_food.domain.nutrition import NUTRIENT_LIMITS, NumericRange
+from DayBetes_food.domain.recipe import RECIPE_MEAL_TYPES, RECIPE_SERVINGS_RANGE
 
 _PORTION_PREPARATION_LISTS = {
     "cooking": sql_in_list(CookingMethod),
@@ -120,6 +121,23 @@ def manual_intake_check_constraints() -> dict[str, str]:
     for field, limits in NUTRIENT_LIMITS.items():
         checks[f"ck_manual_intake_{field}_range"] = _range_check(field, limits)
     return checks
+
+
+def recipe_check_constraints() -> dict[str, str]:
+    """CHECK name -> expression of `recipe`, generated from the enums and the limits
+    (§4.4, §12.1). The same list feeds the CREATE TABLE and db_init._ensure_recipe_schema."""
+    return {
+        "ck_recipe_meal_type": f"meal_type IS NULL OR meal_type IN ({sql_in_list(RECIPE_MEAL_TYPES)})",
+        "ck_recipe_extra_meal_types": (
+            f"extra_meal_types <@ ARRAY[{sql_in_list(RECIPE_MEAL_TYPES)}]::varchar[]"
+        ),
+        "ck_recipe_extra_meal_types_need_main": (
+            "cardinality(extra_meal_types) = 0 "
+            "OR (meal_type IS NOT NULL AND NOT meal_type = ANY(extra_meal_types))"
+        ),
+        "ck_recipe_name_normalized": r"name <> '' AND name = regexp_replace(btrim(name), '\s+', ' ', 'g')",
+        "ck_recipe_servings": _range_check("servings", RECIPE_SERVINGS_RANGE),
+    }
 
 
 class DBSchema:
@@ -486,22 +504,32 @@ class DBSchema:
     );
     """
 
-    recipe = """
+    @classmethod
+    def recipe(cls):
+        """Lifecycle and contract: code_conventions.md §11.2.4."""
+        check_lines = ",\n".join(
+            f"        CONSTRAINT {name} CHECK ({expression})" for name, expression in recipe_check_constraints().items()
+        )
+        return f"""
+    -- Uniqueness: partial unique indexes uq_recipe_* live in db_init._ensure_recipe_schema.
     CREATE TABLE IF NOT EXISTS recipe (
-        id SERIAL PRIMARY KEY, 
-        users_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        origin_root_id INTEGER REFERENCES recipe(id) ON DELETE SET NULL,
-        meal_type VARCHAR(50) CHECK (
-            meal_type IN (
-                'breakfast', 'brunch', 'lunch',
-                'afternoon_snack', 'dinner', 'snack', 'rescue'
-            )
-        ), -- Used to set this as the default value in intake_event, making it easier to reuse
-        name VARCHAR(255) NOT NULL, -- Max length in domain/recipe.py (RECIPE_NAME_MAX_LENGTH)
-        notes TEXT,
-        is_published BOOLEAN NOT NULL DEFAULT FALSE -- True: visible to everyone; FALSE: only owner can view it
-        -- Personal-name uniqueness (uq_recipe_personal_name) is a PARTIAL unique
-        -- index and therefore lives in db_init._ensure_recipe_schema, not here.
+        id SERIAL CONSTRAINT pk_recipe PRIMARY KEY,
+        users_id INTEGER NOT NULL
+            CONSTRAINT fk_recipe_users_id_users
+            REFERENCES users(id) ON DELETE CASCADE,
+        origin_root_id INTEGER
+            CONSTRAINT fk_recipe_origin_root_id_recipe
+            REFERENCES recipe(id) ON DELETE SET NULL,
+        meal_type VARCHAR(50), -- the main one: what an event created from the recipe takes; never rescue
+        extra_meal_types VARCHAR(50)[] NOT NULL DEFAULT '{{}}', -- others it is also eaten as; only for search (§11.2.4)
+        name VARCHAR(255) NOT NULL, -- stored normalized (domain/food.normalize_food_text)
+        notes TEXT, -- free text; domain limit RECIPE_NOTES_MAX_LENGTH (§7.3)
+        servings INTEGER, -- NULL = the recipe is added whole (measurement §4.7)
+        is_published BOOLEAN NOT NULL DEFAULT FALSE, -- no interface writes it until phase 2 (§11.4.1)
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        search_name TEXT GENERATED ALWAYS AS ({search_text_sql("name")}) STORED,
+{check_lines}
     );
     """
 
@@ -602,6 +630,24 @@ class DBSchema:
     );
     """
 
+    recipe_plate = """
+    -- Plates of a recipe (measurement_conventions.md 4.7). No offset: it is born when
+    -- the recipe enters an event. The position order is deferrable so two plates can
+    -- exchange it in one statement.
+    CREATE TABLE IF NOT EXISTS recipe_plate (
+        id SERIAL CONSTRAINT pk_recipe_plate PRIMARY KEY,
+        recipe_id INTEGER NOT NULL
+            CONSTRAINT fk_recipe_plate_recipe_id_recipe
+            REFERENCES recipe(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL CONSTRAINT ck_recipe_plate_position CHECK (position >= 1),
+        name VARCHAR(255), -- NULL = name derived from its ingredients (4.6.3)
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT uq_recipe_plate_recipe_id_position UNIQUE (recipe_id, position) DEFERRABLE INITIALLY IMMEDIATE,
+        CONSTRAINT uq_recipe_plate_recipe_id_id UNIQUE (recipe_id, id) -- target of the composite FK of portion_detail
+    );
+    """
+
     portion_detail = f"""
     CREATE TABLE IF NOT EXISTS portion_detail (
         id SERIAL CONSTRAINT pk_portion_detail PRIMARY KEY,
@@ -634,6 +680,11 @@ class DBSchema:
             REFERENCES intake_plate(id) ON DELETE RESTRICT, -- Which plate (serving) of the event this portion belongs to; deleting a plate with portions is blocked on purpose (measurement_conventions.md 4.6.5)
         CONSTRAINT ck_portion_detail_plate_only_for_event
             CHECK ((intake_event_id IS NULL) = (plate_id IS NULL)), -- An event portion must have a plate; a fridge/recipe portion must not
+        recipe_plate_id INTEGER, -- Which plate of the recipe; the composite FK guarantees it is of that same recipe (4.7)
+        CONSTRAINT ck_portion_detail_recipe_plate_only_for_recipe
+            CHECK ((recipe_id IS NULL) = (recipe_plate_id IS NULL)),
+        CONSTRAINT fk_portion_detail_recipe_plate_id_recipe_plate
+            FOREIGN KEY (recipe_id, recipe_plate_id) REFERENCES recipe_plate (recipe_id, id) ON DELETE RESTRICT,
         -- Uniqueness of a food inside a plate (measurement_conventions.md 4.6.4) is a PARTIAL unique
         -- index and therefore lives in db_init._ensure_portion_detail_schema, not here: a partial
         -- index cannot be declared inline in CREATE TABLE.

@@ -4,6 +4,7 @@ from DayBetes_food.components.cart.cart_components import plate_display_name
 from DayBetes_food.components.food.food_actions import FoodActionsModal
 from DayBetes_food.components.food.foods import (
     Filters,
+    FoodFiltersModal,
     MealSelector,
     QuickCreateButtons,
     SearchInput,
@@ -13,6 +14,9 @@ from DayBetes_food.database.queries import (
     list_planned_intake_events,
     list_portions_by_event,
 )
+
+
+from DayBetes_food.components.food.recipe_add import RecipeAddModal
 
 
 def plate_selector_options(connection, user_id: int, event_id: int):
@@ -105,6 +109,8 @@ def food_main(connection):
         ),
         # Outside #food-list, so a new search does not remove an open pop-up.
         FoodActionsModal(),
+        *RecipeAddModal(),
+        *FoodFiltersModal(),
         id="food_list_wrapper",
         cls="""md:mb-50 lg:mb-50 mb-36""",
     )

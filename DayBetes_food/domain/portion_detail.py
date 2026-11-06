@@ -134,6 +134,7 @@ class PortionDetailRead:
     destination: PortionDestination
     destination_id: int
     plate_id: int | None
+    recipe_plate_id: int | None
     amount: float
     cooking: CookingMethod | None
     conservation: ConservationMethod | None
@@ -154,6 +155,7 @@ class PortionDetailCreate:
     destination_id: int
     amount: float
     plate_id: int | None = None
+    recipe_plate_id: int | None = None
     cooking: CookingMethod | None = None
     conservation: ConservationMethod | None = None
     final_state: FoodPhysicalState | None = None

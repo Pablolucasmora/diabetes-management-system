@@ -91,7 +91,8 @@ def FloatingIsland():
         cls="""
             fixed bottom-6 left-1/2 -translate-x-1/2
             z-50
-        """
+        """,
+        id="floating_island",
     )
 
 def IslandLogo():
