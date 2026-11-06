@@ -191,6 +191,8 @@ async def auth_security_middleware(request: Request, call_next):
     if request.method not in SAFE_METHODS:
         supplied_token = request.headers.get("X-CSRF-Token", "")
         if not supplied_token and request.headers.get("content-type", "").startswith("application/x-www-form-urlencoded"):
+            # Caches the body: form() alone consumes it, and the route would get an empty form.
+            await request.body()
             form = await request.form()
             supplied_token = str(form.get("csrf_token", ""))
 
