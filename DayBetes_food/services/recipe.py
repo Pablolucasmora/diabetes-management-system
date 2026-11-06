@@ -21,7 +21,7 @@ from DayBetes_food.database.queries import (
     next_recipe_copy_name,
     set_user_favorite,
 )
-from DayBetes_food.domain.constants import IntakeEventState, MealType, PortionDestination
+from DayBetes_food.domain.constants import FoodEntryType, IntakeEventState, MealType, PortionDestination
 from DayBetes_food.domain.intake_event import IntakeEventCreate
 from DayBetes_food.domain.intake_plate import IntakePlateCreate, auto_offset_minutes
 from DayBetes_food.domain.portion_detail import PortionDetailCreate, PortionDetailRead
@@ -80,9 +80,7 @@ def _create_recipe_from_plates(connection, user_id: int, event, name: str, plate
         )
     except ConflictError as exc:
         raise ConflictError("recipe_name_taken") from exc
-    if not set_user_favorite(connection, user_id, "recipe", recipe_id, True, commit=False):
-        # Only possible with an invalid argument: a bug, not a user error.
-        raise RuntimeError("recipe_favorite_not_saved")
+    set_user_favorite(connection, user_id, FoodEntryType.RECIPE, recipe_id, True, commit=False)
     for plate_name, portions in plates:
         recipe_plate_id = create_recipe_plate(connection, user_id, recipe_id, name=plate_name, commit=False)
         _portions_to_recipe_plate(connection, user_id, recipe_id, recipe_plate_id, portions)
@@ -177,8 +175,7 @@ def copy_recipe(connection, user_id: int, recipe_id: int) -> int:
             ),
             commit=False,
         )
-        if not set_user_favorite(connection, user_id, "recipe", copy_id, True, commit=False):
-            raise RuntimeError("recipe_favorite_not_saved")
+        set_user_favorite(connection, user_id, FoodEntryType.RECIPE, copy_id, True, commit=False)
         for plate, portions in recipe_plates_with_portions(connection, user_id, source.id):
             recipe_plate_id = create_recipe_plate(connection, user_id, copy_id, name=plate.name, commit=False)
             _portions_to_recipe_plate(connection, user_id, copy_id, recipe_plate_id, portions)

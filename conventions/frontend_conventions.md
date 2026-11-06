@@ -277,7 +277,7 @@ Se construyen con los bloques de `components/food/foods.py`. No se monta un form
 - **El nombre es el título** (`_name_title_input`). Se escribe y se edita en el propio título, en negrita y sin recuadro: parece texto y se edita al pulsarlo. Vacío, muestra en gris qué se espera (`Name of the food`). No hay un campo "Name" aparte.
 - **Secciones** (`_form_section`). Cada una es una tarjeta con un título y sus campos en rejilla, en vez de una tarjeta por campo. En las páginas de crear, las secciones obligatorias van numeradas (`① What is it?`, `② Nutrition`). Así el usuario ve cuántos pasos tiene el formulario.
 - **Lo que casi nunca hace falta va plegado** (`_optional_section`, un `<details>`): *More details*, con subgrupos (`_form_subgroup`) y una línea que resume qué hay dentro. Empieza cerrado. Se abre solo cuando ya trae datos, por ejemplo los que rellena el escáner. Es lo que evita que un formulario abrume.
-- **Al final**, `Favorite` en su propia fila (`_favorite_row`) y una única acción principal a todo el ancho (`_form_submit`, `web_button_primary`: `Create food`, `Save`, `Add to meal`…).
+- **Al final**, `Favorite` en su propia fila (`_favorite_row`), marcado por defecto en los formularios de alta, y una única acción principal a todo el ancho (`_form_submit`, `web_button_primary`: `Create food`, `Save`, `Add to meal`…).
 - Las páginas de editar siguen el mismo esquema, con las secciones del alimento en vez de pasos numerados.
 
 ### 9.2 Inicio
@@ -312,6 +312,22 @@ Decisión 2026-10-27, acordada con el usuario como prueba de diseño.
 | `GET /food/actions/{entry_type}/{entry_id}/copy` | `#food_actions_modal_body` | `innerHTML` | la confirmación | igual |
 
 Todas exigen el header `HX-Request` (`403` si falta).
+
+#### 9.3.2 Estrella de favorito de una fila
+
+Pulsar la estrella activa el favorito y volver a pulsarla lo desactiva. Cada estrella manda en `hx-vals` el estado que pide (`favorite=true|false`), calculado en el servidor a partir de la fila guardada, así que repetir una petición nunca deshace la anterior. Mientras responde, el botón está deshabilitado. Su texto accesible dice lo que hará: `Add to favorites` o `Remove from favorites`.
+
+Si el favorito es lo único que da acceso a un alimento o plato retenido (`code_conventions.md` §11.2.5), quitarlo pide confirmación en el pop-up de la fila (§9.3.1), y al confirmar se retira la tarjeta. Lo decide el servidor en el momento de la pulsación, no al pintar la lista. Sin esa condición se quita con un solo toque, y la tarjeta se queda con la estrella vacía.
+
+**Respuestas HTMX** de `POST /food/favorite/{entry_type}/{entry_id}`, que exige el header `HX-Request` (`403` si falta):
+
+| Caso | `hx-target` final | `hx-swap` final | Respuesta |
+|---|---|---|---|
+| Añadir o quitar, y sigue visible | la estrella | `outerHTML` | la estrella con el estado guardado |
+| Quitar lo único que da acceso, sin `confirmed=true` | `#food_actions_modal_body` (`HX-Retarget`) | `innerHTML` (`HX-Reswap`) | la confirmación; no cambia nada |
+| Quitar, y deja de ser visible | la tarjeta (`HX-Retarget`) | `outerHTML` (`HX-Reswap`) | vacía: la tarjeta desaparece |
+
+Errores, por el canal común: sin sesión, `401`; tipo desconocido, `favorite` ausente, vacío o no válido, y `confirmed` no válido, `422`; añadir algo que no ve, `404`; añadir algo retenido, `409`. Repetir es un no-op: la misma estrella, o la misma respuesta vacía si ya no se ve. No lanza eventos `HX-Trigger` ni navega.
 
 ### 9.4 Detalle de un alimento, plato o receta
 

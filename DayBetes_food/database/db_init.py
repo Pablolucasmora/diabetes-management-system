@@ -848,28 +848,56 @@ def _ensure_manual_intake_timestamptz(cursor):
     cursor.execute("ALTER TABLE manual_intake ALTER COLUMN updated_at SET NOT NULL;")
 
 
+_USER_FAVORITES_CONSTRAINT_RENAMES = {
+    "user_favorites_pkey": "pk_user_favorites",
+    "user_favorites_user_id_fkey": "fk_user_favorites_user_id_users",
+    "user_favorites_catalog_id_fkey": "fk_user_favorites_catalog_id_catalog",
+    "user_favorites_manual_intake_id_fkey": "fk_user_favorites_manual_intake_id_manual_intake",
+    "user_favorites_recipe_id_fkey": "fk_user_favorites_recipe_id_recipe",
+    "user_favorites_check": "ck_user_favorites_one_entry",
+}
+# Current name of each per-food unique index -> the name it had before.
+_USER_FAVORITES_UNIQUE_INDEXES = {
+    "catalog_id": "uq_user_favorites_catalog",
+    "manual_intake_id": "uq_user_favorites_manual",
+    "recipe_id": "uq_user_favorites_recipe",
+}
+
+
 def _ensure_user_favorites_schema(cursor):
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS user_favorites (
-            id BIGSERIAL PRIMARY KEY,
-            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            catalog_id INTEGER REFERENCES catalog(id) ON DELETE CASCADE,
-            manual_intake_id INTEGER REFERENCES manual_intake(id) ON DELETE CASCADE,
-            recipe_id INTEGER REFERENCES recipe(id) ON DELETE CASCADE,
-            CHECK (num_nonnulls(catalog_id, manual_intake_id, recipe_id) = 1)
-        );
-        """
-    )
-    cursor.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS uq_user_favorites_catalog ON user_favorites(user_id, catalog_id) WHERE catalog_id IS NOT NULL;"
-    )
-    cursor.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS uq_user_favorites_manual ON user_favorites(user_id, manual_intake_id) WHERE manual_intake_id IS NOT NULL;"
-    )
-    cursor.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS uq_user_favorites_recipe ON user_favorites(user_id, recipe_id) WHERE recipe_id IS NOT NULL;"
-    )
+    """What DBSchema.user_favorites cannot do on a table that already exists.
+
+    Every step checks first, so an up-to-date database takes no lock on the
+    table (§12.2). created_at of the existing rows is the migration date, a
+    technical backfill (§12.7).
+    """
+    if not _has_column(cursor, "user_favorites", "created_at"):
+        cursor.execute(
+            "ALTER TABLE user_favorites ADD COLUMN created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;"
+        )
+    for old_name, new_name in _USER_FAVORITES_CONSTRAINT_RENAMES.items():
+        if _constraint_exists(cursor, "user_favorites", old_name) and not _constraint_exists(
+            cursor, "user_favorites", new_name
+        ):
+            cursor.execute(
+                sql.SQL("ALTER TABLE user_favorites RENAME CONSTRAINT {} TO {};").format(
+                    sql.Identifier(old_name), sql.Identifier(new_name)
+                )
+            )
+    for column, old_name in _USER_FAVORITES_UNIQUE_INDEXES.items():
+        name = f"uq_user_favorites_user_id_{column}"
+        if _index_exists(cursor, name):
+            continue
+        if _index_exists(cursor, old_name):
+            cursor.execute(
+                sql.SQL("ALTER INDEX {} RENAME TO {};").format(sql.Identifier(old_name), sql.Identifier(name))
+            )
+        else:
+            cursor.execute(
+                sql.SQL("CREATE UNIQUE INDEX {} ON user_favorites (user_id, {}) WHERE {} IS NOT NULL;").format(
+                    sql.Identifier(name), sql.Identifier(column), sql.Identifier(column)
+                )
+            )
     cursor.execute("DROP INDEX IF EXISTS idx_catalog_favorite;")
     cursor.execute("DROP INDEX IF EXISTS idx_manual_favorite;")
     cursor.execute("DROP INDEX IF EXISTS idx_recipe_favorite;")

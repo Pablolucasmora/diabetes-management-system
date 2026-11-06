@@ -928,3 +928,36 @@ En los datos reales, `manual_intake` tiene 4 de 5 filas privadas. Los motivos re
 - Scraping de webs de supermercados: frágil, y sin revisar sus condiciones.
 **Decisión**: DayBetes usa OFF mediante una copia local limpia, generada desde una exportación completa y cargada en el VPS. Se aceptan las condiciones de la ODbL: atribución visible en la interfaz; oferta de la base derivada, o de un método que describa sus cambios, antes de cualquier uso público; y datos de OFF en tabla propia, sin mezclarlos con fuentes de licencia incompatible. La advertencia de OFF contra los fines médicos queda como cuestión abierta para las recomendaciones de la fase 2. El esquema de la tabla, los productos que se cargan, la procedencia en `catalog`, el papel futuro de la API en el escáner y las copias de seguridad quedan pendientes de acordar.
 **Convención actualizada**: `measurement_conventions.md` sección 12.2
+
+## 2026-11-06 — `user_favorites`: solo `created_at`
+
+**Origen**: `user_favorites`, hallazgo 6 (decisión P2 de `audit/audits/audit_user_favorites.md`)
+**Contexto**: la tabla no tenía ningún timestamp y no se podía saber cuándo se marcó un favorito. §6.11 pide timestamps coherentes, y la decisión del 2026-09-22 lo leyó como un mínimo al añadirlos a `portion_detail`, pero no aclara qué necesita una tabla puente cuyas filas nunca se actualizan. Quitar y volver a marcar un favorito crea otra fila.
+**Alternativas consideradas**:
+- Solo `created_at`.
+- `created_at` y `updated_at`, por uniformidad con las demás tablas: `updated_at` sería una columna que nunca cambia.
+- Ninguno, declarando la excepción, porque hoy ninguna función lo necesita: la fecha no se puede recuperar más tarde.
+**Decisión**: solo `created_at`, por si hace falta más adelante, aunque hoy no cambie nada. En las filas anteriores a esta decisión es la fecha de la migración, que es un backfill técnico (§12.7). Vale para esta tabla: `tags`, `linked_tags` y `fridge` se deciden cuando se auditen.
+**Convención actualizada**: `code_conventions.md` sección 11.2.5
+
+## 2026-11-06 — `user_favorites`: tabla Dependent cuya fila concede visibilidad
+
+**Origen**: `user_favorites`, hallazgo 7 (decisión P3 de `audit/audits/audit_user_favorites.md`)
+**Contexto**: la tabla no tenía clasificación en §11.2.1, que prohíbe deducirla del código, y no había ningún contrato de §11.1. Tampoco estaba escrito que una fila, además de una preferencia, concede visibilidad sobre un alimento o plato despublicado o archivado, algo que solo se deducía de leer `_food_visibility_sql`.
+**Alternativas consideradas**:
+- **Dependent**, porque un favorito no tiene sentido sin su usuario y sin su alimento.
+- **Non-archivable**, porque el usuario borra la fila directamente y no solo en cascada.
+**Decisión**: **Dependent** de su usuario y de su alimento, plato o receta, con el borrado directo por el usuario escrito en el mismo contrato. El borrado es físico, al quitar el favorito y en `CASCADE` desde las cuatro tablas, y no requiere auditoría de cambios porque no es un dato clínico. Queda escrito que la fila concede visibilidad. Las recetas no tienen esa retención, y quien tiene en favoritos una receta borrada o despublicada la pierde; se revisa en la fase 2, con la propuesta anotada en `audit/deuda_pendiente.md`.
+**Convención actualizada**: `code_conventions.md` secciones 11.2.1 y 11.2.5
+
+## 2026-11-06 — Confirmar al quitar un favorito solo si se pierde el acceso
+
+**Origen**: `user_favorites`, hallazgo 8 (decisión P4 de `audit/audits/audit_user_favorites.md`)
+**Contexto**: las convenciones permiten quitar de favoritos un alimento retenido, pero no decían cómo. Un solo toque en la estrella lo quitaba sin aviso. La ficha pasaba a `404`, un archivado ya no se podía recuperar, y la tarjeta seguía en la lista con un aspecto normal, respondiendo `404` si se volvía a pulsar. Hoy no se da con datos reales: llegará con varios usuarios.
+**Alternativas consideradas**:
+- Dejarlo como estaba.
+- Pedir confirmación solo cuando quitarlo hará perder el acceso, y retirar la tarjeta.
+- Esperar al undo de 15 s, cuyo alcance aún no incluye esta acción.
+**Decisión**: confirmar solo cuando el favorito es lo único que da acceso, y retirar la tarjeta al aceptar. Si el alimento también está en una receta propia, sigue visible y no se pregunta. Se aplica ya, sin esperar a la fase multiusuario. El resto de favoritos se sigue quitando con un toque.
+**Convención actualizada**: `frontend_conventions.md` sección 9.3.2 y `code_conventions.md` sección 11.2.5
+

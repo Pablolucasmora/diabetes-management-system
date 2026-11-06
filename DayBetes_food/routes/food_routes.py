@@ -48,7 +48,7 @@ from DayBetes_food.database.queries import (
     update_recipe_plate_name,
     list_viewable_recipe_portions,
     update_catalog_item,
-    toggle_user_favorite,
+    get_user_favorite_access,
     set_user_favorite,
     update_manual_intake,
     update_recipe,
@@ -151,10 +151,13 @@ from DayBetes_food.integrations.ciqual import prefill_from_ciqual_food, reliabil
 from DayBetes_food.integrations.open_food_facts import fetch_product_prefill, prefill_from_off_product
 from DayBetes_food.components.food.foods import FoodSectionsContent, FoodCard, FavoriteButton, on_after
 from DayBetes_food.components.food.food_actions import (
+    FOOD_ACTIONS_BODY_ID,
     FoodActionsCopyConfirm,
+    FoodActionsFavoriteConfirm,
     FoodActionsMenu,
     FoodActionsRecipes,
     FoodActionsRecipePlates,
+    food_card_id,
 )
 from DayBetes_food.components.food.rescue import (
     RescueForm,
@@ -1358,6 +1361,13 @@ def _filtered_entries(
 
 _UNKNOWN_ENTRY_TYPE = "Unknown food type."
 
+# Not found, and cannot be added (retained), per food type.
+_FAVORITE_MESSAGES = {
+    FoodEntryType.CATALOG: ("Food not found.", "Archived or unpublished foods cannot be added to favorites."),
+    FoodEntryType.MANUAL_INTAKE: ("Dish not found.", "Archived or unpublished dishes cannot be added to favorites."),
+    FoodEntryType.RECIPE: ("Recipe not found.", "Unpublished recipes cannot be added to favorites."),
+}
+
 
 def _parse_food_entry_type(raw: str) -> FoodEntryType | None:
     """The food type of a Food URL, or None when it is not one. The route
@@ -2417,7 +2427,7 @@ def setup_food_routes(rt):
                         ),
                         commit=False,
                     )
-                    set_user_favorite(connection, user_id, "catalog", int(created_id), True, commit=False)
+                    set_user_favorite(connection, user_id, FoodEntryType.CATALOG, int(created_id), True, commit=False)
             except ConflictError as error:
                 return app_error_response(request, ConflictError, str(error))
             except ValidationError as error:
@@ -2465,7 +2475,7 @@ def setup_food_routes(rt):
                         ),
                         commit=False,
                     )
-                    set_user_favorite(connection, user_id, "manual_intake", int(created_id), True, commit=False)
+                    set_user_favorite(connection, user_id, FoodEntryType.MANUAL_INTAKE, int(created_id), True, commit=False)
             except ConflictError as error:
                 return app_error_response(request, ConflictError, str(error))
             except ValidationError as error:
@@ -2577,7 +2587,7 @@ def setup_food_routes(rt):
                 with connection.transaction():
                     # False = already archived: idempotent no-op (§9.6).
                     archive_catalog_item(connection, user_id, catalog_id, commit=False)
-                    set_user_favorite(connection, user_id, "catalog", catalog_id, False, commit=False)
+                    set_user_favorite(connection, user_id, FoodEntryType.CATALOG, catalog_id, False, commit=False)
             except NotFoundError:
                 return app_error_response(request, NotFoundError, "Food not found.")
         return HTMLResponse("", headers={"HX-Redirect": "/food"})
@@ -2632,7 +2642,7 @@ def setup_food_routes(rt):
                     # False = already archived: idempotent no-op (§9.6).
                     archive_manual_intake(connection, user_id, manual_intake_id, commit=False)
                     set_user_favorite(
-                        connection, user_id, "manual_intake", manual_intake_id, False, commit=False
+                        connection, user_id, FoodEntryType.MANUAL_INTAKE, manual_intake_id, False, commit=False
                     )
             except NotFoundError:
                 return app_error_response(request, NotFoundError, "Dish not found.")
@@ -3178,58 +3188,55 @@ def setup_food_routes(rt):
         return HTMLResponse("", headers={"HX-Trigger": json.dumps({"recipeAdded": {"event_id": event_id}})})
 
     @rt("/food/favorite/{entry_type}/{entry_id}")
-    def post(request: Request, entry_type: str, entry_id: int):
+    def post(request: Request, entry_type: str, entry_id: int, favorite: str = "", confirmed: str = ""):
+        """Sets the favorite to what the star asked for (frontend §9.3.2)."""
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
         kind = _parse_food_entry_type(entry_type)
         if kind is None:
             return app_error_response(request, ValidationError, _UNKNOWN_ENTRY_TYPE)
+        # Required: the strict parser reads an empty value as False, and a request
+        # without the field must not remove the favorite (§7.4, §7.6).
+        if not favorite.strip():
+            return app_error_response(request, ValidationError, "Say whether to add or remove the favorite.")
+        try:
+            wanted = _parse_strict_bool(favorite)
+            removal_confirmed = _parse_strict_bool(confirmed)
+        except ValidationError as error:
+            return app_error_response(request, error, str(error))
 
+        not_found, not_addable = _FAVORITE_MESSAGES[kind]
         with get_connection() as connection:
-            user_id = get_current_user_id()
+            if not wanted and not removal_confirmed:
+                access = get_user_favorite_access(connection, int(user_id), kind, entry_id)
+                entry = (
+                    _food_entry_summary(connection, int(user_id), kind, entry_id)
+                    if access is not None and access.is_only_access
+                    else None
+                )
+                if entry is not None:
+                    response = render_fragment(FoodActionsFavoriteConfirm(kind, entry_id, entry))
+                    response.headers["HX-Retarget"] = f"#{FOOD_ACTIONS_BODY_ID}"
+                    response.headers["HX-Reswap"] = "innerHTML"
+                    return response
+            try:
+                set_user_favorite(connection, int(user_id), kind, entry_id, wanted)
+            except NotFoundError:
+                return app_error_response(request, NotFoundError, not_found)
+            except ConflictError:
+                return app_error_response(request, ConflictError, not_addable)
+            access = get_user_favorite_access(connection, int(user_id), kind, entry_id)
 
-            if kind is FoodEntryType.CATALOG:
-                if not user_id:
-                    return app_error_response(request, AuthenticationError, "Your session has expired.")
-                item = get_catalog_item(connection, int(user_id), entry_id)
-                if item is None:
-                    return app_error_response(request, NotFoundError, "Food not found.")
-                if not item.is_favorite and not item.is_listable:
-                    return app_error_response(
-                        request,
-                        ConflictError,
-                        "Archived or unpublished foods cannot be added to favorites.",
-                    )
-                new_favorite = toggle_user_favorite(connection, int(user_id), entry_type, entry_id)
-                if new_favorite is None:
-                    return app_error_response(request, NotFoundError, "Food not found.")
-                return render_fragment(FavoriteButton(entry_type, entry_id, new_favorite))
-
-            if kind is FoodEntryType.MANUAL_INTAKE:
-                if not user_id:
-                    return app_error_response(request, AuthenticationError, "Your session has expired.")
-                manual_item = get_manual_intake(connection, int(user_id), entry_id)
-                if manual_item is None:
-                    return app_error_response(request, NotFoundError, "Dish not found.")
-                if not manual_item.is_favorite and not manual_item.is_listable:
-                    return app_error_response(
-                        request,
-                        ConflictError,
-                        "Archived or unpublished dishes cannot be added to favorites.",
-                    )
-                new_favorite = toggle_user_favorite(connection, int(user_id), entry_type, entry_id)
-                if new_favorite is None:
-                    return app_error_response(request, NotFoundError, "Dish not found.")
-                return render_fragment(FavoriteButton(entry_type, entry_id, new_favorite))
-
-            new_favorite = None
-            current = get_recipe(connection, int(user_id), entry_id) if user_id else None
-            if current is not None:
-                new_favorite = toggle_user_favorite(connection, user_id, entry_type, entry_id)
-            if new_favorite is None:
-                return app_error_response(request, NotFoundError, "Recipe not found.")
-
-            return render_fragment(FavoriteButton(entry_type, entry_id, new_favorite))
+        if access is None:
+            # The row was the access to this food: its card has nothing left to show.
+            response = HTMLResponse("")
+            response.headers["HX-Retarget"] = f"#{food_card_id(kind, entry_id)}"
+            response.headers["HX-Reswap"] = "outerHTML"
+            return response
+        return render_fragment(FavoriteButton(kind, entry_id, access.is_favorite))
 
     @rt("/food/edit/catalog/{entry_id}")
     def post(
@@ -3539,7 +3546,9 @@ def setup_food_routes(rt):
                         commit=False,
                     )
                     # The food is born personal (R5). Favorite and tags are user data.
-                    set_user_favorite(connection, int(user_id), "catalog", created_id, bool(req.favorite), commit=False)
+                    set_user_favorite(
+                        connection, int(user_id), FoodEntryType.CATALOG, created_id, bool(req.favorite), commit=False
+                    )
                     if req.tags is not None:
                         set_entry_tags(connection, "catalog", created_id, req.tags, commit=False)
                     if target_recipe_id is not None:
@@ -3628,7 +3637,7 @@ def setup_food_routes(rt):
                     )
                     # The dish is born personal (§11.4.1). Favorite and tags are user data.
                     set_user_favorite(
-                        connection, int(user_id), "manual_intake", created_id, bool(req.favorite), commit=False
+                        connection, int(user_id), FoodEntryType.MANUAL_INTAKE, created_id, bool(req.favorite), commit=False
                     )
                     if req.tags is not None:
                         set_entry_tags(connection, "manual_intake", created_id, req.tags, commit=False)
@@ -3766,7 +3775,9 @@ def setup_food_routes(rt):
                         ),
                         commit=False,
                     )
-                    set_user_favorite(connection, int(user_id), "recipe", created_id, bool(req.favorite), commit=False)
+                    set_user_favorite(
+                        connection, int(user_id), FoodEntryType.RECIPE, created_id, bool(req.favorite), commit=False
+                    )
                     if req.tags:
                         set_entry_tags(connection, "recipe", created_id, req.tags, commit=False)
             except ConflictError as error:

@@ -10,8 +10,10 @@ This module no longer holds per-table CRUD functions (see code_conventions.md
 - fuzzy-search helpers shared by several table modules
   (`_build_fuzzy_search`), and the word search of
   the reference tables (`_search_reference_foods`);
-- the visibility rule of `catalog` and `manual_intake`, shared by
-  `catalog.py`, `manual_intake.py` and `entries.py` (`_food_visibility_sql`);
+- the visibility rule of `catalog` and `manual_intake`, shared by `catalog.py`,
+  `manual_intake.py`, `entries.py` and `user_favorites.py`
+  (`_food_visibility_sql`, `_food_in_own_recipe_sql`), and the one of `recipe`,
+  shared by `recipe.py` and `user_favorites.py` (`_RECIPE_VISIBLE`);
 - tag normalization helpers shared by `tags.py` and `linked_tags.py`
   (`_normalize_tag_name`, `_tag_color_from_name`);
 - constants shared across table modules (`TRGM_SIMILARITY_THRESHOLD`).
@@ -395,12 +397,26 @@ _FOOD_VISIBILITY_COLUMNS = {  # technical whitelist (§4.6): user_favorites / po
     PortionOrigin.MANUAL_INTAKE: "manual_intake_id",
 }
 
+# Who sees a recipe (§11.2.4). `entity` is the alias of `recipe` in the query.
+_RECIPE_VISIBLE = "(entity.is_published OR entity.users_id = %(visibility_user_id)s)"
+
+
+def _food_in_own_recipe_sql(origin: PortionOrigin, alias: str) -> str:
+    """The food is an ingredient of one of the viewer's recipes, which keeps it visible (§11.4.1)."""
+    if not _IDENTIFIER_RE.fullmatch(alias or ""):
+        raise ValueError(f"Invalid food visibility alias: {alias!r}")
+    column = _FOOD_VISIBILITY_COLUMNS[PortionOrigin(origin)]
+    return (
+        f"EXISTS (SELECT 1 FROM portion_detail vpd JOIN recipe vr ON vr.id = vpd.recipe_id "
+        f"WHERE vpd.{column} = {alias}.id AND vr.users_id = %(visibility_user_id)s)"
+    )
+
 
 def _food_visibility_sql(origin: PortionOrigin, alias: str, *, include_retained: bool) -> str:
     """SQL visibility rule of `catalog` and `manual_intake` (§11.2.2, §11.2.3, §11.4.1).
 
-    Shared by catalog.py, manual_intake.py and entries.py, so it lives here
-    (§1.3.1). `alias` is validated because it is interpolated; the user id
+    Shared by catalog.py, manual_intake.py, entries.py and user_favorites.py, so
+    it lives here (§1.3.1). `alias` is validated because it is interpolated; the user id
     always travels as the `%(visibility_user_id)s` SQL parameter. It returns:
     - listable: active AND (published OR owned by the viewer);
     - retained (optional): unpublished or archived, but kept in the viewer's
@@ -420,8 +436,7 @@ def _food_visibility_sql(origin: PortionOrigin, alias: str, *, include_retained:
     retained = (
         f"(EXISTS (SELECT 1 FROM user_favorites vf "
         f"WHERE vf.user_id = %(visibility_user_id)s AND vf.{column} = {a}.id)"
-        f" OR EXISTS (SELECT 1 FROM portion_detail vpd JOIN recipe vr ON vr.id = vpd.recipe_id "
-        f"WHERE vpd.{column} = {a}.id AND vr.users_id = %(visibility_user_id)s))"
+        f" OR {_food_in_own_recipe_sql(origin, a)})"
     )
     rule = f"({listable} OR {retained})" if include_retained else listable
     if origin is PortionOrigin.MANUAL_INTAKE:

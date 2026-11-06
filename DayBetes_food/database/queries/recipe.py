@@ -12,6 +12,7 @@ from psycopg.errors import UniqueViolation
 from DayBetes_food.database.mappers import recipe_read_from_row
 from DayBetes_food.database.queries.crud import (
     RawSQL,
+    _RECIPE_VISIBLE,
     _build_fuzzy_search,
     _build_update_query,
     _execute_query,
@@ -35,7 +36,6 @@ _RECIPE_COLUMNS = """
             WHERE uf.user_id = %(visibility_user_id)s AND uf.recipe_id = entity.id) AS is_favorite,
     (entity.users_id = %(visibility_user_id)s) AS can_edit
 """
-_RECIPE_VISIBLE = "(entity.is_published OR entity.users_id = %(visibility_user_id)s)"
 _OWNER_WRITABLE = "recipe.users_id = %(user_id)s"
 
 _RECIPE_UNIQUE_MESSAGES = {
