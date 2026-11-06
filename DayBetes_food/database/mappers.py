@@ -56,6 +56,7 @@ def recipe_read_from_row(row: dict) -> RecipeRead:
             origin_root_id=row.get("origin_root_id"),
             name=row["name"],
             meal_type=MealType(row["meal_type"]) if row.get("meal_type") else None,
+            extra_meal_types=tuple(MealType(value) for value in row["extra_meal_types"]),
             notes=row.get("notes"),
             servings=row.get("servings"),
             is_published=row["is_published"],

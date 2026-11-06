@@ -71,6 +71,21 @@ def parse_recipe_meal_types(raw) -> tuple[MealType, ...]:
     return tuple(dict.fromkeys(meal_type for meal_type in parsed if meal_type))
 
 
+def parse_recipe_extra_meal_types(raw_values, main: MealType | None) -> tuple[MealType, ...]:
+    """Other meal types of a recipe, besides its main one (code_conventions.md §11.2.4).
+
+    Marking the main one as well says nothing new, so it is left out. They need a main
+    one, which is what an event created from the recipe takes (422 otherwise).
+    """
+    parsed = dict.fromkeys(meal_type for raw in raw_values or () if (meal_type := parse_recipe_meal_type(raw)))
+    parsed.pop(main, None)
+    if parsed and main is None:
+        raise ValidationError(
+            "Choose the main meal type before adding others.", fields={"extra_meal_types": "requires_meal_type"}
+        )
+    return tuple(parsed)
+
+
 def parse_recipe_servings(raw) -> int | None:
     """Optional whole number from 1 to 100 (measurement_conventions.md §4.7)."""
     try:
@@ -117,7 +132,8 @@ class RecipeRead:
     user_id: int  # owner: recipe.users_id, NOT NULL (§3.5)
     origin_root_id: int | None
     name: str
-    meal_type: MealType | None
+    meal_type: MealType | None  # the main one: what an event created from the recipe takes
+    extra_meal_types: tuple[MealType, ...]  # others it is also eaten as; only for search
     notes: str | None
     servings: int | None  # None = the recipe is added whole
     is_published: bool
@@ -137,6 +153,7 @@ class RecipeCreate:
     meal_type: MealType | None
     notes: str | None
     servings: int | None
+    extra_meal_types: tuple[MealType, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -147,6 +164,7 @@ class RecipeUpdate:
 
     name: str
     meal_type: MealType | None
+    extra_meal_types: tuple[MealType, ...]
     notes: str | None
     servings: int | None
 
@@ -157,6 +175,7 @@ class RecipeRequest:
 
     name: str
     meal_type: MealType | None
+    extra_meal_types: tuple[MealType, ...]
     notes: str | None
     servings: int | None
     favorite: bool | None  # None = field absent (edit form)

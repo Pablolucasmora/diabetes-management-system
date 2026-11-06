@@ -141,6 +141,7 @@ def recipe_entry_view(item: RecipeRead) -> dict:
         "origin_root_id": item.origin_root_id,
         "name": item.name,
         "meal_type": item.meal_type.value if item.meal_type else None,
+        "extra_meal_types": [meal_type.value for meal_type in item.extra_meal_types],
         "notes": item.notes,
         "servings": item.servings,
         "is_published": item.is_published,
@@ -811,15 +812,10 @@ def _food_filters_button():
     )
 
 
-def _food_filter_meal_option(meal):
+def _meal_type_pill(meal, *, checked: bool = False, **input_attrs):
     """A pill that can be on or off: several meal types can be chosen at once."""
     return Label(
-        Input(
-            type="checkbox",
-            value=meal.value,
-            data_food_filter_meal="true",
-            cls="peer sr-only",
-        ),
+        Input(type="checkbox", value=meal.value, checked=checked, cls="peer sr-only", **input_attrs),
         Span(
             MEAL_TYPE_LABELS.get(meal.value, meal.value),
             cls="""
@@ -845,7 +841,10 @@ def FoodFiltersModal():
             ),
             Fieldset(
                 Legend("Meal type", cls="text-xs text-gray-600 mb-1.5"),
-                Div(*[_food_filter_meal_option(meal) for meal in RECIPE_MEAL_TYPES], cls="flex flex-wrap gap-1.5"),
+                Div(
+                    *[_meal_type_pill(meal, data_food_filter_meal="true") for meal in RECIPE_MEAL_TYPES],
+                    cls="flex flex-wrap gap-1.5",
+                ),
             ),
             Div(
                 modal_secondary_button("Cancel", onclick=close_modal_js("food_filters_modal")),
@@ -1691,7 +1690,11 @@ def _form_draft_bootstrap_script():
               if (type === "submit" || type === "button" || type === "reset" || type === "file" || type === "image") continue;
               var name = el.name;
               if (!name) continue;
-              if (type === "checkbox") {
+              if (type === "checkbox" && byName(form, name).length > 1) {
+                // Several boxes with one name: the values that are on.
+                if (!Array.isArray(payload[name])) payload[name] = [];
+                if (el.checked) payload[name].push(el.value);
+              } else if (type === "checkbox") {
                 payload[name] = !!el.checked;
               } else if (type === "radio") {
                 if (el.checked) payload[name] = el.value;
@@ -1723,7 +1726,9 @@ def _form_draft_bootstrap_script():
                 var el = fields[j];
                 if (!el || el.disabled) continue;
                 var type = (el.type || "").toLowerCase();
-                if (type === "checkbox") {
+                if (type === "checkbox" && Array.isArray(value)) {
+                  if (!el.checked) el.checked = value.indexOf(el.value) !== -1;
+                } else if (type === "checkbox") {
                   if (!el.checked) el.checked = !!value;
                 } else if (type === "radio") {
                   if (!el.checked) el.checked = String(el.value) === String(value);
@@ -2745,6 +2750,21 @@ def _recipe_servings_field(value: str):
     )
 
 
+def _recipe_extra_meal_types_field(selected):
+    """The search also finds it under these. Adding it to a new meal uses the main one."""
+    return Div(
+        _label_with_help("Also for", "Other meal types this recipe is eaten as. They only help to find it."),
+        Div(
+            *[
+                _meal_type_pill(meal, name="extra_meal_types", checked=meal.value in selected)
+                for meal in RECIPE_MEAL_TYPES
+            ],
+            cls="flex flex-wrap gap-1.5",
+        ),
+        cls="flex flex-col gap-1 md:col-span-2",
+    )
+
+
 def CreateRecipePage(tag_options: list[str] | None = None):
     result_id = "create_recipe_result_page"
     form = Form(
@@ -2752,6 +2772,7 @@ def CreateRecipePage(tag_options: list[str] | None = None):
         _form_section(
             "About the recipe",
             _labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in RECIPE_MEAL_TYPES], help_text="When this recipe is usually eaten.", labels=MEAL_TYPE_LABELS),
+            _recipe_extra_meal_types_field(()),
             _recipe_servings_field(""),
             Div(
                 _label_with_help("Notes", "Optional instructions, comments, or context about this recipe.", for_id="create_recipe_notes"),
@@ -3007,6 +3028,7 @@ def EditRecipePage(
         _form_section(
             "Basics",
             _labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in RECIPE_MEAL_TYPES], selected_value=_input_value(entry.get("meal_type")), labels=MEAL_TYPE_LABELS),
+            _recipe_extra_meal_types_field(entry.get("extra_meal_types") or ()),
             _recipe_servings_field(_input_value(entry.get("servings"))),
             Div(
                 _label_with_help("Notes", "Optional instructions, comments, or context about this recipe.", for_id="edit_recipe_notes"),

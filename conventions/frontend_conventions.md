@@ -411,6 +411,8 @@ Decisión 2026-11-05. El modelo está en `measurement_conventions.md` §4.7 y el
 - Filtros `Food` y `Favs`, y la misma paginación de Food por bloques de 8, con `Load more`. Cada `+` añade a la tanda desde la que se entró, o a la última, y muestra `Added to <receta>`.
 - Con búsqueda, en `Food`, salen también Ciqual y Open Food Facts (`measurement_conventions.md` §12). Al pulsar uno se abre su formulario precargado: al guardar, el alimento se añade a la receta y se vuelve al buscador. Nunca se crea un alimento sin revisarlo.
 
+**Tipos de comida**: el formulario tiene el tipo principal (`Meal type`) y, en píldoras, los adicionales (`Also for`). El principal es el que toma una comida creada desde la receta; los adicionales solo sirven para encontrarla con el filtro (decisión 2026-11-06). Elegir adicionales sin principal da un error de validación.
+
 **Notas**: texto libre del usuario, con una caja de 8 filas que no selecciona el texto al tocarla y hasta `RECIPE_NOTES_MAX_LENGTH` caracteres. Un borrador se descarta al guardar con éxito, para que no vuelva a rellenar un campo vaciado a propósito (en los tres formularios de alimentos).
 
 ## 10. Movimiento

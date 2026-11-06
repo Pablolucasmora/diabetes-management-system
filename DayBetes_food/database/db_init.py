@@ -1075,6 +1075,8 @@ def _ensure_recipe_schema(cursor):
             )
     if not _has_column(cursor, "recipe", "servings"):
         cursor.execute("ALTER TABLE recipe ADD COLUMN servings INTEGER;")
+    if not _has_column(cursor, "recipe", "extra_meal_types"):
+        cursor.execute("ALTER TABLE recipe ADD COLUMN extra_meal_types VARCHAR(50)[] NOT NULL DEFAULT '{}';")
     if not _has_column(cursor, "recipe", "search_name"):
         cursor.execute(
             f"ALTER TABLE recipe ADD COLUMN search_name TEXT "

@@ -128,6 +128,13 @@ def recipe_check_constraints() -> dict[str, str]:
     (§4.4, §12.1). The same list feeds the CREATE TABLE and db_init._ensure_recipe_schema."""
     return {
         "ck_recipe_meal_type": f"meal_type IS NULL OR meal_type IN ({sql_in_list(RECIPE_MEAL_TYPES)})",
+        "ck_recipe_extra_meal_types": (
+            f"extra_meal_types <@ ARRAY[{sql_in_list(RECIPE_MEAL_TYPES)}]::varchar[]"
+        ),
+        "ck_recipe_extra_meal_types_need_main": (
+            "cardinality(extra_meal_types) = 0 "
+            "OR (meal_type IS NOT NULL AND NOT meal_type = ANY(extra_meal_types))"
+        ),
         "ck_recipe_name_normalized": r"name <> '' AND name = regexp_replace(btrim(name), '\s+', ' ', 'g')",
         "ck_recipe_servings": _range_check("servings", RECIPE_SERVINGS_RANGE),
     }
@@ -513,7 +520,8 @@ class DBSchema:
         origin_root_id INTEGER
             CONSTRAINT fk_recipe_origin_root_id_recipe
             REFERENCES recipe(id) ON DELETE SET NULL,
-        meal_type VARCHAR(50), -- default meal type of the event the recipe creates; never rescue
+        meal_type VARCHAR(50), -- the main one: what an event created from the recipe takes; never rescue
+        extra_meal_types VARCHAR(50)[] NOT NULL DEFAULT '{{}}', -- others it is also eaten as; only for search (§11.2.4)
         name VARCHAR(255) NOT NULL, -- stored normalized (domain/food.normalize_food_text)
         notes TEXT, -- free text; domain limit RECIPE_NOTES_MAX_LENGTH (§7.3)
         servings INTEGER, -- NULL = the recipe is added whole (measurement §4.7)

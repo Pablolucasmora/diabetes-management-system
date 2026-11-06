@@ -29,7 +29,7 @@ from DayBetes_food.domain.search_text import normalize_search_text
 from DayBetes_food.errors import ConflictError, NotFoundError
 
 _RECIPE_COLUMNS = """
-    entity.id, entity.users_id, entity.origin_root_id, entity.name, entity.meal_type,
+    entity.id, entity.users_id, entity.origin_root_id, entity.name, entity.meal_type, entity.extra_meal_types,
     entity.notes, entity.servings, entity.is_published, entity.created_at, entity.updated_at,
     EXISTS (SELECT 1 FROM user_favorites uf
             WHERE uf.user_id = %(visibility_user_id)s AND uf.recipe_id = entity.id) AS is_favorite,
@@ -55,8 +55,11 @@ def create_recipe(connection, payload: RecipeCreate, commit: bool = True) -> int
     A personal name the owner already uses -> ConflictError (§6.2).
     """
     query = """
-        INSERT INTO recipe (users_id, origin_root_id, meal_type, name, notes, servings)
-        VALUES (%(user_id)s, %(origin_root_id)s, %(meal_type)s, %(name)s, %(notes)s, %(servings)s)
+        INSERT INTO recipe (users_id, origin_root_id, meal_type, extra_meal_types, name, notes, servings)
+        VALUES (
+            %(user_id)s, %(origin_root_id)s, %(meal_type)s, %(extra_meal_types)s::varchar[],
+            %(name)s, %(notes)s, %(servings)s
+        )
         RETURNING id;
     """
     try:
@@ -67,6 +70,7 @@ def create_recipe(connection, payload: RecipeCreate, commit: bool = True) -> int
                 "user_id": payload.user_id,
                 "origin_root_id": payload.origin_root_id,
                 "meal_type": payload.meal_type.value if payload.meal_type else None,
+                "extra_meal_types": [meal_type.value for meal_type in payload.extra_meal_types],
                 "name": payload.name,
                 "notes": payload.notes,
                 "servings": payload.servings,
@@ -136,7 +140,9 @@ def list_recipes(
         params.update(catalog_params)
         params.update(manual_params)
     if meal_types:
-        conditions.append("entity.meal_type = ANY(%(meal_types)s)")
+        conditions.append(
+            "(entity.meal_type = ANY(%(meal_types)s) OR entity.extra_meal_types && %(meal_types)s::varchar[])"
+        )
         params["meal_types"] = [meal_type.value for meal_type in meal_types]
     if owned_only:
         conditions.append("entity.users_id = %(visibility_user_id)s")
@@ -168,6 +174,7 @@ def update_recipe(connection, user_id: int, recipe_id: int, payload: RecipeUpdat
     fields = {
         "name": payload.name,
         "meal_type": payload.meal_type.value if payload.meal_type else None,
+        "extra_meal_types": [meal_type.value for meal_type in payload.extra_meal_types],
         "notes": payload.notes,
         "servings": payload.servings,
     }

@@ -171,6 +171,7 @@ def copy_recipe(connection, user_id: int, recipe_id: int) -> int:
                 origin_root_id=source.origin_root_id or source.id,
                 name=next_recipe_copy_name(connection, user_id, source.name),
                 meal_type=source.meal_type,
+                extra_meal_types=source.extra_meal_types,
                 notes=source.notes,
                 servings=source.servings,
             ),

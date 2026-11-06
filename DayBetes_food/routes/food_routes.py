@@ -201,6 +201,7 @@ from DayBetes_food.domain.recipe import (
     RecipeUpdate,
     parse_recipe_add_servings,
     parse_recipe_meal_type,
+    parse_recipe_extra_meal_types,
     parse_recipe_meal_types,
     parse_recipe_name,
     parse_recipe_notes,
@@ -518,11 +519,15 @@ def _parse_optional_bool(raw: str | None) -> bool | None:
     return None if (raw or "").strip() == "" else _parse_strict_bool(raw)
 
 
-def _parse_recipe_request(*, name, meal_type, notes, servings, favorite=None, tags_json=None) -> RecipeRequest:
+def _parse_recipe_request(
+    *, name, meal_type, extra_meal_types, notes, servings, favorite=None, tags_json=None
+) -> RecipeRequest:
     """The only parser of the recipe create and edit forms (§7.1, §7.11)."""
+    main_meal_type = parse_recipe_meal_type(meal_type)
     return RecipeRequest(
         name=parse_recipe_name(name),
-        meal_type=parse_recipe_meal_type(meal_type),
+        meal_type=main_meal_type,
+        extra_meal_types=parse_recipe_extra_meal_types(extra_meal_types, main_meal_type),
         notes=parse_recipe_notes(notes),
         servings=parse_recipe_servings(servings),
         favorite=None if favorite is None else _parse_strict_bool(favorite),
@@ -976,6 +981,7 @@ def _recipe_summary(entry: dict, portions: list) -> dict:
         "partial_macros": partial,
         "info_rows": [
             ("Meal type", MEAL_TYPE_LABELS.get(entry.get("meal_type"), "")),
+            ("Also for", ", ".join(MEAL_TYPE_LABELS.get(value, value) for value in entry.get("extra_meal_types") or ())),
             ("Ingredients", str(len(portions))),
             ("Recipe amount", f"{total_amount:.1f} g" if total_amount > 0 else ""),
             ("Servings", str(servings) if servings else ""),
@@ -3404,6 +3410,7 @@ def setup_food_routes(rt):
         recipe_id: int,
         name: str = "",
         meal_type: str = "",
+        extra_meal_types: list[str] | None = None,
         notes: str = "",
         servings: str = "",
         tags_json: str | None = None,
@@ -3417,7 +3424,12 @@ def setup_food_routes(rt):
             return app_error_response(request, AuthenticationError, "Your session has expired.")
         try:
             req = _parse_recipe_request(
-                name=name, meal_type=meal_type, notes=notes, servings=servings, tags_json=tags_json
+                name=name,
+                meal_type=meal_type,
+                extra_meal_types=extra_meal_types,
+                notes=notes,
+                servings=servings,
+                tags_json=tags_json,
             )
         except ValidationError as error:
             # Form validation: 200 + fragment inside the form (§9.5).
@@ -3434,7 +3446,13 @@ def setup_food_routes(rt):
                         connection,
                         int(user_id),
                         recipe_id,
-                        RecipeUpdate(name=req.name, meal_type=req.meal_type, notes=req.notes, servings=req.servings),
+                        RecipeUpdate(
+                            name=req.name,
+                            meal_type=req.meal_type,
+                            extra_meal_types=req.extra_meal_types,
+                            notes=req.notes,
+                            servings=req.servings,
+                        ),
                         commit=False,
                     )
                     if req.tags is not None:
@@ -3709,6 +3727,7 @@ def setup_food_routes(rt):
         request: Request,
         name: str = "",
         meal_type: str = "",
+        extra_meal_types: list[str] | None = None,
         notes: str = "",
         servings: str = "",
         favorite: str = "",
@@ -3721,7 +3740,13 @@ def setup_food_routes(rt):
             return app_error_response(request, AuthenticationError, "Your session has expired.")
         try:
             req = _parse_recipe_request(
-                name=name, meal_type=meal_type, notes=notes, servings=servings, favorite=favorite, tags_json=tags_json
+                name=name,
+                meal_type=meal_type,
+                extra_meal_types=extra_meal_types,
+                notes=notes,
+                servings=servings,
+                favorite=favorite,
+                tags_json=tags_json,
             )
         except ValidationError as error:
             return _error_msg(str(error))
@@ -3735,6 +3760,7 @@ def setup_food_routes(rt):
                             origin_root_id=None,
                             name=req.name,
                             meal_type=req.meal_type,
+                            extra_meal_types=req.extra_meal_types,
                             notes=req.notes,
                             servings=req.servings,
                         ),
