@@ -99,6 +99,7 @@ from DayBetes_food.domain.constants import (
     FoodEntryType,
     PortionOrigin,
     parse_enum,
+    parse_optional_id,
 )
 from DayBetes_food.domain.nutrition import (
     NutrientValues,
@@ -200,12 +201,12 @@ from DayBetes_food.domain.recipe import (
     RecipeUpdate,
     parse_recipe_add_servings,
     parse_recipe_meal_type,
-    parse_recipe_name,
     parse_recipe_meal_types,
+    parse_recipe_name,
     parse_recipe_notes,
     parse_recipe_servings,
 )
-from DayBetes_food.services.recipe import add_recipe_to_meal, copy_recipe
+from DayBetes_food.services.recipe import add_recipe_to_meal, copy_recipe, recipe_plates_with_portions
 from DayBetes_food.domain.recipe_plate import parse_recipe_plate_name
 from DayBetes_food.domain.portion_detail import portion_macro_amount
 from DayBetes_food.components.food.recipe_add import RecipeAddForm
@@ -259,13 +260,13 @@ def _resolve_event_plate(connection, user_id: int, event_id: int, plate_id: str,
     Raises:
         NotFoundError: the plate does not exist, is not the user's or belongs to another event.
     """
-    raw = (plate_id or "").strip()
-    if raw.isdigit() and int(raw) != 0:
-        plate = get_intake_plate(connection, user_id, int(raw))
+    chosen = parse_optional_id(plate_id, "plate")
+    if chosen:
+        plate = get_intake_plate(connection, user_id, chosen)
         if plate.intake_event_id != int(event_id):
-            raise NotFoundError(f"Intake plate {raw} does not belong to event {event_id}")
+            raise NotFoundError(f"Intake plate {chosen} does not belong to event {event_id}")
         return plate.id
-    if raw == "0":
+    if chosen == 0:
         return create_intake_plate(
             connection,
             IntakePlateCreate(intake_event_id=int(event_id), offset_minutes=offset_minutes),
@@ -322,17 +323,6 @@ def _to_int(value: str):
 
 
 _TYPED_AMOUNT_RANGE = NumericRange(0, 1_000_000)
-
-
-def _parse_optional_id(raw, label: str) -> int | None:
-    """An id from a form (§7.8). Empty is None; anything malformed is a 422, never
-    silently "no id"."""
-    text = (raw or "").strip()
-    if not text:
-        return None
-    if not re.fullmatch(r"[0-9]{1,10}", text):
-        raise ValidationError(f"Invalid {label}.")
-    return int(text)
 
 
 def _parse_typed_amount(raw) -> float | None:
@@ -555,7 +545,7 @@ def _parse_recipe_add_request(form, recipe: RecipeRead) -> RecipeAddRequest:
         raise ValidationError("The ingredients of the form are incomplete.")
     preparations = {}
     for raw_id, cooking, final_state, conservation in zip(portion_ids, cookings, final_states, conservations):
-        portion_id = _parse_optional_id(str(raw_id), "ingredient")
+        portion_id = parse_optional_id(str(raw_id), "ingredient")
         if portion_id is None:
             raise ValidationError("Invalid ingredient.")
         preparations[portion_id] = PortionPreparation(
@@ -563,8 +553,8 @@ def _parse_recipe_add_request(form, recipe: RecipeRead) -> RecipeAddRequest:
             conservation=parse_enum(ConservationMethod, str(conservation), field="conservation"),
             final_state=parse_enum(FoodPhysicalState, str(final_state), field="final_state"),
         )
-    event_id = _parse_optional_id(str(form.get("intake_event_id") or ""), "meal") or None
-    plate_id = _parse_optional_id(str(form.get("plate_id") or ""), "plate") or None
+    event_id = parse_optional_id(form.get("intake_event_id"), "meal") or None
+    plate_id = parse_optional_id(form.get("plate_id"), "plate") or None
     return RecipeAddRequest(
         event_id=event_id,
         plate_id=plate_id if event_id else None,
@@ -759,8 +749,9 @@ def _resolve_target_event(connection, user_id: int, intake_event_id: str) -> int
     """Planned event a food goes to: the chosen one (checked in SQL, NotFoundError
     or ConflictError otherwise) or a new one with the automatic meal_type
     (§7.14). Same logic as /food/log and /add_food."""
-    if intake_event_id and intake_event_id.isdigit() and int(intake_event_id) != 0:
-        return get_planned_intake_event(connection, user_id, int(intake_event_id))
+    chosen = parse_optional_id(intake_event_id, "meal")
+    if chosen:
+        return get_planned_intake_event(connection, user_id, chosen)
     return create_intake_event(
         connection,
         IntakeEventCreate(
@@ -956,13 +947,6 @@ def _manual_intake_detail_summary(item: ManualIntakeRead) -> dict:
         "per100": per100,
         "info_rows": [(label, value) for label, value in candidates if value is not None],
     }
-
-
-def _build_detail_summary(entry_type: str, entry: dict, recipe_portions: list | None = None) -> dict:
-    if entry_type == "catalog":
-        return _catalog_detail_summary(entry)
-
-    return _recipe_summary(entry, recipe_portions or [])
 
 
 _RECIPE_MACROS = ("calories", "carbs", "sugars", "fats", "saturated", "proteins", "fiber")
@@ -1211,11 +1195,22 @@ def _editable_recipe(connection, user_id, recipe_id: int) -> RecipeRead | None:
     return recipe if recipe is not None and recipe.can_edit else None
 
 
+def _recipe_portion(connection, user_id: int, recipe_id: int, portion_id: int):
+    """An ingredient of that recipe of the user, or None (§5.4)."""
+    try:
+        portion = get_portion_detail(connection, user_id, portion_id)
+    except NotFoundError:
+        return None
+    if portion.destination is not PortionDestination.RECIPE or int(portion.destination_id) != recipe_id:
+        return None
+    return portion
+
+
 def _add_ingredient(connection, user_id: int, recipe_id: int, plate_id: int | None, origin: PortionOrigin, item) -> None:
     """A food into a plate of a recipe, or its last plate. No serving -> the initial
     100 g of a one-click add (R3). Same preparation in that plate -> the amounts add
     up in the index, and the row that was there keeps its flags (§4.6.4, §4.7)."""
-    target_plate_id = plate_id or ensure_default_recipe_plate(connection, recipe_id, commit=False)
+    target_plate_id = plate_id or ensure_default_recipe_plate(connection, user_id, recipe_id, commit=False)
     create_portion_detail(
         connection,
         user_id,
@@ -1546,8 +1541,8 @@ def setup_food_routes(rt):
         recipe_plate_id: str = "",
     ):
         clean = (barcode or "").strip()
-        target_recipe_id = _parse_optional_id(add_to_recipe, "recipe")
-        target_plate_id = _parse_optional_id(recipe_plate_id, "plate")
+        target_recipe_id = parse_optional_id(add_to_recipe, "recipe")
+        target_plate_id = parse_optional_id(recipe_plate_id, "plate")
         ciqual_food = None
         ciqual_code = parse_ciqual_code(ciqual)
         if ciqual_code is not None:
@@ -1587,7 +1582,7 @@ def setup_food_routes(rt):
                     },
                 )
                 off_notice = "Product data could not be loaded. You can fill the form by hand."
-        existing_item_id = int(existing_id) if (existing_id or "").isdigit() else None
+        existing_item_id = parse_optional_id(existing_id, "food")
         user_id = get_current_user_id()
         with get_connection() as connection:
             if valid_barcode and not existing_item_id and user_id:
@@ -2008,7 +2003,7 @@ def setup_food_routes(rt):
             entry = recipe_entry_view(recipe)
             recipe_portions = list_viewable_recipe_portions(connection, int(user_id), entry_id)
             recipe_plates = list_recipe_plates(connection, int(user_id), entry_id)
-            summary = _build_detail_summary(entry_type, entry, recipe_portions=recipe_portions)
+            summary = _recipe_summary(entry, recipe_portions)
             tags = get_entry_tags(connection, entry_type, entry_id)
             can_edit = recipe.can_edit
             can_delete = can_edit
@@ -2041,7 +2036,7 @@ def setup_food_routes(rt):
 
     @rt("/food/recipe/{recipe_id}/ingredients/form")
     def get(request: Request, recipe_id: int, recipe_plate_id: str = ""):
-        target_plate_id = _parse_optional_id(recipe_plate_id, "plate")
+        target_plate_id = parse_optional_id(recipe_plate_id, "plate")
         with get_connection() as connection:
             user_id = get_current_user_id()
             recipe = _editable_recipe(connection, user_id, recipe_id)
@@ -2065,7 +2060,7 @@ def setup_food_routes(rt):
         if filter not in ("food", "favs"):
             return app_error_response(request, ValidationError, "Unknown filter.")
         try:
-            target_plate_id = _parse_optional_id(recipe_plate_id, "plate")
+            target_plate_id = parse_optional_id(recipe_plate_id, "plate")
         except ValidationError as error:
             return app_error_response(request, ValidationError, str(error))
         with get_connection() as connection:
@@ -2089,7 +2084,7 @@ def setup_food_routes(rt):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         try:
-            target_plate_id = _parse_optional_id(recipe_plate_id, "plate")
+            target_plate_id = parse_optional_id(recipe_plate_id, "plate")
             origin = PortionOrigin(entry_type)
         except ValidationError as error:
             return app_error_response(request, ValidationError, str(error))
@@ -2142,11 +2137,8 @@ def setup_food_routes(rt):
             user_id = get_current_user_id()
             if _editable_recipe(connection, user_id, recipe_id) is None:
                 return app_error_response(request, NotFoundError, "Recipe not found.")
-            try:
-                portion = get_portion_detail(connection, int(user_id), portion_id)
-            except NotFoundError:
-                return app_error_response(request, NotFoundError, "Ingredient not found.")
-            if portion.destination is not PortionDestination.RECIPE or int(portion.destination_id) != recipe_id:
+            portion = _recipe_portion(connection, int(user_id), recipe_id, portion_id)
+            if portion is None:
                 return app_error_response(request, NotFoundError, "Ingredient not found.")
             try:
                 # Serving read from the food in the database (7.13). With no
@@ -2190,22 +2182,23 @@ def setup_food_routes(rt):
             user_id = get_current_user_id()
             if _editable_recipe(connection, user_id, recipe_id) is None:
                 return app_error_response(request, NotFoundError, "Recipe not found.")
+            portion = _recipe_portion(connection, int(user_id), recipe_id, portion_id)
+            if portion is None:
+                return app_error_response(request, NotFoundError, "Ingredient not found.")
             try:
-                portion = get_portion_detail(connection, int(user_id), portion_id)
-            except NotFoundError:
-                return app_error_response(request, NotFoundError, "Ingredient not found.")
-            if portion.destination is not PortionDestination.RECIPE or int(portion.destination_id) != recipe_id:
-                return app_error_response(request, NotFoundError, "Ingredient not found.")
-            update_portion_detail_fields(
-                connection,
-                int(user_id),
-                portion_id,
-                PortionDetailUpdate(
-                    cooking=(CLEAR if parsed_cooking is None else parsed_cooking),
-                    final_state=(CLEAR if parsed_final_state is None else parsed_final_state),
-                    conservation=(CLEAR if parsed_conservation is None else parsed_conservation),
-                ),
-            )
+                update_portion_detail_fields(
+                    connection,
+                    int(user_id),
+                    portion_id,
+                    PortionDetailUpdate(
+                        cooking=(CLEAR if parsed_cooking is None else parsed_cooking),
+                        final_state=(CLEAR if parsed_final_state is None else parsed_final_state),
+                        conservation=(CLEAR if parsed_conservation is None else parsed_conservation),
+                    ),
+                )
+            except ValidationError as error:
+                # A merge over the limit (measurement §4.6.4).
+                return app_error_response(request, ValidationError, str(error))
 
             try:
                 get_portion_detail(connection, int(user_id), portion_id)
@@ -2227,11 +2220,8 @@ def setup_food_routes(rt):
             user_id = get_current_user_id()
             if _editable_recipe(connection, user_id, recipe_id) is None:
                 return app_error_response(request, NotFoundError, "Recipe not found.")
-            try:
-                portion = get_portion_detail(connection, int(user_id), portion_id)
-            except NotFoundError:
-                return app_error_response(request, NotFoundError, "Ingredient not found.")
-            if portion.destination is not PortionDestination.RECIPE or int(portion.destination_id) != recipe_id:
+            portion = _recipe_portion(connection, int(user_id), recipe_id, portion_id)
+            if portion is None:
                 return app_error_response(request, NotFoundError, "Ingredient not found.")
             delete_portion_detail(connection, int(user_id), portion_id)
             return _recipe_block_response(connection, int(user_id), recipe_id)
@@ -2251,18 +2241,19 @@ def setup_food_routes(rt):
             user_id = get_current_user_id()
             if _editable_recipe(connection, user_id, recipe_id) is None:
                 return app_error_response(request, NotFoundError, "Recipe not found.")
-            try:
-                portion = get_portion_detail(connection, int(user_id), portion_id)
-            except NotFoundError:
-                return app_error_response(request, NotFoundError, "Ingredient not found.")
-            if portion.destination is not PortionDestination.RECIPE or int(portion.destination_id) != recipe_id:
+            portion = _recipe_portion(connection, int(user_id), recipe_id, portion_id)
+            if portion is None:
                 return app_error_response(request, NotFoundError, "Ingredient not found.")
             if marked and (portion.origin is not PortionOrigin.CATALOG or portion.source.cooking_factor is None):
                 return app_error_response(
                     request, ValidationError, "This food has no cooking factor, so it cannot be weighed cooked."
                 )
-            with connection.transaction():
-                update_portion_flag(connection, int(user_id), portion_id, "is_cooked_weight", marked, commit=False)
+            try:
+                with connection.transaction():
+                    update_portion_flag(connection, int(user_id), portion_id, "is_cooked_weight", marked, commit=False)
+            except ValidationError as error:
+                # A merge over the limit (measurement §4.6.4).
+                return app_error_response(request, ValidationError, str(error))
             return _recipe_block_response(connection, int(user_id), recipe_id)
 
     @rt("/food/recipe/{recipe_id}/ingredient/{portion_id}/plate")
@@ -2271,7 +2262,7 @@ def setup_food_routes(rt):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         try:
-            target = _parse_optional_id(recipe_plate_id, "plate")
+            target = parse_optional_id(recipe_plate_id, "plate")
         except ValidationError as error:
             return app_error_response(request, ValidationError, str(error))
         if target is None:
@@ -2281,13 +2272,15 @@ def setup_food_routes(rt):
             if _editable_recipe(connection, user_id, recipe_id) is None:
                 return app_error_response(request, NotFoundError, "Recipe not found.")
             try:
-                portion = get_portion_detail(connection, int(user_id), portion_id)
-                if portion.destination is not PortionDestination.RECIPE or int(portion.destination_id) != recipe_id:
+                if _recipe_portion(connection, int(user_id), recipe_id, portion_id) is None:
                     raise NotFoundError("portion_not_found")
                 with connection.transaction():
                     move_portion_to_recipe_plate(connection, int(user_id), portion_id, target, commit=False)
             except NotFoundError:
                 return app_error_response(request, NotFoundError, "Ingredient or plate not found.")
+            except ValidationError as error:
+                # A merge over the limit (measurement §4.6.4).
+                return app_error_response(request, ValidationError, str(error))
             return _recipe_block_response(connection, int(user_id), recipe_id)
 
     @rt("/food/recipe/{recipe_id}/plate")
@@ -2300,7 +2293,7 @@ def setup_food_routes(rt):
             if _editable_recipe(connection, user_id, recipe_id) is None:
                 return app_error_response(request, NotFoundError, "Recipe not found.")
             with connection.transaction():
-                create_recipe_plate(connection, recipe_id, commit=False)
+                create_recipe_plate(connection, int(user_id), recipe_id, commit=False)
             return _recipe_block_response(connection, int(user_id), recipe_id)
 
     def _change_recipe_plate(request: Request, plate_id: int, change):
@@ -2371,12 +2364,7 @@ def setup_food_routes(rt):
             recipe = get_recipe(connection, int(user_id), recipe_id)
             if recipe is None:
                 return app_error_response(request, NotFoundError, "Recipe not found.")
-            portions = list_viewable_recipe_portions(connection, int(user_id), recipe_id)
-            groups = [
-                (plate, rows)
-                for plate in list_recipe_plates(connection, int(user_id), recipe_id)
-                if (rows := [row for row in portions if row.recipe_plate_id == plate.id])
-            ]
+            groups = recipe_plates_with_portions(connection, int(user_id), recipe_id)
         if not groups:
             return app_error_response(request, ConflictError, _RECIPE_WITHOUT_INGREDIENTS)
         return render_fragment(RecipeAddForm(recipe, groups, intake_event_id, plate_id))
@@ -2864,9 +2852,7 @@ def setup_food_routes(rt):
             except ConflictError:
                 # The event is no longer 'planned'.
                 return app_error_response(request, ConflictError, "That meal has already been confirmed.")
-            except ValidationError as error:
-                if str(error) == "recipe_without_ingredients":
-                    return render_fragment(P("Recipe has no ingredients to log.", cls="text-red-700"))
+            except ValidationError:
                 return render_fragment(P("Could not log this food: check the amounts.", cls="text-red-700"))
             return HTMLResponse("", headers={"HX-Redirect": "/food"})
 
@@ -3048,7 +3034,7 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             try:
                 recipe_query = _recipe_query(
-                    _parse_optional_id(add_to_recipe, "recipe"), _parse_optional_id(recipe_plate_id, "plate")
+                    parse_optional_id(add_to_recipe, "recipe"), parse_optional_id(recipe_plate_id, "plate")
                 )
             except ValidationError as error:
                 return app_error_response(request, ValidationError, str(error))
@@ -3101,6 +3087,8 @@ def setup_food_routes(rt):
                 return app_error_response(request, NotFoundError, "That meal no longer exists.")
             except ConflictError:
                 return app_error_response(request, ConflictError, "That meal has already been confirmed.")
+            except ValidationError as error:
+                return app_error_response(request, ValidationError, str(error))
             return HTMLResponse("", headers={"HX-Trigger": "addSuccess"})
 
     @rt("/add_manual_intake/{manual_intake_id}")
@@ -3147,6 +3135,8 @@ def setup_food_routes(rt):
                 return app_error_response(request, NotFoundError, "That meal no longer exists.")
             except ConflictError:
                 return app_error_response(request, ConflictError, "That meal has already been confirmed.")
+            except ValidationError as error:
+                return app_error_response(request, ValidationError, str(error))
             return HTMLResponse("", headers={"HX-Trigger": "addSuccess"})
 
     @rt("/add_recipe/{recipe_id}")
@@ -3516,8 +3506,8 @@ def setup_food_routes(rt):
                 prefill_source=prefill_source,
                 prefill_source_id=prefill_source_id,
             )
-            target_recipe_id = _parse_optional_id(add_to_recipe, "recipe")
-            target_plate_id = _parse_optional_id(add_to_recipe_plate, "plate")
+            target_recipe_id = parse_optional_id(add_to_recipe, "recipe")
+            target_plate_id = parse_optional_id(add_to_recipe_plate, "plate")
         except ValidationError as error:
             return _error_msg(str(error))
 
@@ -3709,6 +3699,8 @@ def setup_food_routes(rt):
                 return app_error_response(request, NotFoundError, "That meal no longer exists.")
             except ConflictError:
                 return app_error_response(request, ConflictError, "That meal has already been confirmed.")
+            except ValidationError as error:
+                return app_error_response(request, ValidationError, str(error))
         # Same pattern as "Log food" (§9.5).
         return HTMLResponse("", headers={"HX-Redirect": "/food"})
 
@@ -3815,13 +3807,16 @@ def setup_food_routes(rt):
         user_id = get_current_user_id()
         if not user_id:
             return HTMLResponse(status_code=401)
-        raw_event_id = (intake_event_id or "").strip()
-        if not raw_event_id.isdigit() or int(raw_event_id) == 0:
+        try:
+            chosen_event_id = parse_optional_id(intake_event_id, "meal")
+        except ValidationError as error:
+            return app_error_response(request, ValidationError, str(error))
+        if not chosen_event_id:
             return render_fragment(PlateSelector([]))
 
         with get_connection() as connection:
             try:
-                event_id = get_planned_intake_event(connection, int(user_id), int(raw_event_id))
+                event_id = get_planned_intake_event(connection, int(user_id), chosen_event_id)
             except (NotFoundError, ConflictError):
                 return render_fragment(PlateSelector([]))
             # The last plate something was added to is preselected: when putting

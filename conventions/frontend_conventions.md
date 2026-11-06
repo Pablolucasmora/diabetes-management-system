@@ -55,6 +55,7 @@ Los inputs cuyo control visual lo dibuja el navegador (`type="time"`, `type="dat
   - Para saber si hay página de la web detrás, cada entrada que añade htmx guarda en `history.state` cuántas hay (`dbDepth`). `history.length` no sirve, porque cuenta también otros sitios y las páginas de delante.
   - `#main_content` lleva `hx-history-elt`. La copia que htmx guarda al salir de una página y la petición que hace si al volver no la encuentra usan ese elemento, así que una página restaurada es el mismo fragmento que devuelven las rutas.
   - `dbBack` también pone el scroll arriba, como pide esta sección.
+  - Una página cuya página hija escribe datos que ella pinta no guarda copia: lleva `hx-history="false"`, y al volver se pide de nuevo. Por ahora, solo la ficha de receta, por su buscador de ingredientes (§6, §9.7; decisión 2026-11-06).
 - **Excepción**: una navegación concreta puede conservar la posición de scroll (o aterrizar en otro punto) **solo si el usuario lo pide explícitamente para ese caso**. Cuando eso ocurra, se documenta aquí el caso y el motivo, siguiendo el procedimiento de "Convenciones faltantes" de `CLAUDE.md`. No es una excepción que pueda decidirse componente a componente.
 - No se consideran cambio de página, y por tanto **no** resetean el scroll, los refrescos parciales que reemplazan solo un bloque de la página actual sin cambiar de pantalla (por ejemplo `hx_target="#food-list"` al escribir en un buscador, o el re-render de una fila tras editarla).
 
@@ -208,7 +209,7 @@ Decisión 2026-11-05; sustituye a la versión provisional del 2026-10-18.
 
 - `Save as recipe` en la cabecera de cada tanda con ingredientes (§7.3). Una tanda vacía no tiene nada que guardar.
 - `Save meal as recipe` en la tarjeta de la comida, debajo de `+ Add plate`, solo con dos o más tandas con ingredientes. Con una, el botón de la tanda ya guarda lo mismo.
-- Los dos abren un pop-up con el nombre editable, ya relleno: el nombre visible de la tanda o, en la comida, el suyo o el de su primera tanda con ingredientes. Así un nombre repetido se corrige ahí mismo.
+- Los dos abren un pop-up con el nombre editable, ya relleno: el nombre visible de la tanda o, en la comida, el suyo o el de su primera tanda con ingredientes. Si el nombre está repetido, el pop-up se ha cerrado al pulsar y sale el aviso; al reabrirlo conserva lo escrito, para corregirlo.
 
 **Qué se guarda** (`services/recipe.py`), en una transacción
 
@@ -397,7 +398,7 @@ Decisión 2026-11-05. El modelo está en `measurement_conventions.md` §4.7 y el
 
 **Tandas en la ficha**
 
-- Con una tanda el concepto no se ve: solo `Add ingredient` y un `+ Add plate` discreto debajo, que no aparece hasta que hay ingredientes. Es distinto del carrito, donde la cabecera sale siempre (§7.2), porque aquí no hay offset común que mostrar.
+- Con una tanda el concepto no se ve: solo `Add ingredient` y un `+ Add plate` discreto debajo, que no aparece hasta que la receta tiene una tanda. Es distinto del carrito, donde la cabecera sale siempre (§7.2), porque aquí no hay offset común que mostrar.
 - Con dos o más, cada tanda lleva una cabecera con su nombre editable (vacío, el derivado), subir, bajar y borrar, y su propio `Add ingredient`. Cada ingrediente tiene un selector para moverlo de tanda.
 - Borrar una tanda con ingredientes responde `409` y pide moverlos o borrarlos.
 - Toda acción repinta el bloque `#recipe_ingredients_{id}` y, fuera de banda, el resumen.

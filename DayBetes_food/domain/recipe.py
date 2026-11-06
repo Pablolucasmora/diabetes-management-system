@@ -16,6 +16,7 @@ from DayBetes_food.domain.constants import (
 )
 from DayBetes_food.domain.food import normalize_food_text
 from DayBetes_food.domain.nutrition import NumericRange, parse_number
+from DayBetes_food.domain.portion_detail import parse_amount_grams
 from DayBetes_food.errors import ValidationError
 
 RECIPE_NAME_MAX_LENGTH = 255  # = VARCHAR(255)
@@ -24,7 +25,7 @@ RECIPE_NAME_MAX_LENGTH = 255  # = VARCHAR(255)
 RECIPE_NOTES_MAX_LENGTH = 20000
 RECIPE_SERVINGS_RANGE = NumericRange(1, 100)
 # What is added to a meal can be half a serving (measurement_conventions.md §4.7).
-RECIPE_ADD_SERVINGS_RANGE = NumericRange(0, 100, minimum_exclusive=True)
+RECIPE_ADD_SERVINGS_RANGE = NumericRange(0.01, 100)
 
 # Rescue has its own flow and never carries insulin, so it is not a recipe type
 # (frontend_conventions.md §9.6).
@@ -63,7 +64,6 @@ def parse_recipe_meal_type(raw) -> MealType | None:
     return meal_type
 
 
-def parse_recipe_servings(raw) -> int | None:
 def parse_recipe_meal_types(raw) -> tuple[MealType, ...]:
     """The meal types of a filter, comma-separated, each one as parse_recipe_meal_type.
     Without repeats; '' -> nothing, which means no filter (frontend §9.3)."""
@@ -71,6 +71,7 @@ def parse_recipe_meal_types(raw) -> tuple[MealType, ...]:
     return tuple(dict.fromkeys(meal_type for meal_type in parsed if meal_type))
 
 
+def parse_recipe_servings(raw) -> int | None:
     """Optional whole number from 1 to 100 (measurement_conventions.md §4.7)."""
     try:
         servings = parse_number(raw, "servings", RECIPE_SERVINGS_RANGE, integer=True)
@@ -80,11 +81,11 @@ def parse_recipe_meal_types(raw) -> tuple[MealType, ...]:
 
 
 def parse_recipe_add_servings(raw) -> float:
-    """Required decimal greater than 0, at most 100."""
+    """Required decimal from 0.01 to 100."""
     try:
         servings = parse_number(raw, "servings", RECIPE_ADD_SERVINGS_RANGE)
     except ValidationError as error:
-        raise ValidationError("Servings must be a number greater than 0 and at most 100.", fields=error.fields) from error
+        raise ValidationError("Servings must be a number from 0.01 to 100.", fields=error.fields) from error
     if servings is None:
         raise ValidationError("Choose how many servings to add.", fields={"servings": "required"})
     return servings
@@ -95,7 +96,14 @@ def scaled_recipe_amount(amount: float, chosen_servings: float | None, recipe_se
     from the recipe, never from an amount the client sends (§7.13)."""
     if chosen_servings is None or recipe_servings is None:
         return amount
-    return amount * chosen_servings / recipe_servings
+    scaled = amount * chosen_servings / recipe_servings
+    try:
+        return parse_amount_grams(scaled)
+    except ValidationError as error:
+        raise ValidationError(
+            "With these servings an ingredient would be outside the limit of 100000 g.",
+            fields={"servings": "out_of_range"},
+        ) from error
 
 
 def recipe_meal_type_from_event(meal_type: MealType | None) -> MealType | None:

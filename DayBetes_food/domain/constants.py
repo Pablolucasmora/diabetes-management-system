@@ -5,6 +5,7 @@ single enum here; no parallel lists of the same concept are created in
 routes/, components/, crud.py or schema.py.
 """
 
+import re
 from enum import Enum, unique
 
 from DayBetes_food.errors import ValidationError
@@ -222,6 +223,20 @@ def parse_enum(enum_cls, raw, *, field: str, normalize=None):
         return enum_cls(text)
     except ValueError as exc:
         raise ValidationError(f"Invalid {field.replace('_', ' ')}.", fields={field: "invalid"}) from exc
+
+
+_ID_TEXT = re.compile(r"[0-9]{1,10}")
+
+
+def parse_optional_id(raw, label: str) -> int | None:
+    """An id from a form or a URL (§7.8). Empty is None; anything malformed is a 422,
+    never silently "no id"."""
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    if not _ID_TEXT.fullmatch(text):
+        raise ValidationError(f"Invalid {label}.", fields={label: "invalid"})
+    return int(text)
 
 
 class Clear:

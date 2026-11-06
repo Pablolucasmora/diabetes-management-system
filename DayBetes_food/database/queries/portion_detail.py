@@ -13,6 +13,7 @@ Python. A row that does not exist or does not belong to the user raises
 """
 
 from psycopg import sql
+from psycopg.errors import CheckViolation, ForeignKeyViolation, NumericValueOutOfRange
 
 from DayBetes_food.database.mappers import portion_detail_read_from_row
 from DayBetes_food.database.queries.crud import (
@@ -21,6 +22,7 @@ from DayBetes_food.database.queries.crud import (
 )
 from DayBetes_food.domain.constants import CLEAR, PortionDestination, PortionOrigin
 from DayBetes_food.domain.portion_detail import (
+    PORTION_DETAIL_AMOUNT_MAX_G,
     PORTION_DETAIL_OFFSET_MAX_MINUTES,
     PORTION_DETAIL_OFFSET_MIN_MINUTES,
     PortionDetailCreate,
@@ -155,6 +157,18 @@ def _plate_row(connection, plate_id: int):
     )
 
 
+def _amount_limit_error(exc: Exception) -> Exception:
+    """The sum of a merge is done by the database, so its limit is only known here:
+    public message instead of a 500 (§6.2, 4.6.4). Any other violation stays as it is."""
+    if isinstance(exc, NumericValueOutOfRange) or (
+        getattr(exc.diag, "constraint_name", None) == "ck_portion_detail_amount_range"
+    ):
+        return ValidationError(
+            f"An ingredient cannot have more than {PORTION_DETAIL_AMOUNT_MAX_G:g} g.", fields={"amount": "out_of_range"}
+        )
+    return exc
+
+
 def _portion_plate_key(portion: PortionDetailRead) -> int | None:
     """The plate that holds the uniqueness key of a portion (4.6.4, 4.7)."""
     return portion.recipe_plate_id if portion.destination is PortionDestination.RECIPE else portion.plate_id
@@ -251,7 +265,13 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
         {conflict}
         RETURNING id;
     """
-    result = _execute_query(connection, query, data, commit=commit)
+    try:
+        result = _execute_query(connection, query, data, commit=commit)
+    except (CheckViolation, NumericValueOutOfRange) as exc:
+        raise _amount_limit_error(exc) from exc
+    except ForeignKeyViolation as exc:
+        # The destination or its plate was deleted by another request meanwhile.
+        raise NotFoundError("portion_destination_not_found") from exc
     if not result:
         raise NotFoundError("portion_not_found")
     return int(result["id"])
@@ -302,28 +322,12 @@ def list_portions_by_events(connection, user_id: int, event_ids: list[int]) -> l
     return _rows_to_reads(rows)
 
 
-def list_portions_by_recipe(connection, user_id: int, recipe_id: int) -> list[PortionDetailRead]:
-    query = f"""
-        SELECT {_PORTION_COLUMNS}
-        {_PORTION_FROM}
-        JOIN recipe_plate rp ON rp.id = pd.recipe_plate_id
-        WHERE pd.recipe_id = %(recipe_id)s
-        {_PORTION_OWNED_BY_USER}
-        ORDER BY rp.position, pd.id;
-    """
-    rows = _execute_query_many(
-        connection, query, {"recipe_id": recipe_id, "user_id": user_id}, commit=False
-    )
-    return _rows_to_reads(rows)
-
-
 def list_viewable_recipe_portions(connection, user_id: int, recipe_id: int) -> list[PortionDetailRead]:
     """Portions of a recipe the user may view, owned or public (5.4).
 
     A recipe can be published (`is_published`) and therefore not owned by
     the user: showing it, computing its macros, logging it or copying it
-    requires viewability, not ownership. `list_portions_by_recipe` stays for
-    the owner-only flows (editing the recipe). Every write still goes through
+    requires viewability, not ownership. Every write still goes through
     a function that checks ownership, so this read cannot mutate anything.
     """
     query = f"""
@@ -503,6 +507,10 @@ def _merge_into_sibling(connection, user_id: int, portion_id: int, sibling_id: i
                 raise NotFoundError("portion_not_found")
         if commit:
             connection.commit()
+    except (CheckViolation, NumericValueOutOfRange) as exc:
+        if commit:
+            connection.rollback()
+        raise _amount_limit_error(exc) from exc
     except Exception:
         if commit:
             connection.rollback()

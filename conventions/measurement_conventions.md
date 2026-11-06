@@ -289,15 +289,15 @@ portion_detail
 
 - **La FK compuesta** garantiza en la base que la tanda es de esa misma receta.
 - **Sin offset.** Nace cuando la receta entra en un evento (§4.5). Por eso una tanda de receta tiene `position`: el orden es manual, con subir y bajar, en vez de derivarse del offset (§4.6.1).
-- **Una receta sin ingredientes no tiene tandas.** La primera nace con el primer ingrediente, como en un evento. La migración creó una tanda por cada receta con ingredientes.
+- **Una receta nueva no tiene tandas.** La primera nace con el primer ingrediente, como en un evento. Si el usuario vacía una tanda, se conserva vacía hasta que la borre, también si es la única. Añadir, copiar y guardar omiten las tandas vacías. La migración creó una tanda por cada receta con ingredientes.
 - **Borrar una tanda con ingredientes está bloqueado** (§4.6.5).
-- **Unicidad.** La de §4.6.4 sobre `recipe_plate_id`, con el índice `uq_portion_detail_recipe_plate_origin_preparation_cooked` y la misma regla de fusión: al añadir, editar la preparación o la pesada, o mover de tanda, las filas con la misma clave suman sus cantidades.
+- **Unicidad.** La de §4.6.4 sobre `recipe_plate_id`, con el índice `uq_portion_detail_recipe_plate_origin_preparation_cooked` y la misma regla de fusión: al añadir, editar la preparación o la pesada, o mover de tanda, las filas con la misma clave suman sus cantidades. Si la suma pasa de 100000 g (§4.4), no se guarda y el usuario recibe un `422` con el motivo.
 
 **Raciones.** `recipe.servings` es opcional, un entero de 1 a 100, y son las raciones que salen de la receta entera. La ración es el total de la receta entre `servings`, con las proporciones de cada ingrediente.
 
 **Añadir una receta a una comida.** Lo hace un solo servicio, `add_recipe_to_meal`, en una transacción, tras un paso previo (`frontend_conventions.md` §9.7):
 
-- Con `servings`, se eligen las raciones, decimales mayores que 0 y hasta 100, con `1` por defecto: `amount = amount_receta * raciones / servings`. El servidor lo calcula con los datos de la receta (`code_conventions.md` §7.13). Sin `servings`, se añade la receta entera.
+- Con `servings`, se eligen las raciones, decimales de 0,01 a 100, con `1` por defecto: `amount = amount_receta * raciones / servings`. El servidor lo calcula con los datos de la receta (`code_conventions.md` §7.13). Sin `servings`, se añade la receta entera.
 - La preparación se puede cambiar para esa comida, ya rellena con la de la receta, y no se escribe en la receta.
 - `strictly_weighed` e `is_cooked_weight` se copian de la porción de la receta (§6.11). No hay `strictly_weighed = TRUE` por defecto: venir de una receta no demuestra que hoy se haya pesado. `Weighed cooked` se ajusta en la receta y `Strictly weighted` en el carrito.
 - Sin evento elegido se crea uno, con el nombre de la receta y su tipo de comida o, si no tiene, el de la franja horaria (§7.14 de `code_conventions.md`).

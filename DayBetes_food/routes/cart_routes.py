@@ -1,3 +1,5 @@
+import re
+
 from fasthtml.common import *
 from DayBetes_food.components.cart.cart_main import cart_main, cart_events_list
 from DayBetes_food.components.cart.cart_components import CartCard, MacrosSummary, PortionTriStateFlag
@@ -51,6 +53,7 @@ from DayBetes_food.domain.constants import (
     PortionDestination,
     PortionOrigin,
     parse_enum,
+    parse_optional_id,
 )
 from DayBetes_food.domain.intake_event import (
     INTAKE_EVENT_INGESTED_UNITS,
@@ -232,10 +235,10 @@ def _parse_offset_minutes(raw_value: str) -> int | None:
     text = (raw_value or "").strip()
     if not text:
         return None
-    try:
-        value = int(text)
-    except ValueError as exc:
-        raise ValidationError("The offset must be a whole number of minutes.") from exc
+    # Only ASCII digits: int() would also take "1_0" or other scripts' digits (§7.5).
+    if not re.fullmatch(r"-?[0-9]{1,4}", text):
+        raise ValidationError("The offset must be a whole number of minutes.")
+    value = int(text)
     if not (INTAKE_PLATE_OFFSET_MIN_MINUTES <= value <= INTAKE_PLATE_OFFSET_MAX_MINUTES):
         raise ValidationError(
             f"The offset must be between {INTAKE_PLATE_OFFSET_MIN_MINUTES} and "
@@ -778,12 +781,13 @@ def setup_cart_routes(rt):
             except ConflictError:
                 return _error(request, ConflictError, _EVENT_NOT_PLANNED)
 
-            raw_target = (target_plate_id or "").strip()
+            try:
+                target_id = parse_optional_id(target_plate_id, "plate")
+            except ValidationError as error:
+                return _error(request, ValidationError, str(error))
             try:
                 with connection.transaction():
-                    if raw_target.isdigit() and int(raw_target) != 0:
-                        target_id = int(raw_target)
-                    else:
+                    if not target_id:
                         target_id = create_intake_plate(
                             connection,
                             IntakePlateCreate(
@@ -878,6 +882,9 @@ def setup_cart_routes(rt):
                         _resync_consumed_amount_confidence(connection, int(user_id), event_id, portions)
             except NotFoundError:
                 return _error(request, NotFoundError, _INGREDIENT_GONE)
+            except ValidationError as error:
+                # A merge over the limit (measurement §4.6.4).
+                return _error(request, ValidationError, str(error))
             if field_name == "is_cooked_weight":
                 # Part of the uniqueness key (4.6.4, decision 2026-09-23):
                 # toggling it can merge the row into another one or change the
@@ -951,6 +958,9 @@ def setup_cart_routes(rt):
                 return _error(request, NotFoundError, _INGREDIENT_GONE)
             except ConflictError:
                 return _error(request, ConflictError, _EVENT_NOT_PLANNED)
+            except ValidationError as error:
+                # A merge over the limit (measurement §4.6.4).
+                return _error(request, ValidationError, str(error))
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/plate")

@@ -8,9 +8,11 @@ from DayBetes_food.components.navigation import back_js
 from DayBetes_food.components.food.food_actions import COPY_LABEL, COPY_QUESTION, EDIT_LABELS, FoodActionsTrigger
 from DayBetes_food.components.food.rescue import RescueMarkButton, RescueModal, rescue_open_attrs
 from DayBetes_food.components.modal import (
+    ModalLayer,
     close_modal_js,
     ConfirmActionModal,
     modal_confirm_button,
+    modal_secondary_button,
     open_modal_js,
 )
 from DayBetes_food.domain.catalog import (
@@ -25,7 +27,7 @@ from DayBetes_food.domain.food import (
 from DayBetes_food.components.food.recipe_add import RecipeAddModal, recipe_add_open_attrs
 from DayBetes_food.components.stats.stats_shared import MEAL_TYPE_LABELS
 from DayBetes_food.domain.intake_plate import derive_plate_name
-from DayBetes_food.domain.recipe import RECIPE_MEAL_TYPES, RECIPE_NOTES_MAX_LENGTH, RecipeRead
+from DayBetes_food.domain.recipe import RECIPE_MEAL_TYPES, RECIPE_NAME_MAX_LENGTH, RECIPE_NOTES_MAX_LENGTH, RecipeRead
 from DayBetes_food.domain.recipe_plate import RECIPE_PLATE_NAME_MAX_LENGTH
 from DayBetes_food.domain.manual_intake import (
     MANUAL_INTAKE_DESCRIPTION_MAX_LENGTH,
@@ -451,13 +453,13 @@ def Filters():
                         "recipesTabs.classList.add('hidden');"
                         "}"
                         "}"
-                    ),
-                },
                         # Only the lists that have something to filter offer the button (§9.3).
                         "var filtersButton=document.getElementById('food_filters_button');"
                         "if(filtersButton){"
                         "filtersButton.classList.toggle('hidden',this.dataset.filterValue!=='recipes');"
                         "}"
+                    ),
+                },
             )
         )
 
@@ -467,9 +469,9 @@ def Filters():
         Input(type="hidden", id="food_food_mode", name="food_mode", value="catalog"),
         Input(type="hidden", id="food_favs_mode", name="favs_mode", value="catalog"),
         Input(type="hidden", id="food_recipes_mode", name="recipes_mode", value="mine"),
+        Input(type="hidden", id="food_recipes_meal", name="meal_type", value=""),
         Div(
             *buttons,
-        Input(type="hidden", id="food_recipes_meal", name="meal_type", value=""),
             cls="""
                 relative
                 flex items-center justify-between
@@ -2746,7 +2748,7 @@ def _recipe_servings_field(value: str):
 def CreateRecipePage(tag_options: list[str] | None = None):
     result_id = "create_recipe_result_page"
     form = Form(
-        _form_header("New recipe", _name_title_input("", "Name of the recipe")),
+        _form_header("New recipe", _name_title_input("", "Name of the recipe", RECIPE_NAME_MAX_LENGTH)),
         _form_section(
             "About the recipe",
             _labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in RECIPE_MEAL_TYPES], help_text="When this recipe is usually eaten.", labels=MEAL_TYPE_LABELS),
@@ -3001,7 +3003,7 @@ def EditRecipePage(
     result_id = f"edit_recipe_result_{entry['id']}"
     back_path = f"/food/item/recipe/{entry['id']}"
     form = Form(
-        _edit_header("recipe", _input_value(entry.get("name")), back_path, CATALOG_NAME_MAX_LENGTH),
+        _edit_header("recipe", _input_value(entry.get("name")), back_path, RECIPE_NAME_MAX_LENGTH),
         _form_section(
             "Basics",
             _labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in RECIPE_MEAL_TYPES], selected_value=_input_value(entry.get("meal_type")), labels=MEAL_TYPE_LABELS),
@@ -3216,10 +3218,6 @@ def _detail_info_rows(rows: list[tuple[str, str]]):
 
 def _recipe_portion_name(portion) -> str:
     return portion.source.name or f"Ingredient #{portion.id}"
-
-
-def _recipe_portion_entry_type(portion) -> str:
-    return portion.origin.value
 
 
 def _recipe_portion_meta(portion) -> str:
@@ -3976,7 +3974,7 @@ def FoodDetailPage(
                             "}"
                         ),
                     ),
-                    cls=f"{'hidden ' if recipe_mode else ''}flex justify-end",
+                    cls="flex justify-end",
                 ),
                 Div(
                     Div(
@@ -4015,7 +4013,7 @@ def FoodDetailPage(
                     ),
                     id=advanced_id,
                     data_open="0",
-                    cls=f"{'hidden ' if recipe_mode else ''}w-full relative z-0 transition-all duration-300 ease-out overflow-hidden",
+                    cls="w-full relative z-0 transition-all duration-300 ease-out overflow-hidden",
                     style="max-height:0px;opacity:0;",
                 ),
                 id=form_id,
@@ -4157,6 +4155,9 @@ def FoodDetailPage(
         Script(src=asset_busted("/js/cart_units.js"), defer="defer"),
         Script(src=asset_busted("/js/food_detail.js"), defer="defer"),
         data_food_detail=None if recipe_mode else "true",
+        # Without a saved copy: coming back from its ingredient search must show what
+        # was added there (frontend_conventions.md §5, §6).
+        hx_history="false" if recipe_mode else None,
         data_detail_display_id=display_id,
         data_detail_select_id=select_id,
         data_detail_grams_id=grams_id,

@@ -71,19 +71,6 @@ class IntakePlateCreate:
     offset_minutes: int | None = None
 
 
-@dataclass(frozen=True)
-class IntakePlateUpdate:
-    """Payload to update a plate (§3.1). Editable fields only.
-
-    A field set to None means "leave untouched", like the rest of the
-    project's update payloads. To clear the own name and return the plate to
-    its derived name there is `update_intake_plate_name`, for the same reason
-    as `update_intake_event_name` (§7.4).
-    """
-    name: str | None = None
-    offset_minutes: int | None = None
-
-
 def auto_offset_minutes(meal_time: datetime | None, now: datetime) -> int | None:
     """Offset a new plate is born with: minutes from `meal_time` to `now`.
 

@@ -873,9 +873,10 @@ def _ensure_user_favorites_schema(cursor):
     cursor.execute("DROP INDEX IF EXISTS idx_catalog_favorite;")
     cursor.execute("DROP INDEX IF EXISTS idx_manual_favorite;")
     cursor.execute("DROP INDEX IF EXISTS idx_recipe_favorite;")
-    cursor.execute("ALTER TABLE catalog DROP COLUMN IF EXISTS favorite;")
-    cursor.execute("ALTER TABLE manual_intake DROP COLUMN IF EXISTS favorite;")
-    cursor.execute("ALTER TABLE recipe DROP COLUMN IF EXISTS favorite;")
+    # Checked first: DROP COLUMN IF EXISTS takes an exclusive lock even with nothing to do (§12.2).
+    for table in ("catalog", "manual_intake", "recipe"):
+        if _has_column(cursor, table, "favorite"):
+            cursor.execute(sql.SQL("ALTER TABLE {} DROP COLUMN favorite;").format(sql.Identifier(table)))
 
 _PUBLICATION_TABLES = (("catalog", "created_by"), ("manual_intake", "created_by"), ("recipe", "users_id"))
 
@@ -938,16 +939,24 @@ def _ensure_food_publication_schema(cursor):
                     sql.Identifier(table)
                 )
             )
+        # Checked first: an ALTER takes an exclusive lock even with nothing to change (§12.2).
         cursor.execute(
-            sql.SQL("ALTER TABLE {} ALTER COLUMN is_published SET DEFAULT FALSE;").format(
-                sql.Identifier(table)
-            )
+            "SELECT column_default, is_nullable FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = %(table)s AND column_name = 'is_published';",
+            {"table": table},
         )
-        cursor.execute(
-            sql.SQL("ALTER TABLE {} ALTER COLUMN is_published SET NOT NULL;").format(
-                sql.Identifier(table)
+        published = cursor.fetchone()
+        if published["column_default"] != "false" or published["is_nullable"] == "YES":
+            cursor.execute(
+                sql.SQL("ALTER TABLE {} ALTER COLUMN is_published SET DEFAULT FALSE;").format(
+                    sql.Identifier(table)
+                )
             )
-        )
+            cursor.execute(
+                sql.SQL("ALTER TABLE {} ALTER COLUMN is_published SET NOT NULL;").format(
+                    sql.Identifier(table)
+                )
+            )
     if renamed_now:
         _publish_personal_ingredients_of_published_recipes(cursor)
 
@@ -1019,7 +1028,7 @@ def _ensure_copy_origin_schema(cursor):
     )
     if _index_exists(cursor, "idx_recipe_origin_root") and not _index_exists(cursor, "idx_recipe_origin_root_id"):
         cursor.execute("ALTER INDEX idx_recipe_origin_root RENAME TO idx_recipe_origin_root_id;")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_origin_root_id ON recipe (origin_root_id);")
+    _create_index_once(cursor, "idx_recipe_origin_root_id", "ON recipe (origin_root_id)")
 
 
 # Automatic names of older installs -> canonical names (§11.6).
@@ -1164,14 +1173,22 @@ def _ensure_recipe_plate_schema(cursor):
             "ALTER TABLE portion_detail ADD CONSTRAINT fk_portion_detail_recipe_plate_id_recipe_plate "
             "FOREIGN KEY (recipe_id, recipe_plate_id) REFERENCES recipe_plate (recipe_id, id) ON DELETE RESTRICT;"
         )
-    cursor.execute(
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_portion_detail_recipe_plate_origin_preparation_cooked
-        ON portion_detail (recipe_plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state, is_cooked_weight)
-        NULLS NOT DISTINCT
-        WHERE recipe_plate_id IS NOT NULL;
-        """
-    )
+    if not _index_exists(cursor, "uq_portion_detail_recipe_plate_origin_preparation_cooked"):
+        cursor.execute(
+            """
+            CREATE UNIQUE INDEX uq_portion_detail_recipe_plate_origin_preparation_cooked
+            ON portion_detail (recipe_plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state, is_cooked_weight)
+            NULLS NOT DISTINCT
+            WHERE recipe_plate_id IS NOT NULL;
+            """
+        )
+
+
+def _create_index_once(cursor, name: str, definition: str) -> None:
+    """Checked first: CREATE INDEX IF NOT EXISTS takes a lock that blocks writes until the
+    bootstrap commits, even with nothing to do (§12.2). The arguments are constants."""
+    if not _index_exists(cursor, name):
+        cursor.execute(f"CREATE INDEX {name} {definition};")
 
 
 def _index_exists(cursor, name: str) -> bool:
@@ -1255,7 +1272,7 @@ def _ensure_food_filter_indexes(cursor):
         cursor.execute("ALTER INDEX idx_manual_created_by RENAME TO idx_manual_intake_created_by;")
     # Backs the owner filter and the cascade from users.
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_manual_intake_created_by ON manual_intake (created_by);")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_recipe_users_id ON recipe (users_id);")
+    _create_index_once(cursor, "idx_recipe_users_id", "ON recipe (users_id)")
     # No query uses it: the owner index and the partial unique indexes cover the filter.
     cursor.execute("DROP INDEX IF EXISTS idx_recipe_visibility;")
 
@@ -1283,14 +1300,13 @@ def _ensure_food_search_indexes(cursor):
         # recipe searches search_name since 2026-11-05 (§11.7).
         cursor.execute("DROP INDEX IF EXISTS idx_recipe_name_trgm;")
         cursor.execute("DROP INDEX IF EXISTS idx_recipe_name_compact_trgm;")
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_recipe_search_name_trgm "
-            "ON recipe USING gin (lower(search_name) gin_trgm_ops);"
+        _create_index_once(
+            cursor, "idx_recipe_search_name_trgm", "ON recipe USING gin (lower(search_name) gin_trgm_ops)"
         )
-        cursor.execute(
-            sql.SQL("CREATE INDEX IF NOT EXISTS idx_recipe_search_name_compact_trgm ON recipe USING gin ({} gin_trgm_ops);").format(
-                sql.SQL(fuzzy_compact_sql("search_name"))
-            )
+        _create_index_once(
+            cursor,
+            "idx_recipe_search_name_compact_trgm",
+            f"ON recipe USING gin ({fuzzy_compact_sql('search_name')} gin_trgm_ops)",
         )
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_off_product_search_text_trgm "
@@ -1682,7 +1698,8 @@ def _ensure_portion_detail_schema(cursor):
     # ---- H16: split_group_id was hand-applied DDL that never returned to code ----
     # varchar(64), 0 rows with a value, 0 references in the code, 0 commits. The
     # plates design (decision 2026-09-19) relies on intake_plate, not here.
-    cursor.execute("ALTER TABLE portion_detail DROP COLUMN IF EXISTS split_group_id;")
+    if _has_column(cursor, "portion_detail", "split_group_id"):
+        cursor.execute("ALTER TABLE portion_detail DROP COLUMN split_group_id;")
 
     # ---- T1.2: blocking pre-checks before writing the new CHECKs (decision 2026-09-22) ----
     # The amount check can only run while amount_g still exists; after T1.3 the

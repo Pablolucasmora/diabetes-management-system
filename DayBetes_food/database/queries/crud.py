@@ -17,7 +17,7 @@ This module no longer holds per-table CRUD functions (see code_conventions.md
 - constants shared across table modules (`TRGM_SIMILARITY_THRESHOLD`).
 
 Table-specific queries live in one module per table
-(`users.py`, `catalog.py`, `manual_intake.py`, `recipe.py`, `tags.py`,
+(`users.py`, `catalog.py`, `manual_intake.py`, `recipe.py`, `recipe_plate.py`, `tags.py`,
 `linked_tags.py`, `user_favorites.py`, `food_brands.py`, `intake_event.py`,
 `portion_detail.py`) plus `entries.py` for reads that span more than one
 table with no single owning table. All of them are re-exported from

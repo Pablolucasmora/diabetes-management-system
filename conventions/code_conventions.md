@@ -81,7 +81,7 @@ Un CRUD:
 
 `database/queries/` no es un único archivo: un módulo por tabla física, nombrado como la tabla (`users.py`, `catalog.py`, `manual_intake.py`, `recipe.py`, `recipe_plate.py`, `tags.py`, `linked_tags.py`, `user_favorites.py`, `food_brands.py`, `intake_event.py`, `insulin_injections.py`, `portion_detail.py`, `meal_type_schedule.py`, `auth_sessions.py`, `auth_rate_limits.py`, ...).
 
-- **`crud.py`** contiene únicamente helpers genéricos compartidos por varios módulos de tabla: ejecución de queries (`_execute_query`, `_execute_query_many`), el constructor seguro de `UPDATE` dinámico (`_build_update_query` y su whitelist), búsqueda difusa (`_build_fuzzy_search`, `_add_fuzzy_name_condition`) y los filtros de ownership/favorito reutilizados por varias tablas (`_add_entity_filters`, `_favorite_filter_sql`). No contiene CRUD de ninguna tabla. Un helper usado por más de un módulo de tabla vive en `crud.py`, aunque físicamente resida hoy dentro del bloque de una tabla concreta; no se decide por dónde está escrito hoy sino por quién lo usa.
+- **`crud.py`** contiene únicamente helpers genéricos compartidos por varios módulos de tabla: ejecución de queries (`_execute_query`, `_execute_query_many`), el constructor seguro de `UPDATE` dinámico (`_build_update_query` y su whitelist), búsqueda difusa (`_build_fuzzy_search`), la búsqueda por palabras de las tablas de referencia (`_search_reference_foods`) y la regla de visibilidad de `catalog` y `manual_intake` (`_food_visibility_sql`). No contiene CRUD de ninguna tabla. Un helper usado por más de un módulo de tabla vive en `crud.py`, aunque físicamente resida hoy dentro del bloque de una tabla concreta; no se decide por dónde está escrito hoy sino por quién lo usa.
 - Una función va en el archivo de la tabla sobre la que ejecuta su SQL. Si su `FROM`/`UPDATE`/`INSERT` principal toca la tabla puente de una relación N:M (`linked_tags`, `user_favorites`), va en el archivo de esa tabla puente, no en el de las tablas que relaciona.
 - Una lectura que agrega o combina varias tablas sin tabla dueña clara (autocompletado que unifica `catalog`+`manual_intake`, rankings de uso que cruzan `portion_detail`+`intake_event`, etc.) va en **`entries.py`**, reservado para lecturas cross-entity. No se fuerza en el archivo de la primera tabla que aparece en el `FROM` porque eso es arbitrario.
 - **`__init__.py`** re-exporta toda la API pública de todos los módulos de tabla y de `entries.py` (no los helpers privados de `crud.py`). El resto de la aplicación (`routes/`, `services/`, `components/`) importa siempre `from DayBetes_food.database.queries import <nombre>`, nunca del módulo de tabla concreto — así ningún punto de import fuera de `database/queries/` depende de en qué archivo vive cada query.
@@ -746,7 +746,7 @@ Esto incluye los valores cerrados que llegan en la URL. El tipo de alimento de l
 
 ### 7.8 Identificadores, fechas y horas
 
-- Los identificadores de URL, formularios y HTMX se validan antes de ejecutar SQL.
+- Los identificadores de URL, formularios y HTMX se validan antes de ejecutar SQL. El parser común es `parse_optional_id` (`domain/constants.py`).
 - Un ID mal formado produce `400` o `422`; un ID válido sin recurso visible produce `404`.
 - No convertir IDs inválidos en `0` o `None`.
 - Las fechas y horas usan un formato único y se convierten en el boundary HTTP.

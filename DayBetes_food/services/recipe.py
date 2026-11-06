@@ -84,7 +84,7 @@ def _create_recipe_from_plates(connection, user_id: int, event, name: str, plate
         # Only possible with an invalid argument: a bug, not a user error.
         raise RuntimeError("recipe_favorite_not_saved")
     for plate_name, portions in plates:
-        recipe_plate_id = create_recipe_plate(connection, recipe_id, name=plate_name, commit=False)
+        recipe_plate_id = create_recipe_plate(connection, user_id, recipe_id, name=plate_name, commit=False)
         _portions_to_recipe_plate(connection, user_id, recipe_id, recipe_plate_id, portions)
     return recipe_id
 
@@ -178,13 +178,13 @@ def copy_recipe(connection, user_id: int, recipe_id: int) -> int:
         )
         if not set_user_favorite(connection, user_id, "recipe", copy_id, True, commit=False):
             raise RuntimeError("recipe_favorite_not_saved")
-        for plate, portions in _recipe_plates_with_portions(connection, user_id, source.id):
-            recipe_plate_id = create_recipe_plate(connection, copy_id, name=plate.name, commit=False)
+        for plate, portions in recipe_plates_with_portions(connection, user_id, source.id):
+            recipe_plate_id = create_recipe_plate(connection, user_id, copy_id, name=plate.name, commit=False)
             _portions_to_recipe_plate(connection, user_id, copy_id, recipe_plate_id, portions)
     return copy_id
 
 
-def _recipe_plates_with_portions(connection, user_id: int, recipe_id: int) -> list[tuple]:
+def recipe_plates_with_portions(connection, user_id: int, recipe_id: int) -> list[tuple]:
     """`(plate, portions)` of a recipe the viewer may see, in order, without empty plates."""
     portions = list_viewable_recipe_portions(connection, user_id, recipe_id)
     groups = [
@@ -223,7 +223,7 @@ def add_recipe_to_meal(
         recipe = get_recipe(connection, user_id, recipe_id)
         if recipe is None:
             raise NotFoundError("Recipe not found.")
-        groups = _recipe_plates_with_portions(connection, user_id, recipe_id)
+        groups = recipe_plates_with_portions(connection, user_id, recipe_id)
         if not groups:
             raise ConflictError("recipe_without_ingredients")
         known_ids = {portion.id for _, portions in groups for portion in portions}

@@ -14,16 +14,24 @@ from DayBetes_food.errors import ConflictError, NotFoundError
 _COLUMNS = "rp.id, rp.recipe_id, rp.position, rp.name, rp.created_at, rp.updated_at"
 
 
-def create_recipe_plate(connection, recipe_id: int, *, name: str | None = None, commit: bool = True) -> int:
-    """Add a plate at the end of the recipe. Ownership is checked by the caller,
-    which has already resolved the recipe with `get_recipe` (§5.3).
+def _lock_owned_recipe(connection, user_id: int, recipe_id: int) -> None:
+    """Lock the user's recipe, so the writes on its plates queue instead of colliding
+    on their positions or racing with its deletion (§6.6).
 
-    Two simultaneous creations for one recipe would hit uq_recipe_plate_recipe_id_position;
-    the recipe row is locked first so they queue instead.
+    Raises:
+        NotFoundError: it does not exist or is not the user's.
     """
-    _execute_query(
-        connection, "SELECT id FROM recipe WHERE id = %(recipe_id)s FOR UPDATE;", {"recipe_id": recipe_id}, commit=False
+    row = _execute_query(
+        connection,
+        "SELECT r.id FROM recipe r WHERE r.id = %(recipe_id)s AND r.users_id = %(user_id)s FOR UPDATE;",
+        {"recipe_id": recipe_id, "user_id": user_id},
+        commit=False,
     )
+    if row is None:
+        raise NotFoundError("Recipe not found.")
+
+
+def _insert_recipe_plate(connection, recipe_id: int, name: str | None, commit: bool) -> int:
     row = _execute_query(
         connection,
         """
@@ -39,16 +47,33 @@ def create_recipe_plate(connection, recipe_id: int, *, name: str | None = None, 
     return int(row["id"])
 
 
-def ensure_default_recipe_plate(connection, recipe_id: int, commit: bool = True) -> int:
-    """The recipe's last plate or, if it has none, a first one created implicitly
-    (§4.7: a recipe without ingredients has no plate)."""
+def create_recipe_plate(
+    connection, user_id: int, recipe_id: int, *, name: str | None = None, commit: bool = True
+) -> int:
+    """Add a plate at the end of one of the user's recipes.
+
+    Raises:
+        NotFoundError: the recipe does not exist or is not the user's.
+    """
+    _lock_owned_recipe(connection, user_id, recipe_id)
+    return _insert_recipe_plate(connection, recipe_id, name, commit)
+
+
+def ensure_default_recipe_plate(connection, user_id: int, recipe_id: int, commit: bool = True) -> int:
+    """The last plate of one of the user's recipes or, if it has none, a first one
+    created implicitly (measurement_conventions.md §4.7).
+
+    Raises:
+        NotFoundError: the recipe does not exist or is not the user's.
+    """
+    _lock_owned_recipe(connection, user_id, recipe_id)
     row = _execute_query(
         connection,
         "SELECT rp.id FROM recipe_plate rp WHERE rp.recipe_id = %(recipe_id)s ORDER BY rp.position DESC LIMIT 1;",
         {"recipe_id": recipe_id},
         commit=False,
     )
-    return int(row["id"]) if row else create_recipe_plate(connection, recipe_id, commit=commit)
+    return int(row["id"]) if row else _insert_recipe_plate(connection, recipe_id, None, commit)
 
 
 def get_recipe_plate(connection, user_id: int, plate_id: int) -> RecipePlateRead:
@@ -121,6 +146,9 @@ def swap_recipe_plate_position(connection, user_id: int, plate_id: int, *, up: b
     Raises:
         NotFoundError: it does not exist or its recipe is not the user's.
     """
+    recipe_id = get_recipe_plate(connection, user_id, plate_id).recipe_id
+    _lock_owned_recipe(connection, user_id, recipe_id)
+    # Read after the lock: another request may have just moved it.
     plate = get_recipe_plate(connection, user_id, plate_id)
     neighbour = _execute_query(
         connection,
