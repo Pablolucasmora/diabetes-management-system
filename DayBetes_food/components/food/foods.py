@@ -453,6 +453,11 @@ def Filters():
                         "}"
                     ),
                 },
+                        # Only the lists that have something to filter offer the button (§9.3).
+                        "var filtersButton=document.getElementById('food_filters_button');"
+                        "if(filtersButton){"
+                        "filtersButton.classList.toggle('hidden',this.dataset.filterValue!=='recipes');"
+                        "}"
             )
         )
 
@@ -464,6 +469,7 @@ def Filters():
         Input(type="hidden", id="food_recipes_mode", name="recipes_mode", value="mine"),
         Div(
             *buttons,
+        Input(type="hidden", id="food_recipes_meal", name="meal_type", value=""),
             cls="""
                 relative
                 flex items-center justify-between
@@ -673,20 +679,6 @@ def Filters():
                 ),
                 cls="w-1/2 flex items-end justify-center",
             ),
-            Select(
-                Option("All meals", value=""),
-                *[Option(MEAL_TYPE_LABELS.get(meal.value, meal.value), value=meal.value) for meal in RECIPE_MEAL_TYPES],
-                id="food_recipes_meal",
-                name="meal_type",
-                aria_label="Filter recipes by meal type",
-                data_skip_page_loading="true",
-                hx_get="/food/list",
-                hx_target="#food-list",
-                hx_swap="innerHTML",
-                hx_trigger="change",
-                hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode",
-                cls="bg-white border border-line px-2 py-1 text-xs rounded-lg shrink-0 ml-2 cursor-pointer",
-            ),
             id="food_recipes_tabs",
             cls="hidden w-full flex items-end justify-between mt-2",
         ),
@@ -794,27 +786,111 @@ def Filters():
     )
 
 
-def SearchInput():
-    return Input(
-        inputmode="text",
-        placeholder="What did you eat?",
-        name="search",
-        id="food_search_input",
-        data_skip_page_loading="true",
+def _food_filters_button():
+    """Inside the search box, on the right. It opens the filters pop-up (§9.3)."""
+    return Button(
+        Img(src="/images/ui/filter.svg", alt="", cls="w-5 h-5"),
+        # Marks that a filter is on: from outside the pop-up it would not show.
+        Span(
+            id="food_filters_active",
+            cls="hidden absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-danger border border-white",
+        ),
+        type="button",
+        id="food_filters_button",
+        aria_label="Filters",
+        title="Filters",
         cls="""
-            web_input
-            border border-line inset-shadow-none
-            rounded-2xl
-            md:w-xl lg:w-xl
-            w-xs
-            transition-all
-            px-4 py-3 text-sm
+            hidden absolute right-1.5 top-1/2 -translate-y-1/2
+            web_button web_button_primary
+            rounded-xl w-9 h-9
+            flex items-center justify-center
         """,
-        hx_get="/food/list",
-        hx_target="#food-list",
-        hx_trigger="keyup changed delay:500ms",
-        hx_include="#food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
-        hx_swap="innerHTML",
+        onclick="dbOpenFoodFilters()",
+    )
+
+
+def _food_filter_meal_option(meal):
+    """A pill that can be on or off: several meal types can be chosen at once."""
+    return Label(
+        Input(
+            type="checkbox",
+            value=meal.value,
+            data_food_filter_meal="true",
+            cls="peer sr-only",
+        ),
+        Span(
+            MEAL_TYPE_LABELS.get(meal.value, meal.value),
+            cls="""
+                block px-3 py-1.5 rounded-full text-sm cursor-pointer
+                bg-control border border-line text-stone-900
+                peer-checked:bg-ink peer-checked:border-ink peer-checked:text-white
+                peer-focus-visible:ring-2 peer-focus-visible:ring-ink/40
+                transition-colors
+            """,
+        ),
+    )
+
+
+def FoodFiltersModal():
+    """The filters of the lists of Food. New filters go here: a control in the pop-up
+    (a draft) and a hidden field that the list requests include (static/js/food_filters.js)."""
+    return (
+        ModalLayer(
+            Div(
+                P("Filters", cls="text-lg font-semibold"),
+                modal_secondary_button("Reset", aria_label="Remove every filter", onclick="dbResetFoodFilters()"),
+                cls="flex items-center justify-between gap-3",
+            ),
+            Fieldset(
+                Legend("Meal type", cls="text-xs text-gray-600 mb-1.5"),
+                Div(*[_food_filter_meal_option(meal) for meal in RECIPE_MEAL_TYPES], cls="flex flex-wrap gap-1.5"),
+            ),
+            Div(
+                modal_secondary_button("Cancel", onclick=close_modal_js("food_filters_modal")),
+                modal_confirm_button(
+                    "Confirm",
+                    hx_get="/food/list",
+                    hx_target="#food-list",
+                    hx_swap="innerHTML",
+                    hx_include=(
+                        "#food_search_input, #food_filter, #food_search_mode, #food_food_mode, "
+                        "#food_favs_mode, #food_recipes_mode, #food_recipes_meal"
+                    ),
+                    data_skip_page_loading="true",
+                    **{"hx-on:click": "dbApplyFoodFilters()"},
+                ),
+                cls="flex items-center gap-2 justify-end",
+            ),
+            modal_id="food_filters_modal",
+        ),
+        Script(src=asset_busted("/js/food_filters.js"), defer="defer"),
+    )
+
+
+def SearchInput():
+    return Div(
+        Input(
+            inputmode="text",
+            placeholder="What did you eat?",
+            name="search",
+            id="food_search_input",
+            data_skip_page_loading="true",
+            cls="""
+                web_input
+                border border-line inset-shadow-none
+                rounded-2xl
+                w-full
+                transition-all
+                pl-4 pr-13 py-3 text-sm
+            """,
+            hx_get="/food/list",
+            hx_target="#food-list",
+            hx_trigger="keyup changed delay:500ms",
+            hx_include="#food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
+            hx_swap="innerHTML",
+        ),
+        _food_filters_button(),
+        cls="relative md:w-xl lg:w-xl w-xs",
     )
 
 

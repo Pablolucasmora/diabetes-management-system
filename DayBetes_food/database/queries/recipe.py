@@ -95,7 +95,7 @@ def list_recipes(
     user_id: int,
     *,
     search: str | None = None,
-    meal_type: MealType | None = None,
+    meal_types: tuple[MealType, ...] = (),
     owned_only: bool = False,
     others_only: bool = False,
     favorites_only: bool = False,
@@ -135,9 +135,9 @@ def list_recipes(
         params.update(name_params)
         params.update(catalog_params)
         params.update(manual_params)
-    if meal_type is not None:
-        conditions.append("entity.meal_type = %(meal_type)s")
-        params["meal_type"] = meal_type.value
+    if meal_types:
+        conditions.append("entity.meal_type = ANY(%(meal_types)s)")
+        params["meal_types"] = [meal_type.value for meal_type in meal_types]
     if owned_only:
         conditions.append("entity.users_id = %(visibility_user_id)s")
     if others_only:

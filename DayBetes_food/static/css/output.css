@@ -283,6 +283,9 @@
   .inset-x-0 {
     inset-inline: 0px;
   }
+  .-top-1 {
+    top: calc(var(--spacing) * -1);
+  }
   .top-0 {
     top: 0px;
   }
@@ -295,8 +298,14 @@
   .top-full {
     top: 100%;
   }
+  .-right-1 {
+    right: calc(var(--spacing) * -1);
+  }
   .right-0 {
     right: 0px;
+  }
+  .right-1\.5 {
+    right: calc(var(--spacing) * 1.5);
   }
   .bottom-6 {
     bottom: calc(var(--spacing) * 6);
@@ -406,6 +415,9 @@
   .mr-1 {
     margin-right: var(--spacing);
   }
+  .mb-1\.5 {
+    margin-bottom: calc(var(--spacing) * 1.5);
+  }
   .mb-2 {
     margin-bottom: calc(var(--spacing) * 2);
   }
@@ -465,6 +477,9 @@
   }
   .aspect-\[4\/3\] {
     aspect-ratio: 4/3;
+  }
+  .h-2\.5 {
+    height: calc(var(--spacing) * 2.5);
   }
   .h-3 {
     height: calc(var(--spacing) * 3);
@@ -537,6 +552,9 @@
   }
   .w-1\/3 {
     width: calc(1 / 3 * 100%);
+  }
+  .w-2\.5 {
+    width: calc(var(--spacing) * 2.5);
   }
   .w-3 {
     width: calc(var(--spacing) * 3);
@@ -850,12 +868,6 @@
   .border-gray-300 {
     border-color: var(--color-gray-300);
   }
-  .border-gray-500\/30 {
-    border-color: color-mix(in srgb, oklch(55.1% 0.027 264.364) 30%, transparent);
-    @supports (color: color-mix(in lab, red, red)) {
-      border-color: color-mix(in oklab, var(--color-gray-500) 30%, transparent);
-    }
-  }
   .border-line {
     border-color: var(--color-line);
   }
@@ -1069,6 +1081,9 @@
   .pr-2 {
     padding-right: calc(var(--spacing) * 2);
   }
+  .pr-13 {
+    padding-right: calc(var(--spacing) * 13);
+  }
   .pb-1\.5 {
     padding-bottom: calc(var(--spacing) * 1.5);
   }
@@ -1080,6 +1095,9 @@
   }
   .pl-1 {
     padding-left: var(--spacing);
+  }
+  .pl-4 {
+    padding-left: calc(var(--spacing) * 4);
   }
   .pl-8 {
     padding-left: calc(var(--spacing) * 8);
@@ -1180,6 +1198,9 @@
   .break-all {
     word-break: break-all;
   }
+  .whitespace-pre-line {
+    white-space: pre-line;
+  }
   .text-amber-700 {
     color: var(--color-amber-700);
   }
@@ -1230,6 +1251,9 @@
   }
   .text-white {
     color: var(--color-white);
+  }
+  .lowercase {
+    text-transform: lowercase;
   }
   .uppercase {
     text-transform: uppercase;
@@ -1431,8 +1455,27 @@
     --tw-scale-z: 110%;
     scale: var(--tw-scale-x) var(--tw-scale-y);
   }
+  .peer-checked\:border-ink:is(:where(.peer):checked ~ *) {
+    border-color: var(--color-ink);
+  }
+  .peer-checked\:bg-ink:is(:where(.peer):checked ~ *) {
+    background-color: var(--color-ink);
+  }
+  .peer-checked\:text-white:is(:where(.peer):checked ~ *) {
+    color: var(--color-white);
+  }
   .peer-checked\:opacity-100:is(:where(.peer):checked ~ *) {
     opacity: 100%;
+  }
+  .peer-focus-visible\:ring-2:is(:where(.peer):focus-visible ~ *) {
+    --tw-ring-shadow: var(--tw-ring-inset,) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color, currentcolor);
+    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+  }
+  .peer-focus-visible\:ring-ink\/40:is(:where(.peer):focus-visible ~ *) {
+    --tw-ring-color: color-mix(in srgb, #2b2622 40%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      --tw-ring-color: color-mix(in oklab, var(--color-ink) 40%, transparent);
+    }
   }
   .placeholder\:text-gray-400::placeholder {
     color: var(--color-gray-400);
@@ -1467,14 +1510,6 @@
     }
     .hover\:bg-gray-200:hover {
       background-color: var(--color-gray-200);
-    }
-    .hover\:bg-gray-500\/20:hover {
-      background-color: color-mix(in srgb, oklch(55.1% 0.027 264.364) 20%, transparent);
-    }
-    @supports (color: color-mix(in lab, red, red)) {
-      .hover\:bg-gray-500\/20:hover {
-        background-color: color-mix(in oklab, var(--color-gray-500) 20%, transparent);
-      }
     }
     .hover\:bg-ink\/90:hover {
       background-color: color-mix(in srgb, #2b2622 90%, transparent);
@@ -1756,6 +1791,9 @@
   }
   .\[\&\:\:-webkit-details-marker\]\:hidden::-webkit-details-marker {
     display: none;
+  }
+  .\[\&\>\:first-child\]\:w-full > :first-child {
+    width: 100%;
   }
 }
 @layer theme, base, components, utilities;

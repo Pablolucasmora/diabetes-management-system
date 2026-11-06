@@ -64,6 +64,13 @@ def parse_recipe_meal_type(raw) -> MealType | None:
 
 
 def parse_recipe_servings(raw) -> int | None:
+def parse_recipe_meal_types(raw) -> tuple[MealType, ...]:
+    """The meal types of a filter, comma-separated, each one as parse_recipe_meal_type.
+    Without repeats; '' -> nothing, which means no filter (frontend §9.3)."""
+    parsed = (parse_recipe_meal_type(part) for part in str(raw or "").split(","))
+    return tuple(dict.fromkeys(meal_type for meal_type in parsed if meal_type))
+
+
     """Optional whole number from 1 to 100 (measurement_conventions.md §4.7)."""
     try:
         servings = parse_number(raw, "servings", RECIPE_SERVINGS_RANGE, integer=True)

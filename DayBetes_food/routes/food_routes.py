@@ -201,6 +201,7 @@ from DayBetes_food.domain.recipe import (
     parse_recipe_add_servings,
     parse_recipe_meal_type,
     parse_recipe_name,
+    parse_recipe_meal_types,
     parse_recipe_notes,
     parse_recipe_servings,
 )
@@ -1171,9 +1172,9 @@ def _recipe_views(connection, user_id, **filters) -> list[dict]:
     return [recipe_entry_view(item) for item in list_recipes(connection, int(user_id), **filters)]
 
 
-def _recipes_entries(connection, search: str = "", recipes_mode: str = "mine", meal_type=None) -> list[dict]:
+def _recipes_entries(connection, search: str = "", recipes_mode: str = "mine", meal_types=()) -> list[dict]:
     user_id = get_current_user_id()
-    filters = {"search": (search or "").strip() or None, "meal_type": meal_type}
+    filters = {"search": (search or "").strip() or None, "meal_types": meal_types}
     if (recipes_mode or "mine").strip().lower() == "discover":
         recipes = _recipe_views(connection, user_id, others_only=True, **filters)
     else:
@@ -2829,18 +2830,7 @@ def setup_food_routes(rt):
 
             try:
                 with connection.transaction():
-                    if intake_event_id and intake_event_id.isdigit() and int(intake_event_id) != 0:
-                        event_id = get_planned_intake_event(connection, int(user_id), int(intake_event_id))
-                    else:
-                        event_id = create_intake_event(
-                            connection,
-                            IntakeEventCreate(
-                                user_id=int(user_id),
-                                state=IntakeEventState.PLANNED,
-                                meal_type=_default_meal_type_now(connection, int(user_id)),
-                            ),
-                            commit=False,
-                        )
+                    event_id = _resolve_target_event(connection, int(user_id), intake_event_id)
                     event_data = get_intake_event(connection, int(user_id), event_id)
                     offset_minutes = _event_auto_offset_minutes(event_data)
 
@@ -2895,7 +2885,7 @@ def setup_food_routes(rt):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         try:
-            recipe_meal_type = parse_recipe_meal_type(meal_type)
+            recipe_meal_types = parse_recipe_meal_types(meal_type)
         except ValidationError as error:
             return app_error_response(request, ValidationError, str(error))
 
@@ -2921,7 +2911,7 @@ def setup_food_routes(rt):
             elif filter == "recipes":
                 mode = (search_mode or "recommended").strip().lower()
                 entries = _recipes_entries(
-                    connection, search=clean_search, recipes_mode=recipes_mode_norm, meal_type=recipe_meal_type
+                    connection, search=clean_search, recipes_mode=recipes_mode_norm, meal_types=recipe_meal_types
                 )
             else:
                 mode = (search_mode or "recommended").strip().lower()
@@ -3087,18 +3077,7 @@ def setup_food_routes(rt):
             )
             try:
                 with connection.transaction():
-                    if intake_event_id and intake_event_id.isdigit() and int(intake_event_id) != 0:
-                        event_id = get_planned_intake_event(connection, int(user_id), int(intake_event_id))
-                    else:
-                        event_id = create_intake_event(
-                            connection,
-                            IntakeEventCreate(
-                                user_id=int(user_id),
-                                state=IntakeEventState.PLANNED,
-                                meal_type=_default_meal_type_now(connection, int(user_id)),
-                            ),
-                            commit=False,
-                        )
+                    event_id = _resolve_target_event(connection, int(user_id), intake_event_id)
                     event_data = get_intake_event(connection, int(user_id), event_id)
                     offset_minutes = _event_auto_offset_minutes(event_data)
                     target_plate_id = _resolve_event_plate(
