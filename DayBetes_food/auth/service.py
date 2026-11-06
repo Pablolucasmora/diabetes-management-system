@@ -1,3 +1,4 @@
+import hmac
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -212,7 +213,7 @@ def is_csrf_valid(session_row: Optional[AuthSessionRead], csrf_token: str) -> bo
     token_hash = hash_token(csrf_token)
     if session_row is None:
         return True
-    return token_hash == session_row.csrf_token_hash
+    return hmac.compare_digest(token_hash, session_row.csrf_token_hash)
 
 
 def rate_limit_login_allowed(connection, limiter_key_hash: str, commit: bool = True) -> bool:
