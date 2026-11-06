@@ -1,6 +1,7 @@
 from fasthtml.common import *
 from datetime import datetime, timezone
 from html import escape
+import hmac
 import logging
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
@@ -39,6 +40,7 @@ from DayBetes_food.routes import (
     setup_stats_routes,
     setup_settings_routes,
 )
+from DayBetes_food.routes.http_methods import check_single_method_routes, single_method_rt
 
 
 async def lifespan(app):
@@ -51,7 +53,7 @@ async def lifespan(app):
     yield
 
 
-app, rt = fast_app(
+app, fasthtml_rt = fast_app(
     title="DayBetes",
     htmlkw={"lang": "en"},
     static_path='DayBetes_food/static',
@@ -130,8 +132,11 @@ app.add_middleware(GZipMiddleware, minimum_size=512)
 STATIC_CACHE_CONTROL = "public, max-age=604800"
 ASSET_PREFIXES = ("/css/", "/js/", "/images/")
 PUBLIC_PATH_PREFIXES = ("/auth", "/css", "/js", "/images", "/favicon", "/robots.txt")
-AUTH_POST_EXEMPT_PATHS = {"/auth/login/submit", "/auth/register/submit"}
-UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+# Everything else needs the CSRF token, also a method nobody has thought of (§5.2).
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+# Forms sent before there is a session, with the page that shows each one. There is no
+# session to tie their token to, so they only prove it matches the cookie (§5.2).
+SESSIONLESS_FORM_PAGES = {"/auth/login/submit": "/auth/login", "/auth/register/submit": "/auth/register"}
 
 
 def _is_public_path(path: str) -> bool:
@@ -140,6 +145,13 @@ def _is_public_path(path: str) -> bool:
 
 def _is_htmx_request(request: Request) -> bool:
     return request.headers.get("HX-Request") == "true"
+
+
+def _supplied_csrf_token_is_valid(path: str, supplied_token: str, csrf_cookie: str, session_row) -> bool:
+    """Double submit, plus the token stored with the session when there can be one (§5.2)."""
+    if not supplied_token or not hmac.compare_digest(supplied_token.encode(), csrf_cookie.encode()):
+        return False
+    return path in SESSIONLESS_FORM_PAGES or is_csrf_valid(session_row, supplied_token)
 
 
 def _response_sets_cookie(response, cookie_name: str) -> bool:
@@ -154,7 +166,7 @@ async def auth_security_middleware(request: Request, call_next):
     # replayed to different visitors, poisoning their CSRF cookie with a token
     # that does not belong to their session. A GET for a public asset has
     # nothing to authenticate or CSRF-validate.
-    if request.url.path.startswith(ASSET_PREFIXES):
+    if request.method in SAFE_METHODS and request.url.path.startswith(ASSET_PREFIXES):
         return await call_next(request)
 
     csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME) or generate_token()
@@ -176,14 +188,18 @@ async def auth_security_middleware(request: Request, call_next):
                 if last_seen and (datetime.now(timezone.utc) - last_seen).total_seconds() >= SESSION_REFRESH_SECONDS:
                     refresh_session(connection, session_row.id)
 
-    csrf_exempt = request.url.path in AUTH_POST_EXEMPT_PATHS
-    if request.method in UNSAFE_METHODS and not csrf_exempt:
+    if request.method not in SAFE_METHODS:
         supplied_token = request.headers.get("X-CSRF-Token", "")
         if not supplied_token and request.headers.get("content-type", "").startswith("application/x-www-form-urlencoded"):
             form = await request.form()
             supplied_token = str(form.get("csrf_token", ""))
 
-        if not supplied_token or supplied_token != csrf_cookie or not is_csrf_valid(session_row, supplied_token):
+        if not _supplied_csrf_token_is_valid(request.url.path, supplied_token, csrf_cookie, session_row):
+            # A plain form sent with an old token: its page again, with a valid one,
+            # instead of a JSON error the browser would show as it is.
+            form_page = SESSIONLESS_FORM_PAGES.get(request.url.path)
+            if form_page:
+                return RedirectResponse(url=form_page, status_code=303)
             # A CSRF failure is a `403` with a generic message (§9), but in the
             # project's error format: the middleware runs outside the global
             # boundary (an exception raised here never reaches
@@ -266,6 +282,8 @@ app.add_middleware(BaseHTTPMiddleware, dispatch=add_asset_cache_headers)
 
 # --- COMPONENT INITIALIZATION ---
 
+rt = single_method_rt(fasthtml_rt)
+
 setup_main_routes(rt)
 
 setup_auth_routes(rt)
@@ -277,3 +295,5 @@ setup_cart_routes(rt)
 setup_stats_routes(rt)
 
 setup_settings_routes(rt)
+
+check_single_method_routes(app.routes)

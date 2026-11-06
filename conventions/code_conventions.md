@@ -435,9 +435,10 @@ No duplicar validaciones de sesión de forma distinta en cada ruta. Un endpoint 
 
 ### 5.2 CSRF y rate limiting
 
-- Todas las peticiones con método inseguro (`POST`, `PUT`, `PATCH`, `DELETE`) requieren el token CSRF definido por el middleware.
-- Las excepciones CSRF deben estar en una allowlist central y explícita. Solo pueden incluir endpoints de autenticación que no tengan todavía una sesión válida o que deban funcionar para cerrar una sesión inválida.
-- Añadir una nueva excepción requiere justificarla y documentarla; no se desactiva CSRF dentro de una ruta individual.
+- Toda petición que no use un método de lectura (`GET`, `HEAD`, `OPTIONS`) requiere el token CSRF definido por el middleware. La lista es de métodos seguros, no de inseguros, para que un método no previsto quede protegido por defecto. Una escritura nunca se hace por un método de lectura (§9.2).
+- El token debe coincidir con la cookie (*double submit*) y con el guardado en la sesión, comparados en tiempo constante.
+- Ninguna ruta queda sin token. Los formularios que se envían antes de haber sesión (`/auth/login/submit` y `/auth/register/submit`, en `SESSIONLESS_FORM_PAGES`) solo comprueban que coincida con la cookie, y si falla se vuelve a su página con un token válido.
+- Añadir un formulario a esa lista requiere justificarlo y documentarlo. No se desactiva CSRF dentro de una ruta individual.
 - El rate limiting es obligatorio para login, registro, recuperación de credenciales y cualquier endpoint externo costoso o susceptible de abuso.
 - La clave de rate limiting debe combinar el identificador de operación con una identidad suficientemente estable, normalmente IP normalizada e identificador normalizado cuando exista. Cómo se obtiene y normaliza la IP se define en `infra_conventions.md` §9.
 - Los límites, ventanas y bloqueos se configuran mediante variables de entorno validadas al arrancar.
@@ -1008,7 +1009,7 @@ La decisión entre llamar directamente a CRUD o delegar en un servicio sigue la 
 - `DELETE` se utiliza para borrado físico o eliminación de relaciones según el contrato.
 - El soft-delete se expone mediante una acción `archive_<entity>` o una ruta equivalente explícita.
 
-No se utiliza `GET` para modificar datos. Las rutas usan nombres de recursos claros, parámetros específicos como `event_id` o `recipe_id` y no reciben `user_id` como fuente de autorización.
+No se utiliza `GET` para modificar datos. **Una ruta solo acepta el método que declara**, y `HEAD` si es un `GET`: otro método responde `405` (decisión 2026-11-06). El método es el nombre de su función (`def post`), y todas las rutas se registran con `single_method_rt` (`routes/http_methods.py`), porque FastHTML, por sí solo, acepta `GET` y `POST` en una función anidada. El arranque falla si una ruta se registra de otra forma y acepta varios métodos. Las rutas usan nombres de recursos claros, parámetros específicos como `event_id` o `recipe_id` y no reciben `user_id` como fuente de autorización.
 
 Una misma entidad usa un único segmento de recurso en todas sus rutas: el plato manual es `manual_intake` tanto al crear como al editar o archivar, y no `manual` en unas y `manual_intake` en otras. Al renombrar una ruta, la antigua se elimina en el mismo cambio y se actualizan todas sus referencias. No se mantienen alias de compatibilidad: una página abierta antes del despliegue recibe un `404` y basta con recargarla (hallazgo 20 de `audit_manual_intake.md`).
 
