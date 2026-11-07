@@ -1100,7 +1100,8 @@ petición y el swap `outerHTML` lo destruye.
 | `POST /cart/portion/{portion_id}/strictly_weighed` (`…/macros_quality` se retiró el 2026-10-09: es un dato del alimento, `measurement_conventions.md` §6.11) | `#macros_summary_event_{id}` | `outerHTML` | `Div(MacrosSummary(...), id="macros_summary_event_{id}")` + swap OOB del propio control, `#portion_flag_{campo}_{portion_id}` (`PortionTriStateFlag`) |
 | `POST /cart/portion/{portion_id}/is_cooked_weight` | `#macros_summary_event_{id}` | `outerHTML` | `Div(MacrosSummary(...), id="macros_summary_event_{id}")` |
 | `POST /cart/event/{id}/plate`, `POST /cart/plate/{plate_id}/name`, `…/offset`, `…/apply_offset`, `…/delete` | `#cart_card_event_{id}` | `outerHTML` | `CartCard(event, portions, plates)` |
-| `delete`, `confirm` | `#cart_card_event_{id}` | `outerHTML` | cuerpo vacío (la tarjeta desaparece) y, si no queda ningún evento planificado, swap OOB de `#cart_body` con el carrito vacío |
+| `delete`, `confirm` | `#cart_card_event_{id}` | `outerHTML` | cuerpo vacío (la tarjeta desaparece) y, si no queda ningún evento planificado, swap OOB de `#cart_body` con el carrito vacío. `confirm` añade el evento `mealConfirmed` |
+| `confirm` con una tanda no comida entera y sin `leftovers_reviewed` | `#cart_leftovers_body` (`HX-Retarget`) | `innerHTML` (`HX-Reswap`) | el pop-up de sobras (`frontend_conventions.md` §7.14), sin escribir nada; el mismo patrón que la confirmación de quitar un favorito. Un error de validación del plan de sobras es `200` con `ModalFormError` reenviado a `#cart_leftovers_message` |
 | `POST /cart/event/{event_id}/recipe` y `POST /cart/plate/{plate_id}/recipe` (guardar la comida o la tanda como receta, `frontend_conventions.md` §7.13) | `#cart_card_event_{id}`, declarado pero sin swap | `none` | cuerpo vacío y el evento `recipeSaved` (`HX-Trigger`); `static/js/cart_units.js` muestra el aviso de éxito `Recipe saved`. La tarjeta no cambia |
 | `archive`, `restore` | página completa del carrito | `outerHTML` | `cart_main(...)`; no están enlazadas desde ninguna tarjeta todavía |
 
@@ -1118,8 +1119,9 @@ Fragmento de error: ninguno. Las acciones del carrito son ediciones en línea,
 no un formulario de guardado, así que **no** aplican la excepción de `200` +
 fragmento de esta misma sección: conservan el status semántico de su categoría
 y el aviso viaja por el canal de error visible definido en
-`error_conventions.md` §7. Eventos `HX-Trigger`: `appError` y, en el éxito de
-guardar una tanda o una comida como receta, `recipeSaved`.
+`error_conventions.md` §7. Eventos `HX-Trigger`: `appError`; en el éxito de
+guardar una tanda o una comida como receta, `recipeSaved`; y al confirmar, `mealConfirmed`,
+que cierra el pop-up de sobras (`static/js/fridge.js`).
 
 Añadir un botón nuevo al carrito obliga a elegir una de las filas de esta
 tabla o a añadir una nueva; no se deja el `hx-target` implícito.
@@ -1140,6 +1142,7 @@ por el canal de error visible (`error_conventions.md` §7.1).
 | `GET /food/fridge/{id}/actions/take` (vista de sacar) | `#food_actions_modal_body` | `innerHTML` | la vista |
 | `POST /food/fridge/{id}/take` (`amount_value`, `amount_unit`, y `intake_event_id` y `plate_id` de la cabecera) | `#fridge_take_message`; `none` desde `Eat` | `innerHTML` | cuerpo vacío, la lista fuera de banda y `fridgeChanged` y `fridgeTaken`. Un error de validación es `200` con `ModalFormError` |
 | `GET /food/actions/{entry_type}/{id}/fridge` (guardar desde la fila) | `#food_actions_modal_body` | `innerHTML` | la vista |
+| `POST /food/fridge/store_recipe/{recipe_id}` (paso previo de una receta, `frontend_conventions.md` §9.7) | `#recipe_add_error` | `innerHTML` | cuerpo vacío y `fridgeStored`, que cierra también ese pop-up. Validación: `200` + fragmento |
 | `POST /food/fridge/store/{entry_type}/{id}` (desde la ficha, `frontend_conventions.md` §9.4, o desde la fila) | el mensaje de la ficha o `#food_actions_store_message` | `innerHTML` | cuerpo vacío y `fridgeStored` con el sitio. El error de validación es `200`: `ModalFormError` dentro del pop-up, que la ruta reconoce por `HX-Target`, y el mensaje de la ficha fuera |
 
 Eventos `HX-Trigger`: `fridgeChanged` (cierra el pop-up), `fridgeTaken` y `fridgeStored` (avisos de éxito, porque la página no muestra la comida ni el tupper nuevo), en `static/js/fridge.js`, y, en los errores, `appError`.

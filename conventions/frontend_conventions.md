@@ -227,6 +227,13 @@ Decisión 2026-11-05; sustituye a la versión provisional del 2026-10-18.
 
 **Después de guardar** el usuario se queda en el carrito: se cierra el pop-up y sale el aviso `Recipe saved`.
 
+### 7.14 Confirmar: lo comido por tanda y las sobras (decisión 2026-11-07)
+
+- Encima de `Confirm meal` hay un campo `Eaten` **por cada tanda con ingredientes**, con el nombre de la tanda si hay más de una. Vacío significa que se comió entera (`All of it`). Se escribe en **% por defecto** y un botón cambia a gramos, que se comparan con el total de esa tanda (`measurement_conventions.md` §4.4).
+- Si todas las tandas se comieron enteras, `Confirm meal` confirma directamente.
+- Si alguna no, aparece antes el **pop-up de sobras** (`cart_leftovers_modal`), sin haber escrito nada. Por cada una de esas tandas muestra lo que queda de cada ingrediente y pide: dónde guardarlo (`Fridge`, por defecto, `Freezer` o `Don't keep`), en cuántos tuppers iguales (`Containers`, de 1 a 10) y con qué nombre (vacío, el derivado de sus ingredientes). Su `Confirm meal` confirma la comida y guarda los tuppers juntos (`measurement_conventions.md` §4.8.5); `Cancel` lo cierra sin confirmar.
+- Un error del plan de sobras sale dentro del pop-up; uno de lo comido, en el aviso global (`error_conventions.md` §7.1), y el pop-up sigue abierto.
+
 ## 8. Superficies, contraste y colores
 
 Decisión 2026-10-10 (rediseño de la interfaz, rama `feat/ui-refresh`). La web conserva su identidad: tonos cálidos, esquinas redondeadas, el logo y la isla de navegación inferior. Las superficies son de **cristal líquido** (vidrio esmerilado translúcido, como en iOS) sobre un fondo beige muy claro con manchas de color suaves. Todo se define una sola vez en `static/css/input.css`.
@@ -338,7 +345,7 @@ Errores, por el canal común: sin sesión, `401`; tipo desconocido, `favorite` a
 
 De arriba abajo: el nombre y sus datos, *Add to*, la cantidad (con *Advanced* para la preparación), `Strictly weighted` (§7.1, `measurement_conventions.md` §6.11), *Macros Summary* y *Details*. Debajo, las acciones: `Edit` y `Log`; si el usuario no puede editarlo, `Make a copy` ocupa el sitio de `Edit`. Si puede editarlo, `Make a copy` va en su propia fila debajo, encima de `Publish` (decisión 2026-10-27). Copiar pide confirmación y abre la edición de la copia. Entra bloque a bloque (§10). En un alimento o plato propio y activo aparece además el botón `Rescue` (§9.6).
 
-En un alimento o un plato, debajo de `Edit` y `Log food`, dos botones visibles, `Save to fridge` y `Save to freezer` (decisión 2026-11-07, que sustituye a ofrecerlos dentro de *Add to*, donde no se encontraban): guardan la cantidad de arriba entera en un tupper nuevo, con su preparación y pesada y sin plato (`measurement_conventions.md` §4.8.5). La página no cambia y aparece el aviso `Saved to the fridge` o `Saved to the freezer`. Una receta lo hará desde su paso previo (§9.7), pendiente. Al registrar con `Log food`, si la cantidad cocinada es mayor que la del plato, la línea `Will be saved in fridge` dice lo que se guarda en un tupper de la nevera, y se guarda de verdad.
+En un alimento o un plato, debajo de `Edit` y `Log food`, dos botones visibles, `Save to fridge` y `Save to freezer` (decisión 2026-11-07, que sustituye a ofrecerlos dentro de *Add to*, donde no se encontraban): guardan la cantidad de arriba entera en un tupper nuevo, con su preparación y pesada y sin plato (`measurement_conventions.md` §4.8.5). La página no cambia y aparece el aviso `Saved to the fridge` o `Saved to the freezer`. Una receta se guarda desde su paso previo (§9.7). Al registrar con `Log food`, si la cantidad cocinada es mayor que la del plato, la línea `Will be saved in fridge` dice lo que se guarda en un tupper de la nevera, y se guarda de verdad.
 
 ### 9.5 Carrito
 
@@ -415,6 +422,7 @@ Decisión 2026-11-05. El modelo está en `measurement_conventions.md` §4.7 y el
 - Una línea por ingrediente, con su cantidad por ración. Se despliega para cambiar `cooking`, `final_state` y `conservation`, ya rellenos con lo de la receta. Con varias tandas, agrupadas y con un aviso de que entran como tandas nuevas.
 - `POST /add_recipe/{id}` recibe la comida, la tanda, las raciones y la preparación por ingrediente, nunca cantidades. Validación: `200` + fragmento en `#recipe_add_error`. Una comida o tanda que no existe, `404`; una comida ya confirmada o una receta sin ingredientes, `409`. Al terminar, el evento `recipeAdded` cierra el pop-up y muestra `Added to the meal`.
 - Repetirlo añade la receta otra vez: es otra ración, no un duplicado (§9.6 de `code_conventions.md`). El botón se deshabilita durante la petición.
+- Debajo, `Save to fridge` y `Save to freezer` guardan esas mismas raciones, con la preparación elegida, en un tupper nuevo con el nombre de la receta (decisión 2026-11-07, `measurement_conventions.md` §4.8.5). La comida y la tanda no se usan. El pop-up se cierra y aparece el aviso `Saved to the fridge` o `Saved to the freezer`.
 
 **Tandas en la ficha**
 
