@@ -234,6 +234,19 @@ Decisión 2026-11-05; sustituye a la versión provisional del 2026-10-18.
 - Si alguna no, aparece antes el **pop-up de sobras** (`cart_leftovers_modal`), sin haber escrito nada. Por cada una de esas tandas muestra lo que queda de cada ingrediente y pide: dónde guardarlo (`Fridge`, por defecto, `Freezer` o `Don't keep`), en cuántos tuppers iguales (`Containers`, de 1 a 10) y con qué nombre (vacío, el derivado de sus ingredientes). Su `Confirm meal` confirma la comida y guarda los tuppers juntos (`measurement_conventions.md` §4.8.5); `Cancel` lo cierra sin confirmar.
 - Un error del plan de sobras sale dentro del pop-up; uno de lo comido, en el aviso global (`error_conventions.md` §7.1), y el pop-up sigue abierto.
 
+### 7.15 Guardar parte de un ingrediente en la nevera (decisión 2026-11-07)
+
+Para lo que se cocina de golpe (pasta, quinoa): se añade al carrito con lo pesado antes de cocinar y, ya cocinado, se reparte entre el plato y la nevera.
+
+- En el pop-up `Adjust` de cada ingrediente de una comida planificada, la sección `Keep part in fridge`. Lo que se queda en el plato se dice de una de dos formas:
+  - `In %`: el porcentaje del ingrediente que va al plato.
+  - `Weighed`: el total cocinado (la olla) y lo que se pone en el plato, los dos pesados. La fracción es plato / total, exacta sin factores de cocción.
+- Debajo, dónde va el resto (`Fridge` por defecto o `Freezer`) y en cuántos tuppers iguales (vacío es uno). `Keep the rest` lo hace: la fila se queda con su parte, el resto va a tuppers nuevos (`measurement_conventions.md` §4.8.5), la tarjeta se repinta y aparece el aviso `Saved to the fridge`. Con `Weighed`, cada tupper lleva su parte del peso real.
+- Los campos de `Weighed` solo se ven con esa opción marcada, con CSS (`group-has`), para que un borrador recuperado enseñe los campos que tocan.
+- **Lo escrito es un borrador**: se guarda en el navegador mientras se escribe y vuelve tras recargar, hasta que se guarda (`static/js/form_drafts.js`, el mismo mecanismo que los formularios de alimentos). Un formulario que se queda en la página dice en `data-draft-done-event` qué evento marca que se guardó; los demás se dan por guardados con un `HX-Redirect`. El token CSRF nunca va en un borrador.
+- Es una acción en línea del carrito: un error sale en el aviso global (`code_conventions.md` §9.5).
+- Borrar después la comida no deshace el reparto: lo guardado ya está en la nevera.
+
 ## 8. Superficies, contraste y colores
 
 Decisión 2026-10-10 (rediseño de la interfaz, rama `feat/ui-refresh`). La web conserva su identidad: tonos cálidos, esquinas redondeadas, el logo y la isla de navegación inferior. Las superficies son de **cristal líquido** (vidrio esmerilado translúcido, como en iOS) sobre un fondo beige muy claro con manchas de color suaves. Todo se define una sola vez en `static/css/input.css`.
