@@ -9,6 +9,7 @@ name). Confirming from it confirms the meal and stores the leftovers together
 
 from fasthtml.common import *
 
+from DayBetes_food.components.cart.cart_components import ContainersField, PillRadio
 from DayBetes_food.components.food.food_shared import STORAGE_LABELS
 from DayBetes_food.components.modal import (
     ModalLayer,
@@ -17,14 +18,13 @@ from DayBetes_food.components.modal import (
     modal_secondary_button,
 )
 from DayBetes_food.domain.constants import StorageLocation
-from DayBetes_food.domain.fridge import LEFTOVER_CONTAINERS_RANGE
 from DayBetes_food.domain.intake_plate import PlateEaten
 
 CART_LEFTOVERS_MODAL_ID = "cart_leftovers_modal"
 CART_LEFTOVERS_BODY_ID = "cart_leftovers_body"
 CART_LEFTOVERS_MESSAGE_ID = "cart_leftovers_message"
 
-_FIELD_CLS = "web_input border border-line rounded-lg px-3 py-2 text-sm min-w-0"
+_FIELD_CLS = "web_input border border-line rounded-xl px-3 py-2 text-sm min-w-0"
 
 
 def CartLeftoversModal():
@@ -55,56 +55,42 @@ def _eaten_fields(eaten: list[PlateEaten]):
 
 
 def _plate_leftovers(plate_id: int, label: str, fraction: float, portions: list):
-    """One plate: what is left of each ingredient, and what to do with it."""
+    """One plate: what is left of each ingredient, and what to do with it, with the
+    same controls as `Keep part in fridge` (frontend_conventions.md §7.15). The
+    place is a group of radios, so it is named after the plate."""
     left = 1.0 - fraction
-    location_id = f"leftover_location_{plate_id}"
-    containers_id = f"leftover_containers_{plate_id}"
-    name_id = f"leftover_name_{plate_id}"
     return Div(
         Input(type="hidden", name="leftover_plate_id", value=str(plate_id)),
-        P(label, cls="font-semibold text-gray-900 break-words"),
+        P(label, cls="web_section_label break-words"),
         P(
             ", ".join(f"{portion.source.name} {portion.amount * left:.1f} g" for portion in portions),
             cls="text-xs text-gray-600",
         ),
         Div(
             Div(
-                Label("Keep in", cls="text-xs text-gray-700", **{"for": location_id}),
-                Select(
-                    *[
-                        Option(STORAGE_LABELS[location], value=location.value, selected=location is StorageLocation.FRIDGE)
-                        for location in StorageLocation
-                    ],
-                    Option("Don't keep", value=""),
-                    id=location_id,
-                    name="leftover_location",
-                    cls=_FIELD_CLS,
-                ),
-                cls="flex flex-col gap-1 min-w-0",
+                *[
+                    PillRadio(
+                        f"leftover_location_{plate_id}",
+                        location.value,
+                        STORAGE_LABELS[location],
+                        location is StorageLocation.FRIDGE,
+                    )
+                    for location in StorageLocation
+                ],
+                PillRadio(f"leftover_location_{plate_id}", "", "Don't keep", False),
+                cls="flex items-center gap-2 flex-wrap",
             ),
-            Div(
-                Label("Containers", cls="text-xs text-gray-700", **{"for": containers_id}),
-                Input(
-                    type="number",
-                    id=containers_id,
-                    name="leftover_containers",
-                    value="1",
-                    min=str(int(LEFTOVER_CONTAINERS_RANGE.minimum)),
-                    max=str(int(LEFTOVER_CONTAINERS_RANGE.maximum)),
-                    step="1",
-                    inputmode="numeric",
-                    cls=f"{_FIELD_CLS} overflow-hidden",
-                ),
-                cls="flex flex-col gap-1 min-w-0",
-            ),
-            cls="grid grid-cols-2 gap-2",
+            ContainersField("leftover_containers"),
+            cls="flex items-center justify-between gap-2 flex-wrap",
         ),
-        Div(
-            Label("Name", cls="text-xs text-gray-700", **{"for": name_id}),
-            Input(type="text", id=name_id, name="leftover_name", placeholder=label, cls=f"{_FIELD_CLS} w-full"),
-            cls="flex flex-col gap-1",
+        Input(
+            type="text",
+            name="leftover_name",
+            placeholder=f"Name ({label})",
+            aria_label=f"Name of the containers of {label}",
+            cls=_FIELD_CLS + " w-full",
         ),
-        cls="flex flex-col gap-2 rounded-2xl border border-line p-3",
+        cls="flex flex-col gap-2 pt-3 border-t border-line-soft",
     )
 
 

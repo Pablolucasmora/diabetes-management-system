@@ -822,9 +822,9 @@ def _settings_group(title: str, *content):
     )
 
 
-def _pill_radio(name: str, value: str, label: str, checked: bool, *, compact: bool = False, **attrs):
+def PillRadio(name: str, value: str, label: str, checked: bool, *, compact: bool = False, **attrs):
     """One option of a small set, as a pill; the checked one is ink. `compact` for
-    a pill that shares a row with a field."""
+    a pill that shares a row with a field. Also used by the leftovers pop-up."""
     size = "px-2 py-1 text-xs" if compact else "px-3 py-1.5 text-sm"
     return Label(
         Input(type="radio", name=name, value=value, checked=checked, cls="peer sr-only", **attrs),
@@ -854,14 +854,30 @@ def _number_field(label: str, name: str, field_id: str, *, decimal: bool = True,
     )
 
 
+def ContainersField(name: str):
+    """How many equal containers: empty is one (measurement §4.8.5)."""
+    return Div(
+        Input(
+            type="text",
+            name=name,
+            inputmode="numeric",
+            placeholder="1",
+            aria_label="Containers",
+            cls=f"{_FIELD_CLS} w-14",
+        ),
+        Span("containers", cls="text-xs text-gray-600"),
+        cls="flex items-center gap-2",
+    )
+
+
 def _KeepPartForm(portion_id: int, card_target: str, modal_id: str):
     """After cooking: what stays on the plate, in % or weighed, and where the rest
     goes (frontend_conventions.md §7.15). The weighed fields show only with
     `Weighed` checked, with CSS (`group-has`), without script."""
     return Form(
         Div(
-            _pill_radio("keep_mode", KeepPartMode.PERCENT.value, "In %", True),
-            _pill_radio("keep_mode", KeepPartMode.WEIGHED.value, "Weighed", False, data_keep_weighed="true"),
+            PillRadio("keep_mode", KeepPartMode.PERCENT.value, "In %", True),
+            PillRadio("keep_mode", KeepPartMode.WEIGHED.value, "Weighed", False, data_keep_weighed="true"),
             cls="flex items-center gap-2",
         ),
         Div(
@@ -876,23 +892,12 @@ def _KeepPartForm(portion_id: int, card_target: str, modal_id: str):
         Div(
             Div(
                 *[
-                    _pill_radio("location", location.value, STORAGE_LABELS[location], location is StorageLocation.FRIDGE)
+                    PillRadio("location", location.value, STORAGE_LABELS[location], location is StorageLocation.FRIDGE)
                     for location in StorageLocation
                 ],
                 cls="flex items-center gap-2",
             ),
-            Div(
-                Input(
-                    type="text",
-                    name="containers",
-                    inputmode="numeric",
-                    placeholder="1",
-                    aria_label="Containers",
-                    cls=f"{_FIELD_CLS} w-14",
-                ),
-                Span("containers", cls="text-xs text-gray-600"),
-                cls="flex items-center gap-2",
-            ),
+            ContainersField("containers"),
             cls="flex items-center justify-between gap-2 flex-wrap",
         ),
         modal_confirm_button(
@@ -1194,7 +1199,7 @@ def _EatenRow(plate_id: int, label: str):
         # literals here (§4.3 of code_conventions.md; finding 47).
         Div(
             *[
-                _pill_radio(
+                PillRadio(
                     f"ingested_unit_{plate_id}", unit.value, unit.value, unit is AmountInputUnit.PERCENT, compact=True
                 )
                 for unit in (AmountInputUnit.PERCENT, AmountInputUnit.GRAMS)

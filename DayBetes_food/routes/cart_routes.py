@@ -84,7 +84,6 @@ from DayBetes_food.domain.fridge import (
     LeftoverPlan,
     parse_fridge_name,
     parse_keep_part,
-    parse_leftover_containers,
     parse_optional_containers,
 )
 from DayBetes_food.domain.portion_detail import PortionDetailUpdate, amount_to_grams
@@ -427,24 +426,28 @@ def _parse_eaten(form) -> tuple[PlateEaten, ...]:
 
 
 def _parse_leftover_plans(form) -> tuple[LeftoverPlan, ...]:
-    """The aligned `leftover_*` lists of the leftovers pop-up (§7.1). An empty place
-    is "don't keep"; containers from 1 to 10; the name is optional."""
+    """The plan of the leftovers pop-up (§7.1): the aligned `leftover_plate_id` /
+    `leftover_containers` / `leftover_name` lists, and the place of each plate in
+    `leftover_location_<plate_id>` (radios, one group per plate). An empty place is
+    "don't keep"; empty containers is one; the name is optional."""
     plate_ids = form.getlist("leftover_plate_id")
-    locations = form.getlist("leftover_location")
     containers = form.getlist("leftover_containers")
     names = form.getlist("leftover_name")
-    if not len(plate_ids) == len(locations) == len(containers) == len(names):
+    if not len(plate_ids) == len(containers) == len(names):
         raise ValidationError("The leftovers of the form are incomplete.")
     plans = []
-    for raw_id, raw_location, raw_containers, raw_name in zip(plate_ids, locations, containers, names):
+    for raw_id, raw_containers, raw_name in zip(plate_ids, containers, names):
         plate_id = parse_optional_id(str(raw_id), "plate")
         if plate_id is None:
             raise ValidationError("The leftovers of the form are incomplete.")
+        location_field = f"leftover_location_{plate_id}"
+        if location_field not in form:
+            raise ValidationError("Choose where to keep each plate.")
         plans.append(
             LeftoverPlan(
                 plate_id=plate_id,
-                location=parse_enum(StorageLocation, str(raw_location), field="location"),
-                containers=parse_leftover_containers(raw_containers),
+                location=parse_enum(StorageLocation, str(form.get(location_field)), field="location"),
+                containers=parse_optional_containers(raw_containers),
                 name=parse_fridge_name(raw_name),
             )
         )
