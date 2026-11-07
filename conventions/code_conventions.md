@@ -1137,9 +1137,12 @@ por el canal de error visible (`error_conventions.md` §7.1).
 | `POST /food/fridge/{id}/location` (`location`) | `#food-list` | `innerHTML` | la lista. Repetirla es un no-op (§6.3) |
 | `POST /food/fridge/{id}/discard` | `#food-list` | `innerHTML` | la lista y el evento `fridgeChanged`, que cierra el pop-up |
 | `POST /food/fridge/{id}/edit` (`name`, `expires_at`, `content_weight`) | `#fridge_edit_message` | `innerHTML` | cuerpo vacío, la lista fuera de banda (`#food-list`) y `fridgeChanged`. Un error de validación es `200` con `ModalFormError` en ese mismo destino (excepción de formulario de esta sección) |
-| `POST /food/fridge/store/{entry_type}/{id}` (ficha del alimento, `frontend_conventions.md` §9.4) | el mensaje de la ficha | `innerHTML` | `HX-Redirect` a `/food`, como `/food/log` |
+| `GET /food/fridge/{id}/actions/take` (vista de sacar) | `#food_actions_modal_body` | `innerHTML` | la vista |
+| `POST /food/fridge/{id}/take` (`amount_value`, `amount_unit`, y `intake_event_id` y `plate_id` de la cabecera) | `#fridge_take_message`; `none` desde `Eat` | `innerHTML` | cuerpo vacío, la lista fuera de banda y `fridgeChanged` y `fridgeTaken`. Un error de validación es `200` con `ModalFormError` |
+| `GET /food/actions/{entry_type}/{id}/fridge` (guardar desde la fila) | `#food_actions_modal_body` | `innerHTML` | la vista |
+| `POST /food/fridge/store/{entry_type}/{id}` (desde la ficha, `frontend_conventions.md` §9.4, o desde la fila) | el mensaje de la ficha o `#food_actions_store_message` | `innerHTML` | cuerpo vacío y `fridgeStored` con el sitio. El error de validación es `200`: `ModalFormError` dentro del pop-up, que la ruta reconoce por `HX-Target`, y el mensaje de la ficha fuera |
 
-Eventos `HX-Trigger`: `fridgeChanged` y, en los errores, `appError`.
+Eventos `HX-Trigger`: `fridgeChanged` (cierra el pop-up), `fridgeTaken` y `fridgeStored` (avisos de éxito, porque la página no muestra la comida ni el tupper nuevo), en `static/js/fridge.js`, y, en los errores, `appError`.
 
 ### 9.6 Entrada, estados de carga y repetición
 
@@ -1432,8 +1435,8 @@ Decisión del usuario del 2026-11-07. Cada fila es **un tupper** guardado en la 
 
 - **Propietario.** `users_id`, `NOT NULL`, propietario y actor a la vez; en Python, `user_id` (§3.5). Es privada: solo su propietario la lee y la escribe, con la condición en el SQL.
 - **Contenido.** Sus ingredientes son porciones de `portion_detail` con destino `fridge_id`, escaladas como las de una receta. Un tupper de un solo alimento tiene una sola porción.
-- **Abierto y cerrado.** Un tupper con `closed_at` nulo está en la nevera o en el congelador. Se cierra al sacar lo último que queda o al tirarlo si ya se había sacado algo; un tupper cerrado no se lista ni se reabre.
-- **Tirar.** Si ninguna porción de una comida lo referencia (`portion_detail.source_fridge_id`), se borra físicamente con su contenido y su historial: lo que se tira no se guarda. Si alguna lo referencia, se cierra (`closed_at`), porque esas porciones son histórico clínico. La base lo impide con una FK `NO ACTION DEFERRABLE INITIALLY DEFERRED` (§11.8): con `RESTRICT` la comprobación se hace dentro de cada cascada y borrar un usuario fallaba si la cascada llegaba al tupper antes que a la porción que lo referencia. Como el error saldría en el commit, la query de tirar comprueba antes si hay porciones que lo referencian.
+- **Abierto y cerrado.** Un tupper con `closed_at` nulo está en la nevera o en el congelador. Se cierra con un motivo, `closed_reason`: `emptied` al sacar lo último que queda y `discarded` al tirarlo si ya se había sacado algo. Un tupper cerrado no se lista. Solo uno vaciado se reabre, cuando vuelve lo sacado de él porque se borra la comida o el ingrediente antes de confirmar (`measurement_conventions.md` §4.8.6).
+- **Tirar.** Si ninguna porción de una comida lo referencia (`portion_detail.source_fridge_id`), se borra físicamente con su contenido y su historial: lo que se tira no se guarda. Si alguna lo referencia, se cierra como tirado, porque esas porciones son histórico clínico. La base lo impide con una FK `NO ACTION DEFERRABLE INITIALLY DEFERRED` (§11.8): con `RESTRICT` la comprobación se hace dentro de cada cascada y borrar un usuario fallaba si la cascada llegaba al tupper antes que a la porción que lo referencia. Como el error saldría en el commit, la query de tirar comprueba antes si hay porciones que lo referencian.
 - **Caducar no borra.** Un tupper caducado sigue abierto y se marca en la interfaz hasta que el usuario lo tira o se lo come (`frontend_conventions.md` §9.8).
 - **Cambiar de sitio.** Actualiza `location`, recalcula `expires_at` (`measurement_conventions.md` §4.8) y añade una fila a `fridge_move` en la misma transacción.
 - **Borrado del usuario.** `CASCADE` desde `users`, como el resto de sus datos.

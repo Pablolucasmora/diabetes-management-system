@@ -233,6 +233,15 @@ WHERE plate_id IS NOT NULL
 
 `amount` guarda lo que el usuario pesó (§5.2), y 100 g pesados en crudo y 100 g pesados en cocido son cantidades de alimento distintas: sumarlas en una fila con un único valor de la casilla convertiría mal una de las dos. Por eso la misma comida pesada en crudo y en cocido son dos filas aparte, y solo se suman cuando la casilla coincide.
 
+**`source_fridge_id` forma parte de la clave** (2026-11-07). El índice es `uq_portion_detail_plate_origin_preparation_source`:
+
+```text
+UNIQUE NULLS NOT DISTINCT (plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state, is_cooked_weight, source_fridge_id)
+WHERE plate_id IS NOT NULL
+```
+
+Lo sacado de un tupper vuelve a él si se borra la comida (§4.8.6), así que no se suma con el mismo alimento añadido de otra forma ni con lo sacado de otro tupper. Dos veces del mismo tupper en la misma tanda sí se suman. La clave de las tandas de receta (§4.7) no cambia: una receta no tiene porciones sacadas de un tupper.
+
 **Es un índice único parcial, no un constraint de tabla, y el `WHERE` no es opcional.** `plate_id` es nulo en las porciones con destino `recipe` y `fridge`, y con `NULLS NOT DISTINCT` esos nulos se consideran iguales entre sí: sin el filtro, el mismo alimento con la misma preparación en **dos recetas distintas** chocaría como si fuera un duplicado. La unicidad es dentro de la tanda y solo aplica a las porciones que tienen tanda.
 
 **La fusión es real en la base, no solo visual** (decisión 2026-09-19). Antes de esta regla, añadir dos veces el mismo alimento insertaba dos filas y `group_portions` las sumaba solo al pintar; la fusión física ocurría únicamente si el usuario editaba la cantidad desde el carrito. A partir de aquí, la inserción fusiona en la propia tabla, para que el análisis no tenga que deduplicar.
@@ -319,6 +328,7 @@ fridge
   expires_at      TIMESTAMPTZ   -- editable
   content_weight  REAL NULL     -- peso real del contenido, en gramos (4.8.3)
   closed_at       TIMESTAMPTZ NULL
+  closed_reason   FridgeCloseReason: 'emptied' | 'discarded', NULL si y solo si está abierto
   created_at / updated_at
 
 fridge_move
@@ -347,7 +357,8 @@ portion_detail
 - Las porciones del tupper guardan `amount` con el mismo significado que en una receta: la cantidad del ingrediente tal como se registró, cruda o cocida según `is_cooked_weight` (§5.2). Por eso su suma no es el peso real del tupper.
 - `content_weight` es el **peso real del contenido**, pesado por el usuario. Es opcional: se puede rellenar al guardar o después. Nunca se deduce de las porciones.
 - **Sacar de un tupper** se expresa con una fracción en `(0, 1]`, **en % y con 100 % por defecto**. En gramos solo se admite si el tupper tiene `content_weight`: `fracción = gramos / content_weight`. Sin él, el selector de gramos no se ofrece y el servidor rechaza los gramos con `422`.
-- Las porciones creadas en la comida son las del tupper multiplicadas por la fracción y conservan `is_cooked_weight` y la preparación. Al descontarlo (cuándo, en §4.8.6), las del tupper se reducen por `1 - fracción` y `content_weight`, si existe, en la misma proporción. Con fracción `1`, el tupper se cierra (`closed_at`) en la misma transacción.
+- Las porciones creadas en la comida son las del tupper multiplicadas por la fracción y conservan `is_cooked_weight`, `strictly_weighed` y la preparación. Se descuenta **al añadirlo a la comida** (§4.8.6), en la misma transacción: las del tupper se reducen por `1 - fracción` y `content_weight`, si existe, en la misma proporción.
+- Con fracción `1` el tupper se cierra como vaciado (`closed_reason = 'emptied'`) y **conserva su contenido y su peso tal como estaban**, para poder volver (§4.8.6). Ese contenido no se lista.
 
 #### 4.8.4 Conservación de las porciones sacadas
 
@@ -355,13 +366,18 @@ Cada porción creada lleva `source_fridge_id` y una `conservation` (`fridge` o `
 
 #### 4.8.5 Cómo entra un tupper
 
-- **A mano**, desde la ficha de un alimento, de un plato o de una receta, eligiendo `Fridge` o `Freezer` en *Add to* (`frontend_conventions.md` §9.4). Crea un tupper nuevo con lo indicado.
-- **Al emplatar** desde la ficha de un alimento: si la cantidad total cocinada es mayor que la puesta en el plato, la diferencia se guarda **en ese momento** como tupper nuevo de ese alimento, en la misma transacción que la porción del plato. Se crea aunque luego se borre la comida, porque el tupper existe igual.
+- **A mano**, desde la ficha de un alimento o de un plato, con `Save to fridge` o `Save to freezer`, o desde el pop-up de acciones de su fila (`frontend_conventions.md` §9.3.1, §9.4). Crea un tupper nuevo con la cantidad indicada. Una receta entra desde su paso previo (§9.7), pendiente.
+- **Al emplatar** desde la ficha de un alimento: si la cantidad total cocinada es mayor que la puesta en el plato (más allá del redondeo de la pantalla), la diferencia se guarda **en ese momento** como tupper nuevo de ese alimento **en la nevera**, con su misma preparación y pesada, en la misma transacción que la porción del plato. Se crea aunque luego se borre la comida, porque el tupper existe igual.
 - **Al confirmar una comida** con sobras: pendiente de cerrar la fracción por tanda y su denominador en gramos (§4.4). Se documentará con esa decisión.
 
-#### 4.8.6 Pendiente de decidir
+#### 4.8.6 Sacar y devolver (decisión 2026-11-07)
 
-- **Cuándo se descuenta lo sacado.** Si al añadirlo a una comida `planned` o al confirmarla, y qué pasa con el tupper si esa comida o la porción se borran antes de confirmar.
+- **Lo sacado se descuenta al añadirlo a una comida `planned`**, como al sacarlo de la nevera de verdad.
+- **Si se borra esa comida o ese ingrediente antes de confirmar, vuelve al tupper**, para poder sacarlo otra vez. Vuelve lo que la comida tiene de ese tupper en ese momento, también si se cambió la cantidad en el carrito: cada ingrediente se suma al mismo del tupper (origen, preparación y pesada) o se añade.
+- **El peso real** vuelve con el mismo peso por gramo que tenía el contenido del tupper, que sacar en proporción no cambia. Sin peso real, sigue sin él.
+- **Un tupper vaciado se reabre** con lo devuelto: su contenido anterior, que solo servía para calcular ese peso por gramo, se sustituye. **Un tupper tirado** (`closed_reason = 'discarded'`) no recibe nada: lo devuelto se pierde con la comida.
+- **Una comida confirmada no devuelve nada**: lo sacado ya se comió, y archivarla no lo cambia.
+- Varios tuppers se bloquean siempre en el mismo orden (`code_conventions.md` §6.8).
 
 ## 5. Información nutricional
 
