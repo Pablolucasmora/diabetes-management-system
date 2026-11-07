@@ -477,6 +477,7 @@ Píldora `Fridge` de Food (§9.3). Modelo y cantidades en `measurement_conventio
   - **Copos**: uno pequeño a cada lado del título `Fridge`, fuera de la columna de tarjetas, y otro delante de `Freezer`. Son SVG con `currentColor` en `ice` o `ice-deep`.
   - **Cada tupper es un tupper de cristal**: la tarjeta de cristal (`web_container`) es el cuerpo. Arriba lleva una tapa, una franja de `wash-blue` con una junta de `ice` debajo, y en el centro una pestaña de cierre translúcida que cae sobre el borde (`.fridge_tupper`, con pseudoelementos). No lleva cierres laterales ni etiqueta.
   - **Congelador**: su sección va dentro de un fondo suave de `ice-deep` con esquinas redondeadas (`.fridge_freezer`), que no es de cristal. Sus tuppers miden lo mismo que los de la nevera y el fondo crece a su alrededor con su margen, así que es algo más ancho que la columna. Sus tuppers usan `ice-deep` en la tapa y la junta.
+  - **Píldora `Fridge`** de la cabecera de Food: sin seleccionar, lleva un degradado de blanco a `wash-blue` y el borde en `ice`. Seleccionada, tiene el negro de las demás píldoras y conserva solo el borde `ice` (`.food_filter_fridge`).
   - Un tupper caducado no cambia de forma: se marca solo con la etiqueta `Expired` y la línea de días en `danger` (arriba).
 
 ## 10. Movimiento
