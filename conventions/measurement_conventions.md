@@ -831,7 +831,7 @@ La columna que almacena la dosis en `insulin_injections` se llama `units` (se ll
 Reglas actuales:
 
 - `units` es obligatorio y positivo para insulina **basal**;
-- `units` es opcional para insulina **rápida**: hoy siempre se guarda `NULL`, porque el formulario de rápida no captura la dosis, pero un valor positivo es válido en el modelo y podrá capturarse sin migración adicional (caso de uso: usar una pluma que no registra la dosis por sí sola);
+- `units` es opcional para insulina **rápida** (caso de uso: una pluma que no registra la dosis por sí sola). Desde el 2026-11-08 el formulario de inyección del menú, el de edición de ajustes y el carrito la capturan para los dos tipos, con el mismo campo `Dose (U)`, marcado como opcional con rápida; vacío se guarda `NULL`;
 - `NULL` significa "dosis no registrada", nunca cero (§2);
 - la dosis debe ser positiva;
 - el incremento permitido debe estar definido por el formulario y el servidor, y reforzarse además en PostgreSQL con un `CHECK` coherente con esa validación (`code_conventions.md` §11.6);
@@ -866,6 +866,20 @@ Relación entre `insulin_dose` e `insulin_injections` (decisiones del 2026-09-06
 `shot_time` representa el momento en que se administró la inyección, almacenado en UTC. La interfaz puede introducirlo en la zona horaria local del usuario.
 
 `shot_time` no se sustituye por `created_at` ni al revés: son campos distintos según §9.3. Una inyección puede registrarse horas o días después de haberse administrado.
+
+### 8.4 Bolis de insulina y marcas (decisión del usuario, 2026-11-08)
+
+Cada inyección nueva sale de **un boli concreto**, y así se sabe cuánto le queda y cuándo caduca. Ciclo de vida y propiedad en `code_conventions.md` §11.2.7; interfaz en `frontend_conventions.md` §9.9.
+
+- **Marca** (`insulin_brand`): una insulina tal como la usa el usuario, con su nombre (`NovoRapid`), su tipo (`rapid` o `basal`, el mismo `InsulinType` de §8.1), los **días de uso** una vez abierta (30 por defecto) y las **unidades por boli** (300 por defecto: 3 ml de U-100). Cada usuario tiene las suyas.
+- **Boli** (`insulin_pen`): un boli o un cartucho sacado de la nevera. Guarda su marca, su formato (`prefilled_pen` o `cartridge`, `PenFormat`), cuándo se abrió (`opened_at`), su caducidad (`expires_at`) y su capacidad (`capacity_units`). La caducidad y la capacidad se copian de la marca al abrirlo (`opened_at` + días de uso) y después se editan en el boli: cambiar la marca no cambia los bolis ya abiertos.
+- **Lo que queda** = `capacity_units` − Σ (dosis + **1 U de purga**) de las inyecciones del boli. La purga es fija, `PEN_PRIMING_UNITS = 1`, porque el usuario purga siempre antes de pinchar. Solo cuenta para el boli: `insulin_injections.units` sigue siendo la dosis administrada, sin la purga. Se calcula en vivo, nunca se guarda (§6.9). Una inyección sin dosis (`units` nulo, §8.1) resta solo la purga, y entonces lo que queda se muestra como aproximado (`≈`).
+- **El tipo de la inyección es el de la marca de su boli.** El formulario no lo pregunta. Una marca con bolis no puede cambiar de tipo (`409`), porque dejaría inyecciones con un tipo distinto al de su boli.
+- **No hay inyección nueva sin boli.** El formulario del menú y el carrito lo exigen, y el boli tiene que estar abierto. Las inyecciones anteriores al 2026-11-08 tienen `insulin_pen_id` nulo y se quedan así (§12.7 de `code_conventions.md`); al editarlas se puede dejar sin boli o asignarles uno.
+- **Bolo de una comida.** Mientras la comida está `planned`, `intake_event.insulin_pen_id` e `intake_event.insulin_units` guardan el boli y la dosis elegidos en el carrito, como `injection_zone` (§8.2). Al confirmar se copian a la inyección automática, y desde ahí la fuente de verdad es la inyección. Confirmar una comida con `insulin_dose = TRUE` sin boli abierto es un `422` ("Choose the pen you injected with").
+- **Boli por defecto de una comida**: el boli abierto de insulina **rápida** usado más recientemente (la inyección con `shot_time` más reciente); si ninguno se ha usado, el abierto más recientemente. Se escribe al crear la comida y al marcar `insulin_dose`, nunca al pintar (§7.14 de `code_conventions.md`). Si el boli de una comida `planned` se cierra o se borra, la comida pasa al nuevo boli por defecto en la misma transacción.
+- **Avisos**: un boli abierto está **a punto de acabarse** si le quedan 3 días o menos para caducar (`PEN_WARNING_DAYS`) o 30 U o menos (`PEN_WARNING_UNITS`), y **caducado** si ya pasó `expires_at`. Caducar no lo cierra: se marca hasta que el usuario lo descarta.
+- **Cerrar un boli** guarda el motivo, que se deduce en el momento: `expired` si ya caducó, `empty` si no le quedan unidades y `discarded` en otro caso.
 
 ## 9. Tiempo y fechas
 

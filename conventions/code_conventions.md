@@ -79,7 +79,7 @@ Un CRUD:
 
 #### 1.3.1 Organización de archivos en `database/queries/`
 
-`database/queries/` no es un único archivo: un módulo por tabla física, nombrado como la tabla (`users.py`, `catalog.py`, `manual_intake.py`, `recipe.py`, `recipe_plate.py`, `tags.py`, `linked_tags.py`, `user_favorites.py`, `food_brands.py`, `intake_event.py`, `insulin_injections.py`, `portion_detail.py`, `meal_type_schedule.py`, `auth_sessions.py`, `auth_rate_limits.py`, ...).
+`database/queries/` no es un único archivo: un módulo por tabla física, nombrado como la tabla (`users.py`, `catalog.py`, `manual_intake.py`, `recipe.py`, `recipe_plate.py`, `tags.py`, `linked_tags.py`, `user_favorites.py`, `food_brands.py`, `intake_event.py`, `insulin_injections.py`, `insulin_brand.py`, `insulin_pen.py`, `portion_detail.py`, `meal_type_schedule.py`, `auth_sessions.py`, `auth_rate_limits.py`, ...).
 
 - **`crud.py`** contiene únicamente helpers genéricos compartidos por varios módulos de tabla: ejecución de queries (`_execute_query`, `_execute_query_many`), el constructor seguro de `UPDATE` dinámico (`_build_update_query` y su whitelist), búsqueda difusa (`_build_fuzzy_search`), la búsqueda por palabras de las tablas de referencia (`_search_reference_foods`) y la regla de visibilidad de `catalog` y `manual_intake` (`_food_visibility_sql`). No contiene CRUD de ninguna tabla. Un helper usado por más de un módulo de tabla vive en `crud.py`, aunque físicamente resida hoy dentro del bloque de una tabla concreta; no se decide por dónde está escrito hoy sino por quién lo usa.
 - Una función va en el archivo de la tabla sobre la que ejecuta su SQL. Si su `FROM`/`UPDATE`/`INSERT` principal toca la tabla puente de una relación N:M (`linked_tags`, `user_favorites`), va en el archivo de esa tabla puente, no en el de las tablas que relaciona.
@@ -1096,6 +1096,7 @@ petición y el swap `outerHTML` lo destruye.
 |---|---|---|---|
 | `meal_hour` (hora y fecha) | `#cart_events_list` | `outerHTML` | `cart_events_list(...)` — es la única acción que reordena la lista (`meal_time`) |
 | `name`, `notes`, `meal_type`, `eating_out`, `insulin_dose`, `injection_zone` | `#cart_card_event_{id}` | `outerHTML` | `CartCard(event, portions, plates)` |
+| `insulin_pen` (`insulin_pen_id`, un boli abierto de rápida) e `insulin_units` (vacío es sin dosis), junto a la zona (`measurement_conventions.md` §8.4) | `#cart_card_event_{id}` | `outerHTML` | `CartCard(...)`. Solo con `insulin_dose = TRUE` y la comida `planned` (`409` en otro caso). La opción `+ New pen` no envía nada: abre el pop-up de abrir boli |
 | `POST /cart/portion/{portion_id}/amount` (payload `amount_value` + `amount_unit`), `…/offset`, `…/move`, `…/delete` | `#cart_card_event_{id}` | `outerHTML` | `CartCard(event, portions, plates)` |
 | `POST /cart/portion/{portion_id}/strictly_weighed` (`…/macros_quality` se retiró el 2026-10-09: es un dato del alimento, `measurement_conventions.md` §6.11) | `#macros_summary_event_{id}` | `outerHTML` | `Div(MacrosSummary(...), id="macros_summary_event_{id}")` + swap OOB del propio control, `#portion_flag_{campo}_{portion_id}` (`PortionTriStateFlag`) |
 | `POST /cart/portion/{portion_id}/is_cooked_weight` | `#macros_summary_event_{id}` | `outerHTML` | `Div(MacrosSummary(...), id="macros_summary_event_{id}")` |
@@ -1148,7 +1149,21 @@ por el canal de error visible (`error_conventions.md` §7.1).
 
 Eventos `HX-Trigger`: `fridgeChanged` (cierra el pop-up), `fridgeTaken` y `fridgeStored` (avisos de éxito, porque la página no muestra la comida ni el tupper nuevo), en `static/js/fridge.js`, y, en los errores, `appError`. Sacar a una comida nueva añade `mealCreated` (`frontend_conventions.md` §7.7).
 
-### 9.6 Entrada, estados de carga y repetición
+#### Contrato HTMX de los bolis y las marcas
+
+Páginas `Pens` y `Brands` de ajustes y pop-up de abrir boli (`frontend_conventions.md` §9.9, `routes/insulin_routes.py`). Cada acción exige `HX-Request` (`403` si falta). Un error de validación de un formulario es `200` con `ModalFormError` en el mensaje del pop-up (excepción de formulario de esta sección); el resto de errores viajan por el canal de error visible (`error_conventions.md` §7.1).
+
+| Acción | `hx-target` | `hx-swap` | Fragmento de éxito |
+|---|---|---|---|
+| `POST /insulin/pens` (abrir un boli: `insulin_brand_id` o los campos de una marca nueva, `format`, `opened_date`) | `#insulin_pen_modal_error` | `innerHTML` | cuerpo vacío y `penCreated` con `{id, label, insulin_type}`: `static/js/insulin_pens.js` cierra el pop-up, añade el boli a los selectores de boli de la página y lo elige en el que abrió el pop-up |
+| `POST /insulin/pens/{id}/update` (`format`, `expires_date`, `capacity_units`) | `#insulin_pen_edit_error_{id}` | `innerHTML` | cuerpo vacío e `insulinChanged`, que cierra el pop-up y repinta la lista |
+| `POST /insulin/pens/{id}/discard` | ninguno | `none` | cuerpo vacío e `insulinChanged` |
+| `POST /insulin/brands` y `POST /insulin/brands/{id}/update` (`name`, `insulin_type`, `in_use_days`, `pen_units`) | `#insulin_brand_form_error` / `#insulin_brand_edit_error_{id}` | `innerHTML` | cuerpo vacío e `insulinChanged` |
+| `POST /insulin/brands/{id}/delete` | ninguno | `none` | cuerpo vacío e `insulinChanged` |
+| `GET /settings/insulin/pens/list` y `GET /settings/insulin/brands/list` | `#insulin_pens_body` / `#insulin_brands_body` | `innerHTML` | la lista de bolis o de marcas, con sus pop-ups. `static/js/insulin_pens.js` repinta la de la página abierta |
+
+Eventos `HX-Trigger`: `penCreated` e `insulinChanged`, en `static/js/insulin_pens.js`, y, en los errores, `appError`.
+
 
 La entrada se extrae y valida según la sección 7 antes de crear el `Request` o `Command`. El usuario autenticado procede del contexto de sesión.
 
@@ -1332,6 +1347,8 @@ La clasificación de cada tabla se declara en este registro, que es el sitio ún
 | `portion_detail` | **Dependent** de su destino (`intake_event`, `recipe` o `fridge`); hereda su propietario y su ciclo de vida. | `CASCADE` desde el destino. El borrado físico es apropiado en recetas y en eventos `planned`; en un evento `consumed` es histórico clínico y hoy lo impide la ruta, no la query (limitación declarada). | `audit/audit_portion_detail.md`; `measurement_conventions.md` §6.9.3; `audit/deuda_pendiente.md`, `portion_detail` H27. |
 | `fridge` | **Híbrida por uso**: un tupper del que nunca se ha sacado nada es no archivable; uno con alguna porción consumida que lo referencia es histórico. Contrato completo en §11.2.6. | Físico si nada lo referencia; si no, `closed_at`. `CASCADE` desde `users`. | Decisión del usuario (2026-11-07), `audit/audits/audit_fridge.md`. |
 | `fridge_move` | **Dependent** de `fridge`: historial de cambios de sitio, de solo inserción (el rol de ejecución no puede modificar ni borrar filas). | `CASCADE` desde `fridge`. | Decisión del usuario (2026-11-07), `audit/audits/audit_fridge.md`. |
+| `insulin_brand` | **Híbrida por uso**: una marca sin bolis es no archivable; una con algún boli es archivable (`deleted_at`), sin `restore_`. Contrato completo en §11.2.7. | Físico si ningún boli la usa; si no, `deleted_at`. `CASCADE` desde `users`. | Decisión del usuario (2026-11-08). |
+| `insulin_pen` | **Híbrida por uso**, como `fridge`: un boli sin inyecciones es no archivable; uno con alguna es histórico y se cierra (`closed_at`). Contrato completo en §11.2.7. | Físico si ninguna inyección lo referencia; si no, `closed_at`. `CASCADE` desde `users`. | Decisión del usuario (2026-11-08). |
 
 #### 11.2.2 Contrato de ciclo de vida de `catalog`
 
@@ -1448,7 +1465,19 @@ Decisión del usuario del 2026-11-07. Cada fila es **un tupper** guardado en la 
 - **`fridge_move` es de solo inserción.** La aplicación añade movimientos y los lee, pero nunca cambia ni borra uno: `init_db` retira al rol de ejecución `UPDATE`, `DELETE` y `TRUNCATE` sobre la tabla (decisión 2026-11-07). La cascada desde `fridge` sigue borrándolos, porque las acciones referenciales se ejecutan con los permisos del propietario de la tabla.
 - **Timestamps de `fridge_move`.** Solo `moved_at`, que se fija al insertar la fila y nunca cambia, así que hace de `created_at`; no lleva `updated_at` (decisión 2026-11-07, que cierra para esta tabla lo que la del 2026-11-06 dejó pendiente). `fridge` lleva `created_at` y `updated_at`, porque su nombre, su caducidad, su peso, su sitio y su cierre cambian.
 
-### 11.3 Soft-delete
+#### 11.2.7 Contrato de `insulin_brand` e `insulin_pen`
+
+Decisión del usuario del 2026-11-08. Modelo y cálculo de lo que queda en `measurement_conventions.md` §8.4.
+
+- **Propietario.** `users_id`, `NOT NULL`, propietario y actor a la vez; en Python, `user_id` (§3.5). Las dos son privadas: solo su propietario las lee y las escribe, con la condición en el SQL. Un boli solo puede ser de una marca del mismo usuario, y una inyección o una comida solo pueden apuntar a un boli del mismo usuario: lo comprueba la query que escribe, en el mismo `UPDATE`/`INSERT`.
+- **Nombre de la marca.** Obligatorio, normalizado (espacios de los extremos fuera e internos colapsados) y de hasta `INSULIN_BRAND_NAME_MAX_LENGTH` caracteres. Único por usuario entre las marcas activas, sin distinguir mayúsculas: índice único parcial `uq_insulin_brand_users_id_name` sobre `(users_id, lower(name)) WHERE deleted_at IS NULL` (§11.5). Un choque es `409`.
+- **Borrar una marca.** Si ningún boli la usa, se borra físicamente; si alguno la usa, se archiva (`deleted_at`) y deja de ofrecerse al abrir un boli, pero sus bolis siguen abiertos y se siguen viendo. No hay `restore_` (decisión 2026-09-23). FK `insulin_pen.insulin_brand_id` `NO ACTION DEFERRABLE INITIALLY DEFERRED`, por el mismo motivo que la de `fridge` (§11.2.6): con `RESTRICT`, borrar un usuario fallaría si la cascada llegara antes a la marca que al boli.
+- **Abierto y cerrado.** Un boli con `closed_at` nulo está en uso. Se cierra con un motivo, `closed_reason` (`PenCloseReason`: `empty`, `expired`, `discarded`), deducido al cerrarlo (`measurement_conventions.md` §8.4). Un boli cerrado no se lista en los selectores ni se puede elegir para una inyección nueva; sí se muestra como el boli de las inyecciones que ya lo usan. No se reabre.
+- **Descartar un boli.** Bloquea el boli (§6.8). Si ninguna inyección lo referencia, se borra físicamente; si alguna lo referencia, se cierra. FK `insulin_injections.insulin_pen_id` `NO ACTION DEFERRABLE INITIALLY DEFERRED`, como la de la marca. Las comidas `planned` que lo tenían elegido pasan al boli por defecto en la misma transacción; `intake_event.insulin_pen_id` es `ON DELETE SET NULL`, porque es un borrador.
+- **Borrado del usuario.** `CASCADE` desde `users`, como el resto de sus datos.
+- **Auditoría de cambios** (§11.10): no se requiere. El dato del estudio son las inyecciones.
+- **Timestamps.** Las dos llevan `created_at` y `updated_at`, que se escribe en cada `UPDATE`.
+
 
 Una entidad archivable utiliza un campo nullable `deleted_at`.
 

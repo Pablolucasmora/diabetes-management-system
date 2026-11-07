@@ -267,7 +267,8 @@ Decisión 2026-10-10 (rediseño de la interfaz, rama `feat/ui-refresh`). La web 
 | `line-soft` (`#efe8dd`) | borde suave y elemento activo de la navegación |
 | `muted` (`#8a7d6b`) | etiquetas de sección (`web_section_label`) |
 | `ink` (`#2b2622`) | acción principal (`web_button_primary`) y botón de confirmar de los pop-ups |
-| `danger` (`#b91c1c`) | botón de confirmar de los pop-ups que borran o archivan |
+| `danger` (`#b91c1c`) | botón de confirmar de los pop-ups que borran o archivan; un boli de insulina caducado (§9.9) |
+| `warning` (`#c2410c`) | aviso de algo que está a punto de acabarse: un boli de insulina al que le quedan pocos días o pocas unidades (§9.9). Acordado el 2026-11-08 |
 | `ice` (`rgb(176 214 226)`) | `wash-blue` opaco: junta de la tapa de los tuppers de la nevera y su escarcha (§9.8) |
 | `ice-deep` (`rgb(140 196 224)`) | azul más frío del congelador: su tapa, su junta y su fondo (§9.8) |
 
@@ -480,6 +481,19 @@ Píldora `Fridge` de Food (§9.3). Modelo y cantidades en `measurement_conventio
   - **Congelador**: su sección va dentro de un fondo suave de `ice-deep` con esquinas redondeadas (`.fridge_freezer`), que no es de cristal. Sus tuppers miden lo mismo que los de la nevera y el fondo crece a su alrededor con su margen, así que es algo más ancho que la columna. Sus tuppers usan `ice-deep` en la tapa y la junta.
   - **Píldora `Fridge`** de la cabecera de Food: sin seleccionar, lleva un degradado de blanco a `wash-blue` y el borde en `ice`. Seleccionada, tiene el negro de las demás píldoras y conserva solo el borde `ice` (`.food_filter_fridge`).
   - Un tupper caducado no cambia de forma: se marca solo con la etiqueta `Expired` y la línea de días en `danger` (arriba).
+
+### 9.9 Bolis de insulina (decisión del usuario, 2026-11-08)
+
+Modelo en `measurement_conventions.md` §8.4.
+
+- **Etiqueta de un boli**, igual en todos los selectores: marca, formato y lo que queda (`NovoRapid · Cartridge · 140 U left`, con `≈` si es aproximado). Los selectores listan solo bolis abiertos, el que caduca antes primero, y terminan en la opción `+ New pen`, que no se guarda: abre el pop-up de abrir boli y, al crearlo, el boli nuevo queda elegido en ese selector. No hay opción "sin boli".
+- **Pop-up de abrir boli** (`New pen`, en la sección `Insulin` del menú, en los selectores y en ajustes). Marca (las activas del usuario, con su tipo, más `+ New brand`, que despliega sus campos: nombre, tipo, días de uso, 30 por defecto, y unidades por boli, 300 por defecto), formato y fecha en que se saca de la nevera, hoy por defecto. Marca y formato empiezan sin elegir (§6). Al guardar, la caducidad es esa fecha más los días de la marca.
+- **Formulario de inyección del menú.** En vez del tipo, el selector de boli, y el tipo sale de su marca. La dosis (`Dose (U)`) es obligatoria si el boli es de basal y opcional si es de rápida.
+- **Carrito.** Con `Insulin` marcado, debajo de la fila, en una línea: el botón de la zona, el selector de boli (solo de rápida) y la dosis, que se guardan solos al cambiar, como el resto del carrito. El boli viene elegido con el de por defecto; si no hay ninguno, el selector muestra `Choose pen` y confirmar avisa.
+- **Ajustes, `Insulin pens`** (2026-11-08). Un menú con el mismo diseño que la página principal de ajustes y dos botones, `Pens` y `Brands`, cada uno con su página (`/settings/insulin/pens` y `/settings/insulin/brands`), que vuelve a ese menú con `Back`.
+  - **Pens**: los bolis abiertos, el que caduca antes primero. Cada fila dice marca y formato, los días desde que se abrió y los que le quedan (`3 days in · 27 days left`) y las unidades que quedan. A punto de acabarse, la línea afectada va en `warning`; caducado, lleva `Expired` y la línea de días en `danger`, y el botón `Discard` se ve en la fila sin tener que abrirla. Al tocar una fila: `Edit` (formato, caducidad y capacidad) y `Discard`, que pide confirmación. Abajo, `New pen`.
+  - **Brands**: las marcas activas con su tipo, sus días de uso y sus unidades por boli. Al tocar una fila: `Edit` y `Delete`, que pide confirmación (archiva si tiene bolis). El tipo no se puede cambiar si la marca tiene bolis. Abajo, `New brand`.
+- **Registro de inyecciones de ajustes.** Cada fila muestra su boli. Al editar una se elige el boli entre los abiertos y el que ya tenía; una inyección anterior a los bolis ofrece además dejarla sin boli.
 
 ## 10. Movimiento
 
