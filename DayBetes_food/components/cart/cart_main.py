@@ -3,9 +3,11 @@ from fasthtml.common import *
 from DayBetes_food.components.cart.cart_components import CartCard
 from DayBetes_food.components.cart.cart_leftovers import CartLeftoversModal
 from DayBetes_food.components.injection_zone import asset_busted
+from DayBetes_food.components.insulin_pen import InsulinPenModal
+from DayBetes_food.time_utils import local_today
 
 
-def cart_events_list(events, portions_by_event, plates_by_event=None):
+def cart_events_list(events, portions_by_event, plates_by_event=None, rapid_pens=()):
     """
     Local container of the event cards (#cart_events_list). It is the target
     of the actions that can reorder the list (e.g. meal_hour, which changes
@@ -19,6 +21,7 @@ def cart_events_list(events, portions_by_event, plates_by_event=None):
                 event,
                 portions_by_event.get(event.id, []),
                 plates_by_event.get(event.id, []),
+                rapid_pens,
             )
             for event in events
         ],
@@ -27,7 +30,7 @@ def cart_events_list(events, portions_by_event, plates_by_event=None):
     )
 
 
-def cart_main(events, portions_by_event, plates_by_event=None, oob: bool = False):
+def cart_main(events, portions_by_event, plates_by_event=None, oob: bool = False, rapid_pens=(), brands=()):
     """
     `oob=True` marks the root Div (#cart_body) as an out-of-band swap
     (hx-swap-oob), so that an endpoint that deletes/confirms the last planned
@@ -86,9 +89,11 @@ def cart_main(events, portions_by_event, plates_by_event=None, oob: bool = False
             P("Check what you are about to eat, then confirm it.", cls="text-sm text-gray-600"),
             cls="w-full px-1 flex flex-col gap-0.5",
         ),
-        cart_events_list(events, portions_by_event, plates_by_event),
+        cart_events_list(events, portions_by_event, plates_by_event, rapid_pens),
         # Outside the cards, so repainting one does not remove an open pop-up.
         CartLeftoversModal(),
+        # `+ New pen` of a card's pen selector (frontend_conventions.md §9.9).
+        InsulinPenModal(brands, local_today().isoformat()),
         # With cache busting: /js/ is served with a one-week max-age
         # (main.py), so without the ?v= the browser would keep running the
         # previous version of the file after every change.

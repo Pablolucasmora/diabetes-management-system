@@ -15,6 +15,7 @@
     --color-muted: #8a7d6b;      /* section labels */
     --color-ink: #2b2622;        /* main action */
     --color-danger: #b91c1c;     /* destructive action (delete, archive) */
+    --color-warning: #c2410c;    /* about to run out: an insulin pen with few days or units left */
     --color-wash-peach: rgb(247 206 178 / 0.75);    /* background wash */
     --color-wash-blue: rgb(176 214 226 / 0.7);
     --color-wash-green: rgb(190 224 198 / 0.6);

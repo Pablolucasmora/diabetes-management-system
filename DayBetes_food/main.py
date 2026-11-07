@@ -36,6 +36,7 @@ from DayBetes_food.routes import (
     setup_auth_routes,
     setup_food_routes,
     setup_fridge_routes,
+    setup_insulin_routes,
     setup_main_routes,
     setup_cart_routes,
     setup_stats_routes,
@@ -294,6 +295,8 @@ setup_auth_routes(rt)
 setup_food_routes(rt)
 
 setup_fridge_routes(rt)
+
+setup_insulin_routes(rt)
 
 setup_cart_routes(rt)
 

@@ -84,6 +84,7 @@
     --color-muted: #8a7d6b;
     --color-ink: #2b2622;
     --color-danger: #b91c1c;
+    --color-warning: #c2410c;
     --color-wash-peach: rgb(247 206 178 / 0.75);
     --color-wash-blue: rgb(176 214 226 / 0.7);
     --color-wash-green: rgb(190 224 198 / 0.6);
@@ -395,6 +396,9 @@
   }
   .-mt-1 {
     margin-top: calc(var(--spacing) * -1);
+  }
+  .-mt-2 {
+    margin-top: calc(var(--spacing) * -2);
   }
   .mt-0 {
     margin-top: 0px;
@@ -1280,6 +1284,9 @@
   }
   .text-stone-900 {
     color: var(--color-stone-900);
+  }
+  .text-warning {
+    color: var(--color-warning);
   }
   .text-white {
     color: var(--color-white);

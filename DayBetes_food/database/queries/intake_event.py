@@ -3,6 +3,9 @@ injection operations (H1, H2):
 
 - create_injection_for_event (H1): automatically creates an injection when an event is confirmed
 - set_injection_zone (H2): records the injection zone in the event draft
+- set_event_insulin_pen / set_event_insulin_units: the pen and dose of the bolus
+  in the draft (measurement §8.4), with set_event_default_pen and
+  reassign_planned_events_pen for its default
 """
 
 from dataclasses import fields as dataclass_fields
@@ -16,12 +19,14 @@ from DayBetes_food.database.mappers import intake_event_read_from_row
 from DayBetes_food.database.queries.crud import (
     RawSQL,
     _build_update_query,
+    _execute_query,
     _execute_query_many,
 )
 from DayBetes_food.database.queries.insulin_injections import create_insulin_injection
+from DayBetes_food.database.queries.insulin_pen import DEFAULT_RAPID_PEN_SQL
 from DayBetes_food.domain.constants import IntakeEventState, InsulinType, InjectionZone, MealType
 from DayBetes_food.domain.intake_event import IntakeEventCreate, IntakeEventRead, IntakeEventUpdate
-from DayBetes_food.domain.insulin import InsulinInjectionCreate
+from DayBetes_food.domain.insulin import InsulinInjectionCreate, validate_insulin_dose
 from DayBetes_food.errors import ConflictError, InfrastructureError, NotFoundError, ValidationError
 from DayBetes_food.time_utils import local_today, utc_now, APP_TIMEZONE
 
@@ -42,7 +47,9 @@ _INTAKE_EVENT_COLUMNS = """
     notes,
     created_at,
     updated_at,
-    deleted_at
+    deleted_at,
+    insulin_pen_id,
+    insulin_units
 """
 
 
@@ -126,6 +133,133 @@ def set_injection_zone(
         raise
 
 
+def _set_planned_insulin_draft(
+    connection, user_id: int, intake_event_id: int, assignment: str, params: dict, *, commit: bool
+) -> None:
+    """UPDATE one field of the bolus draft of a planned event with insulin.
+
+    Raises:
+        NotFoundError: the event does not exist or is not the user's.
+        ConflictError: it is not planned, or it carries no insulin.
+    """
+    query = f"""
+        UPDATE intake_event
+        SET {assignment},
+            updated_at = NOW()
+        WHERE id = %(intake_event_id)s
+          AND users_id = %(user_id)s
+          AND state = '{IntakeEventState.PLANNED.value}'
+          AND insulin_dose = TRUE
+          AND deleted_at IS NULL
+        RETURNING id;
+    """
+    row = _execute_query(
+        connection, query, {**params, "intake_event_id": intake_event_id, "user_id": user_id}, commit=commit
+    )
+    if row is None:
+        event = get_intake_event(connection, user_id, intake_event_id)
+        if event is None:
+            raise NotFoundError(f"Intake event {intake_event_id} not found or not owned by user {user_id}")
+        raise ConflictError("Event is not planned or does not carry insulin")
+
+
+def set_event_insulin_pen(
+    connection, user_id: int, intake_event_id: int, pen_id: int, *, commit: bool = True
+) -> None:
+    """Choose the pen of the bolus (measurement §8.4): an open rapid pen of the user,
+    checked in the same UPDATE.
+
+    Raises:
+        NotFoundError: the event is not the user's, or the pen is not an open
+            rapid pen of the user.
+        ConflictError: the event is not planned or carries no insulin.
+    """
+    if get_open_rapid_pen_id(connection, user_id, pen_id) is None:
+        raise NotFoundError("Pen not found.")
+    _set_planned_insulin_draft(
+        connection,
+        user_id,
+        intake_event_id,
+        f"""insulin_pen_id = (
+            SELECT p.id FROM insulin_pen p JOIN insulin_brand b ON b.id = p.insulin_brand_id
+            WHERE p.id = %(pen_id)s AND p.users_id = %(user_id)s AND p.closed_at IS NULL
+              AND b.insulin_type = '{InsulinType.RAPID.value}'
+        )""",
+        {"pen_id": pen_id},
+        commit=commit,
+    )
+
+
+def get_open_rapid_pen_id(connection, user_id: int, pen_id: int) -> int | None:
+    row = _execute_query(
+        connection,
+        f"""
+        SELECT p.id FROM insulin_pen p JOIN insulin_brand b ON b.id = p.insulin_brand_id
+        WHERE p.id = %(pen_id)s AND p.users_id = %(user_id)s AND p.closed_at IS NULL
+          AND b.insulin_type = '{InsulinType.RAPID.value}';
+        """,
+        {"pen_id": pen_id, "user_id": user_id},
+        commit=False,
+    )
+    return int(row["id"]) if row else None
+
+
+def set_event_insulin_units(
+    connection, user_id: int, intake_event_id: int, units: float | None, *, commit: bool = True
+) -> None:
+    """Dose of the bolus in U, or None for "not recorded" (measurement §8.1).
+
+    Raises:
+        ValidationError: not positive or not a multiple of 0.5 U.
+        NotFoundError / ConflictError: as `_set_planned_insulin_draft`.
+    """
+    validate_insulin_dose(InsulinType.RAPID, units)
+    _set_planned_insulin_draft(
+        connection, user_id, intake_event_id, "insulin_units = %(units)s", {"units": units}, commit=commit
+    )
+
+
+def set_event_default_pen(connection, user_id: int, intake_event_id: int, *, commit: bool = True) -> None:
+    """Give a planned event with insulin the default pen when it has none, e.g. when
+    `insulin_dose` is turned on (measurement §8.4). A no-op otherwise."""
+    _execute_query(
+        connection,
+        f"""
+        UPDATE intake_event
+        SET insulin_pen_id = {DEFAULT_RAPID_PEN_SQL},
+            updated_at = NOW()
+        WHERE id = %(intake_event_id)s
+          AND users_id = %(user_id)s
+          AND state = '{IntakeEventState.PLANNED.value}'
+          AND insulin_dose = TRUE
+          AND insulin_pen_id IS NULL
+          AND deleted_at IS NULL
+        RETURNING id;
+        """,
+        {"intake_event_id": intake_event_id, "user_id": user_id, "exclude_pen_id": None},
+        commit=commit,
+    )
+
+
+def reassign_planned_events_pen(connection, user_id: int, pen_id: int, *, commit: bool = True) -> None:
+    """Planned events of the user with `pen_id` go to the default pen without it,
+    before the pen is closed or deleted (code §11.2.7)."""
+    _execute_query_many(
+        connection,
+        f"""
+        UPDATE intake_event
+        SET insulin_pen_id = {DEFAULT_RAPID_PEN_SQL},
+            updated_at = NOW()
+        WHERE users_id = %(user_id)s
+          AND insulin_pen_id = %(exclude_pen_id)s
+          AND state = '{IntakeEventState.PLANNED.value}'
+        RETURNING id;
+        """,
+        {"user_id": user_id, "exclude_pen_id": pen_id},
+        commit=commit,
+    )
+
+
 def create_injection_for_event(
     connection,
     user_id: int,
@@ -142,8 +276,8 @@ def create_injection_for_event(
     1. Checks that the event exists and belongs to the user
     2. If insulin_dose=FALSE, returns None
     3. If insulin_dose=TRUE:
-       - Takes the zone from the event (it can be NULL)
-       - Creates an injection with type RAPID, units=None, optional zone
+       - Takes the zone (it can be NULL), the pen and the dose from the event
+       - Creates a RAPID injection; without a pen it raises ValidationError
        - Returns the id of the created injection
 
     Args:
@@ -162,7 +296,7 @@ def create_injection_for_event(
     """
     query = """
         SELECT id, users_id AS user_id, insulin_dose, injection_zone,
-               meal_time, timezone_at_event
+               meal_time, timezone_at_event, insulin_pen_id, insulin_units
         FROM intake_event
         WHERE id = %(intake_event_id)s
           AND users_id = %(user_id)s
@@ -191,24 +325,27 @@ def create_injection_for_event(
             except ValueError as exc:
                 raise ValidationError("Invalid injection zone stored in intake event") from exc
 
-        # Create the injection (rapid, no dose, optional zone)
+        # Create the injection: rapid, with the pen and dose of the draft (§8.4).
+        # Without an open pen of the user it cannot be logged: 422 for the cart.
+        if row.get("insulin_pen_id") is None:
+            raise ValidationError("Choose the pen you injected with.", fields={"insulin_pen_id": "required"})
         injection_payload = InsulinInjectionCreate(
             user_id=row["user_id"],
             intake_event_id=intake_event_id,
             shot_time=row["meal_time"] or utc_now(),
             timezone_at_event=row["timezone_at_event"] or APP_TIMEZONE.key,
             insulin_type=InsulinType.RAPID,
-            units=None,
+            units=row.get("insulin_units"),
             injection_zone=zone,
+            insulin_pen_id=row["insulin_pen_id"],
         )
-
-        # No revalidation: insulin_type=RAPID with units=None is valid
-        injection_id = create_insulin_injection(
-            connection,
-            injection_payload,
-            commit=commit,
-        )
-        return injection_id
+        try:
+            return create_insulin_injection(connection, injection_payload, commit=commit)
+        except NotFoundError as exc:
+            # The pen of the draft was closed in the meantime.
+            raise ValidationError(
+                "That pen is no longer in use. Choose another one.", fields={"insulin_pen_id": "closed"}
+            ) from exc
 
     except (NotFoundError, ValidationError):
         if commit:
@@ -290,15 +427,18 @@ def create_intake_event(connection, payload: IntakeEventCreate, *, commit: bool 
     Raises:
         InfrastructureError: if the INSERT returns no row.
     """
-    query = """
+    # The default pen of the bolus is written with the row, never guessed when
+    # it is drawn (code §7.14, measurement §8.4).
+    query = f"""
         INSERT INTO intake_event
-            (users_id, state, meal_type, name, meal_time, timezone_at_event)
+            (users_id, state, meal_type, name, meal_time, timezone_at_event, insulin_pen_id)
         VALUES
             (%(user_id)s, %(state)s, %(meal_type)s, %(name)s,
-             COALESCE(%(meal_time)s, CURRENT_TIMESTAMP), %(timezone_at_event)s)
+             COALESCE(%(meal_time)s, CURRENT_TIMESTAMP), %(timezone_at_event)s, {DEFAULT_RAPID_PEN_SQL})
         RETURNING id;
     """
     params = {
+        "exclude_pen_id": None,
         "user_id": payload.user_id,
         "state": payload.state.value,
         "meal_type": payload.meal_type.value if payload.meal_type else None,

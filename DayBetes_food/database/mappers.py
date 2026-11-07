@@ -9,6 +9,8 @@ code.
 from DayBetes_food.domain.catalog import CatalogItemRead
 from DayBetes_food.domain.ciqual_food import CiqualFoodRead
 from DayBetes_food.domain.constants import (
+    PenCloseReason,
+    PenFormat,
     ConservationMethod,
     CookingMethod,
     FoodCategory,
@@ -26,6 +28,7 @@ from DayBetes_food.domain.constants import (
 )
 from DayBetes_food.domain.fridge import FridgeMoveRead, FridgeRead
 from DayBetes_food.domain.insulin import InsulinInjectionRead
+from DayBetes_food.domain.insulin_pen import InsulinBrandRead, InsulinPenRead
 from DayBetes_food.domain.intake_event import IntakeEventRead
 from DayBetes_food.domain.intake_plate import IntakePlateRead
 from DayBetes_food.domain.manual_intake import ManualIntakeRead
@@ -280,6 +283,7 @@ def insulin_injection_read_from_row(row: dict) -> InsulinInjectionRead:
         skin_pinch=row.get("skin_pinch"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        insulin_pen_id=row.get("insulin_pen_id"),
     )
 
 
@@ -337,6 +341,8 @@ def intake_event_read_from_row(row: dict) -> IntakeEventRead:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         deleted_at=row.get("deleted_at"),
+        insulin_pen_id=row.get("insulin_pen_id"),
+        insulin_units=float(row["insulin_units"]) if row.get("insulin_units") is not None else None,
     )
 
 
@@ -461,3 +467,49 @@ def portion_detail_read_from_row(row: dict) -> PortionDetailRead:
         )
     except KeyError as exc:
         raise InfrastructureError(f"Missing required field {exc} in portion_detail row") from exc
+
+
+def insulin_brand_read_from_row(row: dict) -> InsulinBrandRead:
+    """Convert a SQL row from _BRAND_COLUMNS (queries/insulin_brand.py). Every column
+    is required; an unknown insulin_type raises InfrastructureError (§4.3)."""
+    try:
+        return InsulinBrandRead(
+            id=int(row["id"]),
+            user_id=int(row["users_id"]),
+            name=row["name"],
+            insulin_type=InsulinType(row["insulin_type"]),
+            in_use_days=int(row["in_use_days"]),
+            pen_units=float(row["pen_units"]),
+            pen_count=int(row["pen_count"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+    except (KeyError, ValueError) as exc:
+        raise InfrastructureError(f"Invalid insulin_brand row: {exc}") from exc
+
+
+def insulin_pen_read_from_row(row: dict) -> InsulinPenRead:
+    """Convert a SQL row from _PEN_SELECT (queries/insulin_pen.py). Nullable columns:
+    closed_at and closed_reason (NULL = in use). The usage columns are aggregates
+    of its injections (measurement §8.4)."""
+    try:
+        return InsulinPenRead(
+            id=int(row["id"]),
+            user_id=int(row["users_id"]),
+            brand_id=int(row["insulin_brand_id"]),
+            brand_name=row["brand_name"],
+            insulin_type=InsulinType(row["insulin_type"]),
+            format=PenFormat(row["format"]),
+            opened_at=row["opened_at"],
+            expires_at=row["expires_at"],
+            capacity_units=float(row["capacity_units"]),
+            closed_at=row.get("closed_at"),
+            closed_reason=PenCloseReason(row["closed_reason"]) if row.get("closed_reason") else None,
+            injection_count=int(row["injection_count"]),
+            dosed_units=float(row["dosed_units"]),
+            undosed_count=int(row["undosed_count"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+    except (KeyError, ValueError) as exc:
+        raise InfrastructureError(f"Invalid insulin_pen row: {exc}") from exc

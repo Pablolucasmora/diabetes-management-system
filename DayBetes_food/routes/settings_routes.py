@@ -19,12 +19,16 @@ from DayBetes_food.database.queries import (
     get_injection_shot_time_at_offset,
     update_insulin_injection,
     delete_insulin_injection,
+    get_insulin_injection,
+    get_insulin_pen,
+    list_insulin_pens_by_ids,
+    list_open_insulin_pens,
     get_meal_type_schedule,
     upsert_meal_type_window,
     delete_meal_type_window,
 )
-from DayBetes_food.domain.constants import InsulinType, InjectionZone, MealType
-from DayBetes_food.domain.insulin import InsulinInjectionUpdate
+from DayBetes_food.domain.constants import InsulinType, InjectionZone, MealType, parse_optional_id
+from DayBetes_food.domain.insulin import InsulinInjectionUpdate, parse_insulin_units
 from DayBetes_food.domain.meal_type_schedule import (
     AUTO_ASSIGNABLE_MEAL_TYPES,
     resolve_meal_type_window,
@@ -35,6 +39,16 @@ from DayBetes_food.time_utils import local_naive_to_utc_aware, APP_TIMEZONE
 
 
 INJECTIONS_PAGE_SIZE = 15
+
+
+def _injection_pens(connection, user_id: int, rows) -> tuple[list, dict]:
+    """Open pens for the edit selectors and the pen of each row, open or closed."""
+    open_pens = list_open_insulin_pens(connection, user_id)
+    row_pen_ids = {row.insulin_pen_id for row in rows if row.insulin_pen_id is not None}
+    pens_by_id = {pen.id: pen for pen in open_pens}
+    missing = sorted(row_pen_ids - pens_by_id.keys())
+    pens_by_id.update({pen.id: pen for pen in list_insulin_pens_by_ids(connection, user_id, missing)})
+    return open_pens, pens_by_id
 
 
 def setup_settings_routes(rt):
@@ -170,11 +184,14 @@ def setup_settings_routes(rt):
                 limit=INJECTIONS_PAGE_SIZE,
                 offset=0,
             )
+            open_pens, pens_by_id = _injection_pens(connection, int(user_id), rows)
         first_chunk = injections_settings_chunk(
             rows=rows,
             offset=0,
             page_size=INJECTIONS_PAGE_SIZE,
             previous_day=None,
+            open_pens=open_pens,
+            pens_by_id=pens_by_id,
         )
         return render_page(req, lambda _: injections_settings_page(first_chunk), show_cart=False)
 
@@ -198,12 +215,15 @@ def setup_settings_routes(rt):
                 user_id=int(user_id),
                 offset=clean_offset,
             )
+            open_pens, pens_by_id = _injection_pens(connection, int(user_id), rows)
         previous_day = previous_shot.date() if previous_shot else None
         return injections_settings_chunk(
             rows=rows,
             offset=clean_offset,
             page_size=INJECTIONS_PAGE_SIZE,
             previous_day=previous_day,
+            open_pens=open_pens,
+            pens_by_id=pens_by_id,
         )
 
     @rt("/settings/injections/{injection_id}/delete")
@@ -224,7 +244,7 @@ def setup_settings_routes(rt):
     def post(
         req: Request,
         injection_id: int,
-        insulin_type: str = "",
+        insulin_pen_id: str = "",
         units: str = "",
         zone: str = "",
         shot_hour: str = "",
@@ -245,19 +265,13 @@ def setup_settings_routes(rt):
         except ValueError:
             return HTMLResponse(status_code=422)
 
-        # Parse insulin type
+        # Parse the pen ('' = keep an old injection without one) and the dose
+        # (optional for rapid, required for basal: validate_insulin_dose, §8.1).
         try:
-            parsed_insulin_type = InsulinType(insulin_type.strip().lower())
-        except ValueError:
+            pen_id = parse_optional_id(insulin_pen_id, "insulin_pen_id")
+            units_value = parse_insulin_units(units)
+        except ValidationError:
             return HTMLResponse(status_code=422)
-
-        # Parse dose (if any)
-        units_value = None
-        if parsed_insulin_type is InsulinType.BASAL:
-            try:
-                units_value = float((units or "").strip().replace(",", "."))
-            except (TypeError, ValueError):
-                return HTMLResponse(status_code=422)
 
         # Parse zone (optional)
         injection_zone = None
@@ -267,14 +281,26 @@ def setup_settings_routes(rt):
             except ValueError:
                 return HTMLResponse(status_code=422)
 
-        # Actualizar
-        payload = InsulinInjectionUpdate(
-            insulin_type=parsed_insulin_type,
-            shot_time=shot_time,
-            injection_zone=injection_zone,
-            units=units_value,
-        )
         with get_connection() as connection:
+            # The type is the one of the pen's brand (measurement §8.4); without a
+            # pen, the injection keeps its own. The UPDATE checks the pen fits.
+            if pen_id is None:
+                current = get_insulin_injection(connection, int(user_id), int(injection_id))
+                if current is None:
+                    return HTMLResponse(status_code=404)
+                parsed_insulin_type = current.insulin_type
+            else:
+                pen = get_insulin_pen(connection, int(user_id), pen_id)
+                if pen is None:
+                    return HTMLResponse(status_code=404)
+                parsed_insulin_type = pen.insulin_type
+            payload = InsulinInjectionUpdate(
+                insulin_type=parsed_insulin_type,
+                shot_time=shot_time,
+                injection_zone=injection_zone,
+                units=units_value,
+                insulin_pen_id=pen_id,
+            )
             try:
                 update_insulin_injection(
                     connection,

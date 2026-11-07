@@ -8,11 +8,11 @@ from DayBetes_food.components.menu.main_menu import main_menu
 from DayBetes_food.components.scanner.scanner_main import scanner_main
 from DayBetes_food.components.ui import render_fragment, render_page
 from DayBetes_food.database.connection import get_connection
-from DayBetes_food.database.queries import get_catalog_item_by_barcode, create_insulin_injection
-from DayBetes_food.domain.constants import InsulinType, InjectionZone
+from DayBetes_food.database.queries import get_catalog_item_by_barcode, create_insulin_injection, get_open_insulin_pen
+from DayBetes_food.domain.constants import InjectionZone, parse_optional_id
 from DayBetes_food.domain.catalog import parse_barcode
-from DayBetes_food.domain.insulin import InsulinInjectionCreate
-from DayBetes_food.errors import AuthenticationError, ValidationError
+from DayBetes_food.domain.insulin import InsulinInjectionCreate, parse_insulin_units
+from DayBetes_food.errors import AuthenticationError, NotFoundError, ValidationError
 from DayBetes_food.http_errors import app_error_response
 from DayBetes_food.time_utils import local_naive_to_utc_aware, APP_TIMEZONE
 
@@ -29,7 +29,7 @@ def setup_main_routes(rt):
     @rt("/menu/injection_log")
     def post(
         request: Request,
-        insulin_type: str = "",
+        insulin_pen_id: str = "",
         units: str = "",
         zone: str = "",
         shot_hour: str = "",
@@ -50,19 +50,15 @@ def setup_main_routes(rt):
         except ValueError:
             return HTMLResponse(status_code=422)
 
-        # Parse insulin type
+        # Parse the pen, required (measurement §8.4), and the dose: optional for
+        # rapid, required for basal (validate_insulin_dose, §8.1).
         try:
-            parsed_insulin_type = InsulinType(insulin_type.strip().lower())
-        except ValueError:
+            pen_id = parse_optional_id(insulin_pen_id, "insulin_pen_id")
+            units_value = parse_insulin_units(units)
+        except ValidationError:
             return HTMLResponse(status_code=422)
-
-        # Parse dose (if any)
-        units_value = None
-        if parsed_insulin_type is InsulinType.BASAL:
-            try:
-                units_value = float((units or "").strip().replace(",", "."))
-            except (TypeError, ValueError):
-                return HTMLResponse(status_code=422)
+        if pen_id is None:
+            return HTMLResponse(status_code=422)
 
         # Parse zone (optional)
         injection_zone = None
@@ -72,20 +68,27 @@ def setup_main_routes(rt):
             except ValueError:
                 return HTMLResponse(status_code=422)
 
-        # Crear payload y registrar
-        payload = InsulinInjectionCreate(
-            user_id=int(user_id),
-            insulin_type=parsed_insulin_type,
-            shot_time=shot_time,
-            timezone_at_event=APP_TIMEZONE.key,
-            units=units_value,
-            injection_zone=injection_zone,
-        )
         with get_connection() as connection:
+            # The type is the one of the pen's brand; the INSERT checks it is an
+            # open pen of the user (measurement §8.4).
+            pen = get_open_insulin_pen(connection, int(user_id), pen_id)
+            if pen is None:
+                return HTMLResponse(status_code=404)
+            payload = InsulinInjectionCreate(
+                user_id=int(user_id),
+                insulin_type=pen.insulin_type,
+                shot_time=shot_time,
+                timezone_at_event=APP_TIMEZONE.key,
+                units=units_value,
+                injection_zone=injection_zone,
+                insulin_pen_id=pen_id,
+            )
             try:
                 create_insulin_injection(connection, payload)
             except ValidationError:
                 return HTMLResponse(status_code=422)
+            except NotFoundError:
+                return HTMLResponse(status_code=404)
             return render_fragment(main_menu(connection))
 
     @rt("/scanner")
