@@ -267,6 +267,8 @@ Decisión 2026-10-10 (rediseño de la interfaz, rama `feat/ui-refresh`). La web 
 | `muted` (`#8a7d6b`) | etiquetas de sección (`web_section_label`) |
 | `ink` (`#2b2622`) | acción principal (`web_button_primary`) y botón de confirmar de los pop-ups |
 | `danger` (`#b91c1c`) | botón de confirmar de los pop-ups que borran o archivan |
+| `ice` (`rgb(176 214 226)`) | `wash-blue` opaco: junta de la tapa de los tuppers de la nevera y su escarcha (§9.8) |
+| `ice-deep` (`rgb(140 196 224)`) | azul más frío del congelador: su tapa, su junta y su fondo (§9.8) |
 
 **Clases**
 
@@ -470,6 +472,13 @@ Píldora `Fridge` de Food (§9.3). Modelo y cantidades en `measurement_conventio
 - **Pulsación larga** (§9.3.1), en el mismo pop-up que las filas de alimentos: `Edit` y `Discard`. `Edit` es un formulario con el nombre, la fecha de caducidad y el peso real, que se guardan juntos (`code_conventions.md` §3.4). Un nombre vacío vuelve al derivado y un peso vacío, a sin pesar. Tirar pide confirmación, también desde el `Discard` de un caducado.
 - **Sacar.** Una vista del pop-up de acciones: la cantidad en % (100 % por defecto) y, solo si el tupper tiene peso real, gramos (`measurement_conventions.md` §4.8.3). `Add to meal` lo añade a la comida y tanda elegidas en la cabecera, el pop-up se cierra, la lista se repinta y aparece el aviso `Added to your meal`. Si luego se borra la comida o el ingrediente en el carrito, vuelve al tupper (§4.8.6).
 - **Vacío**: una línea que explica cómo se guarda un tupper (desde la página de un alimento o un plato).
+- **Aspecto de nevera** (decisión 2026-11-07). La pestaña se distingue del resto con muy poco, todo en `static/css/input.css` y sin `filter` (§8):
+  - **Escarcha**: una franja muy tenue de `wash-blue` en cada lateral de la pantalla, que se desvanece hacia el centro. Es una capa fija que solo existe mientras la lista de la nevera está en la página (`body:has([data-fridge-list])::after`), por debajo del contenido, como el fondo de color.
+  - **Copos**: uno pequeño a cada lado del título `Fridge`, fuera de la columna de tarjetas, y otro delante de `Freezer`. Son SVG con `currentColor` en `ice` o `ice-deep`.
+  - **Cada tupper es un tupper de cristal**: la tarjeta de cristal (`web_container`) es el cuerpo. Arriba lleva una tapa, una franja de `wash-blue` con una junta de `ice` debajo, y en el centro una pestaña de cierre translúcida que cae sobre el borde (`.fridge_tupper`, con pseudoelementos). No lleva cierres laterales ni etiqueta.
+  - **Congelador**: su sección va dentro de un fondo suave de `ice-deep` con esquinas redondeadas (`.fridge_freezer`), que no es de cristal. Sus tuppers miden lo mismo que los de la nevera y el fondo crece a su alrededor con su margen, así que es algo más ancho que la columna. Sus tuppers usan `ice-deep` en la tapa y la junta.
+  - **Píldora `Fridge`** de la cabecera de Food: sin seleccionar, lleva un degradado de blanco a `wash-blue` y el borde en `ice`. Seleccionada, tiene el negro de las demás píldoras y conserva solo el borde `ice` (`.food_filter_fridge`).
+  - Un tupper caducado no cambia de forma: se marca solo con la etiqueta `Expired` y la línea de días en `danger` (arriba).
 
 ## 10. Movimiento
 

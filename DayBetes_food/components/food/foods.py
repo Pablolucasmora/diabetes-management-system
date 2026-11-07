@@ -479,7 +479,11 @@ def Filters(selected: str = "all"):
         buttons.append(
             Button(
                 text,
-                cls=f"{FILTER_ITEM_CLS} {'bg-black text-white shadow-md' if value == selected else 'bg-transparent text-gray-700'}",
+                cls=(
+                    f"{FILTER_ITEM_CLS} {'bg-black text-white shadow-md' if value == selected else 'bg-transparent text-gray-700'}"
+                    # The Fridge pill looks frosted (frontend_conventions.md §9.8).
+                    f"{' food_filter_fridge' if value == 'fridge' else ''}"
+                ),
                 data_food_filter_btn="true",
                 data_filter_value=value,
                 data_skip_page_loading="true",
