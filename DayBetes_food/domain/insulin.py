@@ -89,18 +89,32 @@ def validate_insulin_dose(insulin_type: InsulinType, units: float | None) -> Non
     - If there is a dose, it must be positive and a multiple of 0.5 U
     """
     if insulin_type is InsulinType.BASAL and units is None:
-        raise ValidationError("Basal insulin requires a dose", fields={"units": "required"})
+        raise ValidationError("Enter the dose of the basal insulin.", fields={"units": "required"})
 
     if units is not None:
         if units <= 0:
-            raise ValidationError("Insulin dose must be positive", fields={"units": "positive"})
+            raise ValidationError("The dose must be greater than 0 U.", fields={"units": "positive"})
         # Check it is a multiple of 0.5: (units * 2) must be an integer
         if abs((units * 2) - round(units * 2)) > 1e-8:
-            raise ValidationError("Insulin dose must be a multiple of 0.5 U", fields={"units": "step"})
+            raise ValidationError("The dose goes in steps of 0.5 U.", fields={"units": "step"})
 
 
 def parse_insulin_units(raw) -> float | None:
     """Dose typed in a form, in U (measurement_conventions.md §8.1). '' -> None,
     which means "dose not recorded", never zero; '8,5' -> 8.5; text, NaN or
     Infinity -> ValidationError. Valid for basal and rapid alike."""
-    return parse_number(raw, "units", _ANY_NUMBER)
+    try:
+        return parse_number(raw, "units", _ANY_NUMBER)
+    except ValidationError as error:
+        raise ValidationError("The dose must be a number.", fields=error.fields) from error
+
+
+def parse_shot_local(shot_hour, shot_date) -> datetime:
+    """Local naive moment of an injection form, `HH:MM` and `YYYY-MM-DD` (§7.8). The
+    caller converts it to UTC with the common helper (§10.4)."""
+    try:
+        hour = datetime.strptime(str(shot_hour or "").strip(), "%H:%M").time()
+        day = datetime.strptime(str(shot_date or "").strip(), "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise ValidationError("Choose a valid date and time.", fields={"shot_time": "invalid"}) from exc
+    return datetime.combine(day, hour)

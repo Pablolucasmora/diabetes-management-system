@@ -5,6 +5,8 @@
 // - `penCreated` (HX-Trigger of POST /insulin/pens) closes the pop-up, adds the pen to
 //   the selectors of the page and chooses it in the one that opened the pop-up.
 // - `insulinChanged` (settings) closes the open pop-up and repaints the list.
+// - `injectionLogged` (menu) and `injectionUpdated` (injection log) close the
+//   injection pop-up once it is saved; form errors stay inside it (§9.5).
 (function () {
   if (window.__dbInsulinPensReady) return;
   window.__dbInsulinPensReady = true;
@@ -95,5 +97,20 @@
     var detail = event && event.detail ? event.detail : null;
     if (detail && detail.modal && window.dbCloseModal) window.dbCloseModal(detail.modal);
     refreshSettings();
+  });
+
+  // An injection logged from the menu: the menu is repainted, so the pens show
+  // what is left after it.
+  document.body.addEventListener("injectionLogged", function () {
+    if (window.dbCloseModal) window.dbCloseModal("menu_injection_modal");
+    notice("Injection logged");
+    if (window.htmx) window.htmx.ajax("GET", "/menu", { target: "#main_content", swap: "innerHTML" });
+  });
+
+  // An injection edited or deleted from the injection log.
+  document.body.addEventListener("injectionUpdated", function (event) {
+    var detail = event && event.detail ? event.detail : null;
+    if (detail && detail.modal && window.dbCloseModal) window.dbCloseModal(detail.modal);
+    if (window.htmx) window.htmx.ajax("GET", "/settings/injections", { target: "#main_content", swap: "innerHTML" });
   });
 })();

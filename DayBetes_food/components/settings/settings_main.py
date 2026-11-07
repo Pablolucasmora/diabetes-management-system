@@ -406,7 +406,6 @@ def _format_injection_hour(dt):
 
 def _injection_delete_modal(injection):
     modal_id = f"settings_injection_delete_{injection.id}"
-    refresh_js = "htmx.ajax('GET','/settings/injections',{target:'#main_content',swap:'innerHTML'});"
     return ConfirmActionModal(
         modal_id=modal_id,
         title="Delete injection",
@@ -416,8 +415,6 @@ def _injection_delete_modal(injection):
             danger=True,
             hx_post=f"/settings/injections/{injection.id}/delete",
             hx_swap="none",
-            **{"hx-on:htmx:after-request": refresh_js},
-            onclick=close_modal_js(modal_id),
         ),
     )
 
@@ -501,7 +498,6 @@ def _injection_edit_modal(injection, open_pens, pens_by_id):
         )
         for zone in InjectionZone
     ]
-    refresh_js = "htmx.ajax('GET','/settings/injections',{target:'#main_content',swap:'innerHTML'});"
     return ModalLayer(
         P("Insulin injection", cls="text-lg font-semibold"),
         Form(
@@ -588,24 +584,18 @@ def _injection_edit_modal(injection, open_pens, pens_by_id):
             ),
             Div(*zone_buttons, cls="flex flex-wrap gap-2"),
             Input(type="hidden", name="zone", value=(selected_zone.value if selected_zone else ""), data_settings_injection_zone_input="true"),
+            # Form errors land here (code_conventions.md §9.5); the pop-up closes
+            # only on success, with `injectionUpdated` (static/js/insulin_pens.js).
+            Div(id=f"settings_injection_error_{injection.id}"),
             Div(
                 modal_confirm_button(
                     "OK",
                     cls="ml-auto",
                     hx_post=f"/settings/injections/{injection.id}/update",
                     hx_include="closest form",
-                    hx_swap="none",
-                    **{"hx-on:htmx:after-request": refresh_js},
-                    onclick=(
-                        "const form=this.form;"
-                        "const z=form?form.querySelector('[data-settings-injection-zone-input]'):null;"
-                        "if(!z||!z.value){alert('Select a zone first.');return false;}"
-                        "const t=form?form.querySelector('[data-settings-insulin-pen]'):null;"
-                        "const o=t?t.options[t.selectedIndex]:null;"
-                        "const b=form?form.querySelector('input[name=units]'):null;"
-                        "if(o&&o.dataset.insulinType==='basal'&&(!b||!b.value)){alert('Enter the basal dose.');return false;}"
-                        + close_modal_js(modal_id)
-                    ),
+                    hx_target=f"#settings_injection_error_{injection.id}",
+                    hx_swap="innerHTML",
+                    hx_disabled_elt="this",
                 ),
             ),
             cls="flex flex-col gap-3",

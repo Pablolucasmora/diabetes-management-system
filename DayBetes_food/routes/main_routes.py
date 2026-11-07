@@ -1,18 +1,18 @@
 from fasthtml.common import *
 import json
-from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote_plus
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.menu.main_menu import main_menu
 from DayBetes_food.components.scanner.scanner_main import scanner_main
+from DayBetes_food.components.modal import ModalFormError
 from DayBetes_food.components.ui import render_fragment, render_page
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.database.queries import get_catalog_item_by_barcode, create_insulin_injection, get_open_insulin_pen
-from DayBetes_food.domain.constants import InjectionZone, parse_optional_id
+from DayBetes_food.domain.constants import InjectionZone, parse_enum, parse_optional_id
 from DayBetes_food.domain.catalog import parse_barcode
-from DayBetes_food.domain.insulin import InsulinInjectionCreate, parse_insulin_units
-from DayBetes_food.errors import AuthenticationError, NotFoundError, ValidationError
+from DayBetes_food.domain.insulin import InsulinInjectionCreate, parse_insulin_units, parse_shot_local
+from DayBetes_food.errors import AuthenticationError, AuthorizationError, NotFoundError, ValidationError
 from DayBetes_food.http_errors import app_error_response
 from DayBetes_food.time_utils import local_naive_to_utc_aware, APP_TIMEZONE
 
@@ -35,45 +35,34 @@ def setup_main_routes(rt):
         shot_hour: str = "",
         shot_date: str = "",
     ):
+        """Log an injection from the menu pop-up (frontend_conventions.md §9.9). A form
+        error is 200 + message inside the pop-up (code §9.5); on success an empty body
+        and `injectionLogged`, which closes it, gives the notice and repaints the menu."""
         if request.headers.get("HX-Request") != "true":
-            return HTMLResponse(status_code=403)
+            return app_error_response(request, AuthorizationError, "This action only works from the app.")
         user_id = get_current_user_id()
         if not user_id:
-            return HTMLResponse(status_code=401)
-
-        # Parse date and time
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        # The pen is required (measurement §8.4), the zone too in this form, and the
+        # dose is optional for rapid and required for basal (§8.1).
         try:
-            parsed_time = datetime.strptime((shot_hour or "").strip(), "%H:%M").time()
-            parsed_date = datetime.strptime((shot_date or "").strip(), "%Y-%m-%d").date()
-            shot_time_local = datetime.combine(parsed_date, parsed_time)
-            shot_time = local_naive_to_utc_aware(shot_time_local)
-        except ValueError:
-            return HTMLResponse(status_code=422)
-
-        # Parse the pen, required (measurement §8.4), and the dose: optional for
-        # rapid, required for basal (validate_insulin_dose, §8.1).
-        try:
+            shot_time = local_naive_to_utc_aware(parse_shot_local(shot_hour, shot_date))
             pen_id = parse_optional_id(insulin_pen_id, "insulin_pen_id")
+            if pen_id is None:
+                raise ValidationError("Choose the pen.", fields={"insulin_pen_id": "required"})
+            injection_zone = parse_enum(InjectionZone, zone, field="zone", normalize=str.lower)
+            if injection_zone is None:
+                raise ValidationError("Choose the injection zone.", fields={"zone": "required"})
             units_value = parse_insulin_units(units)
-        except ValidationError:
-            return HTMLResponse(status_code=422)
-        if pen_id is None:
-            return HTMLResponse(status_code=422)
-
-        # Parse zone (optional)
-        injection_zone = None
-        if zone and zone.strip():
-            try:
-                injection_zone = InjectionZone(zone.strip().lower())
-            except ValueError:
-                return HTMLResponse(status_code=422)
+        except ValidationError as error:
+            return render_fragment(ModalFormError(str(error)))
 
         with get_connection() as connection:
             # The type is the one of the pen's brand; the INSERT checks it is an
             # open pen of the user (measurement §8.4).
             pen = get_open_insulin_pen(connection, int(user_id), pen_id)
             if pen is None:
-                return HTMLResponse(status_code=404)
+                return app_error_response(request, NotFoundError, "That pen is no longer in use.")
             payload = InsulinInjectionCreate(
                 user_id=int(user_id),
                 insulin_type=pen.insulin_type,
@@ -85,11 +74,11 @@ def setup_main_routes(rt):
             )
             try:
                 create_insulin_injection(connection, payload)
-            except ValidationError:
-                return HTMLResponse(status_code=422)
+            except ValidationError as error:
+                return render_fragment(ModalFormError(str(error)))
             except NotFoundError:
-                return HTMLResponse(status_code=404)
-            return render_fragment(main_menu(connection))
+                return app_error_response(request, NotFoundError, "That pen is no longer in use.")
+        return HTMLResponse("", headers={"HX-Trigger": "injectionLogged"})
 
     @rt("/scanner")
     def get(req):
