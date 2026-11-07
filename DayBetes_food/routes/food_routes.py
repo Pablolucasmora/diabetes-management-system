@@ -158,7 +158,13 @@ from DayBetes_food.components.data_sources import ciqual_attribution, off_attrib
 from DayBetes_food.domain.ciqual_food import parse_ciqual_code
 from DayBetes_food.integrations.ciqual import prefill_from_ciqual_food, reliability_note
 from DayBetes_food.integrations.open_food_facts import fetch_product_prefill, prefill_from_off_product
-from DayBetes_food.components.food.foods import FoodSectionsContent, FoodCard, FavoriteButton, on_after
+from DayBetes_food.components.food.foods import (
+    FoodSectionsContent,
+    FoodCard,
+    FavoriteButton,
+    meal_option_label,
+    on_after,
+)
 from DayBetes_food.components.food.food_actions import (
     FOOD_ACTIONS_BODY_ID,
     FOOD_ACTIONS_STORE_MESSAGE_ID,
@@ -800,14 +806,14 @@ def _detail_origin(
     return item
 
 
-def _resolve_target_event(connection, user_id: int, intake_event_id: str) -> int:
-    """Planned event a food goes to: the chosen one (checked in SQL, NotFoundError
-    or ConflictError otherwise) or a new one with the automatic meal_type
-    (§7.14). Same logic as /food/log and /add_food."""
+def _resolve_target_event(connection, user_id: int, intake_event_id: str) -> tuple[int, bool]:
+    """Planned event a food goes to, and whether it was created now: the chosen one
+    (checked in SQL, NotFoundError or ConflictError otherwise) or a new one with the
+    automatic meal_type (§7.14). Same logic as /food/log and /add_food."""
     chosen = parse_optional_id(intake_event_id, "meal")
     if chosen:
-        return get_planned_intake_event(connection, user_id, chosen)
-    return create_intake_event(
+        return get_planned_intake_event(connection, user_id, chosen), False
+    event_id = create_intake_event(
         connection,
         IntakeEventCreate(
             user_id=user_id,
@@ -816,6 +822,15 @@ def _resolve_target_event(connection, user_id: int, intake_event_id: str) -> int
         ),
         commit=False,
     )
+    return event_id, True
+
+
+def _meal_created_event(connection, user_id: int, event_id: int) -> dict:
+    """`mealCreated` (HX-Trigger, frontend §7.7): the page adds the new meal to its
+    meal selector and leaves it chosen, so the next add goes to the same meal
+    instead of creating another one."""
+    event = get_intake_event(connection, user_id, event_id)
+    return {"mealCreated": {"id": event_id, "label": meal_option_label(event)}}
 
 
 def _prefill_view(prefill, barcode: str, source_id: str, source: PrefillSource = PrefillSource.OPEN_FOOD_FACTS) -> dict:
@@ -2903,7 +2918,7 @@ def setup_food_routes(rt):
 
             try:
                 with connection.transaction():
-                    event_id = _resolve_target_event(connection, int(user_id), intake_event_id)
+                    event_id, _ = _resolve_target_event(connection, int(user_id), intake_event_id)
                     event_data = get_intake_event(connection, int(user_id), event_id)
                     offset_minutes = _event_auto_offset_minutes(event_data)
 
@@ -3264,7 +3279,7 @@ def setup_food_routes(rt):
             )
             try:
                 with connection.transaction():
-                    event_id = _resolve_target_event(connection, int(user_id), intake_event_id)
+                    event_id, meal_created = _resolve_target_event(connection, int(user_id), intake_event_id)
                     event_data = get_intake_event(connection, int(user_id), event_id)
                     offset_minutes = _event_auto_offset_minutes(event_data)
                     target_plate_id = _resolve_event_plate(
@@ -3290,7 +3305,10 @@ def setup_food_routes(rt):
                 return app_error_response(request, ConflictError, "That meal has already been confirmed.")
             except ValidationError as error:
                 return app_error_response(request, ValidationError, str(error))
-            return HTMLResponse("", headers={"HX-Trigger": "addSuccess"})
+            trigger = {"addSuccess": True}
+            if meal_created:
+                trigger.update(_meal_created_event(connection, int(user_id), event_id))
+            return HTMLResponse("", headers={"HX-Trigger": json.dumps(trigger)})
 
     @rt("/add_manual_intake/{manual_intake_id}")
     def post(request: Request, manual_intake_id: int, intake_event_id: str = "", plate_id: str = ""):
@@ -3312,7 +3330,7 @@ def setup_food_routes(rt):
             )
             try:
                 with connection.transaction():
-                    event_id = _resolve_target_event(connection, int(user_id), intake_event_id)
+                    event_id, meal_created = _resolve_target_event(connection, int(user_id), intake_event_id)
                     event_data = get_intake_event(connection, int(user_id), event_id)
                     offset_minutes = _event_auto_offset_minutes(event_data)
                     target_plate_id = _resolve_event_plate(
@@ -3338,7 +3356,10 @@ def setup_food_routes(rt):
                 return app_error_response(request, ConflictError, "That meal has already been confirmed.")
             except ValidationError as error:
                 return app_error_response(request, ValidationError, str(error))
-            return HTMLResponse("", headers={"HX-Trigger": "addSuccess"})
+            trigger = {"addSuccess": True}
+            if meal_created:
+                trigger.update(_meal_created_event(connection, int(user_id), event_id))
+            return HTMLResponse("", headers={"HX-Trigger": json.dumps(trigger)})
 
     @rt("/food/fridge/{fridge_id}/take")
     def post(
@@ -3372,7 +3393,7 @@ def setup_food_routes(rt):
                 return app_error_response(request, NotFoundError, "That container is no longer in your fridge.")
             try:
                 with connection.transaction():
-                    event_id = _resolve_target_event(connection, int(user_id), intake_event_id)
+                    event_id, meal_created = _resolve_target_event(connection, int(user_id), intake_event_id)
                     offset_minutes = _event_auto_offset_minutes(get_intake_event(connection, int(user_id), event_id))
                     target_plate_id = _resolve_event_plate(
                         connection, int(user_id), event_id, plate_id, offset_minutes
@@ -3387,8 +3408,11 @@ def setup_food_routes(rt):
             except ValidationError as error:
                 return render_fragment(ModalFormError(str(error)))
             items = list_fridge_items(connection, int(user_id))
+            trigger = {"fridgeChanged": True, "fridgeTaken": True}
+            if meal_created:
+                trigger.update(_meal_created_event(connection, int(user_id), event_id))
         response = render_fragment(FridgeListOob(items, utc_now()))
-        response.headers["HX-Trigger"] = json.dumps({"fridgeChanged": True, "fridgeTaken": True})
+        response.headers["HX-Trigger"] = json.dumps(trigger)
         return response
 
     @rt("/add_recipe/{recipe_id}")
@@ -3421,7 +3445,10 @@ def setup_food_routes(rt):
             except ConflictError as error:
                 message = _RECIPE_WITHOUT_INGREDIENTS if str(error) == "recipe_without_ingredients" else _MEAL_CONFIRMED
                 return app_error_response(request, ConflictError, message)
-        return HTMLResponse("", headers={"HX-Trigger": json.dumps({"recipeAdded": {"event_id": event_id}})})
+            trigger = {"recipeAdded": {"event_id": event_id}}
+            if add_request.event_id is None:
+                trigger.update(_meal_created_event(connection, int(user_id), event_id))
+        return HTMLResponse("", headers={"HX-Trigger": json.dumps(trigger)})
 
     @rt("/food/fridge/store_recipe/{recipe_id}")
     async def post(request: Request, recipe_id: int):
@@ -3968,7 +3995,7 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             try:
                 with connection.transaction():  # row + portion, all or nothing (§2.3)
-                    event_id = _resolve_target_event(connection, int(user_id), intake_event_id)
+                    event_id, _ = _resolve_target_event(connection, int(user_id), intake_event_id)
                     offset_minutes = _event_auto_offset_minutes(
                         get_intake_event(connection, int(user_id), event_id)
                     )

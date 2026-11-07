@@ -1146,7 +1146,7 @@ por el canal de error visible (`error_conventions.md` §7.1).
 | `POST /food/fridge/store_recipe/{recipe_id}` (paso previo de una receta, `frontend_conventions.md` §9.7) | `#recipe_add_error` | `innerHTML` | cuerpo vacío y `fridgeStored`, que cierra también ese pop-up. Validación: `200` + fragmento |
 | `POST /food/fridge/store/{entry_type}/{id}` (desde la ficha, `frontend_conventions.md` §9.4, o desde la fila) | el mensaje de la ficha o `#food_actions_store_message` | `innerHTML` | cuerpo vacío y `fridgeStored` con el sitio. El error de validación es `200`: `ModalFormError` dentro del pop-up, que la ruta reconoce por `HX-Target`, y el mensaje de la ficha fuera |
 
-Eventos `HX-Trigger`: `fridgeChanged` (cierra el pop-up), `fridgeTaken` y `fridgeStored` (avisos de éxito, porque la página no muestra la comida ni el tupper nuevo), en `static/js/fridge.js`, y, en los errores, `appError`.
+Eventos `HX-Trigger`: `fridgeChanged` (cierra el pop-up), `fridgeTaken` y `fridgeStored` (avisos de éxito, porque la página no muestra la comida ni el tupper nuevo), en `static/js/fridge.js`, y, en los errores, `appError`. Sacar a una comida nueva añade `mealCreated` (`frontend_conventions.md` §7.7).
 
 ### 9.6 Entrada, estados de carga y repetición
 
