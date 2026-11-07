@@ -229,10 +229,12 @@ Decisión 2026-11-05; sustituye a la versión provisional del 2026-10-18.
 
 ### 7.14 Confirmar: lo comido por tanda y las sobras (decisión 2026-11-07)
 
-- Encima de `Confirm meal` hay un campo `Eaten` **por cada tanda con ingredientes**, con el nombre de la tanda si hay más de una. Vacío significa que se comió entera (`All of it`). Se escribe en **% por defecto** y un botón cambia a gramos, que se comparan con el total de esa tanda (`measurement_conventions.md` §4.4).
+- Encima de `Confirm meal` hay un campo `Eaten` **por cada tanda con ingredientes**, con el nombre de la tanda si hay más de una. Vacío significa que se comió entera (`All of it`). Se escribe en **% por defecto** y dos pastillas eligen `%` o `g`; los gramos se comparan con el total de esa tanda (`measurement_conventions.md` §4.4).
+- **Lo escrito en `Eaten` es un borrador**: se guarda en el navegador y vuelve tras recargar, hasta que la comida se confirma (`static/js/form_drafts.js`). Como el borrador se guarda por nombre de campo, el valor y la unidad llevan el id de su tanda (`ingested_value_<tanda>`, `ingested_unit_<tanda>`). Confirmado desde el pop-up de sobras, `mealConfirmed` lleva el id de la comida y `static/js/fridge.js` borra ese borrador.
 - Si todas las tandas se comieron enteras, `Confirm meal` confirma directamente.
 - Si alguna no, aparece antes el **pop-up de sobras** (`cart_leftovers_modal`), sin haber escrito nada. Por cada una de esas tandas muestra lo que queda de cada ingrediente y pide: dónde guardarlo (`Fridge`, por defecto, `Freezer` o `Don't keep`), en cuántos tuppers iguales (`Containers`, de 1 a 10) y con qué nombre (vacío, el derivado de sus ingredientes). Su `Confirm meal` confirma la comida y guarda los tuppers juntos (`measurement_conventions.md` §4.8.5); `Cancel` lo cierra sin confirmar.
 - Un error del plan de sobras sale dentro del pop-up; uno de lo comido, en el aviso global (`error_conventions.md` §7.1), y el pop-up sigue abierto.
+- **Borradores en general** (`static/js/form_drafts.js`): un formulario con `data-draft-key` guarda lo escrito en el navegador y lo recupera en los campos vacíos. Se descarta al guardar: con un `HX-Redirect` o, en un formulario que se queda en la página, con el evento que nombra `data-draft-done-event`. El token CSRF nunca va en un borrador.
 
 ### 7.15 Guardar parte de un ingrediente en la nevera (decisión 2026-11-07)
 
@@ -241,9 +243,10 @@ Para lo que se cocina de golpe (pasta, quinoa): se añade al carrito con lo pesa
 - En el pop-up `Adjust` de cada ingrediente de una comida planificada, la sección `Keep part in fridge`. Lo que se queda en el plato se dice de una de dos formas:
   - `In %`: el porcentaje del ingrediente que va al plato.
   - `Weighed`: el total cocinado (la olla) y lo que se pone en el plato, los dos pesados. La fracción es plato / total, exacta sin factores de cocción.
+- La sección está **plegada**: se abre con su título, porque solo hace falta después de cocinar y abierta ocupa el pop-up.
 - Debajo, dónde va el resto (`Fridge` por defecto o `Freezer`) y en cuántos tuppers iguales (vacío es uno). `Keep the rest` lo hace: la fila se queda con su parte, el resto va a tuppers nuevos (`measurement_conventions.md` §4.8.5), la tarjeta se repinta y aparece el aviso `Saved to the fridge`. Con `Weighed`, cada tupper lleva su parte del peso real.
-- Los campos de `Weighed` solo se ven con esa opción marcada, con CSS (`group-has`), para que un borrador recuperado enseñe los campos que tocan.
-- **Lo escrito es un borrador**: se guarda en el navegador mientras se escribe y vuelve tras recargar, hasta que se guarda (`static/js/form_drafts.js`, el mismo mecanismo que los formularios de alimentos). Un formulario que se queda en la página dice en `data-draft-done-event` qué evento marca que se guardó; los demás se dan por guardados con un `HX-Redirect`. El token CSRF nunca va en un borrador.
+- Los campos de `Weighed` solo se ven con esa opción marcada, con CSS (`group-has`), sin script.
+- No se guarda como borrador: el reparto se decide en el momento (decisión del usuario, 2026-11-07).
 - Es una acción en línea del carrito: un error sale en el aviso global (`code_conventions.md` §9.5).
 - Borrar después la comida no deshace el reparto: lo guardado ya está en la nevera.
 
