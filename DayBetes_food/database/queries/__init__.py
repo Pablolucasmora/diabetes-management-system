@@ -3,7 +3,7 @@
 One module per table (`users.py`, `catalog.py`, `manual_intake.py`,
 `recipe.py`, `tags.py`, `linked_tags.py`, `user_favorites.py`,
 `food_brands.py`, `intake_event.py`, `insulin_injections.py`,
-`portion_detail.py`, `meal_type_schedule.py`, `auth_sessions.py`,
+`portion_detail.py`, `fridge.py`, `meal_type_schedule.py`, `auth_sessions.py`,
 `auth_rate_limits.py`, `off_product.py`, `ciqual_food.py`), plus
 `entries.py` for cross-entity reads without an owning table and `crud.py`
 with the shared generic helpers (private, not re-exported here).
@@ -128,6 +128,7 @@ from DayBetes_food.database.queries.portion_detail import (
     get_portion_detail,
     list_portions_by_event,
     list_portions_by_events,
+    list_portions_by_fridges,
     move_portion_to_recipe_plate,
     list_viewable_recipe_portions,
     update_portion_amount,
@@ -137,6 +138,15 @@ from DayBetes_food.database.queries.portion_detail import (
     move_portion_to_plate,
     delete_portion_detail,
     scale_event_portion_amounts,
+)
+from DayBetes_food.database.queries.fridge import (
+    create_fridge,
+    get_fridge,
+    list_fridges,
+    update_fridge,
+    set_fridge_location,
+    delete_fridge,
+    close_fridge,
 )
 from DayBetes_food.database.queries.insulin_injections import (
     create_insulin_injection,
@@ -247,6 +257,7 @@ __all__ = [
     "get_portion_detail",
     "list_portions_by_event",
     "list_portions_by_events",
+    "list_portions_by_fridges",
     "move_portion_to_recipe_plate",
     "list_viewable_recipe_portions",
     "update_portion_amount",
@@ -256,6 +267,13 @@ __all__ = [
     "move_portion_to_plate",
     "delete_portion_detail",
     "scale_event_portion_amounts",
+    "create_fridge",
+    "get_fridge",
+    "list_fridges",
+    "update_fridge",
+    "set_fridge_location",
+    "delete_fridge",
+    "close_fridge",
     "create_insulin_injection",
     "list_insulin_injections",
     "get_insulin_injection",

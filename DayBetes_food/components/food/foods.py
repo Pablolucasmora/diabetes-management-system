@@ -57,6 +57,7 @@ from DayBetes_food.domain.constants import (
     Nutriscore,
     NutrientEntryMode,
     PortionOrigin,
+    StorageLocation,
 )
 from DayBetes_food.domain.nutrition import SMART_MACROS_MAX_LENGTH
 from DayBetes_food.time_utils import to_local
@@ -164,6 +165,8 @@ GLYCEMIC_INDEX_LABELS = {
     GlycemicIndex.MEDIUM: "Medium",
     GlycemicIndex.HIGH: "Fast",
 }
+# Where a food can be saved instead of a meal (frontend_conventions.md §9.4).
+STORAGE_LABELS = {StorageLocation.FRIDGE: "Fridge", StorageLocation.FREEZER: "Freezer"}
 # Declared confidence, ordinal 0-2 (measurement §6.10).
 CONFIDENCE_LABELS = {0: "Not sure", 1: "More or less", 2: "Quite sure"}
 MACROS_QUALITY_LABELS = {True: "Published (label, menu, website)", False: "Estimated"}
@@ -244,8 +247,11 @@ def MealSelector(
     plate_options: list = None,
     selected_plate_id: int = None,
     show_plates: bool = True,
+    storage_options: bool = False,
 ):
-    """`show_plates=False` for a recipe with several plates, which creates its own (§7.7)."""
+    """`show_plates=False` for a recipe with several plates, which creates its own (§7.7).
+    `storage_options` adds Fridge and Freezer after the meals: the page of a food or a
+    dish can save it as a new container instead (frontend_conventions.md §9.4)."""
     options = []
     for event in events:
         local_meal_time = to_local(event.meal_time)
@@ -264,6 +270,13 @@ def MealSelector(
         options = [Option("- No meals yet -", value="", cls="text-gray-500/50")]
 
     options.append(Option("New Meal", value="0", selected=(selected_id == 0)))
+    if storage_options:
+        options.append(
+            Optgroup(
+                *[Option(STORAGE_LABELS[location], value=location.value) for location in StorageLocation],
+                label="Save to",
+            )
+        )
 
     return Div(
         Label("Add to", cls="web_section_label shrink-0", **{"for": "meal_selector"}),
@@ -278,7 +291,13 @@ def MealSelector(
             **(
                 {
                     "hx_get": "/food/plate_selector",
-                    "hx_trigger": "change",
+                    # A container has no plates: the box is hidden instead
+                    # (static/js/food_detail.js).
+                    "hx_trigger": (
+                        "change[!this.selectedOptions[0].parentElement.matches('optgroup')]"
+                        if storage_options
+                        else "change"
+                    ),
                     "hx_target": "#plate_selector_box",
                     "hx_swap": "innerHTML",
                     "hx_include": "this",
@@ -405,6 +424,69 @@ def PlateSelector(plate_options: list, selected_id: int = None):
     )
 
 
+# Every control of the Food header sends the whole state of the list.
+_FOOD_LIST_INCLUDE = (
+    "#food_search_input, #food_filter, #food_search_mode, #food_food_mode, "
+    "#food_favs_mode, #food_recipes_mode, #food_recipes_meal"
+)
+
+
+def _mode_tabs(group: str, tabs: tuple[tuple[str, str], ...], *, hidden: bool = True):
+    """Underlined tabs of one pill of the Food header (frontend_conventions.md §9.3).
+    The first one starts selected; choosing one writes its value in
+    #food_<group>_mode and reloads the list."""
+    width = {2: "w-1/2", 3: "w-1/3"}[len(tabs)]
+    columns = []
+    for index, (label, value) in enumerate(tabs):
+        selected = index == 0
+        align = "text-left" if index == 0 else ("text-right" if index == len(tabs) - 1 else "text-center")
+        columns.append(
+            Div(
+                Button(
+                    label,
+                    type="button",
+                    data_skip_page_loading="true",
+                    **{f"data_{group}_mode_btn": "true", f"data_{group}_mode_value": value},
+                    cls=(
+                        "inline-flex px-0 pb-1.5 text-sm "
+                        f"{'font-bold text-black' if selected else 'font-medium text-gray-400'} "
+                        f"{align} transition-colors duration-150 cursor-pointer"
+                    ),
+                    style=(
+                        "transform: translateX(0); border-bottom: 2px solid "
+                        f"{'#111827' if selected else 'transparent'};"
+                    ),
+                    hx_get="/food/list",
+                    hx_target="#food-list",
+                    hx_swap="innerHTML",
+                    hx_include=_FOOD_LIST_INCLUDE,
+                    **{
+                        "hx-on:click": (
+                            f"var mode='{value}';"
+                            f"var modeInput=document.getElementById('food_{group}_mode');"
+                            "if(modeInput){modeInput.value=mode;}"
+                            f"document.querySelectorAll('[data-{group}-mode-btn]').forEach(function(btn){{"
+                            "btn.classList.remove('text-black','font-bold');"
+                            "btn.classList.add('text-gray-400','font-medium');"
+                            "btn.style.borderBottom='2px solid transparent';"
+                            "});"
+                            "this.classList.remove('text-gray-400');"
+                            "this.classList.remove('font-medium');"
+                            "this.classList.add('text-black','font-bold');"
+                            "this.style.borderBottom='2px solid #111827';"
+                        ),
+                    },
+                ),
+                cls=f"{width} flex items-end justify-center",
+            )
+        )
+    return Div(
+        *columns,
+        id=f"food_{group}_tabs",
+        cls=f"{'hidden ' if hidden else ''}w-full flex items-end justify-between mt-2",
+    )
+
+
 def Filters():
     filters = [("Search", "all"), ("Food", "food"), ("Recipes", "recipes"), ("Favs", "favs")]
     buttons = []
@@ -419,7 +501,7 @@ def Filters():
                 hx_get="/food/list",
                 hx_target="#food-list",
                 hx_swap="innerHTML",
-                hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
+                hx_include=_FOOD_LIST_INCLUDE,
                 **{
                     "hx-on:click": (
                         f"document.getElementById('food_filter').value='{value}';"
@@ -488,310 +570,10 @@ def Filters():
                 rounded-full
             """,
         ),
-        Div(
-            Div(
-                Button(
-                    "Recommended",
-                    type="button",
-                    data_skip_page_loading="true",
-                    data_search_mode_btn="true",
-                    data_search_mode_value="recommended",
-                    cls="inline-flex px-0 pb-1.5 text-sm font-bold text-black text-left transition-colors duration-150 cursor-pointer",
-                    style="transform: translateX(0); border-bottom: 2px solid #111827;",
-                    hx_get="/food/list",
-                    hx_target="#food-list",
-                    hx_swap="innerHTML",
-                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
-                    **{
-                        "hx-on:click": (
-                            "var mode='recommended';"
-                            "var modeInput=document.getElementById('food_search_mode');"
-                            "if(modeInput){modeInput.value=mode;}"
-                            "document.querySelectorAll('[data-search-mode-btn]').forEach(function(btn){"
-                            "btn.classList.remove('text-black','font-bold');"
-                            "btn.classList.add('text-gray-400','font-medium');"
-                            "btn.style.borderBottom='2px solid transparent';"
-                            "});"
-                            "this.classList.remove('text-gray-400');"
-                            "this.classList.remove('font-medium');"
-                            "this.classList.add('text-black','font-bold');"
-                            "this.style.borderBottom='2px solid #111827';"
-                        ),
-                    },
-                ),
-                cls="w-1/2 flex items-end justify-center",
-            ),
-            Div(
-                Button(
-                    "Global",
-                    type="button",
-                    data_skip_page_loading="true",
-                    data_search_mode_btn="true",
-                    data_search_mode_value="global",
-                    cls="inline-flex px-0 pb-1.5 text-sm font-medium text-gray-400 text-right transition-colors duration-150 cursor-pointer",
-                    style="transform: translateX(0); border-bottom: 2px solid transparent;",
-                    hx_get="/food/list",
-                    hx_target="#food-list",
-                    hx_swap="innerHTML",
-                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
-                    **{
-                        "hx-on:click": (
-                            "var mode='global';"
-                            "var modeInput=document.getElementById('food_search_mode');"
-                            "if(modeInput){modeInput.value=mode;}"
-                            "document.querySelectorAll('[data-search-mode-btn]').forEach(function(btn){"
-                            "btn.classList.remove('text-black','font-bold');"
-                            "btn.classList.add('text-gray-400','font-medium');"
-                            "btn.style.borderBottom='2px solid transparent';"
-                            "});"
-                            "this.classList.remove('text-gray-400');"
-                            "this.classList.remove('font-medium');"
-                            "this.classList.add('text-black','font-bold');"
-                            "this.style.borderBottom='2px solid #111827';"
-                        ),
-                    },
-                ),
-                cls="w-1/2 flex items-end justify-center",
-            ),
-            id="food_search_tabs",
-            cls="w-full flex items-end justify-between mt-2",
-        ),
-        Div(
-            Div(
-                Button(
-                    "Catalog",
-                    type="button",
-                    data_skip_page_loading="true",
-                    data_food_mode_btn="true",
-                    data_food_mode_value="catalog",
-                    cls="inline-flex px-0 pb-1.5 text-sm font-bold text-black text-left transition-colors duration-150 cursor-pointer",
-                    style="transform: translateX(0); border-bottom: 2px solid #111827;",
-                    hx_get="/food/list",
-                    hx_target="#food-list",
-                    hx_swap="innerHTML",
-                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
-                    **{
-                        "hx-on:click": (
-                            "var mode='catalog';"
-                            "var modeInput=document.getElementById('food_food_mode');"
-                            "if(modeInput){modeInput.value=mode;}"
-                            "document.querySelectorAll('[data-food-mode-btn]').forEach(function(btn){"
-                            "btn.classList.remove('text-black','font-bold');"
-                            "btn.classList.add('text-gray-400','font-medium');"
-                            "btn.style.borderBottom='2px solid transparent';"
-                            "});"
-                            "this.classList.remove('text-gray-400');"
-                            "this.classList.remove('font-medium');"
-                            "this.classList.add('text-black','font-bold');"
-                            "this.style.borderBottom='2px solid #111827';"
-                        ),
-                    },
-                ),
-                cls="w-1/2 flex items-end justify-center",
-            ),
-            Div(
-                Button(
-                    "Manual",
-                    type="button",
-                    data_skip_page_loading="true",
-                    data_food_mode_btn="true",
-                    data_food_mode_value="manual",
-                    cls="inline-flex px-0 pb-1.5 text-sm font-medium text-gray-400 text-right transition-colors duration-150 cursor-pointer",
-                    style="transform: translateX(0); border-bottom: 2px solid transparent;",
-                    hx_get="/food/list",
-                    hx_target="#food-list",
-                    hx_swap="innerHTML",
-                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
-                    **{
-                        "hx-on:click": (
-                            "var mode='manual';"
-                            "var modeInput=document.getElementById('food_food_mode');"
-                            "if(modeInput){modeInput.value=mode;}"
-                            "document.querySelectorAll('[data-food-mode-btn]').forEach(function(btn){"
-                            "btn.classList.remove('text-black','font-bold');"
-                            "btn.classList.add('text-gray-400','font-medium');"
-                            "btn.style.borderBottom='2px solid transparent';"
-                            "});"
-                            "this.classList.remove('text-gray-400');"
-                            "this.classList.remove('font-medium');"
-                            "this.classList.add('text-black','font-bold');"
-                            "this.style.borderBottom='2px solid #111827';"
-                        ),
-                    },
-                ),
-                cls="w-1/2 flex items-end justify-center",
-            ),
-            id="food_food_tabs",
-            cls="hidden w-full flex items-end justify-between mt-2",
-        ),
-        Div(
-            Div(
-                Button(
-                    "Mine",
-                    type="button",
-                    data_skip_page_loading="true",
-                    data_recipes_mode_btn="true",
-                    data_recipes_mode_value="mine",
-                    cls="inline-flex px-0 pb-1.5 text-sm font-bold text-black text-left transition-colors duration-150 cursor-pointer",
-                    style="transform: translateX(0); border-bottom: 2px solid #111827;",
-                    hx_get="/food/list",
-                    hx_target="#food-list",
-                    hx_swap="innerHTML",
-                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
-                    **{
-                        "hx-on:click": (
-                            "var mode='mine';"
-                            "var modeInput=document.getElementById('food_recipes_mode');"
-                            "if(modeInput){modeInput.value=mode;}"
-                            "document.querySelectorAll('[data-recipes-mode-btn]').forEach(function(btn){"
-                            "btn.classList.remove('text-black','font-bold');"
-                            "btn.classList.add('text-gray-400','font-medium');"
-                            "btn.style.borderBottom='2px solid transparent';"
-                            "});"
-                            "this.classList.remove('text-gray-400');"
-                            "this.classList.remove('font-medium');"
-                            "this.classList.add('text-black','font-bold');"
-                            "this.style.borderBottom='2px solid #111827';"
-                        ),
-                    },
-                ),
-                cls="w-1/2 flex items-end justify-center",
-            ),
-            Div(
-                Button(
-                    "Discover",
-                    type="button",
-                    data_skip_page_loading="true",
-                    data_recipes_mode_btn="true",
-                    data_recipes_mode_value="discover",
-                    cls="inline-flex px-0 pb-1.5 text-sm font-medium text-gray-400 text-right transition-colors duration-150 cursor-pointer",
-                    style="transform: translateX(0); border-bottom: 2px solid transparent;",
-                    hx_get="/food/list",
-                    hx_target="#food-list",
-                    hx_swap="innerHTML",
-                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
-                    **{
-                        "hx-on:click": (
-                            "var mode='discover';"
-                            "var modeInput=document.getElementById('food_recipes_mode');"
-                            "if(modeInput){modeInput.value=mode;}"
-                            "document.querySelectorAll('[data-recipes-mode-btn]').forEach(function(btn){"
-                            "btn.classList.remove('text-black','font-bold');"
-                            "btn.classList.add('text-gray-400','font-medium');"
-                            "btn.style.borderBottom='2px solid transparent';"
-                            "});"
-                            "this.classList.remove('text-gray-400');"
-                            "this.classList.remove('font-medium');"
-                            "this.classList.add('text-black','font-bold');"
-                            "this.style.borderBottom='2px solid #111827';"
-                        ),
-                    },
-                ),
-                cls="w-1/2 flex items-end justify-center",
-            ),
-            id="food_recipes_tabs",
-            cls="hidden w-full flex items-end justify-between mt-2",
-        ),
-        Div(
-            Div(
-                Button(
-                    "Catalog",
-                    type="button",
-                    data_skip_page_loading="true",
-                    data_favs_mode_btn="true",
-                    data_favs_mode_value="catalog",
-                    cls="inline-flex px-0 pb-1.5 text-sm font-bold text-black text-left transition-colors duration-150 cursor-pointer",
-                    style="transform: translateX(0); border-bottom: 2px solid #111827;",
-                    hx_get="/food/list",
-                    hx_target="#food-list",
-                    hx_swap="innerHTML",
-                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
-                    **{
-                        "hx-on:click": (
-                            "var mode='catalog';"
-                            "var modeInput=document.getElementById('food_favs_mode');"
-                            "if(modeInput){modeInput.value=mode;}"
-                            "document.querySelectorAll('[data-favs-mode-btn]').forEach(function(btn){"
-                            "btn.classList.remove('text-black','font-bold');"
-                            "btn.classList.add('text-gray-400','font-medium');"
-                            "btn.style.borderBottom='2px solid transparent';"
-                            "});"
-                            "this.classList.remove('text-gray-400');"
-                            "this.classList.remove('font-medium');"
-                            "this.classList.add('text-black','font-bold');"
-                            "this.style.borderBottom='2px solid #111827';"
-                        ),
-                    },
-                ),
-                cls="w-1/3 flex items-end justify-center",
-            ),
-            Div(
-                Button(
-                    "Manual",
-                    type="button",
-                    data_skip_page_loading="true",
-                    data_favs_mode_btn="true",
-                    data_favs_mode_value="manual",
-                    cls="inline-flex px-0 pb-1.5 text-sm font-medium text-gray-400 text-center transition-colors duration-150 cursor-pointer",
-                    style="transform: translateX(0); border-bottom: 2px solid transparent;",
-                    hx_get="/food/list",
-                    hx_target="#food-list",
-                    hx_swap="innerHTML",
-                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
-                    **{
-                        "hx-on:click": (
-                            "var mode='manual';"
-                            "var modeInput=document.getElementById('food_favs_mode');"
-                            "if(modeInput){modeInput.value=mode;}"
-                            "document.querySelectorAll('[data-favs-mode-btn]').forEach(function(btn){"
-                            "btn.classList.remove('text-black','font-bold');"
-                            "btn.classList.add('text-gray-400','font-medium');"
-                            "btn.style.borderBottom='2px solid transparent';"
-                            "});"
-                            "this.classList.remove('text-gray-400');"
-                            "this.classList.remove('font-medium');"
-                            "this.classList.add('text-black','font-bold');"
-                            "this.style.borderBottom='2px solid #111827';"
-                        ),
-                    },
-                ),
-                cls="w-1/3 flex items-end justify-center",
-            ),
-            Div(
-                Button(
-                    "Recipes",
-                    type="button",
-                    data_skip_page_loading="true",
-                    data_favs_mode_btn="true",
-                    data_favs_mode_value="recipes",
-                    cls="inline-flex px-0 pb-1.5 text-sm font-medium text-gray-400 text-right transition-colors duration-150 cursor-pointer",
-                    style="transform: translateX(0); border-bottom: 2px solid transparent;",
-                    hx_get="/food/list",
-                    hx_target="#food-list",
-                    hx_swap="innerHTML",
-                    hx_include="#food_search_input, #food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
-                    **{
-                        "hx-on:click": (
-                            "var mode='recipes';"
-                            "var modeInput=document.getElementById('food_favs_mode');"
-                            "if(modeInput){modeInput.value=mode;}"
-                            "document.querySelectorAll('[data-favs-mode-btn]').forEach(function(btn){"
-                            "btn.classList.remove('text-black','font-bold');"
-                            "btn.classList.add('text-gray-400','font-medium');"
-                            "btn.style.borderBottom='2px solid transparent';"
-                            "});"
-                            "this.classList.remove('text-gray-400');"
-                            "this.classList.remove('font-medium');"
-                            "this.classList.add('text-black','font-bold');"
-                            "this.style.borderBottom='2px solid #111827';"
-                        ),
-                    },
-                ),
-                cls="w-1/3 flex items-end justify-center",
-            ),
-            id="food_favs_tabs",
-            cls="hidden w-full flex items-end justify-between mt-2",
-        ),
+        _mode_tabs("search", (("Recommended", "recommended"), ("Global", "global")), hidden=False),
+        _mode_tabs("food", (("Catalog", "catalog"), ("Manual", "manual"), ("Fridge", "fridge"))),
+        _mode_tabs("recipes", (("Mine", "mine"), ("Discover", "discover"))),
+        _mode_tabs("favs", (("Catalog", "catalog"), ("Manual", "manual"), ("Recipes", "recipes"))),
         cls="md:w-xl lg:w-xl w-xs transition-all",
     )
 
@@ -3783,6 +3565,7 @@ def FoodDetailPage(
         plate_options=plate_options,
         selected_plate_id=selected_plate_id,
         show_plates=not (recipe_mode and len(used_plates) > 1),
+        storage_options=archivable,
     )
     recipe_ingredients = (
         RecipeIngredientsBlock(recipe_id, recipe_portions or [], recipe_plates or [], can_edit) if recipe_mode else ""
@@ -3795,16 +3578,33 @@ def FoodDetailPage(
             **recipe_add_open_attrs(recipe_id),
         )
         if recipe_mode
-        else Button(
-            "Log food",
-            type="button",
-            cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-black text-white border-black",
-            hx_post=f"/food/log/{entry_type}/{entry['id']}",
-            hx_target=f"#{msg_id}",
-            hx_swap="innerHTML",
-            hx_push_url="false",
-            hx_include=f"#meal_selector, #plate_selector, #{form_id}, #{root_id}_weighed",
-            data_skip_page_loading="true",
+        else Div(
+            Button(
+                "Log food",
+                type="button",
+                cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-black text-white border-black",
+                hx_post=f"/food/log/{entry_type}/{entry['id']}",
+                hx_target=f"#{msg_id}",
+                hx_swap="innerHTML",
+                hx_push_url="false",
+                hx_include=f"#meal_selector, #plate_selector, #{form_id}, #{root_id}_weighed",
+                data_skip_page_loading="true",
+                data_detail_meal_only="true",
+            ),
+            # Shown instead when Add to is Fridge or Freezer; static/js/food_detail.js
+            # names it and sends the place in hx-vals (frontend_conventions.md §9.4).
+            Button(
+                "Save to fridge",
+                type="button",
+                cls="hidden web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-black text-white border-black",
+                hx_post=f"/food/fridge/store/{entry_type}/{entry['id']}",
+                hx_target=f"#{msg_id}",
+                hx_swap="innerHTML",
+                hx_push_url="false",
+                hx_include=f"#{form_id}, #{root_id}_weighed",
+                data_skip_page_loading="true",
+                data_detail_storage_only="true",
+            ),
         )
     )
 
@@ -3943,18 +3743,21 @@ def FoodDetailPage(
                     ),
                     Input(type="hidden", id=plate_unit_id, name="plate_unit", value=AmountInputUnit.PERCENT.value),
                     Input(type="hidden", id=plate_grams_id, value=f"{default_amount:.6f}"),
+                    data_detail_meal_only="true",
                     cls="flex items-center gap-2",
                 ),
                 P(
                     f"Total amount (plate amount): {default_amount:.1f} ({default_amount:.1f}) {base_unit}",
                     id=plate_equivalent_id,
                     data_detail_plate_equivalent="true",
+                    data_detail_meal_only="true",
                     cls="text-xs text-gray-600",
                 ),
                 P(
                     f"Will be saved in fridge: {0.0:.1f} {base_unit}",
                     id=leftovers_id,
                     data_detail_leftovers="true",
+                    data_detail_meal_only="true",
                     cls="text-xs text-gray-600",
                 ),
                 (
@@ -4033,6 +3836,8 @@ def FoodDetailPage(
                                 placeholder="Conservation",
                                 allow_add=False,
                             ),
+                            # A container says where it is (measurement §4.8.4).
+                            data_detail_meal_only="true",
                             cls="flex flex-col gap-1",
                         ),
                         id=advanced_inner_id,

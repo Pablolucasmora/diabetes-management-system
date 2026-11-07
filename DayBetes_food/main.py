@@ -35,6 +35,7 @@ from DayBetes_food.http_errors import (
 from DayBetes_food.routes import (
     setup_auth_routes,
     setup_food_routes,
+    setup_fridge_routes,
     setup_main_routes,
     setup_cart_routes,
     setup_stats_routes,
@@ -291,6 +292,8 @@ setup_main_routes(rt)
 setup_auth_routes(rt)
 
 setup_food_routes(rt)
+
+setup_fridge_routes(rt)
 
 setup_cart_routes(rt)
 

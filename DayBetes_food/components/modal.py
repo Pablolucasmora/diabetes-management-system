@@ -55,6 +55,16 @@ def modal_secondary_button(label: str, *, cls: str = "", **attrs):
     )
 
 
+def ModalFormError(message: str):
+    """Validation message inside a pop-up form (code_conventions.md §9.5). Solid,
+    not glass: it sits in a solid card (frontend_conventions.md §8)."""
+    return P(
+        message,
+        role="alert",
+        cls="text-sm text-danger bg-danger/5 border border-danger/25 rounded-xl px-3 py-2",
+    )
+
+
 def ModalLayer(*content, modal_id: str, card_cls: str = "gap-4"):
     """Full-page dimmed and blurred layer with a solid card in the middle.
 

@@ -21,7 +21,9 @@ from DayBetes_food.domain.constants import (
     Nutriscore,
     PortionDestination,
     PortionOrigin,
+    StorageLocation,
 )
+from DayBetes_food.domain.fridge import FridgeRead
 from DayBetes_food.domain.insulin import InsulinInjectionRead
 from DayBetes_food.domain.intake_event import IntakeEventRead
 from DayBetes_food.domain.intake_plate import IntakePlateRead
@@ -355,6 +357,31 @@ def intake_plate_read_from_row(row: dict) -> IntakePlateRead:
         )
     except KeyError as exc:
         raise InfrastructureError(f"Missing required field {exc} in intake plate row") from exc
+
+
+def fridge_read_from_row(row: dict) -> FridgeRead:
+    """Convert a SQL row from _FRIDGE_COLUMNS (queries/fridge.py) to FridgeRead.
+
+    Nullable columns: name (NULL = derived name), content_weight (NULL = not
+    weighed) and closed_at (NULL = still stored). An unknown location raises
+    InfrastructureError (§4.3).
+    """
+    try:
+        content_weight = row.get("content_weight")
+        return FridgeRead(
+            id=int(row["id"]),
+            user_id=int(row["users_id"]),
+            name=row.get("name"),
+            location=StorageLocation(row["location"]),
+            stored_at=row["stored_at"],
+            expires_at=row["expires_at"],
+            content_weight=float(content_weight) if content_weight is not None else None,
+            closed_at=row.get("closed_at"),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+    except (KeyError, ValueError) as exc:
+        raise InfrastructureError(f"Invalid fridge row: {exc}") from exc
 
 
 def _single_arc_column(row: dict, columns: tuple[str, ...], arc: str) -> str:

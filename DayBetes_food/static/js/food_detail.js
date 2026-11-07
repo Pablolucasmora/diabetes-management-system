@@ -300,6 +300,36 @@
     refreshPlate(root, refs, true);
   }
 
+  // Add to can also be Fridge or Freezer (frontend_conventions.md §9.4): the
+  // page then saves a new container instead of logging a meal. What only
+  // applies to a meal (plate, conservation, the Log button) is hidden and the
+  // Save button names the place and sends it in hx-vals. The server is still
+  // the one that checks the place (/food/fridge/store).
+  var STORAGE_BUTTON_LABELS = { fridge: "Save to fridge", freezer: "Save to freezer" };
+
+  function chosenStorage(selectEl) {
+    var option = selectedOption(selectEl);
+    if (!option || !option.parentElement || option.parentElement.tagName !== "OPTGROUP") return "";
+    return option.value;
+  }
+
+  function syncDestination(root) {
+    var mealSelect = root.querySelector("#meal_selector");
+    if (!mealSelect) return;
+    var storage = chosenStorage(mealSelect);
+    var mealOnly = root.querySelectorAll("[data-detail-meal-only], #plate_selector_box");
+    for (var i = 0; i < mealOnly.length; i += 1) {
+      mealOnly[i].classList.toggle("hidden", storage !== "");
+    }
+    var save = root.querySelector("[data-detail-storage-only]");
+    if (!save) return;
+    save.classList.toggle("hidden", storage === "");
+    if (storage) {
+      save.textContent = STORAGE_BUTTON_LABELS[storage] || save.textContent;
+      save.setAttribute("hx-vals", JSON.stringify({ location: storage }));
+    }
+  }
+
   function bindOne(root) {
     if (!root || root.dataset.detailBound === "1") return;
     root.dataset.detailBound = "1";
@@ -310,6 +340,14 @@
     restore(root, refs);
     updatePlateUnitButton(refs);
     syncDisplayFromGrams(root, refs);
+
+    var mealSelect = root.querySelector("#meal_selector");
+    if (mealSelect) {
+      mealSelect.addEventListener("change", function () {
+        syncDestination(root);
+      });
+    }
+    syncDestination(root);
 
     refs.displayInput.addEventListener("change", function () {
       syncGramsFromDisplay(root, refs);

@@ -94,9 +94,7 @@ _PORTION_FROM = """
 """
 
 # Ownership of the destination arc (5.3, 6.9). Written once: every read and
-# mutation appends it to its WHERE. The `fridge` branch is included although it
-# has no writer yet: it is a condition of the model, and omitting it would make
-# fridge portions invisible to their own owner the day the branch exists.
+# mutation appends it to its WHERE, the `fridge` branch included (§11.2.6).
 _PORTION_OWNED_BY_USER = """
     AND (
         EXISTS (
@@ -137,9 +135,13 @@ def _ensure_destination_owned(connection, user_id: int, destination: PortionDest
     table = _DESTINATION_TABLE.get(destination)
     if table is None:
         raise ValidationError("invalid_destination")
-    archived = " AND deleted_at IS NULL" if destination is PortionDestination.INTAKE_EVENT else ""
+    # An archived event or a closed container takes no new portions (§11.2.6).
+    still_open = {
+        PortionDestination.INTAKE_EVENT: " AND deleted_at IS NULL",
+        PortionDestination.FRIDGE: " AND closed_at IS NULL",
+    }.get(destination, "")
     query = sql.SQL(
-        "SELECT 1 AS ok FROM {} WHERE id = %(id)s AND users_id = %(user_id)s" + archived + ";"
+        "SELECT 1 AS ok FROM {} WHERE id = %(id)s AND users_id = %(user_id)s" + still_open + ";"
     ).format(sql.Identifier(table))
     row = _execute_query(
         connection, query, {"id": destination_id, "user_id": user_id}, commit=False
@@ -318,6 +320,23 @@ def list_portions_by_events(connection, user_id: int, event_ids: list[int]) -> l
     """
     rows = _execute_query_many(
         connection, query, {"event_ids": event_ids, "user_id": user_id}, commit=False
+    )
+    return _rows_to_reads(rows)
+
+
+def list_portions_by_fridges(connection, user_id: int, fridge_ids: list[int]) -> list[PortionDetailRead]:
+    """Content of several containers at once, in insertion order (measurement §4.8.1)."""
+    if not fridge_ids:
+        return []
+    query = f"""
+        SELECT {_PORTION_COLUMNS}
+        {_PORTION_FROM}
+        WHERE pd.fridge_id = ANY(%(fridge_ids)s)
+        {_PORTION_OWNED_BY_USER}
+        ORDER BY pd.fridge_id, pd.id;
+    """
+    rows = _execute_query_many(
+        connection, query, {"fridge_ids": fridge_ids, "user_id": user_id}, commit=False
     )
     return _rows_to_reads(rows)
 

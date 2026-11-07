@@ -11,6 +11,7 @@ from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.food.food_main import food_main, plate_selector_options
 from DayBetes_food.components.ui import render_fragment, render_page
 from DayBetes_food.http_errors import app_error_response, request_id
+from DayBetes_food.services.fridge import list_fridge_items, store_in_fridge
 from DayBetes_food.services.intake_event import confirm_planned_event
 from DayBetes_food.database.queries import (
     create_catalog_item,
@@ -98,6 +99,7 @@ from DayBetes_food.domain.constants import (
     PrefillSource,
     FoodEntryType,
     PortionOrigin,
+    StorageLocation,
     parse_enum,
     parse_optional_id,
 )
@@ -159,9 +161,10 @@ from DayBetes_food.components.food.food_actions import (
     FoodActionsRecipePlates,
     food_card_id,
 )
+from DayBetes_food.components.food.fridge import FridgeListContent
+from DayBetes_food.components.modal import ModalFormError
 from DayBetes_food.components.food.rescue import (
     RescueForm,
-    RescueFormError,
     RescueLine,
     RescueMarkButton,
     RescueOptions,
@@ -212,6 +215,7 @@ from DayBetes_food.domain.recipe import (
 )
 from DayBetes_food.services.recipe import add_recipe_to_meal, copy_recipe, recipe_plates_with_portions
 from DayBetes_food.domain.recipe_plate import parse_recipe_plate_name
+from DayBetes_food.domain.fridge import FridgeStoreCommand
 from DayBetes_food.domain.portion_detail import portion_macro_amount
 from DayBetes_food.components.food.recipe_add import RecipeAddForm
 from DayBetes_food.components.stats.stats_shared import MEAL_TYPE_LABELS
@@ -732,7 +736,7 @@ def _get_rescue_food(connection, user_id: int, origin: PortionOrigin, entry_id: 
 
 def _rescue_error(message: str):
     """Validation error of the rescue pop-up: 200 + message inside the form (§9.5)."""
-    return render_fragment(RescueFormError(message))
+    return render_fragment(ModalFormError(message))
 
 
 def _has_rescue_tag(tags) -> bool:
@@ -751,6 +755,40 @@ def _portion_defaults(item: CatalogItemRead | ManualIntakeRead) -> dict:
     Every route that creates a portion from a catalog food or a manual dish
     must use it."""
     return {"strictly_weighed": item.default_strictly_weighed}
+
+
+def _detail_origin(
+    connection, user_id: int, kind: FoodEntryType, entry_id: int, cooked_weight: bool, unit: AmountInputUnit
+) -> CatalogItemRead | ManualIntakeRead:
+    """The food or dish of a detail page, read with its visibility rule, and checked
+    against what the form asks of it: a cooked weight needs a cooking factor
+    (measurement §5.2, R4) and the `portion` unit needs a serving. Shared by
+    /food/log and /food/fridge/store.
+
+    Raises:
+        NotFoundError: it does not exist or is not visible to the user.
+        ValidationError: with the public message for the form.
+    """
+    if kind is FoodEntryType.CATALOG:
+        item = get_catalog_item(connection, user_id, entry_id)
+        if item is None:
+            raise NotFoundError("Item not found.")
+        # R4: the 422 applies only when the user ticks the box.
+        if cooked_weight and item.cooking_factor is None:
+            raise ValidationError("This food has no cooking factor, so it cannot be weighed cooked.")
+        noun = "food"
+    else:
+        item = get_manual_intake(connection, user_id, entry_id)
+        if item is None:
+            raise NotFoundError("Item not found.")
+        # measurement §5.2: a manual dish has no cooking factor; the box is never
+        # turned into False silently (§7.2).
+        if cooked_weight:
+            raise ValidationError("Cooked weight only applies to catalog foods.")
+        noun = "dish"
+    if unit is AmountInputUnit.PORTION and item.default_portion is None:
+        raise ValidationError(f"This {noun} has no serving. Use grams, lb or oz.")
+    return item
 
 
 def _resolve_target_event(connection, user_id: int, intake_event_id: str) -> int:
@@ -2775,40 +2813,24 @@ def setup_food_routes(rt):
         except ValidationError as error:
             return render_fragment(P(str(error), cls="text-red-700"))
 
+        if kind is FoodEntryType.RECIPE:
+            # A recipe goes through its own step (POST /add_recipe, frontend §9.7).
+            return app_error_response(request, ValidationError, _UNKNOWN_ENTRY_TYPE)
+
         with get_connection() as connection:
             user_id = get_current_user_id()
             if not user_id:
                 # Defence in depth: the middleware already covers these routes
                 # (finding 26 of audit_intake_event).
                 return app_error_response(request, AuthenticationError, "Your session has expired.")
-            origin_item = None
-            portion_defaults = {}
-            if kind is FoodEntryType.CATALOG:
-                origin_item = get_catalog_item(connection, int(user_id), entry_id)
-                if origin_item is None:
-                    return app_error_response(request, NotFoundError, "Item not found.")
-                # R4: the 422 applies only when the user ticks the box.
-                if cooked_weight and origin_item.cooking_factor is None:
-                    return _error_msg("This food has no cooking factor, so it cannot be weighed cooked.")
-                serving_grams = origin_item.default_portion
-                if unit is AmountInputUnit.PORTION and serving_grams is None:
-                    return _error_msg("This food has no serving. Use grams, lb or oz.")
-                portion_defaults = _portion_defaults(origin_item)
-            elif kind is FoodEntryType.MANUAL_INTAKE:
-                origin_item = get_manual_intake(connection, int(user_id), entry_id)
-                if origin_item is None:
-                    return app_error_response(request, NotFoundError, "Item not found.")
-                # measurement §5.2: a manual dish has no cooking factor; the box
-                # is never turned into False silently (§7.2).
-                if cooked_weight:
-                    return _error_msg("Cooked weight only applies to catalog foods.")
-                serving_grams = origin_item.default_portion
-                if unit is AmountInputUnit.PORTION and serving_grams is None:
-                    return _error_msg("This dish has no serving. Use grams, lb or oz.")
-                portion_defaults = _portion_defaults(origin_item)
-            else:
-                # A recipe goes through its own step (POST /add_recipe, frontend §9.7).
-                return app_error_response(request, ValidationError, _UNKNOWN_ENTRY_TYPE)
+            try:
+                origin_item = _detail_origin(connection, int(user_id), kind, entry_id, cooked_weight, unit)
+            except NotFoundError as error:
+                return app_error_response(request, NotFoundError, str(error))
+            except ValidationError as error:
+                return _error_msg(str(error))
+            serving_grams = origin_item.default_portion
+            portion_defaults = _portion_defaults(origin_item)
             try:
                 total_grams = parse_amount_grams(amount_to_grams(typed_amount, unit, serving_grams))
                 if plated_unit is AmountInputUnit.PERCENT:
@@ -2872,6 +2894,85 @@ def setup_food_routes(rt):
                 return render_fragment(P("Could not log this food: check the amounts.", cls="text-red-700"))
             return HTMLResponse("", headers={"HX-Redirect": "/food"})
 
+    @rt("/food/fridge/store/{entry_type}/{entry_id}")
+    def post(
+        request: Request,
+        entry_type: str,
+        entry_id: int,
+        location: str = "",
+        amount_value: str = "",
+        amount_unit: str = AmountInputUnit.PORTION.value,
+        cooking: str = "",
+        final_state: str = "",
+        is_cooked_weight: str = "",
+        strictly_weighed: str | None = None,
+    ):
+        """Save an amount of a food or a dish from its page as a new container in
+        the fridge or the freezer (measurement_conventions.md §4.8.5, frontend §9.4).
+
+        Same fields as /food/log without the plate: the whole amount goes into the
+        container, and its conservation is the container's place (§4.8.4).
+        Repeating it stores a second container (§9.6). Form validation answers
+        200 + message (§9.5); on success it goes back to Food, like /food/log.
+        """
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        kind = _parse_food_entry_type(entry_type)
+        if kind is None or kind is FoodEntryType.RECIPE:
+            return app_error_response(request, ValidationError, _UNKNOWN_ENTRY_TYPE)
+        try:
+            storage = parse_enum(StorageLocation, location, field="location")
+            cooked_weight = _parse_strict_bool(is_cooked_weight)
+            chosen_weighed = _parse_optional_bool(strictly_weighed)
+            parsed_cooking = parse_enum(CookingMethod, cooking, field="cooking")
+            parsed_final_state = parse_enum(FoodPhysicalState, final_state, field="final_state")
+        except ValidationError as error:
+            return app_error_response(request, ValidationError, str(error))
+        if storage is None:
+            return app_error_response(request, ValidationError, "Choose the fridge or the freezer.")
+        try:
+            unit = AmountInputUnit((amount_unit or "").strip())
+        except ValueError:
+            return _error_msg("Choose a valid unit.")
+        if unit is AmountInputUnit.PERCENT:
+            return _error_msg("Choose a valid unit.")
+        typed_amount = _parse_typed_amount(amount_value)
+        if typed_amount is None:
+            return _error_msg("Amount must be a number.")
+
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        with get_connection() as connection:
+            try:
+                origin_item = _detail_origin(connection, int(user_id), kind, entry_id, cooked_weight, unit)
+                grams = parse_amount_grams(amount_to_grams(typed_amount, unit, origin_item.default_portion))
+            except NotFoundError as error:
+                return app_error_response(request, NotFoundError, str(error))
+            except ValidationError as error:
+                return _error_msg(str(error))
+            weighed = chosen_weighed if strictly_weighed is not None else origin_item.default_strictly_weighed
+            try:
+                store_in_fridge(
+                    connection,
+                    FridgeStoreCommand(
+                        user_id=int(user_id),
+                        location=storage,
+                        origin=PortionOrigin(kind.value),
+                        origin_id=entry_id,
+                        amount=grams,
+                        cooking=parsed_cooking,
+                        final_state=parsed_final_state,
+                        strictly_weighed=weighed,
+                        is_cooked_weight=cooked_weight,
+                    ),
+                )
+            except NotFoundError:
+                return app_error_response(request, NotFoundError, "Item not found.")
+            except ValidationError as error:
+                return _error_msg(str(error))
+        return HTMLResponse("", headers={"HX-Redirect": "/food"})
+
     @rt("/food/list")
     def get(
         request: Request,
@@ -2894,8 +2995,17 @@ def setup_food_routes(rt):
         clean_search = (search or "").strip()
         page = max(1, int(page or 1))
         food_mode_norm = (food_mode or "catalog").strip().lower()
-        if food_mode_norm not in ("catalog", "manual"):
+        if food_mode_norm not in ("catalog", "manual", "fridge"):
             food_mode_norm = "catalog"
+        if filter == "food" and food_mode_norm == "fridge":
+            # The user's containers, without search or pages: there are never
+            # many (frontend_conventions.md §9.8).
+            user_id = get_current_user_id()
+            if not user_id:
+                return app_error_response(request, AuthenticationError, "Your session has expired.")
+            with get_connection() as connection:
+                items = list_fridge_items(connection, int(user_id))
+            return render_fragment(FridgeListContent(items, utc_now()))
         favs_mode_norm = (favs_mode or "catalog").strip().lower()
         if favs_mode_norm not in ("catalog", "manual", "recipes"):
             favs_mode_norm = "catalog"

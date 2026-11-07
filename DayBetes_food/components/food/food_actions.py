@@ -57,14 +57,14 @@ def food_actions_url(entry_type: FoodEntryType, entry_id: int) -> str:
     return f"/food/actions/{entry_type.value}/{entry_id}"
 
 
-def FoodActionsTrigger(entry_type: FoodEntryType, entry_id: int):
-    """Hidden request source inside a food row. static/js/food_actions.js
+def ActionsTrigger(url: str):
+    """Hidden request source inside a row of the Food list. static/js/food_actions.js
     fires `dbFoodActions` on it after a long press or a right click; being
     its own element, the request skips the page loading layer without
-    affecting the row's own click."""
+    affecting the row's own click. `url` returns the first view of the pop-up."""
     return Span(
         hidden=True,
-        hx_get=food_actions_url(entry_type, entry_id),
+        hx_get=url,
         hx_trigger="dbFoodActions",
         hx_target=f"#{FOOD_ACTIONS_BODY_ID}",
         hx_swap="innerHTML",
@@ -72,6 +72,10 @@ def FoodActionsTrigger(entry_type: FoodEntryType, entry_id: int):
         data_skip_page_loading="true",
         data_food_actions_trigger="true",
     )
+
+
+def FoodActionsTrigger(entry_type: FoodEntryType, entry_id: int):
+    return ActionsTrigger(food_actions_url(entry_type, entry_id))
 
 
 def FoodActionsModal():
@@ -83,8 +87,9 @@ def FoodActionsModal():
     )
 
 
-def _view_link_attrs(url: str) -> dict:
-    """Swaps another view of the pop-up into its body. `data-food-actions-view`
+def actions_view_attrs(url: str) -> dict:
+    """Swaps another view of the pop-up into its body (also the first view, from a
+    button outside it: the pop-up opens when the view is in). `data-food-actions-view`
     is what static/js/food_actions.js animates (§10)."""
     return {
         "hx_get": url,
@@ -96,9 +101,9 @@ def _view_link_attrs(url: str) -> dict:
     }
 
 
-def _header(title: str, subtitle: str = "", back_url: str | None = None):
+def actions_header(title: str, subtitle: str = "", back_url: str | None = None):
     return Div(
-        modal_icon_button("‹", aria_label="Back", **_view_link_attrs(back_url)) if back_url else "",
+        modal_icon_button("‹", aria_label="Back", **actions_view_attrs(back_url)) if back_url else "",
         Div(
             P(title, cls=f"text-lg leading-snug {MODAL_NAME_CLS}"),
             P(subtitle, cls="text-xs text-gray-500 truncate") if subtitle else "",
@@ -109,7 +114,7 @@ def _header(title: str, subtitle: str = "", back_url: str | None = None):
     )
 
 
-def _option(label: str, *, chevron: bool = False, **attrs):
+def actions_option(label: str, *, chevron: bool = False, **attrs):
     return Button(
         Span(label),
         Span("›", aria_hidden="true", cls="text-lg leading-none text-gray-500") if chevron else "",
@@ -126,7 +131,7 @@ def FoodActionsMenu(entry_type: FoodEntryType, entry_id: int, entry: FoodEntrySu
     options = []
     if entry.can_edit:
         options.append(
-            _option(
+            actions_option(
                 EDIT_LABELS[entry_type],
                 hx_get=f"/food/edit/{entry_type.value}/{entry_id}/form",
                 hx_target="#main_content",
@@ -135,13 +140,13 @@ def FoodActionsMenu(entry_type: FoodEntryType, entry_id: int, entry: FoodEntrySu
                 onclick=close_modal_js(FOOD_ACTIONS_MODAL_ID) + " window.scrollTo({ top: 0, behavior: 'auto' });",
             )
         )
-    options.append(_option(COPY_LABEL, chevron=True, **_view_link_attrs(f"{base_url}/copy")))
+    options.append(actions_option(COPY_LABEL, chevron=True, **actions_view_attrs(f"{base_url}/copy")))
     # A recipe cannot be an ingredient of another recipe.
     if entry_type is not FoodEntryType.RECIPE:
-        options.append(_option("Add to recipe", chevron=True, **_view_link_attrs(f"{base_url}/recipes")))
+        options.append(actions_option("Add to recipe", chevron=True, **actions_view_attrs(f"{base_url}/recipes")))
 
     return Div(
-        _header(entry.name or "Unnamed", entry.subtitle),
+        actions_header(entry.name or "Unnamed", entry.subtitle),
         Div(*options, cls="flex flex-col gap-1.5"),
         cls="flex flex-col gap-3",
     )
@@ -157,15 +162,15 @@ def FoodActionsRecipes(
         content = Div(
             *[
                 (
-                    _option(
+                    actions_option(
                         recipe.name,
                         chevron=True,
-                        **_view_link_attrs(
+                        **actions_view_attrs(
                             f"{food_actions_url(entry_type, entry_id)}/recipes/{recipe.id}/plates"
                         ),
                     )
                     if recipe.id in several_plates
-                    else _option(
+                    else actions_option(
                         recipe.name,
                         hx_post=f"/food/recipe/{recipe.id}/ingredients/add/{entry_type.value}/{entry_id}",
                         hx_swap="none",
@@ -181,7 +186,7 @@ def FoodActionsRecipes(
     else:
         content = P("You have no recipes yet. Create one from the + menu.", cls="text-sm text-gray-600 px-1")
     return Div(
-        _header("Add to recipe", entry.name or "Unnamed", back_url=food_actions_url(entry_type, entry_id)),
+        actions_header("Add to recipe", entry.name or "Unnamed", back_url=food_actions_url(entry_type, entry_id)),
         content,
         cls="flex flex-col gap-3",
     )
@@ -192,10 +197,10 @@ def FoodActionsRecipePlates(
 ):
     """Third view, for a recipe with several plates: which one (§9.3.1)."""
     return Div(
-        _header(recipe.name, entry.name or "Unnamed", back_url=f"{food_actions_url(entry_type, entry_id)}/recipes"),
+        actions_header(recipe.name, entry.name or "Unnamed", back_url=f"{food_actions_url(entry_type, entry_id)}/recipes"),
         Div(
             *[
-                _option(
+                actions_option(
                     label,
                     hx_post=(
                         f"/food/recipe/{recipe.id}/ingredients/add/{entry_type.value}/{entry_id}"
@@ -217,7 +222,7 @@ def FoodActionsRecipePlates(
 def FoodActionsCopyConfirm(entry_type: FoodEntryType, entry_id: int, entry: FoodEntrySummary):
     """Copy confirmation: the same question as the detail page (§9.4)."""
     return Div(
-        _header(COPY_LABEL, entry.name or "Unnamed", back_url=food_actions_url(entry_type, entry_id)),
+        actions_header(COPY_LABEL, entry.name or "Unnamed", back_url=food_actions_url(entry_type, entry_id)),
         P(COPY_QUESTION, cls="text-sm text-gray-700"),
         Div(
             modal_secondary_button("No", onclick=close_modal_js(FOOD_ACTIONS_MODAL_ID), cls="w-full"),
@@ -240,7 +245,7 @@ def FoodActionsFavoriteConfirm(entry_type: FoodEntryType, entry_id: int, entry: 
     """Asked only when the favorite is all that keeps the food visible (§9.3.2)."""
     noun = "dish" if entry_type is FoodEntryType.MANUAL_INTAKE else "food"
     return Div(
-        _header("Remove from favorites", entry.name or "Unnamed"),
+        actions_header("Remove from favorites", entry.name or "Unnamed"),
         P(
             f"This {noun} is no longer available. If you remove it from your favorites, "
             "you will lose access to it. Make a copy first if you want to keep using it.",
