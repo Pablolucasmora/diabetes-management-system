@@ -13,6 +13,7 @@ from DayBetes_food.components.food.food_actions import (
     favorite_button_id,
     food_card_id,
 )
+from DayBetes_food.components.food.food_shared import FORM_FIELD_CLS, STORAGE_LABELS
 from DayBetes_food.components.food.rescue import RescueMarkButton, RescueModal, rescue_open_attrs
 from DayBetes_food.components.modal import (
     ModalLayer,
@@ -165,16 +166,11 @@ GLYCEMIC_INDEX_LABELS = {
     GlycemicIndex.MEDIUM: "Medium",
     GlycemicIndex.HIGH: "Fast",
 }
-# Where a food can be saved instead of a meal (frontend_conventions.md §9.4).
-STORAGE_LABELS = {StorageLocation.FRIDGE: "Fridge", StorageLocation.FREEZER: "Freezer"}
 # Declared confidence, ordinal 0-2 (measurement §6.10).
 CONFIDENCE_LABELS = {0: "Not sure", 1: "More or less", 2: "Quite sure"}
 MACROS_QUALITY_LABELS = {True: "Published (label, menu, website)", False: "Estimated"}
 WEIGHED_LABELS = {True: "Weighed", False: "Not weighed"}
 
-# One style for every field of the create and edit forms: full width, a
-# comfortable touch height and text-sm (frontend_conventions.md §2, §8).
-FORM_FIELD_CLS = "web_input w-full rounded-lg border border-line px-3 py-2 text-sm"
 
 FILTER_ITEM_CLS = """
     px-3 py-2
@@ -247,11 +243,8 @@ def MealSelector(
     plate_options: list = None,
     selected_plate_id: int = None,
     show_plates: bool = True,
-    storage_options: bool = False,
 ):
-    """`show_plates=False` for a recipe with several plates, which creates its own (§7.7).
-    `storage_options` adds Fridge and Freezer after the meals: the page of a food or a
-    dish can save it as a new container instead (frontend_conventions.md §9.4)."""
+    """`show_plates=False` for a recipe with several plates, which creates its own (§7.7)."""
     options = []
     for event in events:
         local_meal_time = to_local(event.meal_time)
@@ -270,13 +263,6 @@ def MealSelector(
         options = [Option("- No meals yet -", value="", cls="text-gray-500/50")]
 
     options.append(Option("New Meal", value="0", selected=(selected_id == 0)))
-    if storage_options:
-        options.append(
-            Optgroup(
-                *[Option(STORAGE_LABELS[location], value=location.value) for location in StorageLocation],
-                label="Save to",
-            )
-        )
 
     return Div(
         Label("Add to", cls="web_section_label shrink-0", **{"for": "meal_selector"}),
@@ -291,13 +277,7 @@ def MealSelector(
             **(
                 {
                     "hx_get": "/food/plate_selector",
-                    # A container has no plates: the box is hidden instead
-                    # (static/js/food_detail.js).
-                    "hx_trigger": (
-                        "change[!this.selectedOptions[0].parentElement.matches('optgroup')]"
-                        if storage_options
-                        else "change"
-                    ),
+                    "hx_trigger": "change",
                     "hx_target": "#plate_selector_box",
                     "hx_swap": "innerHTML",
                     "hx_include": "this",
@@ -487,14 +467,19 @@ def _mode_tabs(group: str, tabs: tuple[tuple[str, str], ...], *, hidden: bool = 
     )
 
 
-def Filters():
-    filters = [("Search", "all"), ("Food", "food"), ("Recipes", "recipes"), ("Favs", "favs")]
+# The pills of the Food header (frontend_conventions.md §9.3), as `(label, filter)`.
+FOOD_FILTERS = (("Search", "all"), ("Food", "food"), ("Recipes", "recipes"), ("Favs", "favs"), ("Fridge", "fridge"))
+
+
+def Filters(selected: str = "all"):
+    """`selected` is the pill the page opens on: `fridge` from the button of the
+    home page (§9.2), `all` otherwise."""
     buttons = []
-    for text, value in filters:
+    for text, value in FOOD_FILTERS:
         buttons.append(
             Button(
                 text,
-                cls=f"{FILTER_ITEM_CLS} {'bg-black text-white shadow-md' if value == 'all' else 'bg-transparent text-gray-700'}",
+                cls=f"{FILTER_ITEM_CLS} {'bg-black text-white shadow-md' if value == selected else 'bg-transparent text-gray-700'}",
                 data_food_filter_btn="true",
                 data_filter_value=value,
                 data_skip_page_loading="true",
@@ -554,7 +539,7 @@ def Filters():
         )
 
     return Div(
-        Input(type="hidden", id="food_filter", name="filter", value="all"),
+        Input(type="hidden", id="food_filter", name="filter", value=selected),
         Input(type="hidden", id="food_search_mode", name="search_mode", value="recommended"),
         Input(type="hidden", id="food_food_mode", name="food_mode", value="catalog"),
         Input(type="hidden", id="food_favs_mode", name="favs_mode", value="catalog"),
@@ -565,13 +550,13 @@ def Filters():
             cls="""
                 relative
                 flex items-center justify-between
-                gap-3
+                md:gap-3 lg:gap-3 gap-1.5
                 w-full
                 rounded-full
             """,
         ),
-        _mode_tabs("search", (("Recommended", "recommended"), ("Global", "global")), hidden=False),
-        _mode_tabs("food", (("Catalog", "catalog"), ("Manual", "manual"), ("Fridge", "fridge"))),
+        _mode_tabs("search", (("Recommended", "recommended"), ("Global", "global")), hidden=selected != "all"),
+        _mode_tabs("food", (("Catalog", "catalog"), ("Manual", "manual"))),
         _mode_tabs("recipes", (("Mine", "mine"), ("Discover", "discover"))),
         _mode_tabs("favs", (("Catalog", "catalog"), ("Manual", "manual"), ("Recipes", "recipes"))),
         cls="md:w-xl lg:w-xl w-xs transition-all",
@@ -3565,7 +3550,6 @@ def FoodDetailPage(
         plate_options=plate_options,
         selected_plate_id=selected_plate_id,
         show_plates=not (recipe_mode and len(used_plates) > 1),
-        storage_options=archivable,
     )
     recipe_ingredients = (
         RecipeIngredientsBlock(recipe_id, recipe_portions or [], recipe_plates or [], can_edit) if recipe_mode else ""
@@ -3578,34 +3562,41 @@ def FoodDetailPage(
             **recipe_add_open_attrs(recipe_id),
         )
         if recipe_mode
-        else Div(
-            Button(
-                "Log food",
-                type="button",
-                cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-black text-white border-black",
-                hx_post=f"/food/log/{entry_type}/{entry['id']}",
-                hx_target=f"#{msg_id}",
-                hx_swap="innerHTML",
-                hx_push_url="false",
-                hx_include=f"#meal_selector, #plate_selector, #{form_id}, #{root_id}_weighed",
-                data_skip_page_loading="true",
-                data_detail_meal_only="true",
-            ),
-            # Shown instead when Add to is Fridge or Freezer; static/js/food_detail.js
-            # names it and sends the place in hx-vals (frontend_conventions.md §9.4).
-            Button(
-                "Save to fridge",
-                type="button",
-                cls="hidden web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-black text-white border-black",
-                hx_post=f"/food/fridge/store/{entry_type}/{entry['id']}",
-                hx_target=f"#{msg_id}",
-                hx_swap="innerHTML",
-                hx_push_url="false",
-                hx_include=f"#{form_id}, #{root_id}_weighed",
-                data_skip_page_loading="true",
-                data_detail_storage_only="true",
-            ),
+        else Button(
+            "Log food",
+            type="button",
+            cls="web_button w-full px-4 py-3 text-sm md:text-base rounded-2xl bg-black text-white border-black",
+            hx_post=f"/food/log/{entry_type}/{entry['id']}",
+            hx_target=f"#{msg_id}",
+            hx_swap="innerHTML",
+            hx_push_url="false",
+            hx_include=f"#meal_selector, #plate_selector, #{form_id}, #{root_id}_weighed",
+            data_skip_page_loading="true",
         )
+    )
+    # The whole amount into a new container, without plating (frontend §9.4).
+    storage_buttons = (
+        Div(
+            *[
+                Button(
+                    f"Save to {STORAGE_LABELS[location].lower()}",
+                    type="button",
+                    cls="web_button w-full px-4 py-2 text-sm rounded-2xl",
+                    hx_post=f"/food/fridge/store/{entry_type}/{entry['id']}",
+                    hx_vals=json.dumps({"location": location.value}),
+                    hx_target=f"#{msg_id}",
+                    hx_swap="innerHTML",
+                    hx_push_url="false",
+                    hx_include=f"#{form_id}, #{root_id}_weighed",
+                    data_skip_page_loading="true",
+                    **{"hx-disabled-elt": "this"},
+                )
+                for location in StorageLocation
+            ],
+            cls="w-full grid grid-cols-2 gap-3",
+        )
+        if archivable
+        else ""
     )
 
     return Div(
@@ -3743,21 +3734,18 @@ def FoodDetailPage(
                     ),
                     Input(type="hidden", id=plate_unit_id, name="plate_unit", value=AmountInputUnit.PERCENT.value),
                     Input(type="hidden", id=plate_grams_id, value=f"{default_amount:.6f}"),
-                    data_detail_meal_only="true",
                     cls="flex items-center gap-2",
                 ),
                 P(
                     f"Total amount (plate amount): {default_amount:.1f} ({default_amount:.1f}) {base_unit}",
                     id=plate_equivalent_id,
                     data_detail_plate_equivalent="true",
-                    data_detail_meal_only="true",
                     cls="text-xs text-gray-600",
                 ),
                 P(
                     f"Will be saved in fridge: {0.0:.1f} {base_unit}",
                     id=leftovers_id,
                     data_detail_leftovers="true",
-                    data_detail_meal_only="true",
                     cls="text-xs text-gray-600",
                 ),
                 (
@@ -3836,8 +3824,6 @@ def FoodDetailPage(
                                 placeholder="Conservation",
                                 allow_add=False,
                             ),
-                            # A container says where it is (measurement §4.8.4).
-                            data_detail_meal_only="true",
                             cls="flex flex-col gap-1",
                         ),
                         id=advanced_inner_id,
@@ -3903,6 +3889,7 @@ def FoodDetailPage(
             action_button,
             cls="w-full grid grid-cols-2 gap-3",
         ),
+        storage_buttons,
         # Anyone who sees the item can copy it, the owner too (decision
         # 2026-10-27). Without edit rights the copy takes the Edit slot.
         (

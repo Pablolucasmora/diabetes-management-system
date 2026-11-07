@@ -70,6 +70,7 @@ _PORTION_COLUMNS = """
     pd.strictly_weighed,
     pd.is_cooked_weight,
     pd.offset_minutes,
+    pd.source_fridge_id,
     pd.created_at,
     pd.updated_at,
     COALESCE(c.name, im.name) AS source_name,
@@ -203,6 +204,8 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
         raise ValidationError("plate_only_for_event")
     if payload.offset_minutes is not None and not is_event:
         raise ValidationError("offset_only_for_event")
+    if payload.source_fridge_id is not None and not is_event:
+        raise ValidationError("source_fridge_only_for_event")
 
     _ensure_destination_owned(connection, user_id, destination, payload.destination_id)
 
@@ -239,13 +242,18 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
         "strictly_weighed": payload.strictly_weighed,
         "is_cooked_weight": bool(payload.is_cooked_weight),
         "offset_minutes": offset_minutes,
+        "source_fridge_id": payload.source_fridge_id,
     }
 
     # ON CONFLICT over the partial unique index of 4.6.4 or 4.7: the inference needs
-    # to repeat its WHERE. Fridge portions enter neither index and never merge.
+    # to repeat its columns and its WHERE. Fridge portions enter neither index and
+    # never merge. Only an event plate has the source container in its key.
     plate_column = "recipe_plate_id" if is_recipe else "plate_id"
+    key_columns = f"{plate_column}, catalog_id, manual_intake_id, cooking, conservation, final_state, is_cooked_weight"
+    if not is_recipe:
+        key_columns += ", source_fridge_id"
     conflict = (
-        f"ON CONFLICT ({plate_column}, catalog_id, manual_intake_id, cooking, conservation, final_state, is_cooked_weight) "
+        f"ON CONFLICT ({key_columns}) "
         f"WHERE {plate_column} IS NOT NULL "
         "DO UPDATE SET amount = portion_detail.amount + EXCLUDED.amount, updated_at = NOW()"
     )
@@ -255,14 +263,14 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
             intake_event_id, recipe_id, fridge_id, plate_id, recipe_plate_id,
             cooking, conservation, final_state,
             strictly_weighed,
-            is_cooked_weight, offset_minutes
+            is_cooked_weight, offset_minutes, source_fridge_id
         )
         VALUES (
             %(amount)s, %(catalog_id)s, %(manual_intake_id)s,
             %(intake_event_id)s, %(recipe_id)s, %(fridge_id)s, %(plate_id)s, %(recipe_plate_id)s,
             %(cooking)s, %(conservation)s, %(final_state)s,
             %(strictly_weighed)s,
-            %(is_cooked_weight)s, %(offset_minutes)s
+            %(is_cooked_weight)s, %(offset_minutes)s, %(source_fridge_id)s
         )
         {conflict}
         RETURNING id;
@@ -474,6 +482,7 @@ def _find_preparation_sibling(
           AND pd.conservation IS NOT DISTINCT FROM %(conservation)s
           AND pd.final_state IS NOT DISTINCT FROM %(final_state)s
           AND pd.is_cooked_weight IS NOT DISTINCT FROM %(is_cooked_weight)s
+          AND pd.source_fridge_id IS NOT DISTINCT FROM %(source_fridge_id)s
         {_PORTION_OWNED_BY_USER}
         LIMIT 1;
     """
@@ -486,6 +495,7 @@ def _find_preparation_sibling(
         "conservation": (conservation.value if hasattr(conservation, "value") else conservation),
         "final_state": (final_state.value if hasattr(final_state, "value") else final_state),
         "is_cooked_weight": bool(is_cooked_weight),
+        "source_fridge_id": portion.source_fridge_id,
         "user_id": user_id,
     }
     row = _execute_query(connection, query, params, commit=False)
@@ -712,6 +722,42 @@ def delete_portion_detail(connection, user_id: int, portion_id: int, commit: boo
     )
     if not result:
         raise NotFoundError("portion_not_found")
+
+
+def scale_fridge_portion_amounts(connection, user_id: int, fridge_id: int, factor: float, commit: bool = True) -> None:
+    """Multiply the content of a container by `factor`, in (0, 1): what stays after
+    taking a part of it (measurement §4.8.3). One statement, ownership in the SQL."""
+    if not (0.0 < factor < 1.0):
+        raise ValidationError("invalid_factor")
+    query = f"""
+        UPDATE portion_detail pd
+        SET amount = pd.amount * %(factor)s, updated_at = NOW()
+        WHERE pd.fridge_id = %(fridge_id)s
+        {_PORTION_OWNED_BY_USER}
+        RETURNING pd.id;
+    """
+    try:
+        _execute_query_many(
+            connection, query, {"factor": factor, "fridge_id": fridge_id, "user_id": user_id}, commit=commit
+        )
+    except (CheckViolation, NumericValueOutOfRange) as exc:
+        raise _amount_limit_error(exc) from exc
+
+
+def delete_fridge_portions(connection, user_id: int, fridge_id: int, commit: bool = True) -> None:
+    """Remove the content of an emptied container before what was taken goes back
+    into it (measurement §4.8.6)."""
+    _execute_query_many(
+        connection,
+        f"""
+        DELETE FROM portion_detail pd
+        WHERE pd.fridge_id = %(fridge_id)s
+        {_PORTION_OWNED_BY_USER}
+        RETURNING pd.id;
+        """,
+        {"fridge_id": fridge_id, "user_id": user_id},
+        commit=commit,
+    )
 
 
 def scale_event_portion_amounts(connection, user_id: int, event_id: int, fraction: float, commit: bool = True) -> bool:

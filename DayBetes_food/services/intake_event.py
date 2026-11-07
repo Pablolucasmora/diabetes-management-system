@@ -5,14 +5,22 @@ import math
 from DayBetes_food.database.queries import (
     confirm_intake_event,
     create_injection_for_event,
+    delete_intake_event,
+    delete_portion_detail,
+    get_planned_intake_event,
     list_portions_by_event,
     scale_event_portion_amounts,
     update_intake_event,
 )
 from DayBetes_food.domain.constants import AmountInputUnit
 from DayBetes_food.domain.intake_event import INTAKE_EVENT_INGESTED_AMOUNT_MAX_G, IntakeEventUpdate
-from DayBetes_food.domain.portion_detail import calculate_macro_summary_metrics, portion_intake_amount
+from DayBetes_food.domain.portion_detail import (
+    PortionDetailRead,
+    calculate_macro_summary_metrics,
+    portion_intake_amount,
+)
 from DayBetes_food.errors import ConflictError, ValidationError
+from DayBetes_food.services.fridge import return_to_fridge
 
 
 def confirm_planned_event(
@@ -90,3 +98,25 @@ def confirm_planned_event(
     update_intake_event(connection, user_id=user_id, event_id=event_id, data=update_payload, commit=False)
     # Automatic injection: returns an id or None (event without insulin).
     create_injection_for_event(connection, user_id=user_id, intake_event_id=event_id, commit=False)
+
+
+def delete_planned_event(connection, user_id: int, event_id: int) -> None:
+    """Delete a planned meal (decision 2026-09-08), giving back to their containers
+    what was taken from them (measurement §4.8.6). Runs inside the caller's
+    transaction, like `confirm_planned_event`.
+
+    Raises:
+        NotFoundError: it does not exist or is not the user's.
+        ConflictError: it is no longer planned.
+    """
+    get_planned_intake_event(connection, user_id, event_id)
+    return_to_fridge(connection, user_id, list_portions_by_event(connection, user_id, event_id))
+    delete_intake_event(connection, user_id=user_id, event_id=event_id, commit=False)
+
+
+def delete_planned_portion(connection, user_id: int, portion: PortionDetailRead) -> None:
+    """Delete an ingredient of a planned meal, already resolved by the caller, giving
+    it back to its container if it came from one (measurement §4.8.6). Runs inside
+    the caller's transaction."""
+    return_to_fridge(connection, user_id, [portion])
+    delete_portion_detail(connection, user_id, portion.id, commit=False)

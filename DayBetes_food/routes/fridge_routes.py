@@ -2,8 +2,9 @@
 
 Every route is an htmx action of the Food page: it requires `HX-Request` (403
 otherwise) and a session. The HTMX contract (target, swap, fragment, events) is
-in code_conventions.md §9.5. Saving a food into a new container is a route of
-the food page, next to `/food/log` (routes/food_routes.py).
+in code_conventions.md §9.5. Saving a food into a new container and taking a part
+of one into a meal are in routes/food_routes.py, next to the other routes that
+add to a meal (`/food/log`, `/add_food`).
 """
 
 from fasthtml.common import *
@@ -15,6 +16,7 @@ from DayBetes_food.components.food.fridge import (
     FridgeEditForm,
     FridgeListContent,
     FridgeListOob,
+    FridgeTakeForm,
 )
 from DayBetes_food.components.modal import ModalFormError
 from DayBetes_food.components.ui import render_fragment
@@ -72,6 +74,10 @@ def setup_fridge_routes(rt):
     @rt("/food/fridge/{fridge_id}/actions/edit")
     def get(request: Request, fridge_id: int):
         return _view(request, fridge_id, FridgeEditForm)
+
+    @rt("/food/fridge/{fridge_id}/actions/take")
+    def get(request: Request, fridge_id: int):
+        return _view(request, fridge_id, FridgeTakeForm)
 
     @rt("/food/fridge/{fridge_id}/actions/discard")
     def get(request: Request, fridge_id: int):

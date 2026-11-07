@@ -18,6 +18,7 @@ from DayBetes_food.domain.constants import (
     CookingMethod,
     FoodCategory,
     FoodPhysicalState,
+    FridgeCloseReason,
     GlycemicIndex,
     IntakeEventState,
     InsulinType,
@@ -153,6 +154,8 @@ def fridge_check_constraints() -> dict[str, str]:
         "ck_fridge_content_weight": _range_check("content_weight", FRIDGE_CONTENT_WEIGHT_RANGE),
         "ck_fridge_expires_after_stored": "expires_at > stored_at",
         "ck_fridge_closed_after_stored": "closed_at IS NULL OR closed_at >= stored_at",
+        "ck_fridge_closed_reason": f"closed_reason IS NULL OR closed_reason IN ({sql_in_list(FridgeCloseReason)})",
+        "ck_fridge_closed_reason_iff_closed": "(closed_at IS NULL) = (closed_reason IS NULL)",
     }
 
 
@@ -519,6 +522,7 @@ class DBSchema:
         expires_at TIMESTAMPTZ NOT NULL, -- set by the app from domain.fridge.default_expires_at; editable (4.8.2)
         content_weight REAL, -- real weight of the content in grams, weighed by the user; never derived from the portions (4.8.3)
         closed_at TIMESTAMPTZ, -- NULL = still in the fridge or the freezer (§11.2.6)
+        closed_reason VARCHAR(20), -- FridgeCloseReason: emptied (can reopen) or discarded; NULL iff open
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 {check_lines}

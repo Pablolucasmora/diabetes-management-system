@@ -26,6 +26,7 @@ from DayBetes_food.domain.constants import (
     CookingMethod,
     FoodCategory,
     FoodPhysicalState,
+    FridgeCloseReason,
     sql_in_list,
 )
 
@@ -1254,6 +1255,7 @@ def _ensure_fridge_schema(cursor):
         ("expires_at", "TIMESTAMPTZ NOT NULL"),
         ("content_weight", "REAL"),
         ("closed_at", "TIMESTAMPTZ"),
+        ("closed_reason", "VARCHAR(20)"),
         ("created_at", "TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP"),
         ("updated_at", "TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP"),
     )
@@ -1278,6 +1280,12 @@ def _ensure_fridge_schema(cursor):
                     sql.Identifier(old_name), sql.Identifier(new_name)
                 )
             )
+    # Technical backfill (§12.7): until 2026-11-07 discarding was the only way a
+    # container was closed, so a closed one without a reason was discarded.
+    cursor.execute(
+        "UPDATE fridge SET closed_reason = %(reason)s WHERE closed_at IS NOT NULL AND closed_reason IS NULL;",
+        {"reason": FridgeCloseReason.DISCARDED.value},
+    )
     for name, expression in fridge_check_constraints().items():
         if not _constraint_exists(cursor, "fridge", name):
             cursor.execute(
@@ -1292,8 +1300,8 @@ def _ensure_fridge_schema(cursor):
     # Place history of a container, in order (measurement §4.8.4); also serves the CASCADE.
     _create_index_once(cursor, "idx_fridge_move_fridge_id", "ON fridge_move (fridge_id, moved_at)")
 
-    if not _has_column(cursor, "portion_detail", "source_fridge_id"):
-        cursor.execute("ALTER TABLE portion_detail ADD COLUMN source_fridge_id INTEGER;")
+    # The column itself is added by _ensure_portion_detail_schema: it is part of
+    # the uniqueness key of §4.6.4.
     # Deferred NO ACTION, not RESTRICT (§11.8): RESTRICT, and a non-deferred NO
     # ACTION, are checked inside each cascade, so deleting a user failed when the
     # cascade reached the container before the event portion that references it.
@@ -1337,6 +1345,12 @@ def _create_index_once(cursor, name: str, definition: str) -> None:
     bootstrap commits, even with nothing to do (§12.2). The arguments are constants."""
     if not _index_exists(cursor, name):
         cursor.execute(f"CREATE INDEX {name} {definition};")
+
+
+def _create_unique_index_once(cursor, name: str, definition: str) -> None:
+    """Same as `_create_index_once`, for a unique index. The arguments are constants."""
+    if not _index_exists(cursor, name):
+        cursor.execute(f"CREATE UNIQUE INDEX {name} {definition};")
 
 
 def _index_exists(cursor, name: str) -> bool:
@@ -2011,6 +2025,11 @@ def _ensure_portion_detail_schema(cursor):
     # cannot be created over data that already violates it. Same merge rule the
     # insert will apply: amounts are summed and the rest of the fields are those
     # of the oldest row of the group.
+    # Part of the uniqueness key since 2026-11-07 (§4.6.4), so it must exist before
+    # the duplicates below are grouped. Its FK and CHECK are in _ensure_fridge_schema.
+    if not _has_column(cursor, "portion_detail", "source_fridge_id"):
+        cursor.execute("ALTER TABLE portion_detail ADD COLUMN source_fridge_id INTEGER;")
+
     _DUPLICATE_PORTION_GROUPS = """
         WITH dup AS (
             SELECT
@@ -2019,7 +2038,8 @@ def _ensure_portion_detail_schema(cursor):
                 sum(amount) AS total_amount
             FROM portion_detail
             WHERE plate_id IS NOT NULL
-            GROUP BY plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state, is_cooked_weight
+            GROUP BY plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state, is_cooked_weight,
+                     source_fridge_id
             HAVING count(*) > 1
         )
     """
@@ -2047,16 +2067,18 @@ def _ensure_portion_detail_schema(cursor):
     # in two different recipes would clash as a false duplicate. Uniqueness is
     # inside the plate (§4.6.4). is_cooked_weight is part of the key since
     # 2026-09-23: the same grams weighed raw and weighed cooked are different
-    # amounts of food, so they are separate rows. The old index without it is
-    # dropped, otherwise it would keep rejecting that pair.
+    # amounts of food, so they are separate rows. source_fridge_id is part of it
+    # since 2026-11-07: what was taken from a container goes back to it when the
+    # planned meal is deleted, so it is never merged with the same food from
+    # elsewhere (measurement §4.8.6). Each older index is dropped, otherwise it
+    # would keep rejecting the pairs the new key allows.
     cursor.execute("DROP INDEX IF EXISTS uq_portion_detail_plate_origin_preparation;")
-    cursor.execute(
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_portion_detail_plate_origin_preparation_cooked
-        ON portion_detail (plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state, is_cooked_weight)
-        NULLS NOT DISTINCT
-        WHERE plate_id IS NOT NULL;
-        """
+    cursor.execute("DROP INDEX IF EXISTS uq_portion_detail_plate_origin_preparation_cooked;")
+    _create_unique_index_once(
+        cursor,
+        "uq_portion_detail_plate_origin_preparation_source",
+        "ON portion_detail (plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state, "
+        "is_cooked_weight, source_fridge_id) NULLS NOT DISTINCT WHERE plate_id IS NOT NULL",
     )
 
     # ---- T1.3: amount range CHECK, after the consolidation above ----

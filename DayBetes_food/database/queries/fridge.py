@@ -3,23 +3,24 @@
 
 A container is private: every query carries its owner in the SQL (§5.3), so a
 container of another user and one that does not exist give the same
-`NotFoundError` (§5.4). Only open containers (`closed_at IS NULL`) are read or
-changed: a closed one is never listed nor reopened.
+`NotFoundError` (§5.4). Only open containers (`closed_at IS NULL`) are listed or
+edited. `lock_fridge` also reads a closed one, and `reopen_fridge` reopens an
+emptied one, for what is taken out and given back (measurement §4.8.6).
 """
 
 from datetime import datetime
 
 from psycopg.errors import CheckViolation
 
-from DayBetes_food.database.mappers import fridge_read_from_row
+from DayBetes_food.database.mappers import fridge_move_read_from_row, fridge_read_from_row
 from DayBetes_food.database.queries.crud import _execute_query, _execute_query_many
-from DayBetes_food.domain.constants import StorageLocation
-from DayBetes_food.domain.fridge import FridgeCreate, FridgeRead, FridgeUpdate
+from DayBetes_food.domain.constants import FridgeCloseReason, StorageLocation
+from DayBetes_food.domain.fridge import FridgeCreate, FridgeMoveRead, FridgeRead, FridgeUpdate
 from DayBetes_food.errors import NotFoundError, ValidationError
 
 _FRIDGE_COLUMNS = """
     f.id, f.users_id, f.name, f.location, f.stored_at, f.expires_at,
-    f.content_weight, f.closed_at, f.created_at, f.updated_at
+    f.content_weight, f.closed_at, f.closed_reason, f.created_at, f.updated_at
 """
 _OPEN_AND_OWNED = "f.users_id = %(user_id)s AND f.closed_at IS NULL"
 
@@ -57,6 +58,36 @@ def get_fridge(connection, user_id: int, fridge_id: int) -> FridgeRead | None:
         commit=False,
     )
     return fridge_read_from_row(row) if row else None
+
+
+def lock_fridge(connection, user_id: int, fridge_id: int) -> FridgeRead | None:
+    """A container of the user, open or closed, locked until the transaction ends
+    (§6.8): taking out and giving back read its content and write it. None when
+    it does not exist or is not theirs."""
+    row = _execute_query(
+        connection,
+        f"SELECT {_FRIDGE_COLUMNS} FROM fridge f WHERE f.id = %(fridge_id)s AND f.users_id = %(user_id)s FOR UPDATE;",
+        {"fridge_id": fridge_id, "user_id": user_id},
+        commit=False,
+    )
+    return fridge_read_from_row(row) if row else None
+
+
+def list_fridge_moves(connection, user_id: int, fridge_id: int) -> list[FridgeMoveRead]:
+    """Place history of a container, oldest first (idx_fridge_move_fridge_id)."""
+    rows = _execute_query_many(
+        connection,
+        """
+        SELECT fm.from_location, fm.to_location, fm.moved_at
+        FROM fridge_move fm
+        JOIN fridge f ON f.id = fm.fridge_id
+        WHERE fm.fridge_id = %(fridge_id)s AND f.users_id = %(user_id)s
+        ORDER BY fm.moved_at, fm.id;
+        """,
+        {"fridge_id": fridge_id, "user_id": user_id},
+        commit=False,
+    )
+    return [fridge_move_read_from_row(row) for row in rows]
 
 
 def list_fridges(connection, user_id: int) -> list[FridgeRead]:
@@ -192,19 +223,67 @@ def delete_fridge(connection, user_id: int, fridge_id: int, commit: bool = True)
     return bool(row["deleted"])
 
 
-def close_fridge(connection, user_id: int, fridge_id: int, commit: bool = True) -> None:
-    """Take a container out of the fridge for good (`closed_at`, §11.2.6). It keeps
-    its row because the portions eaten from it reference it. No open row ->
-    NotFoundError, so repeating it is a 404, as for a deleted one."""
+def close_fridge(
+    connection, user_id: int, fridge_id: int, reason: FridgeCloseReason, commit: bool = True
+) -> None:
+    """Take a container out of the fridge (`closed_at`, §11.2.6): emptied, when the
+    last of it was taken, or discarded. It keeps its row because the portions taken
+    from it reference it. No open row -> NotFoundError, so repeating it is a 404."""
     row = _execute_query(
         connection,
         """
         UPDATE fridge
-        SET closed_at = NOW(), updated_at = NOW()
+        SET closed_at = NOW(), closed_reason = %(reason)s, updated_at = NOW()
         WHERE fridge.id = %(fridge_id)s AND fridge.users_id = %(user_id)s AND fridge.closed_at IS NULL
         RETURNING fridge.id;
         """,
-        {"fridge_id": fridge_id, "user_id": user_id},
+        {"fridge_id": fridge_id, "user_id": user_id, "reason": reason.value},
+        commit=commit,
+    )
+    if row is None:
+        raise NotFoundError("Container not found.")
+
+
+def reopen_fridge(
+    connection, user_id: int, fridge_id: int, content_weight: float | None, commit: bool = True
+) -> None:
+    """Put an emptied container back in the fridge, with what was taken from it
+    (measurement §4.8.6). A discarded one never reopens. No emptied row ->
+    NotFoundError."""
+    row = _execute_query(
+        connection,
+        """
+        UPDATE fridge
+        SET closed_at = NULL, closed_reason = NULL, content_weight = %(content_weight)s, updated_at = NOW()
+        WHERE fridge.id = %(fridge_id)s AND fridge.users_id = %(user_id)s AND fridge.closed_reason = %(emptied)s
+        RETURNING fridge.id;
+        """,
+        {
+            "fridge_id": fridge_id,
+            "user_id": user_id,
+            "content_weight": content_weight,
+            "emptied": FridgeCloseReason.EMPTIED.value,
+        },
+        commit=commit,
+    )
+    if row is None:
+        raise NotFoundError("Container not found.")
+
+
+def update_fridge_content_weight(
+    connection, user_id: int, fridge_id: int, content_weight: float | None, commit: bool = True
+) -> None:
+    """Write the real weight of an open container after taking out or giving back a
+    part (measurement §4.8.3). No open row -> NotFoundError."""
+    row = _execute_query(
+        connection,
+        """
+        UPDATE fridge
+        SET content_weight = %(content_weight)s, updated_at = NOW()
+        WHERE fridge.id = %(fridge_id)s AND fridge.users_id = %(user_id)s AND fridge.closed_at IS NULL
+        RETURNING fridge.id;
+        """,
+        {"fridge_id": fridge_id, "user_id": user_id, "content_weight": content_weight},
         commit=commit,
     )
     if row is None:

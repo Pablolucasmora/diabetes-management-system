@@ -18,9 +18,9 @@ from DayBetes_food.components.food.food_actions import (
     actions_option,
     actions_view_attrs,
 )
-from DayBetes_food.components.food.foods import FORM_FIELD_CLS, STORAGE_LABELS
+from DayBetes_food.components.food.food_shared import FORM_FIELD_CLS, STORAGE_LABELS
 from DayBetes_food.components.modal import close_modal_js, modal_confirm_button, modal_secondary_button
-from DayBetes_food.domain.constants import StorageLocation
+from DayBetes_food.domain.constants import AmountInputUnit, StorageLocation
 from DayBetes_food.domain.fridge import FRIDGE_NAME_MAX_LENGTH, FridgeItem, other_location
 from DayBetes_food.time_utils import to_local
 
@@ -28,6 +28,9 @@ from DayBetes_food.time_utils import to_local
 # change it answer with the whole list for that same target (code_conventions §9.5).
 FRIDGE_LIST_TARGET = "#food-list"
 FRIDGE_EDIT_MESSAGE_ID = "fridge_edit_message"
+FRIDGE_TAKE_MESSAGE_ID = "fridge_take_message"
+# What is taken goes to the meal and plate chosen in the Food header (§7.7).
+MEAL_TARGET_INCLUDE = "#meal_selector, #plate_selector"
 
 _MOVE_LABELS = {StorageLocation.FRIDGE: "To fridge", StorageLocation.FREEZER: "To freezer"}
 
@@ -69,31 +72,64 @@ def _timing_text(item: FridgeItem, now: datetime) -> str:
 
 
 def FridgeCard(item: FridgeItem, now: datetime):
-    """A container: name, content, days and real weight. The button moves it to the
-    other place or, once expired, discards it; holding the card opens its actions."""
+    """A container: name, content, days and real weight. Its buttons move it to the
+    other place and take a part of it into the meal of the header or, once expired,
+    discard it or eat all of it; holding the card opens its actions."""
     fridge = item.fridge
     expired = item.is_expired(now)
-    content = ", ".join(portion.source.name for portion in item.portions if portion.source.name)
+    # The amounts as stored, so what is left after taking a part shows (frontend §6).
+    content = ", ".join(
+        f"{portion.source.name} {portion.amount:.1f} g{' cooked' if portion.is_cooked_weight else ''}"
+        for portion in item.portions
+        if portion.source.name
+    )
     meta = _timing_text(item, now)
     if fridge.content_weight is not None:
         meta = f"{meta} · {fridge.content_weight:.1f} g"
     if expired:
-        button = Button(
-            "Discard",
-            type="button",
-            cls=f"{_SMALL_BUTTON_CLS} text-danger",
-            data_no_open="true",
-            **actions_view_attrs(f"{fridge_actions_url(fridge.id)}/discard"),
+        buttons = (
+            Button(
+                "Discard",
+                type="button",
+                cls=f"{_SMALL_BUTTON_CLS} text-danger",
+                data_no_open="true",
+                **actions_view_attrs(f"{fridge_actions_url(fridge.id)}/discard"),
+            ),
+            # The + with 100 %, straight away (frontend §9.8). Only the list comes
+            # back, out of band; a failure is a notice (error_conventions §7.1).
+            Button(
+                "Eat",
+                type="button",
+                cls=_SMALL_BUTTON_CLS,
+                data_no_open="true",
+                hx_post=f"/food/fridge/{fridge.id}/take",
+                hx_vals=json.dumps({"amount_value": "100", "amount_unit": AmountInputUnit.PERCENT.value}),
+                hx_include=MEAL_TARGET_INCLUDE,
+                hx_swap="none",
+                hx_push_url="false",
+                data_skip_page_loading="true",
+                **{"hx-disabled-elt": "this"},
+            ),
         )
     else:
         target = other_location(fridge.location)
-        button = Button(
-            _MOVE_LABELS[target],
-            type="button",
-            cls=_SMALL_BUTTON_CLS,
-            data_no_open="true",
-            **{"hx-disabled-elt": "this"},
-            **_list_action_attrs(f"/food/fridge/{fridge.id}/location", location=target.value),
+        buttons = (
+            Button(
+                _MOVE_LABELS[target],
+                type="button",
+                cls=_SMALL_BUTTON_CLS,
+                data_no_open="true",
+                **{"hx-disabled-elt": "this"},
+                **_list_action_attrs(f"/food/fridge/{fridge.id}/location", location=target.value),
+            ),
+            Button(
+                "+",
+                type="button",
+                aria_label="Add to meal",
+                cls="web_button web_button_primary rounded-xl w-9 h-9 flex items-center justify-center text-lg leading-none",
+                data_no_open="true",
+                **actions_view_attrs(f"{fridge_actions_url(fridge.id)}/take"),
+            ),
         )
     return Div(
         Div(
@@ -106,7 +142,7 @@ def FridgeCard(item: FridgeItem, now: datetime):
             P(meta, cls=f"text-xs mt-0.5 {'text-danger' if expired else 'text-gray-700'}"),
             cls="flex flex-col min-w-0",
         ),
-        Div(button, cls="flex items-center gap-2 ml-3"),
+        Div(*buttons, cls="flex items-center gap-2 ml-3 shrink-0"),
         ActionsTrigger(fridge_actions_url(fridge.id)),
         id=f"fridge_card_{fridge.id}",
         # Long press or right click: actions pop-up (§9.3.1, static/js/food_actions.js).
@@ -120,7 +156,7 @@ def FridgeListContent(items: list[FridgeItem], now: datetime) -> tuple:
     if not items:
         return (
             P(
-                "Nothing stored yet. Save a food or a dish from its page: choose Fridge or Freezer in Add to.",
+                "Nothing stored yet. Save a food or a dish with Save to fridge, on its page or holding it in the list.",
                 cls="text-sm text-gray-600 text-center md:w-md lg:w-md w-xs mt-2",
             ),
         )
@@ -220,6 +256,59 @@ def FridgeEditForm(item: FridgeItem):
                     hx_post=f"/food/fridge/{fridge.id}/edit",
                     hx_include=f"#{form_id}",
                     hx_target=f"#{FRIDGE_EDIT_MESSAGE_ID}",
+                    hx_swap="innerHTML",
+                    hx_push_url="false",
+                    data_skip_page_loading="true",
+                    **{"hx-disabled-elt": "this"},
+                ),
+                cls="grid grid-cols-2 gap-2",
+            ),
+            id=form_id,
+            onsubmit="return false;",
+            cls="flex flex-col gap-3",
+        ),
+        cls="flex flex-col gap-3",
+    )
+
+
+def FridgeTakeForm(item: FridgeItem):
+    """How much to take into the meal of the header: % by default, grams only with
+    the real weight (measurement §4.8.3). A validation error stays in the form."""
+    fridge = item.fridge
+    form_id = f"fridge_take_form_{fridge.id}"
+    units = [Option("%", value=AmountInputUnit.PERCENT.value, selected=True)]
+    if fridge.content_weight is not None:
+        units.append(Option(f"g (of {fridge.content_weight:.1f} g)", value=AmountInputUnit.GRAMS.value))
+    return Div(
+        actions_header("Add to meal", item.display_name, back_url=fridge_actions_url(fridge.id)),
+        Form(
+            Div(
+                Label("Amount", cls="text-xs text-gray-700", **{"for": "fridge_take_amount"}),
+                Div(
+                    Input(
+                        type="text",
+                        id="fridge_take_amount",
+                        name="amount_value",
+                        value="100",
+                        inputmode="decimal",
+                        onclick="this.select()",
+                        cls=f"{FORM_FIELD_CLS} flex-1 min-w-0",
+                    ),
+                    Select(*units, name="amount_unit", aria_label="Unit", cls=f"{FORM_FIELD_CLS} w-auto"),
+                    cls="flex items-center gap-2",
+                ),
+                cls="flex flex-col gap-1",
+            ),
+            P("It goes to the meal and plate chosen in Add to.", cls="text-xs text-gray-500"),
+            Div(id=FRIDGE_TAKE_MESSAGE_ID),
+            Div(
+                modal_secondary_button("Cancel", onclick=close_modal_js(FOOD_ACTIONS_MODAL_ID), cls="w-full"),
+                modal_confirm_button(
+                    "Add to meal",
+                    cls="w-full",
+                    hx_post=f"/food/fridge/{fridge.id}/take",
+                    hx_include=f"#{form_id}, {MEAL_TARGET_INCLUDE}",
+                    hx_target=f"#{FRIDGE_TAKE_MESSAGE_ID}",
                     hx_swap="innerHTML",
                     hx_push_url="false",
                     data_skip_page_loading="true",

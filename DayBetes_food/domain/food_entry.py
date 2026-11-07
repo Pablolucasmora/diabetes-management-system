@@ -12,7 +12,9 @@ from dataclasses import dataclass
 class FoodEntrySummary:
     """What the actions pop-up of a Food row shows and allows
     (frontend_conventions.md §9.3.1): its name, the line under it (brand,
-    origin or "Recipe") and whether the viewer can edit it."""
+    origin or "Recipe"), whether the viewer can edit it and its serving in
+    grams, which saving it to the fridge starts from (None: no serving)."""
     name: str
     subtitle: str
     can_edit: bool
+    default_portion: float | None = None

@@ -138,6 +138,8 @@ from DayBetes_food.database.queries.portion_detail import (
     move_portion_to_plate,
     delete_portion_detail,
     scale_event_portion_amounts,
+    scale_fridge_portion_amounts,
+    delete_fridge_portions,
 )
 from DayBetes_food.database.queries.fridge import (
     create_fridge,
@@ -147,6 +149,10 @@ from DayBetes_food.database.queries.fridge import (
     set_fridge_location,
     delete_fridge,
     close_fridge,
+    lock_fridge,
+    reopen_fridge,
+    update_fridge_content_weight,
+    list_fridge_moves,
 )
 from DayBetes_food.database.queries.insulin_injections import (
     create_insulin_injection,
@@ -267,6 +273,8 @@ __all__ = [
     "move_portion_to_plate",
     "delete_portion_detail",
     "scale_event_portion_amounts",
+    "scale_fridge_portion_amounts",
+    "delete_fridge_portions",
     "create_fridge",
     "get_fridge",
     "list_fridges",
@@ -274,6 +282,10 @@ __all__ = [
     "set_fridge_location",
     "delete_fridge",
     "close_fridge",
+    "lock_fridge",
+    "reopen_fridge",
+    "update_fridge_content_weight",
+    "list_fridge_moves",
     "create_insulin_injection",
     "list_insulin_injections",
     "get_insulin_injection",

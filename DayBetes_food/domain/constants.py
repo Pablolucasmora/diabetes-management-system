@@ -207,6 +207,14 @@ class StorageLocation(str, Enum):
 
 
 @unique
+class FridgeCloseReason(str, Enum):
+    """Why a container left the fridge (code_conventions.md §11.2.6). An emptied one
+    reopens if what was taken from it goes back; a discarded one never does."""
+    EMPTIED = "emptied"
+    DISCARDED = "discarded"
+
+
+@unique
 class GlycemicIndex(str, Enum):
     """Declared absorption speed of a manual dish (measurement_conventions.md
     §5.5). Not a measured GI. Existing codes kept (§4.2); `none` added."""

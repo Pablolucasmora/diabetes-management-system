@@ -1,29 +1,43 @@
 """Use cases of `fridge` that combine several queries or a domain rule
 (code_conventions.md §1.2, §11.2.6; measurement_conventions.md §4.8).
 
-The functions that write are the root coordinator of their unit of work (§1.1):
+Most functions that write are the root coordinator of their unit of work (§1.1):
 they open the transaction, so everything is written together or not at all (§2.3).
+`take_from_fridge` and `return_to_fridge` are steps of a meal operation instead:
+they run inside the transaction of its coordinator (§1.2).
 """
+
+from collections import defaultdict
+from dataclasses import replace
 
 from DayBetes_food.database.queries import (
     close_fridge,
     create_fridge,
     create_portion_detail,
     delete_fridge,
+    delete_fridge_portions,
     get_fridge,
+    list_fridge_moves,
     list_fridges,
     list_portions_by_fridges,
+    lock_fridge,
+    reopen_fridge,
+    scale_fridge_portion_amounts,
     set_fridge_location,
+    update_fridge_content_weight,
+    update_portion_amount,
 )
-from DayBetes_food.domain.constants import PortionDestination, StorageLocation
+from DayBetes_food.domain.constants import FridgeCloseReason, PortionDestination, StorageLocation
 from DayBetes_food.domain.fridge import (
     FridgeCreate,
     FridgeItem,
     FridgeRead,
     FridgeStoreCommand,
+    conservation_when_taken,
     default_expires_at,
 )
-from DayBetes_food.domain.portion_detail import PortionDetailCreate
+from DayBetes_food.domain.portion_detail import PortionDetailCreate, PortionDetailRead
+from DayBetes_food.errors import NotFoundError
 from DayBetes_food.time_utils import utc_now
 
 
@@ -46,46 +60,51 @@ def get_fridge_item(connection, user_id: int, fridge_id: int) -> FridgeItem | No
     return _with_contents(connection, user_id, [fridge])[0] if fridge else None
 
 
-def store_in_fridge(connection, command: FridgeStoreCommand) -> int:
+def create_fridge_container(connection, command: FridgeStoreCommand) -> int:
     """A new container with one food, stored now, with the default expiry of its place
     (§4.8.2). A fridge portion has no conservation of its own: the container says
-    where it is (§4.8.4).
-
-    Repeating it stores a second container: two tuppers are two rows (§9.6).
+    where it is (§4.8.4). Runs inside the caller's transaction: /food/log stores the
+    leftovers of what it plates in its own (§4.8.5).
 
     Raises:
         NotFoundError: the food is not visible to the user anymore.
         ValidationError: the amount is outside the limits.
     """
     stored_at = utc_now()
-    with connection.transaction():
-        fridge_id = create_fridge(
-            connection,
-            FridgeCreate(
-                user_id=command.user_id,
-                location=command.location,
-                stored_at=stored_at,
-                expires_at=default_expires_at(command.location, stored_at),
-            ),
-            commit=False,
-        )
-        create_portion_detail(
-            connection,
-            command.user_id,
-            PortionDetailCreate(
-                origin=command.origin,
-                origin_id=command.origin_id,
-                destination=PortionDestination.FRIDGE,
-                destination_id=fridge_id,
-                amount=command.amount,
-                cooking=command.cooking,
-                final_state=command.final_state,
-                strictly_weighed=command.strictly_weighed,
-                is_cooked_weight=command.is_cooked_weight,
-            ),
-            commit=False,
-        )
+    fridge_id = create_fridge(
+        connection,
+        FridgeCreate(
+            user_id=command.user_id,
+            location=command.location,
+            stored_at=stored_at,
+            expires_at=default_expires_at(command.location, stored_at),
+        ),
+        commit=False,
+    )
+    create_portion_detail(
+        connection,
+        command.user_id,
+        PortionDetailCreate(
+            origin=command.origin,
+            origin_id=command.origin_id,
+            destination=PortionDestination.FRIDGE,
+            destination_id=fridge_id,
+            amount=command.amount,
+            cooking=command.cooking,
+            final_state=command.final_state,
+            strictly_weighed=command.strictly_weighed,
+            is_cooked_weight=command.is_cooked_weight,
+        ),
+        commit=False,
+    )
     return fridge_id
+
+
+def store_in_fridge(connection, command: FridgeStoreCommand) -> int:
+    """`create_fridge_container` as its own unit of work. Repeating it stores a second
+    container: two tuppers are two rows (§9.6)."""
+    with connection.transaction():
+        return create_fridge_container(connection, command)
 
 
 def move_fridge(connection, user_id: int, fridge_id: int, location: StorageLocation) -> bool:
@@ -112,4 +131,122 @@ def discard_fridge(connection, user_id: int, fridge_id: int) -> None:
     """
     with connection.transaction():
         if not delete_fridge(connection, user_id, fridge_id, commit=False):
-            close_fridge(connection, user_id, fridge_id, commit=False)
+            close_fridge(connection, user_id, fridge_id, FridgeCloseReason.DISCARDED, commit=False)
+
+
+def take_from_fridge(
+    connection, user_id: int, fridge_id: int, fraction: float, event_id: int, plate_id: int
+) -> None:
+    """Take `fraction` of a container into a plate of a planned meal (measurement §4.8.3,
+    §4.8.4). It is discounted now: the content left is scaled by `1 - fraction`, and
+    taking all of it empties the container, which keeps its content as it was so
+    that it can come back (§4.8.6). Runs inside the caller's transaction.
+
+    Raises:
+        NotFoundError: the container is not open or not the user's.
+        ValidationError: an amount leaves the limits.
+    """
+    fridge = lock_fridge(connection, user_id, fridge_id)
+    if fridge is None or fridge.closed_at is not None:
+        raise NotFoundError("Container not found.")
+    conservation = conservation_when_taken(fridge, list_fridge_moves(connection, user_id, fridge_id), utc_now())
+    for portion in list_portions_by_fridges(connection, user_id, [fridge_id]):
+        create_portion_detail(
+            connection,
+            user_id,
+            PortionDetailCreate(
+                origin=portion.origin,
+                origin_id=portion.origin_id,
+                destination=PortionDestination.INTAKE_EVENT,
+                destination_id=event_id,
+                plate_id=plate_id,
+                amount=portion.amount * fraction,
+                cooking=portion.cooking,
+                conservation=conservation,
+                final_state=portion.final_state,
+                strictly_weighed=portion.strictly_weighed,
+                is_cooked_weight=portion.is_cooked_weight,
+                source_fridge_id=fridge_id,
+            ),
+            commit=False,
+        )
+    if fraction >= 1.0:
+        close_fridge(connection, user_id, fridge_id, FridgeCloseReason.EMPTIED, commit=False)
+        return
+    remaining = 1.0 - fraction
+    scale_fridge_portion_amounts(connection, user_id, fridge_id, remaining, commit=False)
+    if fridge.content_weight is not None:
+        update_fridge_content_weight(connection, user_id, fridge_id, fridge.content_weight * remaining, commit=False)
+
+
+def _preparation_key(portion: PortionDetailRead) -> tuple:
+    """What makes two portions the same ingredient inside a container."""
+    return (portion.origin, portion.origin_id, portion.cooking, portion.final_state, portion.is_cooked_weight)
+
+
+def return_to_fridge(connection, user_id: int, portions: list[PortionDetailRead]) -> None:
+    """Give back to their containers the portions of a planned meal taken from one,
+    before they are deleted (measurement §4.8.6). An emptied container reopens with
+    them; a discarded one takes nothing back. The real weight follows the same
+    weight per gram as the content it had. Runs inside the caller's transaction.
+    """
+    taken_by_fridge: dict[int, list[PortionDetailRead]] = defaultdict(list)
+    for portion in portions:
+        if portion.source_fridge_id is not None:
+            taken_by_fridge[portion.source_fridge_id].append(portion)
+    # Always in the same order, so two requests lock the containers alike (§6.8).
+    for fridge_id in sorted(taken_by_fridge):
+        taken = taken_by_fridge[fridge_id]
+        fridge = lock_fridge(connection, user_id, fridge_id)
+        if fridge is None or fridge.closed_reason is FridgeCloseReason.DISCARDED:
+            continue
+        content = list_portions_by_fridges(connection, user_id, [fridge_id])
+        content_total = sum(portion.amount for portion in content)
+        weight_per_gram = (
+            fridge.content_weight / content_total if fridge.content_weight is not None and content_total > 0 else None
+        )
+        returned_weight = (
+            sum(portion.amount for portion in taken) * weight_per_gram if weight_per_gram is not None else None
+        )
+        if fridge.closed_at is not None:
+            # What an emptied container kept was its content before the last take.
+            delete_fridge_portions(connection, user_id, fridge_id, commit=False)
+            content = []
+            reopen_fridge(connection, user_id, fridge_id, returned_weight, commit=False)
+        elif returned_weight is not None:
+            update_fridge_content_weight(
+                connection, user_id, fridge_id, fridge.content_weight + returned_weight, commit=False
+            )
+        _add_to_fridge_content(connection, user_id, fridge_id, content, taken)
+
+
+def _add_to_fridge_content(
+    connection, user_id: int, fridge_id: int, content: list[PortionDetailRead], returned: list[PortionDetailRead]
+) -> None:
+    """Sum each returned portion into the same ingredient of the container, or add it."""
+    by_key = {_preparation_key(portion): portion for portion in content}
+    for portion in returned:
+        key = _preparation_key(portion)
+        if key in by_key:
+            existing = by_key[key]
+            new_amount = existing.amount + portion.amount
+            update_portion_amount(connection, user_id, existing.id, new_amount, commit=False)
+            by_key[key] = replace(existing, amount=new_amount)
+            continue
+        portion_id = create_portion_detail(
+            connection,
+            user_id,
+            PortionDetailCreate(
+                origin=portion.origin,
+                origin_id=portion.origin_id,
+                destination=PortionDestination.FRIDGE,
+                destination_id=fridge_id,
+                amount=portion.amount,
+                cooking=portion.cooking,
+                final_state=portion.final_state,
+                strictly_weighed=portion.strictly_weighed,
+                is_cooked_weight=portion.is_cooked_weight,
+            ),
+            commit=False,
+        )
+        by_key[key] = replace(portion, id=portion_id)

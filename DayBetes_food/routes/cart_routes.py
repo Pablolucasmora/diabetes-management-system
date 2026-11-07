@@ -13,7 +13,6 @@ import math
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.time_utils import local_naive_to_utc_aware, local_today, to_local, APP_TIMEZONE
 from DayBetes_food.database.queries import (
-    delete_portion_detail,
     get_portion_detail,
     list_portions_by_event,
     list_portions_by_events,
@@ -31,7 +30,6 @@ from DayBetes_food.database.queries import (
     list_intake_plates_by_events,
     update_intake_plate_name,
     set_injection_zone,
-    delete_intake_event,
     archive_intake_event,
     restore_intake_event,
     get_intake_event,
@@ -69,7 +67,11 @@ from DayBetes_food.domain.intake_plate import (
 )
 from DayBetes_food.domain.portion_detail import PortionDetailUpdate, amount_to_grams
 from DayBetes_food.http_errors import app_error_response
-from DayBetes_food.services.intake_event import confirm_planned_event
+from DayBetes_food.services.intake_event import (
+    confirm_planned_event,
+    delete_planned_event,
+    delete_planned_portion,
+)
 from DayBetes_food.domain.recipe import parse_recipe_name
 from DayBetes_food.services.recipe import save_event_as_recipe, save_plate_as_recipe
 from DayBetes_food.errors import (
@@ -541,7 +543,8 @@ def setup_cart_routes(rt):
             return _error(request, AuthenticationError, _NO_SESSION)
         with get_connection() as connection:
             try:
-                delete_intake_event(connection, user_id=int(user_id), event_id=event_id)
+                with connection.transaction():
+                    delete_planned_event(connection, int(user_id), event_id)
             except NotFoundError:
                 return _error(request, NotFoundError, _EVENT_GONE)
             except ConflictError:
@@ -751,7 +754,7 @@ def setup_cart_routes(rt):
                 portion = get_portion_detail(connection, int(user_id), portion_id)
                 event_id = _portion_event_id(connection, int(user_id), portion)
                 with connection.transaction():
-                    delete_portion_detail(connection, int(user_id), portion_id, commit=False)
+                    delete_planned_portion(connection, int(user_id), portion)
             except NotFoundError:
                 return _error(request, NotFoundError, _INGREDIENT_GONE)
             except ConflictError:

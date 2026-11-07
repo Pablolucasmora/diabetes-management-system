@@ -10,8 +10,11 @@ from datetime import date, datetime, time, timedelta
 
 from DayBetes_food.domain.constants import (
     MASS_SANITY_MAX_G,
+    AmountInputUnit,
+    ConservationMethod,
     CookingMethod,
     FoodPhysicalState,
+    FridgeCloseReason,
     PortionOrigin,
     StorageLocation,
 )
@@ -50,6 +53,68 @@ def default_expires_at(location: StorageLocation, since: datetime) -> datetime:
 def other_location(location: StorageLocation) -> StorageLocation:
     """Where the move button of a container sends it (frontend_conventions.md §9.8)."""
     return StorageLocation.FREEZER if location is StorageLocation.FRIDGE else StorageLocation.FRIDGE
+
+
+# Typed grams are compared with a weight shown with one decimal: a gap this small
+# is display rounding, not more than the container holds.
+_GRAMS_DISPLAY_TOLERANCE_G = 0.05
+_TAKE_PERCENT_RANGE = NumericRange(0, 100, minimum_exclusive=True)
+
+_CONSERVATION_OF = {
+    StorageLocation.FRIDGE: ConservationMethod.FRIDGE,
+    StorageLocation.FREEZER: ConservationMethod.FREEZER,
+}
+
+
+def parse_take_fraction(raw_value, unit: AmountInputUnit, content_weight: float | None) -> float:
+    """Part of a container that is taken out, in (0, 1] (measurement §4.8.3).
+
+    In % by default. In grams only when the container has its real weight: the
+    amounts of its portions are not its weight (cooked, raw...)."""
+    if unit is AmountInputUnit.PERCENT:
+        try:
+            percent = parse_number(raw_value, "amount", _TAKE_PERCENT_RANGE)
+        except ValidationError as error:
+            raise ValidationError("Take between 0 and 100 %.", fields=error.fields) from error
+        if percent is None:
+            raise ValidationError("Say how much to take.", fields={"amount": "required"})
+        return percent / 100.0
+    if unit is not AmountInputUnit.GRAMS:
+        raise ValidationError("Take it in % or in grams.", fields={"unit": "invalid"})
+    if content_weight is None:
+        raise ValidationError(
+            "Weigh the container first to take it in grams, or use %.", fields={"unit": "requires_content_weight"}
+        )
+    limit = NumericRange(0, content_weight + _GRAMS_DISPLAY_TOLERANCE_G, minimum_exclusive=True)
+    try:
+        grams = parse_number(raw_value, "amount", limit)
+    except ValidationError as error:
+        raise ValidationError(
+            f"Take between 0 and {content_weight:.1f} g.", fields=error.fields
+        ) from error
+    if grams is None:
+        raise ValidationError("Say how much to take.", fields={"amount": "required"})
+    return min(grams / content_weight, 1.0)
+
+
+def conservation_when_taken(
+    fridge: "FridgeRead", moves: list["FridgeMoveRead"], taken_at: datetime
+) -> ConservationMethod:
+    """Conservation of what is taken: the place where the container spent more time
+    from `stored_at` to `taken_at`; the freezer on a tie (measurement §4.8.4)."""
+    time_in = {location: timedelta(0) for location in StorageLocation}
+    since = fridge.stored_at
+    place = moves[0].from_location if moves else fridge.location
+    for move in sorted(moves, key=lambda move: move.moved_at):
+        time_in[place] += move.moved_at - since
+        since, place = move.moved_at, move.to_location
+    time_in[place] += max(taken_at - since, timedelta(0))
+    longest = (
+        StorageLocation.FREEZER
+        if time_in[StorageLocation.FREEZER] >= time_in[StorageLocation.FRIDGE]
+        else StorageLocation.FRIDGE
+    )
+    return _CONSERVATION_OF[longest]
 
 
 def parse_fridge_name(raw) -> str | None:
@@ -101,8 +166,16 @@ class FridgeRead:
     expires_at: datetime
     content_weight: float | None   # None = not weighed
     closed_at: datetime | None
+    closed_reason: FridgeCloseReason | None   # None while it is still stored
     created_at: datetime
     updated_at: datetime
+
+
+@dataclass(frozen=True)
+class FridgeMoveRead:
+    from_location: StorageLocation
+    to_location: StorageLocation
+    moved_at: datetime
 
 
 @dataclass(frozen=True)

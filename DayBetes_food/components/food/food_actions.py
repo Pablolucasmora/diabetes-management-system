@@ -13,6 +13,7 @@ import json
 
 from fasthtml.common import *
 
+from DayBetes_food.components.food.food_shared import FORM_FIELD_CLS, STORAGE_LABELS
 from DayBetes_food.components.modal import (
     MODAL_NAME_CLS,
     ModalLayer,
@@ -21,11 +22,13 @@ from DayBetes_food.components.modal import (
     modal_icon_button,
     modal_secondary_button,
 )
-from DayBetes_food.domain.constants import FoodEntryType
+from DayBetes_food.domain.constants import AmountInputUnit, FoodEntryType, StorageLocation
+from DayBetes_food.domain.food import INITIAL_AMOUNT_WITHOUT_SERVING_G
 from DayBetes_food.domain.food_entry import FoodEntrySummary
 
 FOOD_ACTIONS_MODAL_ID = "food_actions_modal"
 FOOD_ACTIONS_BODY_ID = "food_actions_modal_body"
+FOOD_ACTIONS_STORE_MESSAGE_ID = "food_actions_store_message"
 
 # Shared with the detail page (§9.4), so both name the same action the same way.
 EDIT_LABELS = {
@@ -141,9 +144,11 @@ def FoodActionsMenu(entry_type: FoodEntryType, entry_id: int, entry: FoodEntrySu
             )
         )
     options.append(actions_option(COPY_LABEL, chevron=True, **actions_view_attrs(f"{base_url}/copy")))
-    # A recipe cannot be an ingredient of another recipe.
+    # A recipe cannot be an ingredient of another recipe, nor go alone into a
+    # container (frontend §9.4).
     if entry_type is not FoodEntryType.RECIPE:
         options.append(actions_option("Add to recipe", chevron=True, **actions_view_attrs(f"{base_url}/recipes")))
+        options.append(actions_option("Save to fridge", chevron=True, **actions_view_attrs(f"{base_url}/fridge")))
 
     return Div(
         actions_header(entry.name or "Unnamed", entry.subtitle),
@@ -214,6 +219,64 @@ def FoodActionsRecipePlates(
                 for plate_id, label in plates
             ],
             cls="flex flex-col gap-1.5 max-h-[50vh] overflow-y-auto",
+        ),
+        cls="flex flex-col gap-3",
+    )
+
+
+def FoodActionsStore(entry_type: FoodEntryType, entry_id: int, entry: FoodEntrySummary):
+    """An amount of the food into a new container, in the fridge or the freezer
+    (measurement §4.8.5). It starts from its serving or, without one, 100 g, as the
+    + of the row does. On success static/js/fridge.js closes it and gives the notice."""
+    has_serving = entry.default_portion is not None
+    form_id = f"food_actions_store_form_{entry_type.value}_{entry_id}"
+    units = [Option("g", value=AmountInputUnit.GRAMS.value, selected=not has_serving)]
+    if has_serving:
+        units.insert(
+            0, Option(f"serving ({entry.default_portion:g} g)", value=AmountInputUnit.PORTION.value, selected=True)
+        )
+    return Div(
+        actions_header("Save to fridge", entry.name or "Unnamed", back_url=food_actions_url(entry_type, entry_id)),
+        Form(
+            Div(
+                Label("Amount", cls="text-xs text-gray-700", **{"for": "food_actions_store_amount"}),
+                Div(
+                    Input(
+                        type="text",
+                        id="food_actions_store_amount",
+                        name="amount_value",
+                        value="1" if has_serving else f"{INITIAL_AMOUNT_WITHOUT_SERVING_G:g}",
+                        inputmode="decimal",
+                        onclick="this.select()",
+                        cls=f"{FORM_FIELD_CLS} flex-1 min-w-0",
+                    ),
+                    Select(*units, name="amount_unit", aria_label="Unit", cls=f"{FORM_FIELD_CLS} w-auto"),
+                    cls="flex items-center gap-2",
+                ),
+                cls="flex flex-col gap-1",
+            ),
+            Div(id=FOOD_ACTIONS_STORE_MESSAGE_ID),
+            Div(
+                *[
+                    modal_confirm_button(
+                        f"To {STORAGE_LABELS[location].lower()}",
+                        cls="w-full",
+                        hx_post=f"/food/fridge/store/{entry_type.value}/{entry_id}",
+                        hx_vals=json.dumps({"location": location.value}),
+                        hx_include=f"#{form_id}",
+                        hx_target=f"#{FOOD_ACTIONS_STORE_MESSAGE_ID}",
+                        hx_swap="innerHTML",
+                        hx_push_url="false",
+                        data_skip_page_loading="true",
+                        **{"hx-disabled-elt": "this"},
+                    )
+                    for location in StorageLocation
+                ],
+                cls="grid grid-cols-2 gap-2",
+            ),
+            id=form_id,
+            onsubmit="return false;",
+            cls="flex flex-col gap-3",
         ),
         cls="flex flex-col gap-3",
     )

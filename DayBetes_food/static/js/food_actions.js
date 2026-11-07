@@ -190,10 +190,4 @@
     if (window.dbCloseModal) window.dbCloseModal(MODAL_ID);
     if (window.dbShowAppNotice) window.dbShowAppNotice("Added to " + elt.getAttribute("data-food-actions-recipe"));
   });
-
-  // A container edited or discarded from its pop-up (routes/fridge_routes.py,
-  // HX-Trigger): the list is already repainted, so the pop-up closes.
-  document.body.addEventListener("fridgeChanged", function () {
-    if (window.dbCloseModal) window.dbCloseModal(MODAL_ID);
-  });
 })();

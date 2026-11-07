@@ -610,6 +610,9 @@
   .w-\[min\(52vw\,calc\(100vw-1\.5rem\)\)\] {
     width: min(52vw, calc(100vw - 1.5rem));
   }
+  .w-auto {
+    width: auto;
+  }
   .w-fit {
     width: fit-content;
   }
@@ -1654,6 +1657,9 @@
     .md\:grid-cols-3 {
       grid-template-columns: repeat(3, minmax(0, 1fr));
     }
+    .md\:grid-cols-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
     .md\:flex-row {
       flex-direction: row;
     }
@@ -1763,6 +1769,9 @@
     .lg\:translate-x-29 {
       --tw-translate-x: calc(var(--spacing) * 29);
       translate: var(--tw-translate-x) var(--tw-translate-y);
+    }
+    .lg\:grid-cols-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
     }
     .lg\:gap-2 {
       gap: calc(var(--spacing) * 2);
