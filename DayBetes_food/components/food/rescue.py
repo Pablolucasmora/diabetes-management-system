@@ -17,7 +17,8 @@ from DayBetes_food.components.modal import (
     modal_icon_button,
     modal_secondary_button,
 )
-from DayBetes_food.domain.constants import AmountInputUnit
+from DayBetes_food.components.stats.stats_shared import MEAL_TYPE_LABELS
+from DayBetes_food.domain.constants import AmountInputUnit, MealType
 
 RESCUE_MODAL_ID = "rescue_modal"
 
@@ -124,6 +125,21 @@ def RescueForm(date_value: str, time_value: str, options: list[dict]):
             type="button",
             id="rescue_add_another",
             cls="hidden self-start text-sm font-medium text-gray-600 hover:text-gray-900 cursor-pointer",
+        ),
+        # The meal type, rescue by default: glucose tablets or strips that are
+        # not a rescue go in as a snack or another type (§9.6, 2026-11-08).
+        Select(
+            *[
+                Option(MEAL_TYPE_LABELS[meal_type.value], value=meal_type.value, selected=meal_type is MealType.RESCUE)
+                for meal_type in MealType
+            ],
+            name="meal_type",
+            aria_label="Meal type",
+            onchange=(
+                "var b=document.getElementById('rescue_submit');"
+                "if(b){b.textContent=this.value==='rescue'?'Log rescue':'Log meal';}"
+            ),
+            cls=_FIELD_CLS,
         ),
         Div(
             Input(type="date", name="meal_date", value=date_value, required=True,

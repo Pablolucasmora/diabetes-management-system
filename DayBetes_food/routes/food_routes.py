@@ -1822,6 +1822,13 @@ def setup_food_routes(rt):
             return _rescue_error("Choose a valid date and time.")
         # Any moment is accepted, also a future one (§9.6, decision 2026-09-06).
         meal_time = local_naive_to_utc_aware(datetime.combine(meal_d, meal_t))
+        # Rescue by default; any other type for what is not a rescue (§9.6).
+        try:
+            meal_type = parse_enum(MealType, str(form.get("meal_type") or ""), field="meal_type")
+        except ValidationError:
+            return _rescue_error("That meal type does not exist.")
+        if meal_type is None:
+            return _rescue_error("Choose the meal type.")
 
         # HTTP payload validation that does not depend on the database (§7.1).
         lines = []
@@ -1867,12 +1874,12 @@ def setup_food_routes(rt):
                         IntakeEventCreate(
                             user_id=int(user_id),
                             state=IntakeEventState.PLANNED,
-                            meal_type=MealType.RESCUE,
+                            meal_type=meal_type,
                             meal_time=meal_time,
                         ),
                         commit=False,
                     )
-                    # A rescue never carries insulin (§9.6): without this the
+                    # This pop-up never logs insulin, whatever the meal type (§9.6): without this the
                     # column DEFAULT TRUE would create an automatic injection.
                     update_intake_event(
                         connection,
@@ -1912,7 +1919,7 @@ def setup_food_routes(rt):
                 return app_error_response(request, ConflictError, "The rescue could not be registered.")
             except ValidationError:
                 return _rescue_error("The total amount must be at most 100000 g.")
-        return HTMLResponse("", headers={"HX-Trigger": "rescueRegistered"})
+        return HTMLResponse("", headers={"HX-Trigger": json.dumps({"rescueRegistered": {"meal_type": meal_type.value}})})
 
     @rt("/food/rescue/mark/{entry_type}/{entry_id}")
     def post(request: Request, entry_type: str, entry_id: int, rescue: str = ""):
