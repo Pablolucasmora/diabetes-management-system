@@ -29,7 +29,7 @@ from DayBetes_food.database.queries import (
     update_fridge_content_weight,
     update_portion_amount,
 )
-from DayBetes_food.domain.constants import FridgeCloseReason, PortionDestination, StorageLocation
+from DayBetes_food.domain.constants import AmountInputUnit, FridgeCloseReason, PortionDestination, StorageLocation
 from DayBetes_food.domain.fridge import (
     FridgeCreate,
     FridgeItem,
@@ -41,6 +41,7 @@ from DayBetes_food.domain.fridge import (
     conservation_when_taken,
     merge_contents,
     default_expires_at,
+    parse_take_fraction,
 )
 from DayBetes_food.domain.portion_detail import PortionDetailCreate, PortionDetailRead
 from DayBetes_food.domain.recipe import RecipeAddRequest, scaled_recipe_amount
@@ -252,25 +253,43 @@ def discard_fridge(connection, user_id: int, fridge_id: int) -> None:
         NotFoundError: the container is not open or not the user's.
     """
     with connection.transaction():
+        # Locked first, in its own statement (§6.8): a take that commits while
+        # this waits is then seen by delete_fridge, which closes the container
+        # instead of deleting a row that an eaten portion now references.
+        fridge = lock_fridge(connection, user_id, fridge_id)
+        if fridge is None or fridge.closed_at is not None:
+            raise NotFoundError("Container not found.")
         if not delete_fridge(connection, user_id, fridge_id, commit=False):
             close_fridge(connection, user_id, fridge_id, FridgeCloseReason.DISCARDED, commit=False)
 
 
 def take_from_fridge(
-    connection, user_id: int, fridge_id: int, fraction: float, event_id: int, plate_id: int
+    connection,
+    user_id: int,
+    fridge_id: int,
+    raw_amount,
+    unit: AmountInputUnit,
+    event_id: int,
+    plate_id: int,
 ) -> None:
-    """Take `fraction` of a container into a plate of a planned meal (measurement §4.8.3,
+    """Take a part of a container into a plate of a planned meal (measurement §4.8.3,
     §4.8.4). It is discounted now: the content left is scaled by `1 - fraction`, and
     taking all of it empties the container, which keeps its content as it was so
     that it can come back (§4.8.6). Runs inside the caller's transaction.
 
+    The amount arrives as typed and becomes a fraction here, with the real weight
+    of the locked container (§6.8): read before the lock, a take in grams that
+    runs at the same time would be converted with a weight that no longer holds.
+
     Raises:
         NotFoundError: the container is not open or not the user's.
-        ValidationError: an amount leaves the limits.
+        ValidationError: the amount is not valid for this container, or an amount
+            leaves the limits.
     """
     fridge = lock_fridge(connection, user_id, fridge_id)
     if fridge is None or fridge.closed_at is not None:
         raise NotFoundError("Container not found.")
+    fraction = parse_take_fraction(raw_amount, unit, fridge.content_weight)
     conservation = conservation_when_taken(fridge, list_fridge_moves(connection, user_id, fridge_id), utc_now())
     for portion in list_portions_by_fridges(connection, user_id, [fridge_id]):
         create_portion_detail(

@@ -224,7 +224,7 @@ from DayBetes_food.domain.recipe import (
 )
 from DayBetes_food.services.recipe import add_recipe_to_meal, copy_recipe, recipe_plates_with_portions
 from DayBetes_food.domain.recipe_plate import parse_recipe_plate_name
-from DayBetes_food.domain.fridge import FridgeContent, FridgeStoreCommand, parse_take_fraction
+from DayBetes_food.domain.fridge import FridgeContent, FridgeStoreCommand
 from DayBetes_food.domain.portion_detail import portion_macro_amount
 from DayBetes_food.components.food.recipe_add import RecipeAddForm
 from DayBetes_food.components.stats.stats_shared import MEAL_TYPE_LABELS
@@ -3368,13 +3368,8 @@ def setup_food_routes(rt):
         except ValueError:
             return render_fragment(ModalFormError("Take it in % or in grams."))
         with get_connection() as connection:
-            fridge = get_fridge(connection, int(user_id), fridge_id)
-            if fridge is None:
+            if get_fridge(connection, int(user_id), fridge_id) is None:
                 return app_error_response(request, NotFoundError, "That container is no longer in your fridge.")
-            try:
-                fraction = parse_take_fraction(amount_value, unit, fridge.content_weight)
-            except ValidationError as error:
-                return render_fragment(ModalFormError(str(error)))
             try:
                 with connection.transaction():
                     event_id = _resolve_target_event(connection, int(user_id), intake_event_id)
@@ -3382,7 +3377,9 @@ def setup_food_routes(rt):
                     target_plate_id = _resolve_event_plate(
                         connection, int(user_id), event_id, plate_id, offset_minutes
                     )
-                    take_from_fridge(connection, int(user_id), fridge_id, fraction, event_id, target_plate_id)
+                    take_from_fridge(
+                        connection, int(user_id), fridge_id, amount_value, unit, event_id, target_plate_id
+                    )
             except NotFoundError:
                 return app_error_response(request, NotFoundError, "That meal or container is no longer available.")
             except ConflictError:

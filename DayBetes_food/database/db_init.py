@@ -1330,8 +1330,9 @@ def _ensure_fridge_schema(cursor):
             "CHECK (source_fridge_id IS NULL OR intake_event_id IS NOT NULL);"
         )
     # The content of a container is read by fridge_id, which is also the target of its
-    # ON DELETE CASCADE. source_fridge_id is checked by RESTRICT when a container is
-    # discarded, and is NULL in almost every row, hence partial (§11.7).
+    # ON DELETE CASCADE. source_fridge_id is checked at commit by its deferred foreign
+    # key when a container is deleted, and is NULL in almost every row, hence
+    # partial (§11.7).
     _create_index_once(cursor, "idx_portion_detail_fridge_id", "ON portion_detail (fridge_id) WHERE fridge_id IS NOT NULL")
     _create_index_once(
         cursor,
@@ -2702,6 +2703,10 @@ def init_db():
         # Reference data: only the load script writes it (measurement §12.2).
         cur.execute(sql.SQL("REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON off_product FROM {}").format(role))
         cur.execute(sql.SQL("REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ciqual_food FROM {}").format(role))
+        # Insert-only history (code §11.2.6): the runtime adds moves and reads them,
+        # never changes or removes one. The CASCADE from fridge still deletes them,
+        # because referential actions run as the owner of the table.
+        cur.execute(sql.SQL("REVOKE UPDATE, DELETE, TRUNCATE ON fridge_move FROM {}").format(role))
 
         conn.commit()
         logger.info("Database initialized successfully.")
