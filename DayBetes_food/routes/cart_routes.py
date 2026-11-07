@@ -401,22 +401,19 @@ _SAVE_RECIPE_CONFLICTS = {
 
 
 def _parse_eaten(form) -> tuple[PlateEaten, ...]:
-    """The aligned `plate_id` / `ingested_value` / `ingested_unit` lists of the
-    confirm form (§7.1). An empty value is the whole plate; anything else must be
-    a finite number >= 0 (findings 32 and 33); the range is checked against the
-    plate in the service."""
-    plate_ids = form.getlist("plate_id")
-    values = form.getlist("ingested_value")
-    units = form.getlist("ingested_unit")
-    if not len(plate_ids) == len(values) == len(units):
-        raise ValidationError("eaten_fields_incomplete")
+    """What was eaten of each plate in the confirm form (§7.1): the `plate_id` list,
+    and per plate `ingested_value_<plate_id>` and `ingested_unit_<plate_id>` (named
+    after the plate so the browser draft keeps each one, frontend §7.14). An empty
+    value is the whole plate; anything else must be a finite number >= 0 (findings
+    32 and 33); the range is checked against the plate in the service. A missing
+    unit is a 422, never grams by default (finding 47)."""
     eaten = []
-    for raw_id, raw_value, raw_unit in zip(plate_ids, values, units):
+    for raw_id in form.getlist("plate_id"):
         plate_id = parse_optional_id(str(raw_id), "plate")
         if plate_id is None:
             raise ValidationError("eaten_plate_missing")
-        unit = _parse_ingested_unit(str(raw_unit))
-        text = str(raw_value).strip()
+        unit = _parse_ingested_unit(str(form.get(f"ingested_unit_{plate_id}") or ""))
+        text = str(form.get(f"ingested_value_{plate_id}") or "").strip()
         value = None
         if text:
             try:
@@ -1293,8 +1290,8 @@ def setup_cart_routes(rt):
         """
         Confirm the event (planned -> consumed), measurement_conventions.md §4.4/§6.9.1.
 
-        The form says how much of each plate was eaten (decision 2026-11-07): aligned
-        `plate_id` / `ingested_value` / `ingested_unit` lists. An empty value is the
+        The form says how much of each plate was eaten (decision 2026-11-07): the
+        `plate_id` list, `ingested_value_<plate_id>` and `ingested_unit_<plate_id>`. An empty value is the
         whole plate; `%` is a percentage and `g` a mass against the plate's live
         total. There are no other units: any other value is a 422, never grams by
         default (finding 47). The fraction must end up in (0, 1] (decision
@@ -1366,5 +1363,5 @@ def setup_cart_routes(rt):
             except ValidationError:
                 return _error(request, ValidationError, "The amount eaten is not valid.")
             response = _removal_response(connection, int(user_id))
-        response.headers["HX-Trigger"] = "mealConfirmed"
+        response.headers["HX-Trigger"] = json.dumps({"mealConfirmed": {"event_id": event_id}})
         return response

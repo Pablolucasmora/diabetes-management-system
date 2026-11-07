@@ -1,4 +1,4 @@
-// Drafts of the forms with `data-draft-key` (frontend_conventions.md §7.15, §9.1):
+// Drafts of the forms with `data-draft-key` (frontend_conventions.md §7.14, §9.1):
 // what is typed is kept in this browser and comes back after a reload, until the
 // form is saved. Presentation only: the server never reads it.
 (function () {

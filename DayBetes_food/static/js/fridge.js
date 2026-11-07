@@ -44,8 +44,13 @@
     if (target && target.id === LEFTOVERS_BODY_ID && window.dbOpenModal) window.dbOpenModal(LEFTOVERS_MODAL_ID);
   });
 
-  // The meal was confirmed, from its card or from the pop-up.
-  document.body.addEventListener("mealConfirmed", function () {
+  // The meal was confirmed, from its card or from the pop-up. Its eaten draft is
+  // done (cart_components.eaten_draft_key): confirmed from the pop-up, the card's
+  // own form never sees the response that would clear it.
+  document.body.addEventListener("mealConfirmed", function (event) {
     if (window.dbCloseModal) window.dbCloseModal(LEFTOVERS_MODAL_ID);
+    var eventId = event && event.detail ? event.detail.event_id : null;
+    if (eventId == null) return;
+    try { window.localStorage.removeItem("cart_eaten_" + eventId); } catch (_) {}
   });
 })();
