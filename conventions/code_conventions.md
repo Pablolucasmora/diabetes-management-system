@@ -1162,7 +1162,11 @@ Páginas `Pens` y `Brands` de ajustes y pop-up de abrir boli (`frontend_conventi
 | `POST /insulin/brands/{id}/delete` | ninguno | `none` | cuerpo vacío e `insulinChanged` |
 | `GET /settings/insulin/pens/list` y `GET /settings/insulin/brands/list` | `#insulin_pens_body` / `#insulin_brands_body` | `innerHTML` | la lista de bolis o de marcas, con sus pop-ups. `static/js/insulin_pens.js` repinta la de la página abierta |
 
-Eventos `HX-Trigger`: `penCreated` e `insulinChanged`, en `static/js/insulin_pens.js`, y, en los errores, `appError`.
+| `POST /menu/injection_log` (`insulin_pen_id`, `units`, `zone`, `shot_hour`, `shot_date`) | `#menu_injection_error` | `innerHTML` | cuerpo vacío e `injectionLogged`, que cierra el pop-up, avisa y repinta el menú |
+| `POST /settings/injections/{id}/update` (los mismos campos) | `#settings_injection_error_{id}` | `innerHTML` | cuerpo vacío e `injectionUpdated` con el pop-up, que lo cierra y repinta el registro |
+| `POST /settings/injections/{id}/delete` | ninguno | `none` | cuerpo vacío e `injectionUpdated` |
+
+Eventos `HX-Trigger`: `penCreated`, `insulinChanged`, `injectionLogged` e `injectionUpdated`, en `static/js/insulin_pens.js`, y, en los errores, `appError`.
 
 
 La entrada se extrae y valida según la sección 7 antes de crear el `Request` o `Command`. El usuario autenticado procede del contexto de sesión.
