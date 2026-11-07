@@ -961,3 +961,56 @@ En los datos reales, `manual_intake` tiene 4 de 5 filas privadas. Los motivos re
 **Decisión**: confirmar solo cuando el favorito es lo único que da acceso, y retirar la tarjeta al aceptar. Si el alimento también está en una receta propia, sigue visible y no se pregunta. Se aplica ya, sin esperar a la fase multiusuario. El resto de favoritos se sigue quitando con un toque.
 **Convención actualizada**: `frontend_conventions.md` sección 9.3.2 y `code_conventions.md` sección 11.2.5
 
+
+## 2026-11-07 — Nevera y congelador: un tupper por fila, con ciclo de vida híbrido por uso
+
+**Origen**: n/a (diseño de la nevera); registrada a raíz de `audit/audits/audit_fridge.md`, hallazgo 6
+**Contexto**: hacía falta guardar comida ya hecha (sobras, tandas cocinadas para varios días o algo que llega hecho) y poder sacarla a una comida. Lo que se saca acaba en porciones consumidas, que son histórico clínico, así que un tupper del que se ha comido algo no puede desaparecer al tirarlo; uno del que no se ha comido nada no tiene valor para el estudio.
+**Alternativas consideradas**:
+- Borrar siempre el tupper al tirarlo.
+- Cerrarlo siempre, aunque nunca se haya sacado nada de él.
+- Híbrido por uso: borrar si ninguna porción consumida lo referencia y cerrar si alguna lo referencia.
+**Decisión**: cada fila de `fridge` es un tupper, solo en la nevera o en el congelador (no hay despensa a temperatura ambiente), con caducidad por defecto de 10 y 90 días. El ciclo de vida es híbrido por uso: se borra físicamente con su contenido y su historial si nada consumido lo referencia; si no, se cierra como `discarded`. Lo sacado se descuenta al añadirlo a una comida `planned` y vuelve al tupper si se borra la comida o el ingrediente antes de confirmar; sacar lo último lo cierra como `emptied`, que es el único motivo que se reabre. La conservación de lo sacado es el sitio donde el tupper pasó más tiempo, contado con `fridge_move`.
+**Convención actualizada**: `code_conventions.md` secciones 11.2.1 y 11.2.6; `measurement_conventions.md` sección 4.8
+
+## 2026-11-07 — `portion_detail.source_fridge_id`: FK diferida en vez de `RESTRICT`
+
+**Origen**: n/a (diseño de la nevera); registrada a raíz de `audit/audits/audit_fridge.md`, hallazgo 6
+**Contexto**: la base debe impedir borrar un tupper del que se ha comido algo. Con `RESTRICT` la comprobación se hace dentro de cada cascada, y borrar un usuario fallaba si la cascada llegaba al tupper antes que a la porción que lo referencia.
+**Alternativas consideradas**:
+- `RESTRICT`.
+- `NO ACTION DEFERRABLE INITIALLY DEFERRED`, que comprueba al hacer el commit, cuando la cascada ya ha borrado también las porciones.
+**Decisión**: FK `NO ACTION DEFERRABLE INITIALLY DEFERRED`. Como su error saldría en el commit, tirar bloquea primero el tupper y comprueba antes si hay porciones que lo referencian, para cerrarlo en vez de intentar borrarlo.
+**Convención actualizada**: `code_conventions.md` sección 11.2.6; `measurement_conventions.md` sección 4.8.1
+
+## 2026-11-07 — Al confirmar, una fracción por tanda y la confianza calculada después de escalar
+
+**Origen**: n/a (sobras al confirmar una comida); registrada a raíz de `audit/audits/audit_fridge.md`, hallazgo 6
+**Contexto**: al confirmar una comida había una sola fracción para todo el evento. Con tandas, de una se puede dejar un 25 % y comerse otra entera, y lo que sobra de cada una puede ir a la nevera. Con una sola fracción daba igual calcular `amount_confidence` antes o después de escalar; con una por tanda, escalar cambia la proporción entre porciones.
+**Alternativas consideradas**:
+- Mantener una sola fracción por evento.
+- Una fracción por tanda, con la confianza calculada antes de escalar, como hasta ahora.
+- Una fracción por tanda, con la confianza calculada sobre las porciones ya escaladas.
+**Decisión**: una fracción en `(0, 1]` por tanda; una tanda que el formulario no menciona se ha comido entera. `amount_confidence` se calcula sobre las porciones ya multiplicadas por la fracción de su tanda. Mantiene el rango `(0, 1]` de la decisión del 2026-09-22.
+**Convención actualizada**: `measurement_conventions.md` secciones 4.4 y 6.9.1; `frontend_conventions.md` sección 7.14
+
+## 2026-11-07 — `fridge_move` es de solo inserción también por permisos
+
+**Origen**: `fridge`, hallazgo 4 de `audit/audits/audit_fridge.md`
+**Contexto**: `fridge_move` es el historial de sitios que usa la regla de conservación y el análisis del estudio. El código solo inserta y lee sus filas, pero el rol de ejecución tenía `UPDATE` y `DELETE` sobre ella: la garantía era solo de disciplina. No había ninguna convención sobre proteger por permisos las tablas de historial; el único precedente era el de los datos de referencia (`off_product`, `ciqual_food`).
+**Alternativas consideradas**:
+- Dejarlo por disciplina, como estaba.
+- Retirar al rol de ejecución `UPDATE`, `DELETE` y `TRUNCATE` sobre la tabla.
+**Decisión**: `init_db` retira al rol de ejecución `UPDATE`, `DELETE` y `TRUNCATE` sobre `fridge_move`. La cascada desde `fridge` sigue borrando sus filas, porque las acciones referenciales se ejecutan con los permisos del propietario de la tabla (comprobado contra la base). Vale para esta tabla: no se extiende a otras tablas de historial sin decidirlo.
+**Convención actualizada**: `code_conventions.md` secciones 11.2.1 y 11.2.6
+
+## 2026-11-07 — `fridge_move`: solo `moved_at`
+
+**Origen**: `fridge`, hallazgo 5 de `audit/audits/audit_fridge.md`
+**Contexto**: la decisión del 2026-11-06 sobre `user_favorites` dejó pendiente qué timestamps lleva `fridge` hasta auditarla. `fridge` ya tiene `created_at` y `updated_at`, porque sus datos cambian. `fridge_move` solo tiene `moved_at`, que se fija al insertar la fila, y sus filas nunca se actualizan.
+**Alternativas consideradas**:
+- Solo `moved_at`, que hace de `created_at`.
+- Añadir `created_at`, que repetiría `moved_at`.
+- Añadir `created_at` y `updated_at`, por uniformidad: `updated_at` nunca cambiaría.
+**Decisión**: solo `moved_at`. Completa, para `fridge` y `fridge_move`, lo que la decisión del 2026-11-06 dejó pendiente; `tags` y `linked_tags` siguen pendientes de su auditoría.
+**Convención actualizada**: `code_conventions.md` sección 11.2.6

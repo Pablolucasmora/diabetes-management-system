@@ -9,6 +9,8 @@ from DayBetes_food.config import DB_RUNTIME_ROLE
 from DayBetes_food.database.connection import get_migrations_connection
 from DayBetes_food.database.queries.crud import fuzzy_compact_sql
 from DayBetes_food.database.schema import (
+    insulin_brand_check_constraints,
+    insulin_pen_check_constraints,
     DBSchema,
     catalog_check_constraints,
     fridge_check_constraints,
@@ -1330,13 +1332,82 @@ def _ensure_fridge_schema(cursor):
             "CHECK (source_fridge_id IS NULL OR intake_event_id IS NOT NULL);"
         )
     # The content of a container is read by fridge_id, which is also the target of its
-    # ON DELETE CASCADE. source_fridge_id is checked by RESTRICT when a container is
-    # discarded, and is NULL in almost every row, hence partial (§11.7).
+    # ON DELETE CASCADE. source_fridge_id is checked at commit by its deferred foreign
+    # key when a container is deleted, and is NULL in almost every row, hence
+    # partial (§11.7).
     _create_index_once(cursor, "idx_portion_detail_fridge_id", "ON portion_detail (fridge_id) WHERE fridge_id IS NOT NULL")
     _create_index_once(
         cursor,
         "idx_portion_detail_source_fridge_id",
         "ON portion_detail (source_fridge_id) WHERE source_fridge_id IS NOT NULL",
+    )
+
+
+def _ensure_insulin_pen_schema(cursor):
+    """`insulin_brand`, `insulin_pen` and the pen columns of `insulin_injections` and
+    `intake_event` (code §11.2.7, measurement §8.4). Idempotent: every step checks
+    first (§12.2). Existing injections keep insulin_pen_id NULL (§12.7)."""
+    for table, checks in (
+        ("insulin_brand", insulin_brand_check_constraints()),
+        ("insulin_pen", insulin_pen_check_constraints()),
+    ):
+        for name, expression in checks.items():
+            if not _constraint_exists(cursor, table, name):
+                cursor.execute(
+                    sql.SQL("ALTER TABLE {} ADD CONSTRAINT {} CHECK ({});").format(
+                        sql.Identifier(table), sql.Identifier(name), sql.SQL(expression)
+                    )
+                )
+
+    if not _has_column(cursor, "insulin_injections", "insulin_pen_id"):
+        cursor.execute("ALTER TABLE insulin_injections ADD COLUMN insulin_pen_id INTEGER;")
+    if not _constraint_exists(cursor, "insulin_injections", "fk_insulin_injections_insulin_pen_id_insulin_pen"):
+        # Deferred NO ACTION, like fridge (§11.2.6): checked at commit, so deleting
+        # a user does not depend on the order of its cascades.
+        cursor.execute(
+            "ALTER TABLE insulin_injections ADD CONSTRAINT fk_insulin_injections_insulin_pen_id_insulin_pen "
+            "FOREIGN KEY (insulin_pen_id) REFERENCES insulin_pen(id) "
+            "ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED;"
+        )
+
+    if not _has_column(cursor, "intake_event", "insulin_pen_id"):
+        cursor.execute("ALTER TABLE intake_event ADD COLUMN insulin_pen_id INTEGER;")
+    if not _constraint_exists(cursor, "intake_event", "fk_intake_event_insulin_pen_id_insulin_pen"):
+        cursor.execute(
+            "ALTER TABLE intake_event ADD CONSTRAINT fk_intake_event_insulin_pen_id_insulin_pen "
+            "FOREIGN KEY (insulin_pen_id) REFERENCES insulin_pen(id) ON DELETE SET NULL;"
+        )
+    if not _has_column(cursor, "intake_event", "insulin_units"):
+        cursor.execute("ALTER TABLE intake_event ADD COLUMN insulin_units REAL;")
+    if not _constraint_exists(cursor, "intake_event", "ck_intake_event_insulin_units"):
+        cursor.execute(
+            "ALTER TABLE intake_event ADD CONSTRAINT ck_intake_event_insulin_units CHECK "
+            "(insulin_units IS NULL OR (insulin_units > 0 AND (insulin_units * 2) = floor(insulin_units * 2)));"
+        )
+
+    # One active brand per name and user, ignoring case (§11.5).
+    _create_unique_index_once(
+        cursor,
+        "uq_insulin_brand_users_id_name",
+        "ON insulin_brand (users_id, lower(name)) WHERE deleted_at IS NULL",
+    )
+    # The open pens of a user, the soonest to expire first (selectors and settings).
+    _create_index_once(
+        cursor, "idx_insulin_pen_users_id_open", "ON insulin_pen (users_id, expires_at) WHERE closed_at IS NULL"
+    )
+    # Whether a brand has pens (archive or delete, type change) and its deferred FK.
+    _create_index_once(cursor, "idx_insulin_pen_insulin_brand_id", "ON insulin_pen (insulin_brand_id)")
+    # What is left in a pen sums its injections; also its deferred FK. NULL in old rows.
+    _create_index_once(
+        cursor,
+        "idx_insulin_injections_insulin_pen_id",
+        "ON insulin_injections (insulin_pen_id, shot_time) WHERE insulin_pen_id IS NOT NULL",
+    )
+    # ON DELETE SET NULL from a deleted pen, and the planned meals of a closed pen.
+    _create_index_once(
+        cursor,
+        "idx_intake_event_insulin_pen_id",
+        "ON intake_event (insulin_pen_id) WHERE insulin_pen_id IS NOT NULL",
     )
 
 
@@ -2644,6 +2715,9 @@ def init_db():
             DBSchema.ciqual_food(),
             DBSchema.fridge(),
             DBSchema.fridge_move,
+            # Before intake_event and insulin_injections: both reference insulin_pen.
+            DBSchema.insulin_brand(),
+            DBSchema.insulin_pen(),
             DBSchema.tags,
             DBSchema.recipe(),
             DBSchema.user_favorites,
@@ -2680,6 +2754,7 @@ def init_db():
         _ensure_auth_rate_limits_schema(cur)
         _ensure_intake_event_schema(cur)
         _ensure_insulin_injections_schema(cur)
+        _ensure_insulin_pen_schema(cur)
         # After intake_event: portion_detail plates depend on it through a
         # foreign key, so their DDL cannot run earlier (§12.3).
         _ensure_portion_detail_schema(cur)
@@ -2702,6 +2777,10 @@ def init_db():
         # Reference data: only the load script writes it (measurement §12.2).
         cur.execute(sql.SQL("REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON off_product FROM {}").format(role))
         cur.execute(sql.SQL("REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ciqual_food FROM {}").format(role))
+        # Insert-only history (code §11.2.6): the runtime adds moves and reads them,
+        # never changes or removes one. The CASCADE from fridge still deletes them,
+        # because referential actions run as the owner of the table.
+        cur.execute(sql.SQL("REVOKE UPDATE, DELETE, TRUNCATE ON fridge_move FROM {}").format(role))
 
         conn.commit()
         logger.info("Database initialized successfully.")

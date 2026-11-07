@@ -23,7 +23,17 @@ from DayBetes_food.domain.insulin import (
     InsulinInjectionUpdate,
     validate_insulin_dose,
 )
-from DayBetes_food.errors import InfrastructureError, NotFoundError
+from DayBetes_food.errors import NotFoundError, ValidationError
+
+# The pen of an injection must be the user's, open and of the same insulin type
+# (measurement §8.4). The INSERT and the UPDATE check it in their own statement.
+_PEN_FITS = """
+    EXISTS (
+        SELECT 1 FROM insulin_pen p JOIN insulin_brand b ON b.id = p.insulin_brand_id
+        WHERE p.id = %(insulin_pen_id)s AND p.users_id = %(user_id)s
+          AND p.closed_at IS NULL AND b.insulin_type = %(insulin_type)s::varchar
+    )
+"""
 
 
 def create_insulin_injection(
@@ -43,21 +53,24 @@ def create_insulin_injection(
         id of the created row
 
     Raises:
-        ValidationError: if insulin_type/units are not consistent
-        InfrastructureError: if the insert fails
+        ValidationError: if insulin_type/units are not consistent, or there is no pen
+        NotFoundError: the pen is not an open one of the user with this insulin type
     """
     # Validate before reaching the DB
     validate_insulin_dose(payload.insulin_type, payload.units)
+    # No new injection without a pen (measurement §8.4).
+    if payload.insulin_pen_id is None:
+        raise ValidationError("Choose the pen you injected with.", fields={"insulin_pen_id": "required"})
 
-    query = """
+    query = f"""
         INSERT INTO insulin_injections (
             users_id, intake_event_id, shot_time, insulin_type, units, injection_zone,
-            notes, needle_leak, skin_pinch, timezone_at_event
+            notes, needle_leak, skin_pinch, timezone_at_event, insulin_pen_id
         )
-        VALUES (
-            %(user_id)s, %(intake_event_id)s, %(shot_time)s, %(insulin_type)s, %(units)s, %(injection_zone)s,
-            %(notes)s, %(needle_leak)s, %(skin_pinch)s, %(timezone_at_event)s
-        )
+        SELECT
+            %(user_id)s, %(intake_event_id)s, %(shot_time)s, %(insulin_type)s::varchar, %(units)s, %(injection_zone)s,
+            %(notes)s, %(needle_leak)s, %(skin_pinch)s, %(timezone_at_event)s, %(insulin_pen_id)s
+        WHERE {_PEN_FITS}
         RETURNING id;
     """
     try:
@@ -75,11 +88,12 @@ def create_insulin_injection(
                     "needle_leak": payload.needle_leak,
                     "skin_pinch": payload.skin_pinch,
                     "timezone_at_event": payload.timezone_at_event,
+                    "insulin_pen_id": payload.insulin_pen_id,
                 },
             )
             row = cursor.fetchone()
         if row is None:
-            raise InfrastructureError("Insulin injection INSERT returned no row")
+            raise NotFoundError("That pen is not open or is not of this insulin type.")
         injection_id = int(row["id"])
         if commit:
             connection.commit()
@@ -113,7 +127,7 @@ def list_insulin_injections(
     query = """
         SELECT
             id, users_id, intake_event_id, shot_time, insulin_type, units, injection_zone,
-            notes, needle_leak, skin_pinch, timezone_at_event, created_at, updated_at
+            notes, needle_leak, skin_pinch, timezone_at_event, created_at, updated_at, insulin_pen_id
         FROM insulin_injections
         WHERE users_id = %(user_id)s
         ORDER BY shot_time DESC, id DESC
@@ -146,7 +160,7 @@ def get_insulin_injection(
     query = """
         SELECT
             id, users_id, intake_event_id, shot_time, insulin_type, units, injection_zone,
-            notes, needle_leak, skin_pinch, timezone_at_event, created_at, updated_at
+            notes, needle_leak, skin_pinch, timezone_at_event, created_at, updated_at, insulin_pen_id
         FROM insulin_injections
         WHERE id = %(injection_id)s AND users_id = %(user_id)s;
     """
@@ -222,16 +236,24 @@ def update_insulin_injection(
     # Validate before reaching the DB
     validate_insulin_dose(payload.insulin_type, payload.units)
 
-    query = """
-        UPDATE insulin_injections
+    # The pen stays the same, or is another open one of the user and the same
+    # type; an injection without a pen can only stay without one (§8.4).
+    query = f"""
+        UPDATE insulin_injections i
         SET
-            insulin_type = %(insulin_type)s,
+            insulin_type = %(insulin_type)s::varchar,
             shot_time = %(shot_time)s,
             injection_zone = %(injection_zone)s,
             units = %(units)s,
+            insulin_pen_id = %(insulin_pen_id)s::integer,
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = %(injection_id)s AND users_id = %(user_id)s
-        RETURNING id;
+        WHERE i.id = %(injection_id)s AND i.users_id = %(user_id)s
+          AND (
+            (%(insulin_pen_id)s::integer IS NULL AND i.insulin_pen_id IS NULL)
+            OR (i.insulin_pen_id = %(insulin_pen_id)s::integer AND i.insulin_type = %(insulin_type)s::varchar)
+            OR {_PEN_FITS}
+          )
+        RETURNING i.id;
     """
     try:
         with connection.cursor() as cursor:
@@ -244,11 +266,12 @@ def update_insulin_injection(
                     "shot_time": payload.shot_time,
                     "injection_zone": payload.injection_zone.value if payload.injection_zone else None,
                     "units": payload.units,
+                    "insulin_pen_id": payload.insulin_pen_id,
                 },
             )
             row = cursor.fetchone()
         if row is None:
-            raise NotFoundError(f"Insulin injection {injection_id} not found or not owned by user {user_id}")
+            raise NotFoundError(f"Insulin injection {injection_id} not found, not the user's, or its pen does not fit")
         if commit:
             connection.commit()
     except Exception:

@@ -25,6 +25,8 @@ from DayBetes_food.domain.constants import (
     InjectionZone,
     MealType,
     Nutriscore,
+    PenCloseReason,
+    PenFormat,
     PrefillSource,
     StorageLocation,
     sql_in_list,
@@ -36,6 +38,12 @@ from DayBetes_food.domain.food import (
     FOOD_DEFAULT_PORTION_RANGE,
 )
 from DayBetes_food.domain.fridge import FRIDGE_CONTENT_WEIGHT_RANGE
+from DayBetes_food.domain.insulin_pen import (
+    DEFAULT_IN_USE_DAYS,
+    DEFAULT_PEN_UNITS,
+    IN_USE_DAYS_RANGE,
+    PEN_UNITS_RANGE,
+)
 from DayBetes_food.domain.meal_type_schedule import AUTO_ASSIGNABLE_MEAL_TYPES
 from DayBetes_food.domain.nutrition import NUTRIENT_LIMITS, NumericRange
 from DayBetes_food.domain.recipe import RECIPE_MEAL_TYPES, RECIPE_SERVINGS_RANGE
@@ -159,6 +167,31 @@ def fridge_check_constraints() -> dict[str, str]:
     }
 
 
+def insulin_brand_check_constraints() -> dict[str, str]:
+    """CHECK name -> expression of `insulin_brand` (code §11.2.7, measurement §8.4).
+    The same list feeds the CREATE TABLE and db_init._ensure_insulin_pen_schema."""
+    return {
+        "ck_insulin_brand_name_normalized": r"name <> '' AND name = regexp_replace(btrim(name), '\s+', ' ', 'g')",
+        "ck_insulin_brand_insulin_type": f"insulin_type IN ({sql_in_list(InsulinType)})",
+        "ck_insulin_brand_in_use_days": (
+            f"in_use_days >= {int(IN_USE_DAYS_RANGE.minimum)} AND in_use_days <= {int(IN_USE_DAYS_RANGE.maximum)}"
+        ),
+        "ck_insulin_brand_pen_units": _range_check("pen_units", PEN_UNITS_RANGE),
+    }
+
+
+def insulin_pen_check_constraints() -> dict[str, str]:
+    """CHECK name -> expression of `insulin_pen` (code §11.2.7, measurement §8.4)."""
+    return {
+        "ck_insulin_pen_format": f"format IN ({sql_in_list(PenFormat)})",
+        "ck_insulin_pen_capacity_units": _range_check("capacity_units", PEN_UNITS_RANGE),
+        "ck_insulin_pen_expires_after_opened": "expires_at > opened_at",
+        "ck_insulin_pen_closed_after_opened": "closed_at IS NULL OR closed_at >= opened_at",
+        "ck_insulin_pen_closed_reason": f"closed_reason IS NULL OR closed_reason IN ({sql_in_list(PenCloseReason)})",
+        "ck_insulin_pen_closed_reason_iff_closed": "(closed_at IS NULL) = (closed_reason IS NULL)",
+    }
+
+
 class DBSchema:
     extensions = """
     CREATE EXTENSION IF NOT EXISTS pg_trgm;
@@ -268,6 +301,11 @@ class DBSchema:
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         timezone_at_event TEXT NOT NULL DEFAULT 'Europe/Madrid',
+        -- The pen it came from; NULL only before pens existed (measurement 8.4).
+        -- Deferred NO ACTION (code 11.2.7): a used pen is closed, never deleted.
+        insulin_pen_id INTEGER
+            CONSTRAINT fk_insulin_injections_insulin_pen_id_insulin_pen
+            REFERENCES insulin_pen(id) ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED,
         CONSTRAINT fk_insulin_injections_users_id_users
             FOREIGN KEY (users_id) REFERENCES users(id) ON DELETE CASCADE,
         CONSTRAINT fk_insulin_injections_intake_event_id_intake_event
@@ -504,6 +542,62 @@ class DBSchema:
     """
 
     @classmethod
+    def insulin_brand(cls):
+        """An insulin as the user uses it: name, type, days in use and units per pen.
+        Hybrid by use (code_conventions.md §11.2.7): archived if a pen uses it."""
+        check_lines = ",\n".join(
+            f"        CONSTRAINT {name} CHECK ({expression})"
+            for name, expression in insulin_brand_check_constraints().items()
+        )
+        return f"""
+    CREATE TABLE IF NOT EXISTS insulin_brand (
+        id SERIAL CONSTRAINT pk_insulin_brand PRIMARY KEY,
+        users_id INTEGER NOT NULL
+            CONSTRAINT fk_insulin_brand_users_id_users
+            REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR(100) NOT NULL, -- stored normalized; unique per user among active brands (uq_insulin_brand_users_id_name)
+        insulin_type VARCHAR(20) NOT NULL, -- InsulinType; fixed once a pen uses the brand (measurement 8.4)
+        in_use_days INTEGER NOT NULL DEFAULT {DEFAULT_IN_USE_DAYS}, -- days a pen keeps once opened
+        pen_units REAL NOT NULL DEFAULT {DEFAULT_PEN_UNITS:g}, -- units in a full pen
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        deleted_at TIMESTAMPTZ, -- archived: it had pens when it was deleted (§11.2.7)
+{check_lines}
+    );
+    """
+
+    @classmethod
+    def insulin_pen(cls):
+        """One insulin pen or cartridge taken out of the fridge. Hybrid by use, like
+        `fridge` (code_conventions.md §11.2.7); what is left is computed live
+        from its injections (measurement_conventions.md §8.4)."""
+        check_lines = ",\n".join(
+            f"        CONSTRAINT {name} CHECK ({expression})"
+            for name, expression in insulin_pen_check_constraints().items()
+        )
+        return f"""
+    CREATE TABLE IF NOT EXISTS insulin_pen (
+        id SERIAL CONSTRAINT pk_insulin_pen PRIMARY KEY,
+        users_id INTEGER NOT NULL
+            CONSTRAINT fk_insulin_pen_users_id_users
+            REFERENCES users(id) ON DELETE CASCADE,
+        -- Deferred NO ACTION (§11.2.7): a brand used by a pen is archived, never deleted.
+        insulin_brand_id INTEGER NOT NULL
+            CONSTRAINT fk_insulin_pen_insulin_brand_id_insulin_brand
+            REFERENCES insulin_brand(id) ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED,
+        format VARCHAR(20) NOT NULL, -- PenFormat
+        opened_at TIMESTAMPTZ NOT NULL, -- taken out of the fridge
+        expires_at TIMESTAMPTZ NOT NULL, -- opened_at + the brand's days in use; editable
+        capacity_units REAL NOT NULL, -- copied from the brand; editable
+        closed_at TIMESTAMPTZ, -- NULL = in use
+        closed_reason VARCHAR(20), -- PenCloseReason; NULL iff open
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+{check_lines}
+    );
+    """
+
+    @classmethod
     def fridge(cls):
         """A container in the fridge or the freezer. Lifecycle and contract:
         code_conventions.md §11.2.6; model: measurement_conventions.md §4.8."""
@@ -651,6 +745,12 @@ class DBSchema:
         injection_zone VARCHAR(50)
             CONSTRAINT ck_intake_event_injection_zone
             CHECK (injection_zone IS NULL OR injection_zone IN ({injection_zone_list})), -- Temporary selection while the meal is still in the cart; definitive log goes to insulin_injections table when meal is confirmed
+        insulin_pen_id INTEGER
+            CONSTRAINT fk_intake_event_insulin_pen_id_insulin_pen
+            REFERENCES insulin_pen(id) ON DELETE SET NULL, -- Draft like injection_zone: the pen of the bolus, copied to the injection on confirm (measurement 8.4)
+        insulin_units REAL
+            CONSTRAINT ck_intake_event_insulin_units
+            CHECK (insulin_units IS NULL OR (insulin_units > 0 AND (insulin_units * 2) = floor(insulin_units * 2))), -- Draft dose of the bolus in U, same rule as insulin_injections.units (measurement 8.1)
 
         ingested_amount REAL
             CONSTRAINT ck_intake_event_ingested_amount

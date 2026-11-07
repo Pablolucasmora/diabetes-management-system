@@ -116,6 +116,8 @@ def _base_html_shell(content_html: str) -> str:
     <script src="{asset_busted("/js/rescue.js")}" defer></script>
     <script src="{asset_busted("/js/food_actions.js")}" defer></script>
     <script src="{asset_busted("/js/fridge.js")}" defer></script>
+    <script src="{asset_busted("/js/meal_selector.js")}" defer></script>
+    <script src="{asset_busted("/js/insulin_pens.js")}" defer></script>
     <script src="{asset_busted("/js/form_drafts.js")}" defer></script>
     <script src="{asset_busted("/js/cart_units.js")}" defer></script>
     <script src="{asset_busted("/js/food_detail.js")}" defer></script>

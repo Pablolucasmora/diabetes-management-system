@@ -19,6 +19,7 @@ from DayBetes_food.components.modal import (
     open_modal_js,
 )
 from DayBetes_food.components.food.rescue import RescueModal, rescue_open_attrs
+from DayBetes_food.components.insulin_pen import InsulinPenModal, PenSelect, open_pen_modal_js
 from DayBetes_food.domain.constants import InjectionZone
 from DayBetes_food.time_utils import local_now, to_local
 
@@ -125,7 +126,7 @@ def _section_title(text: str):
     return P(text, cls="web_section_label px-1")
 
 
-def quick_actions(latest_event, portions):
+def quick_actions(latest_event, portions, pens=(), brands=()):
     now = local_now()
     modal_id = "menu_injection_modal"
     open_js = open_modal_js(modal_id)
@@ -146,11 +147,13 @@ def quick_actions(latest_event, portions):
     switch_insulin_js = (
         f"const box=document.getElementById('{modal_id}');"
         "if(!box) return;"
-        "const sel=box.querySelector('[data-menu-insulin-type]');"
-        "const basal=box.querySelector('[data-menu-basal-wrap]');"
-        "if(!sel||!basal) return;"
-        "if(sel.value==='basal'){basal.classList.remove('hidden');}"
-        "else{basal.classList.add('hidden');}"
+        "const sel=box.querySelector('[data-pen-select]');"
+        "const hint=box.querySelector('[data-menu-dose-optional]');"
+        "if(!sel||!hint) return;"
+        # The dose is required for basal and optional for rapid (measurement §8.1);
+        # the type is the one of the pen's brand (§8.4).
+        "const opt=sel.options[sel.selectedIndex];"
+        "hint.classList.toggle('hidden',!!opt&&opt.dataset.insulinType==='basal');"
     )
     zone_buttons = [
         Button(
@@ -242,6 +245,13 @@ def quick_actions(latest_event, portions):
                 cls="web_button web_button_primary w-full py-3 text-sm",
                 onclick=open_js,
             ),
+            # Taking a new pen out of the fridge (frontend_conventions.md §9.9).
+            Button(
+                "New pen",
+                type="button",
+                cls="web_button w-full py-3 text-sm",
+                onclick=open_pen_modal_js(),
+            ),
             cls="web_container w-full p-4 flex flex-col gap-3",
         ),
         # Same pop-up as the bolt of the Food header (frontend_conventions.md §9.6).
@@ -261,19 +271,19 @@ def quick_actions(latest_event, portions):
     injection_modal = ModalLayer(
         P("Insulin injection", cls="text-lg font-semibold"),
         Form(
+            # The type comes from the pen's brand (frontend_conventions.md §9.9).
             Div(
-                Div(
-                    Label("Type", cls="text-xs text-gray-600"),
-                    Select(
-                        Option("Rapid", value="rapid", selected=True),
-                        Option("Basal", value="basal"),
-                        name="insulin_type",
-                        cls="web_input border border-white rounded-lg px-2 py-1 text-base",
-                        data_menu_insulin_type="true",
-                        onchange=switch_insulin_js,
-                    ),
-                    cls="flex flex-col gap-1 flex-1 min-w-0",
+                Label("Pen", cls="text-xs text-gray-600", **{"for": "menu_injection_pen"}),
+                PenSelect(
+                    pens,
+                    None,
+                    select_id="menu_injection_pen",
+                    cls="web_input border border-white rounded-lg px-2 py-1 text-base w-full min-w-0",
+                    onchange=switch_insulin_js,
                 ),
+                cls="flex flex-col gap-1",
+            ),
+            Div(
                 Div(
                     Label("Injection hour", cls="text-xs text-gray-600"),
                     Div(
@@ -309,20 +319,24 @@ def quick_actions(latest_event, portions):
                     ),
                     cls="flex flex-col gap-1 flex-1 min-w-0",
                 ),
-                cls="grid grid-cols-2 gap-3",
-            ),
-            Div(
-                Label("Basal dose", cls="text-xs text-gray-600"),
-                Input(
-                    type="text",
-                    name="units",
-                    inputmode="decimal",
-                    pattern="[0-9]+([\\.,][0-9]+)?",
-                    placeholder="e.g. 8.5",
-                    cls="web_input border border-white rounded-lg px-2 py-1 text-sm",
+                Div(
+                    Label(
+                        "Dose (U)",
+                        Span(" - optional", data_menu_dose_optional="true"),
+                        cls="text-xs text-gray-600",
+                    ),
+                    Input(
+                        type="text",
+                        name="units",
+                        inputmode="decimal",
+                        pattern="[0-9]+([\\.,][0-9]+)?",
+                        placeholder="e.g. 8.5",
+                        aria_label="Dose in units",
+                        cls="web_input border border-white rounded-lg px-2 py-1 text-sm",
+                    ),
+                    cls="flex flex-col gap-1 flex-1 min-w-0",
                 ),
-                data_menu_basal_wrap="true",
-                cls="hidden flex-col gap-1",
+                cls="grid grid-cols-2 gap-3",
             ),
             Div(
                 Img(
@@ -347,9 +361,11 @@ def quick_actions(latest_event, portions):
                         "const form=this.form;"
                         "const z=form?form.querySelector('[data-menu-injection-zone-input]'):null;"
                         "if(!z||!z.value){alert('Select a zone first.');return false;}"
-                        "const t=form?form.querySelector('[data-menu-insulin-type]'):null;"
+                        "const t=form?form.querySelector('[data-pen-select]'):null;"
+                        "const o=t?t.options[t.selectedIndex]:null;"
+                        "if(!t||!t.value||t.value==='new'){alert('Choose the pen.');return false;}"
                         "const b=form?form.querySelector('input[name=units]'):null;"
-                        "if(t&&t.value==='basal'&&(!b||!b.value)){alert('Enter basal dose.');return false;}"
+                        "if(o&&o.dataset.insulinType==='basal'&&(!b||!b.value)){alert('Enter the basal dose.');return false;}"
                         + close_js
                     ),
                 ),
@@ -363,6 +379,7 @@ def quick_actions(latest_event, portions):
     actions = Div(
         quick_grid,
         injection_modal,
+        InsulinPenModal(brands, now.date().isoformat()),
         RescueModal(),
         cls="relative"
     )

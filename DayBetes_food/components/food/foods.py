@@ -237,6 +237,13 @@ def _food_back_button(label: str = "Back"):
     )
 
 
+def meal_option_label(event) -> str:
+    """Text of a meal in the meal selector. Also sent with `mealCreated`, so that the
+    option the page adds reads the same as the one a reload would draw (§7.7)."""
+    local_meal_time = to_local(event.meal_time)
+    return event.name or (f"Meal {local_meal_time.strftime('%H:%M')}" if local_meal_time else f"Meal {event.id}")
+
+
 def MealSelector(
     events: list,
     selected_id: int = None,
@@ -247,13 +254,9 @@ def MealSelector(
     """`show_plates=False` for a recipe with several plates, which creates its own (§7.7)."""
     options = []
     for event in events:
-        local_meal_time = to_local(event.meal_time)
-        label = event.name or (
-            f"Meal {local_meal_time.strftime('%H:%M')}" if local_meal_time else f"Meal {event.id}"
-        )
         options.append(
             Option(
-                label,
+                meal_option_label(event),
                 value=str(event.id),
                 selected=(event.id == selected_id),
             )

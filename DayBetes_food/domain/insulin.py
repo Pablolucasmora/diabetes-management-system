@@ -4,11 +4,17 @@ This module imports no psycopg, routes or components. The conversion from a
 SQL row to these dataclasses lives in DayBetes_food/database/mappers.py, not here.
 """
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
 
 from DayBetes_food.domain.constants import InjectionZone, InsulinType
+from DayBetes_food.domain.nutrition import NumericRange, parse_number
 from DayBetes_food.errors import ValidationError
+
+# Only parsing: positivity, the 0.5 U step and whether it is required are checked
+# by validate_insulin_dose, the same for every way an injection is written.
+_ANY_NUMBER = NumericRange(-math.inf, math.inf)
 
 
 @dataclass(frozen=True)
@@ -31,6 +37,8 @@ class InsulinInjectionRead:
     skin_pinch: bool | None
     created_at: datetime
     updated_at: datetime
+    # NULL only in injections logged before pens existed (measurement §8.4).
+    insulin_pen_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -50,6 +58,9 @@ class InsulinInjectionCreate:
     notes: str | None = None
     needle_leak: bool | None = None
     skin_pinch: bool | None = None
+    # Required for every new injection (measurement §8.4); the insulin_type
+    # must be the one of the pen's brand, which the caller takes from the pen.
+    insulin_pen_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -64,6 +75,7 @@ class InsulinInjectionUpdate:
     shot_time: datetime
     injection_zone: InjectionZone | None
     units: float | None
+    insulin_pen_id: int | None  # None only to keep an old injection without a pen
 
 
 def validate_insulin_dose(insulin_type: InsulinType, units: float | None) -> None:
@@ -85,3 +97,10 @@ def validate_insulin_dose(insulin_type: InsulinType, units: float | None) -> Non
         # Check it is a multiple of 0.5: (units * 2) must be an integer
         if abs((units * 2) - round(units * 2)) > 1e-8:
             raise ValidationError("Insulin dose must be a multiple of 0.5 U", fields={"units": "step"})
+
+
+def parse_insulin_units(raw) -> float | None:
+    """Dose typed in a form, in U (measurement_conventions.md §8.1). '' -> None,
+    which means "dose not recorded", never zero; '8,5' -> 8.5; text, NaN or
+    Infinity -> ValidationError. Valid for basal and rapid alike."""
+    return parse_number(raw, "units", _ANY_NUMBER)

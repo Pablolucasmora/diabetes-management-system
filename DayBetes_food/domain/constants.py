@@ -223,6 +223,22 @@ class FridgeCloseReason(str, Enum):
 
 
 @unique
+class PenFormat(str, Enum):
+    """How an insulin pen comes (measurement_conventions.md §8.4)."""
+    PREFILLED_PEN = "prefilled_pen"
+    CARTRIDGE = "cartridge"
+
+
+@unique
+class PenCloseReason(str, Enum):
+    """Why an insulin pen stopped being used (code_conventions.md §11.2.7). It is
+    worked out when the pen is closed, never asked (measurement §8.4)."""
+    EMPTY = "empty"
+    EXPIRED = "expired"
+    DISCARDED = "discarded"
+
+
+@unique
 class GlycemicIndex(str, Enum):
     """Declared absorption speed of a manual dish (measurement_conventions.md
     §5.5). Not a measured GI. Existing codes kept (§4.2); `none` added."""

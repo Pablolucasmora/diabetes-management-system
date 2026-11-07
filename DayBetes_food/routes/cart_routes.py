@@ -25,6 +25,11 @@ import math
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.time_utils import local_naive_to_utc_aware, local_today, to_local, APP_TIMEZONE
 from DayBetes_food.database.queries import (
+    list_insulin_brands,
+    list_open_insulin_pens,
+    set_event_default_pen,
+    set_event_insulin_pen,
+    set_event_insulin_units,
     get_portion_detail,
     list_portions_by_event,
     list_portions_by_events,
@@ -58,6 +63,7 @@ from DayBetes_food.domain.constants import (
     CookingMethod,
     FoodPhysicalState,
     InjectionZone,
+    InsulinType,
     IntakeEventState,
     KeepPartMode,
     MealType,
@@ -67,6 +73,7 @@ from DayBetes_food.domain.constants import (
     parse_enum,
     parse_optional_id,
 )
+from DayBetes_food.domain.insulin import parse_insulin_units
 from DayBetes_food.domain.intake_event import (
     INTAKE_EVENT_INGESTED_UNITS,
     INTAKE_EVENT_NAME_MAX_LENGTH,
@@ -142,7 +149,13 @@ def _load_cart_main(connection):
     if not user_id:
         return _no_user_cart()
     events, portions_by_event, plates_by_event = _load_events_and_portions(connection, int(user_id))
-    return cart_main(events, portions_by_event, plates_by_event)
+    return cart_main(
+        events,
+        portions_by_event,
+        plates_by_event,
+        rapid_pens=list_open_insulin_pens(connection, int(user_id), InsulinType.RAPID),
+        brands=list_insulin_brands(connection, int(user_id)),
+    )
 
 
 def _cart_response(connection):
@@ -163,7 +176,8 @@ def _events_list_response(connection, user_id: int):
     action that can reorder the list (order `meal_time DESC`).
     """
     events, portions_by_event, plates_by_event = _load_events_and_portions(connection, user_id)
-    return render_fragment(cart_events_list(events, portions_by_event, plates_by_event))
+    rapid_pens = list_open_insulin_pens(connection, user_id, InsulinType.RAPID)
+    return render_fragment(cart_events_list(events, portions_by_event, plates_by_event, rapid_pens))
 
 
 def _card_response(request: Request, connection, user_id: int, event_id: int):
@@ -177,7 +191,8 @@ def _card_response(request: Request, connection, user_id: int, event_id: int):
         return _error(request, NotFoundError, "That meal no longer exists.")
     portions = list_portions_by_event(connection, user_id, event_id)
     plates = list_intake_plates(connection, event_id)
-    return render_fragment(CartCard(event, portions, plates))
+    rapid_pens = list_open_insulin_pens(connection, user_id, InsulinType.RAPID)
+    return render_fragment(CartCard(event, portions, plates, rapid_pens))
 
 
 def _portion_event_id(connection, user_id: int, portion, *, require_planned: bool = True) -> int:
@@ -737,18 +752,72 @@ def setup_cart_routes(rt):
             return _error(request, ValidationError, "The 'Insulin' checkbox could not be read.")
         with get_connection() as connection:
             try:
-                update_intake_event(
-                    connection,
-                    user_id=int(user_id),
-                    event_id=event_id,
-                    data=IntakeEventUpdate(insulin_dose=value),
-                )
+                with connection.transaction():
+                    update_intake_event(
+                        connection,
+                        user_id=int(user_id),
+                        event_id=event_id,
+                        data=IntakeEventUpdate(insulin_dose=value),
+                        commit=False,
+                    )
+                    # Turned on: the pen of the bolus gets its default, written now
+                    # and not guessed when drawn (code §7.14, measurement §8.4).
+                    if value:
+                        set_event_default_pen(connection, int(user_id), event_id, commit=False)
             except NotFoundError:
                 return _error(request, NotFoundError, _EVENT_GONE)
             except ConflictError:
                 return _error(request, ConflictError, _EVENT_NOT_PLANNED)
             except ValidationError:
                 return _error(request, ValidationError, "The 'Insulin' checkbox could not be read.")
+            return _card_response(request, connection, int(user_id), event_id)
+
+    @rt("/cart/event/{event_id}/insulin_pen")
+    def post(request: Request, event_id: int, insulin_pen_id: str = ""):
+        """Pen of the bolus: an open rapid pen of the user (measurement §8.4)."""
+        if request.headers.get("HX-Request") != "true":
+            return _error(request, AuthorizationError, _NOT_HTMX)
+        user_id = get_current_user_id()
+        if not user_id:
+            return _error(request, AuthenticationError, _NO_SESSION)
+        try:
+            pen_id = parse_optional_id(insulin_pen_id, "insulin_pen_id")
+        except ValidationError:
+            return _error(request, ValidationError, "That pen could not be read.")
+        if pen_id is None:
+            return _error(request, ValidationError, "Choose the pen you injected with.")
+        with get_connection() as connection:
+            try:
+                set_event_insulin_pen(connection, int(user_id), event_id, pen_id)
+            except NotFoundError:
+                if get_intake_event(connection, int(user_id), event_id) is None:
+                    return _error(request, NotFoundError, _EVENT_GONE)
+                return _error(request, NotFoundError, "That pen is no longer in use.")
+            except ConflictError:
+                return _error(request, ConflictError, _EVENT_NOT_PLANNED)
+            return _card_response(request, connection, int(user_id), event_id)
+
+    @rt("/cart/event/{event_id}/insulin_units")
+    def post(request: Request, event_id: int, insulin_units: str = ""):
+        """Dose of the bolus in U; empty is "not recorded" (measurement §8.1)."""
+        if request.headers.get("HX-Request") != "true":
+            return _error(request, AuthorizationError, _NOT_HTMX)
+        user_id = get_current_user_id()
+        if not user_id:
+            return _error(request, AuthenticationError, _NO_SESSION)
+        try:
+            units = parse_insulin_units(insulin_units)
+        except ValidationError:
+            return _error(request, ValidationError, "The dose is not a valid number.")
+        with get_connection() as connection:
+            try:
+                set_event_insulin_units(connection, int(user_id), event_id, units)
+            except ValidationError as error:
+                return _error(request, ValidationError, str(error))
+            except NotFoundError:
+                return _error(request, NotFoundError, _EVENT_GONE)
+            except ConflictError:
+                return _error(request, ConflictError, _EVENT_NOT_PLANNED)
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/injection_zone")
@@ -1363,7 +1432,10 @@ def setup_cart_routes(rt):
                         "A meal without ingredients cannot be confirmed.",
                     )
                 return _error(request, ConflictError, "That meal has already been confirmed.")
-            except ValidationError:
+            except ValidationError as error:
+                # Without an open pen the automatic injection cannot be logged (§8.4).
+                if "insulin_pen_id" in error.fields:
+                    return _error(request, ValidationError, str(error))
                 return _error(request, ValidationError, "The amount eaten is not valid.")
             response = _removal_response(connection, int(user_id))
         response.headers["HX-Trigger"] = json.dumps({"mealConfirmed": {"event_id": event_id}})

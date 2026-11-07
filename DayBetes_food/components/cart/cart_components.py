@@ -17,6 +17,7 @@ from DayBetes_food.components.cart.cart_shared import (
     unit_amount,
 )
 from DayBetes_food.components.food.food_shared import STORAGE_LABELS
+from DayBetes_food.components.insulin_pen import PenSelect, units_text
 from DayBetes_food.components.injection_zone import (
     BASE_INJECTION_ZONE_IMAGE,
     INJECTION_ZONE_IMAGE_BY_ZONE,
@@ -30,6 +31,7 @@ from DayBetes_food.domain.constants import (
     CookingMethod,
     FoodPhysicalState,
     InjectionZone,
+    InsulinType,
     KeepPartMode,
     MealType,
     PortionOrigin,
@@ -1342,7 +1344,52 @@ def _toggle_row(label: str, hint: str, control, extra=None):
     )
 
 
-def CartCard(event, portions, plates=()):
+def _bolus_row(event, rapid_pens, zone_label: str, card_target: str):
+    """Zone, pen and dose of the meal's bolus, side by side (frontend_conventions.md
+    §9.9). Each saves on its own when it changes, like the rest of the cart."""
+    pen_ids = {pen.id for pen in rapid_pens}
+    selected_pen = event.insulin_pen_id if event.insulin_pen_id in pen_ids else None
+    return Div(
+        Button(
+            Img(src="/images/content/injection.svg", alt="", cls="w-4 h-4"),
+            Span(zone_label),
+            type="button",
+            aria_label="Injection zone",
+            cls=f"{_SOFT_BUTTON_CLS} px-3 py-1.5 text-xs flex items-center gap-1.5 shrink-0",
+            onclick=_open_injection_modal_js(f"injection_zone_modal_{event.id}"),
+        ),
+        PenSelect(
+            rapid_pens,
+            selected_pen,
+            select_id=f"insulin_pen_{event.id}",
+            only_type=InsulinType.RAPID,
+            cls=f"{_PILL_FIELD_CLS} min-w-0 flex-1 text-xs",
+            hx_post=f"/cart/event/{event.id}/insulin_pen",
+            # `+ New pen` opens the pop-up instead of saving (static/js/insulin_pens.js).
+            hx_trigger="change[this.value!=='new']",
+            hx_target=card_target,
+            hx_swap="outerHTML",
+        ),
+        Input(
+            type="text",
+            name="insulin_units",
+            inputmode="decimal",
+            pattern="[0-9]+([\\.,][0-9]+)?",
+            placeholder="U",
+            value=units_text(event.insulin_units) if event.insulin_units is not None else "",
+            aria_label="Dose in units",
+            title="Dose in units",
+            cls=f"{_PILL_FIELD_CLS} w-16 shrink-0 text-xs text-center",
+            hx_post=f"/cart/event/{event.id}/insulin_units",
+            hx_trigger="change",
+            hx_target=card_target,
+            hx_swap="outerHTML",
+        ),
+        cls="flex items-center gap-2",
+    )
+
+
+def CartCard(event, portions, plates=(), rapid_pens=()):
     """One planned meal, read from top to bottom in the order it is used:
     what it is, what it has, the details that matter before eating, and the
     confirmation (frontend_conventions.md §7.1)."""
@@ -1429,15 +1476,8 @@ def CartCard(event, portions, plates=()):
                     hx_target=card_target,
                     hx_swap="outerHTML",
                 ),
-                extra=Button(
-                    Img(src="/images/content/injection.svg", alt="", cls="w-4 h-4"),
-                    Span(zone_label),
-                    type="button",
-                    aria_label="Injection zone",
-                    cls=f"{_SOFT_BUTTON_CLS} px-3 py-1.5 text-xs flex items-center gap-1.5 shrink-0",
-                    onclick=_open_injection_modal_js(f"injection_zone_modal_{event.id}"),
-                ) if event.insulin_dose else None,
             ),
+            _bolus_row(event, rapid_pens, zone_label, card_target) if event.insulin_dose else "",
             NotesSection(event),
             cls="flex flex-col gap-3 pt-4 border-t border-line-soft",
         ),

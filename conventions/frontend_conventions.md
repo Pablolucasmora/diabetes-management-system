@@ -153,6 +153,7 @@ En la pantalla de añadir alimento, **junto al selector de comida (meal selector
 - **Se muestra siempre que el evento tenga al menos una tanda**, aunque sea una sola y sin nombre (decisión 2026-09-19, corrige el criterio inicial de ocultarlo en ese caso): con una sola tanda sigue siendo el único sitio desde el que mandar el alimento a una tanda nueva. Solo queda vacío cuando no hay evento del que listar tandas —ninguno seleccionado, `New Meal`, o un evento que ya no está en el carrito—.
 - **Se pinta ya en la carga de la página**, con las tandas del evento que el selector de comida muestra seleccionado, y se repinta al cambiar de comida. Si solo se rellenara al cambiar de comida, el selector estaría vacío justo en el caso más común: entrar y añadir un alimento a la comida que ya venía elegida.
 - El selector viaja en el `hx-include` de los botones de añadir, junto al de comida: un alimento tiene que saber a qué tanda va, no solo a qué evento. Si no se está mostrando, la petición sale sin `plate_id` y eso significa exactamente "la tanda por defecto".
+- **Una comida creada al añadir queda elegida** (2026-11-08). Si se añade algo sin comida elegida, la ruta crea una y responde además con el evento `mealCreated` (`HX-Trigger`, `{"id", "label"}`). `static/js/meal_selector.js` la añade al selector de comida, la deja seleccionada y lanza su `change`, que repinta el selector de tanda. Sin esto, cada añadido seguido sin recargar creaba una comida distinta, y el selector mostraba "sin comida" cuando ya existía una (§6). Lo emiten `/add_food`, `/add_manual_intake`, `/add_recipe` y sacar de la nevera; las rutas que redirigen (`/food/log`, `/food/quick_add`) no lo necesitan, porque la página se vuelve a pintar.
 
 - **Con una receta** (decisión 2026-11-05). Una receta de una tanda se puede añadir a la tanda elegida. Una de varias tandas crea las suyas: en su ficha no se dibuja el selector de tanda y, desde la lista de Food, el paso previo avisa de que entra como tandas nuevas e ignora la elegida (§9.7).
 
@@ -266,7 +267,8 @@ Decisión 2026-10-10 (rediseño de la interfaz, rama `feat/ui-refresh`). La web 
 | `line-soft` (`#efe8dd`) | borde suave y elemento activo de la navegación |
 | `muted` (`#8a7d6b`) | etiquetas de sección (`web_section_label`) |
 | `ink` (`#2b2622`) | acción principal (`web_button_primary`) y botón de confirmar de los pop-ups |
-| `danger` (`#b91c1c`) | botón de confirmar de los pop-ups que borran o archivan |
+| `danger` (`#b91c1c`) | botón de confirmar de los pop-ups que borran o archivan; un boli de insulina caducado (§9.9) |
+| `warning` (`#c2410c`) | aviso de algo que está a punto de acabarse: un boli de insulina al que le quedan pocos días o pocas unidades (§9.9). Acordado el 2026-11-08 |
 | `ice` (`rgb(176 214 226)`) | `wash-blue` opaco: junta de la tapa de los tuppers de la nevera y su escarcha (§9.8) |
 | `ice-deep` (`rgb(140 196 224)`) | azul más frío del congelador: su tapa, su junta y su fondo (§9.8) |
 
@@ -438,7 +440,7 @@ Decisión 2026-11-05. El modelo está en `measurement_conventions.md` §4.7 y el
 - El `+` de la fila y `Add to meal` de la ficha abren el pop-up `recipe_add_modal`. Su contenido se pide al servidor (`GET /food/recipe/{id}/add/form`) con la comida y la tanda elegidas, y `static/js/recipe_add.js` lo abre cuando llega, como en el rescate (§9.6).
 - Con `servings`, un campo `Servings` con `1`. Sin él, no aparece, pero el paso sigue, para ajustar la preparación.
 - Una línea por ingrediente, con su cantidad por ración. Se despliega para cambiar `cooking`, `final_state` y `conservation`, ya rellenos con lo de la receta. Con varias tandas, agrupadas y con un aviso de que entran como tandas nuevas.
-- `POST /add_recipe/{id}` recibe la comida, la tanda, las raciones y la preparación por ingrediente, nunca cantidades. Validación: `200` + fragmento en `#recipe_add_error`. Una comida o tanda que no existe, `404`; una comida ya confirmada o una receta sin ingredientes, `409`. Al terminar, el evento `recipeAdded` cierra el pop-up y muestra `Added to the meal`.
+- `POST /add_recipe/{id}` recibe la comida, la tanda, las raciones y la preparación por ingrediente, nunca cantidades. Validación: `200` + fragmento en `#recipe_add_error`. Una comida o tanda que no existe, `404`; una comida ya confirmada o una receta sin ingredientes, `409`. Al terminar, el evento `recipeAdded` cierra el pop-up y muestra `Added to the meal`. Si ha creado la comida, va también `mealCreated` (§7.7).
 - Repetirlo añade la receta otra vez: es otra ración, no un duplicado (§9.6 de `code_conventions.md`). El botón se deshabilita durante la petición.
 - Debajo, `Save to fridge` y `Save to freezer` guardan esas mismas raciones, con la preparación elegida, en un tupper nuevo con el nombre de la receta (decisión 2026-11-07, `measurement_conventions.md` §4.8.5). La comida y la tanda no se usan. El pop-up se cierra y aparece el aviso `Saved to the fridge` o `Saved to the freezer`.
 
@@ -479,6 +481,19 @@ Píldora `Fridge` de Food (§9.3). Modelo y cantidades en `measurement_conventio
   - **Congelador**: su sección va dentro de un fondo suave de `ice-deep` con esquinas redondeadas (`.fridge_freezer`), que no es de cristal. Sus tuppers miden lo mismo que los de la nevera y el fondo crece a su alrededor con su margen, así que es algo más ancho que la columna. Sus tuppers usan `ice-deep` en la tapa y la junta.
   - **Píldora `Fridge`** de la cabecera de Food: sin seleccionar, lleva un degradado de blanco a `wash-blue` y el borde en `ice`. Seleccionada, tiene el negro de las demás píldoras y conserva solo el borde `ice` (`.food_filter_fridge`).
   - Un tupper caducado no cambia de forma: se marca solo con la etiqueta `Expired` y la línea de días en `danger` (arriba).
+
+### 9.9 Bolis de insulina (decisión del usuario, 2026-11-08)
+
+Modelo en `measurement_conventions.md` §8.4.
+
+- **Etiqueta de un boli**, igual en todos los selectores: marca, formato y lo que queda (`NovoRapid · Cartridge · 140 U left`, con `≈` si es aproximado). Los selectores listan solo bolis abiertos, el que caduca antes primero, y terminan en la opción `+ New pen`, que no se guarda: abre el pop-up de abrir boli y, al crearlo, el boli nuevo queda elegido en ese selector. No hay opción "sin boli".
+- **Pop-up de abrir boli** (`New pen`, en la sección `Insulin` del menú, en los selectores y en ajustes). Marca (las activas del usuario, con su tipo, más `+ New brand`, que despliega sus campos: nombre, tipo, días de uso, 30 por defecto, y unidades por boli, 300 por defecto), formato y fecha en que se saca de la nevera, hoy por defecto. Marca y formato empiezan sin elegir (§6). Al guardar, la caducidad es esa fecha más los días de la marca.
+- **Formulario de inyección del menú.** En vez del tipo, el selector de boli, y el tipo sale de su marca. La dosis (`Dose (U)`) es obligatoria si el boli es de basal y opcional si es de rápida.
+- **Carrito.** Con `Insulin` marcado, debajo de la fila, en una línea: el botón de la zona, el selector de boli (solo de rápida) y la dosis, que se guardan solos al cambiar, como el resto del carrito. El boli viene elegido con el de por defecto; si no hay ninguno, el selector muestra `Choose pen` y confirmar avisa.
+- **Ajustes, `Insulin pens`** (2026-11-08). Un menú con el mismo diseño que la página principal de ajustes y dos botones, `Pens` y `Brands`, cada uno con su página (`/settings/insulin/pens` y `/settings/insulin/brands`), que vuelve a ese menú con `Back`.
+  - **Pens**: los bolis abiertos, el que caduca antes primero. Cada fila dice marca y formato, los días desde que se abrió y los que le quedan (`3 days in · 27 days left`) y las unidades que quedan. A punto de acabarse, la línea afectada va en `warning`; caducado, lleva `Expired` y la línea de días en `danger`, y el botón `Discard` se ve en la fila sin tener que abrirla. Al tocar una fila: `Edit` (formato, caducidad y capacidad) y `Discard`, que pide confirmación. Abajo, `New pen`.
+  - **Brands**: las marcas activas con su tipo, sus días de uso y sus unidades por boli. Al tocar una fila: `Edit` y `Delete`, que pide confirmación (archiva si tiene bolis). El tipo no se puede cambiar si la marca tiene bolis. Abajo, `New brand`.
+- **Registro de inyecciones de ajustes.** Cada fila muestra su boli. Al editar una se elige el boli entre los abiertos y el que ya tenía; una inyección anterior a los bolis ofrece además dejarla sin boli.
 
 ## 10. Movimiento
 

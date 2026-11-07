@@ -86,6 +86,10 @@ class IntakeEventRead:
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None
+    # Draft of the meal's bolus while it is planned, copied to the automatic
+    # injection on confirm, like injection_zone (measurement §8.2, §8.4).
+    insulin_pen_id: int | None = None
+    insulin_units: float | None = None
 
 
 @dataclass(frozen=True)

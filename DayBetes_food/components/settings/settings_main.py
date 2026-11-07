@@ -10,6 +10,7 @@ from DayBetes_food.components.injection_zone import (
     parse_injection_zone,
     asset_busted,
 )
+from DayBetes_food.components.insulin_pen import pen_label
 from DayBetes_food.domain.constants import InjectionZone, InsulinType
 from DayBetes_food.domain.meal_type_schedule import (
     AUTO_ASSIGNABLE_MEAL_TYPES,
@@ -64,6 +65,15 @@ def settings_main(connection, current_user=None):
                 type="button",
                 cls="web_button food_entry flex items-center justify-between cursor-pointer text-left",
                 hx_get="/settings/injections",
+                hx_target="#main_content",
+                hx_swap="innerHTML",
+                hx_push_url="true",
+            ),
+            Button(
+                "Insulin pens",
+                type="button",
+                cls="web_button food_entry flex items-center justify-between cursor-pointer text-left",
+                hx_get="/settings/insulin",
                 hx_target="#main_content",
                 hx_swap="innerHTML",
                 hx_push_url="true",
@@ -412,7 +422,36 @@ def _injection_delete_modal(injection):
     )
 
 
-def _injection_edit_modal(injection):
+def _injection_pen_options(injection, open_pens, pens_by_id):
+    """The open pens and the one it already has; one without a pen can stay so
+    (frontend_conventions.md §9.9). No `+ New pen` here: this page has no pop-up of pens."""
+    options = []
+    if injection.insulin_pen_id is None:
+        options.append(
+            Option(
+                f"No pen ({'Basal' if injection.insulin_type is InsulinType.BASAL else 'Rapid'}, before pens)",
+                value="",
+                selected=True,
+                data_insulin_type=injection.insulin_type.value,
+            )
+        )
+    pens = list(open_pens)
+    current = pens_by_id.get(injection.insulin_pen_id)
+    if current is not None and all(pen.id != current.id for pen in pens):
+        pens.insert(0, current)
+    for pen in pens:
+        options.append(
+            Option(
+                pen_label(pen),
+                value=str(pen.id),
+                selected=pen.id == injection.insulin_pen_id,
+                data_insulin_type=pen.insulin_type.value,
+            )
+        )
+    return options
+
+
+def _injection_edit_modal(injection, open_pens, pens_by_id):
     modal_id = f"settings_injection_edit_{injection.id}"
     local_dt = to_local(injection.shot_time)
     shot_hour = local_dt.strftime("%H:%M") if local_dt else ""
@@ -438,11 +477,13 @@ def _injection_edit_modal(injection):
     switch_type_js = (
         f"const box=document.getElementById('{modal_id}');"
         "if(!box) return;"
-        "const sel=box.querySelector('[data-settings-insulin-type]');"
-        "const basal=box.querySelector('[data-settings-basal-wrap]');"
-        "if(!sel||!basal) return;"
-        "if(sel.value==='basal'){basal.classList.remove('hidden');}"
-        "else{basal.classList.add('hidden');}"
+        "const sel=box.querySelector('[data-settings-insulin-pen]');"
+        "const hint=box.querySelector('[data-settings-dose-optional]');"
+        "if(!sel||!hint) return;"
+        # The dose is required for basal and optional for rapid (measurement §8.1);
+        # the type is the one of the pen's brand (§8.4).
+        "const opt=sel.options[sel.selectedIndex];"
+        "hint.classList.toggle('hidden',!!opt&&opt.dataset.insulinType==='basal');"
     )
     zone_buttons = [
         Button(
@@ -467,13 +508,13 @@ def _injection_edit_modal(injection):
             Input(type="hidden", name="injection_id", value=str(injection.id)),
             Div(
                 Div(
-                    Label("Type", cls="text-xs text-gray-600"),
+                    Label("Pen", cls="text-xs text-gray-600"),
                     Select(
-                        Option("Rapid", value="rapid", selected=injection.insulin_type is not InsulinType.BASAL),
-                        Option("Basal", value="basal", selected=injection.insulin_type is InsulinType.BASAL),
-                        name="insulin_type",
-                        cls="web_input border border-white rounded-lg px-2 py-1 text-base",
-                        data_settings_insulin_type="true",
+                        *_injection_pen_options(injection, open_pens, pens_by_id),
+                        name="insulin_pen_id",
+                        aria_label="Insulin pen",
+                        cls="web_input border border-white rounded-lg px-2 py-1 text-base min-w-0 w-full",
+                        data_settings_insulin_pen="true",
                         onchange=switch_type_js,
                     ),
                     cls="flex flex-col gap-1 flex-1 min-w-0",
@@ -516,7 +557,15 @@ def _injection_edit_modal(injection):
                 cls="grid grid-cols-2 gap-3",
             ),
             Div(
-                Label("Basal dose", cls="text-xs text-gray-600"),
+                Label(
+                    "Dose (U)",
+                    Span(
+                        " - optional",
+                        data_settings_dose_optional="true",
+                        cls="hidden" if injection.insulin_type is InsulinType.BASAL else "",
+                    ),
+                    cls="text-xs text-gray-600",
+                ),
                 Input(
                     type="text",
                     name="units",
@@ -526,8 +575,7 @@ def _injection_edit_modal(injection):
                     value=(f"{float(units):g}" if units is not None else ""),
                     cls="web_input border border-white rounded-lg px-2 py-1 text-sm",
                 ),
-                data_settings_basal_wrap="true",
-                cls=f"{'hidden ' if injection.insulin_type is not InsulinType.BASAL else ''}flex flex-col gap-1",
+                cls="flex flex-col gap-1",
             ),
             Div(
                 Img(
@@ -552,9 +600,10 @@ def _injection_edit_modal(injection):
                         "const form=this.form;"
                         "const z=form?form.querySelector('[data-settings-injection-zone-input]'):null;"
                         "if(!z||!z.value){alert('Select a zone first.');return false;}"
-                        "const t=form?form.querySelector('[data-settings-insulin-type]'):null;"
+                        "const t=form?form.querySelector('[data-settings-insulin-pen]'):null;"
+                        "const o=t?t.options[t.selectedIndex]:null;"
                         "const b=form?form.querySelector('input[name=units]'):null;"
-                        "if(t&&t.value==='basal'&&(!b||!b.value)){alert('Enter basal dose.');return false;}"
+                        "if(o&&o.dataset.insulinType==='basal'&&(!b||!b.value)){alert('Enter the basal dose.');return false;}"
                         + close_modal_js(modal_id)
                     ),
                 ),
@@ -566,15 +615,18 @@ def _injection_edit_modal(injection):
     )
 
 
-def _injection_row(injection):
+def _injection_row(injection, pens_by_id):
     actions_id = f"settings_injection_actions_{injection.id}"
     insulin_label = "Basal" if injection.insulin_type is InsulinType.BASAL else "Rapid"
+    pen = pens_by_id.get(injection.insulin_pen_id)
+    if pen is not None:
+        insulin_label = f"{insulin_label} · {pen.brand_name}"
     zone_label = injection_zone_label(injection.injection_zone)
     local_dt = to_local(injection.shot_time)
     hour = _format_injection_hour(local_dt) if local_dt else "--:--"
-    basal_text = ""
-    if injection.insulin_type is InsulinType.BASAL and injection.units is not None:
-        basal_text = f"Basal units: {float(injection.units):g}u"
+    dose_text = ""
+    if injection.units is not None:
+        dose_text = f"Dose: {float(injection.units):g} U"
 
     return Div(
         Div(
@@ -585,7 +637,7 @@ def _injection_row(injection):
             ),
             Div(
                 P(f"Zone: {zone_label}", cls="text-xs text-gray-700"),
-                P(basal_text, cls=f"text-xs text-gray-700 {'hidden' if not basal_text else ''}"),
+                P(dose_text, cls=f"text-xs text-gray-700 {'hidden' if not dose_text else ''}"),
                 cls="flex items-center justify-between gap-3",
             ),
             onclick=(
@@ -615,9 +667,9 @@ def _injection_row(injection):
     )
 
 
-def _injection_row_modals(injection):
+def _injection_row_modals(injection, open_pens, pens_by_id):
     return Div(
-        _injection_edit_modal(injection),
+        _injection_edit_modal(injection, open_pens, pens_by_id),
         _injection_delete_modal(injection),
     )
 
@@ -631,7 +683,12 @@ def injections_settings_chunk(
     offset: int,
     page_size: int,
     previous_day=None,
+    open_pens=(),
+    pens_by_id=None,
 ):
+    """`open_pens` feed the pen selector of each edit pop-up and `pens_by_id` has the
+    pen of each row, open or closed (frontend_conventions.md §9.9)."""
+    pens_by_id = pens_by_id or {}
     if not rows and offset == 0:
         return Div(P("No injections found.", cls="text-sm text-gray-600"), cls="w-full")
 
@@ -646,8 +703,8 @@ def injections_settings_chunk(
         if current_day != day_value:
             items.append(_injection_day_header(_format_injection_day(local_dt)))
             current_day = day_value
-        items.append(_injection_row(injection))
-        modals.append(_injection_row_modals(injection))
+        items.append(_injection_row(injection, pens_by_id))
+        modals.append(_injection_row_modals(injection, open_pens, pens_by_id))
 
     has_more = len(rows) >= page_size
     next_offset = offset + len(rows)
