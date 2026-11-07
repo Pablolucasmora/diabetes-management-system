@@ -137,7 +137,7 @@ from DayBetes_food.database.queries.portion_detail import (
     update_portion_detail_fields,
     move_portion_to_plate,
     delete_portion_detail,
-    scale_event_portion_amounts,
+    scale_plate_portion_amounts,
     scale_fridge_portion_amounts,
     delete_fridge_portions,
 )
@@ -272,7 +272,7 @@ __all__ = [
     "update_portion_detail_fields",
     "move_portion_to_plate",
     "delete_portion_detail",
-    "scale_event_portion_amounts",
+    "scale_plate_portion_amounts",
     "scale_fridge_portion_amounts",
     "delete_fridge_portions",
     "create_fridge",

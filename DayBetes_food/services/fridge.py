@@ -17,9 +17,11 @@ from DayBetes_food.database.queries import (
     delete_fridge,
     delete_fridge_portions,
     get_fridge,
+    get_recipe,
     list_fridge_moves,
     list_fridges,
     list_portions_by_fridges,
+    list_viewable_recipe_portions,
     lock_fridge,
     reopen_fridge,
     scale_fridge_portion_amounts,
@@ -32,12 +34,16 @@ from DayBetes_food.domain.fridge import (
     FridgeCreate,
     FridgeItem,
     FridgeRead,
+    FridgeContent,
     FridgeStoreCommand,
+    LeftoverPlan,
     conservation_when_taken,
+    merge_contents,
     default_expires_at,
 )
 from DayBetes_food.domain.portion_detail import PortionDetailCreate, PortionDetailRead
-from DayBetes_food.errors import NotFoundError
+from DayBetes_food.domain.recipe import RecipeAddRequest, scaled_recipe_amount
+from DayBetes_food.errors import ConflictError, NotFoundError, ValidationError
 from DayBetes_food.time_utils import utc_now
 
 
@@ -61,15 +67,17 @@ def get_fridge_item(connection, user_id: int, fridge_id: int) -> FridgeItem | No
 
 
 def create_fridge_container(connection, command: FridgeStoreCommand) -> int:
-    """A new container with one food, stored now, with the default expiry of its place
-    (§4.8.2). A fridge portion has no conservation of its own: the container says
-    where it is (§4.8.4). Runs inside the caller's transaction: /food/log stores the
-    leftovers of what it plates in its own (§4.8.5).
+    """A new container with its contents, stored now, with the default expiry of its
+    place (§4.8.2). Its portions have no conservation of their own: the container
+    says where it is (§4.8.4). Runs inside the caller's transaction: /food/log and
+    the confirm of a meal store their leftovers in their own (§4.8.5).
 
     Raises:
-        NotFoundError: the food is not visible to the user anymore.
-        ValidationError: the amount is outside the limits.
+        NotFoundError: a food is not visible to the user anymore.
+        ValidationError: an amount is outside the limits, or there is nothing to store.
     """
+    if not command.contents:
+        raise ValidationError("fridge_without_contents")
     stored_at = utc_now()
     fridge_id = create_fridge(
         connection,
@@ -78,25 +86,27 @@ def create_fridge_container(connection, command: FridgeStoreCommand) -> int:
             location=command.location,
             stored_at=stored_at,
             expires_at=default_expires_at(command.location, stored_at),
+            name=command.name,
         ),
         commit=False,
     )
-    create_portion_detail(
-        connection,
-        command.user_id,
-        PortionDetailCreate(
-            origin=command.origin,
-            origin_id=command.origin_id,
-            destination=PortionDestination.FRIDGE,
-            destination_id=fridge_id,
-            amount=command.amount,
-            cooking=command.cooking,
-            final_state=command.final_state,
-            strictly_weighed=command.strictly_weighed,
-            is_cooked_weight=command.is_cooked_weight,
-        ),
-        commit=False,
-    )
+    for content in command.contents:
+        create_portion_detail(
+            connection,
+            command.user_id,
+            PortionDetailCreate(
+                origin=content.origin,
+                origin_id=content.origin_id,
+                destination=PortionDestination.FRIDGE,
+                destination_id=fridge_id,
+                amount=content.amount,
+                cooking=content.cooking,
+                final_state=content.final_state,
+                strictly_weighed=content.strictly_weighed,
+                is_cooked_weight=content.is_cooked_weight,
+            ),
+            commit=False,
+        )
     return fridge_id
 
 
@@ -105,6 +115,77 @@ def store_in_fridge(connection, command: FridgeStoreCommand) -> int:
     container: two tuppers are two rows (§9.6)."""
     with connection.transaction():
         return create_fridge_container(connection, command)
+
+
+def store_recipe_in_fridge(
+    connection, user_id: int, recipe_id: int, location: StorageLocation, request: RecipeAddRequest
+) -> int:
+    """A recipe into a new container, as its step before adding asked: the servings
+    scale it and the preparation can change, as when it goes into a meal (§4.7). Its
+    plates are joined: a container has none. Repeating it stores another container.
+
+    Raises:
+        NotFoundError: the recipe is not visible to the user.
+        ConflictError: "recipe_without_ingredients".
+        ValidationError: an ingredient is not of this recipe, or an amount leaves the limits.
+    """
+    with connection.transaction():
+        recipe = get_recipe(connection, user_id, recipe_id)
+        if recipe is None:
+            raise NotFoundError("Recipe not found.")
+        portions = list_viewable_recipe_portions(connection, user_id, recipe_id)
+        if not portions:
+            raise ConflictError("recipe_without_ingredients")
+        if not set(request.preparations) <= {portion.id for portion in portions}:
+            raise ValidationError("An ingredient is not part of this recipe.")
+        contents = []
+        for portion in portions:
+            preparation = request.preparations.get(portion.id)
+            contents.append(
+                FridgeContent(
+                    origin=portion.origin,
+                    origin_id=portion.origin_id,
+                    amount=scaled_recipe_amount(portion.amount, request.servings, recipe.servings),
+                    cooking=preparation.cooking if preparation else portion.cooking,
+                    final_state=preparation.final_state if preparation else portion.final_state,
+                    strictly_weighed=portion.strictly_weighed,
+                    is_cooked_weight=portion.is_cooked_weight,
+                )
+            )
+        return create_fridge_container(
+            connection,
+            FridgeStoreCommand(
+                user_id=user_id, location=location, contents=merge_contents(contents), name=recipe.name
+            ),
+        )
+
+
+def store_plate_leftovers(
+    connection, user_id: int, plate_portions: list[PortionDetailRead], fraction: float, plan: LeftoverPlan
+) -> None:
+    """What was not eaten of a plate, `1 - fraction` of each ingredient, into
+    `plan.containers` equal new containers (§4.8.5). Called by the confirm of the
+    meal before its portions are scaled, inside its transaction."""
+    if plan.location is None:
+        return
+    share = (1.0 - fraction) / plan.containers
+    contents = merge_contents(
+        FridgeContent(
+            origin=portion.origin,
+            origin_id=portion.origin_id,
+            amount=portion.amount * share,
+            cooking=portion.cooking,
+            final_state=portion.final_state,
+            strictly_weighed=portion.strictly_weighed,
+            is_cooked_weight=portion.is_cooked_weight,
+        )
+        for portion in plate_portions
+    )
+    for _ in range(plan.containers):
+        create_fridge_container(
+            connection,
+            FridgeStoreCommand(user_id=user_id, location=plan.location, contents=contents, name=plan.name),
+        )
 
 
 def move_fridge(connection, user_id: int, fridge_id: int, location: StorageLocation) -> bool:

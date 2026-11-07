@@ -760,12 +760,13 @@ def delete_fridge_portions(connection, user_id: int, fridge_id: int, commit: boo
     )
 
 
-def scale_event_portion_amounts(connection, user_id: int, event_id: int, fraction: float, commit: bool = True) -> bool:
-    """Scale every portion of an event by `fraction` (confirm flow, 4.4/6.9.1).
+def scale_plate_portion_amounts(connection, user_id: int, plate_id: int, fraction: float, commit: bool = True) -> bool:
+    """Scale every portion of a plate by `fraction`, what was eaten of it (confirm
+    flow, measurement 4.4/6.9.1; per plate since 2026-11-07).
 
-    Single SQL statement over all portions, not a Python loop. `fraction` is in
-    (0, 1] since decision 2026-09-22: a confirm that ate nothing is rejected
-    with 422 before reaching here. The ownership filter is inside the SQL.
+    Single SQL statement over the plate, not a Python loop. `fraction` is in (0, 1]
+    since decision 2026-09-22: a plate that was not eaten is rejected with 422
+    before reaching here. The ownership filter is inside the SQL.
     """
     if not (0.0 < fraction <= 1.0):
         raise ValidationError("invalid_fraction")
@@ -773,7 +774,7 @@ def scale_event_portion_amounts(connection, user_id: int, event_id: int, fractio
         UPDATE portion_detail pd
         SET amount = pd.amount * %(fraction)s,
             updated_at = NOW()
-        WHERE pd.intake_event_id = %(event_id)s
+        WHERE pd.plate_id = %(plate_id)s
           AND EXISTS (
               SELECT 1 FROM intake_event ie
               WHERE ie.id = pd.intake_event_id AND ie.users_id = %(user_id)s
@@ -781,7 +782,7 @@ def scale_event_portion_amounts(connection, user_id: int, event_id: int, fractio
     """
     try:
         with connection.cursor() as cursor:
-            cursor.execute(query, {"fraction": fraction, "event_id": event_id, "user_id": user_id})
+            cursor.execute(query, {"fraction": fraction, "plate_id": plate_id, "user_id": user_id})
             updated = cursor.rowcount
         if commit:
             connection.commit()

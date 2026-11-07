@@ -5,7 +5,7 @@ This module imports no psycopg, routes or components. The SQL-row-to-dataclass
 conversion lives in DayBetes_food/database/mappers.py.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 
 from DayBetes_food.domain.constants import (
@@ -198,11 +198,10 @@ class FridgeUpdate:
 
 
 @dataclass(frozen=True)
-class FridgeStoreCommand:
-    """Store an amount of a food or a dish as a new container (measurement §4.8.5)."""
+class FridgeContent:
+    """One ingredient that goes into a container (measurement §4.8.1). It has no
+    conservation: the container says where it is (§4.8.4)."""
 
-    user_id: int
-    location: StorageLocation
     origin: PortionOrigin
     origin_id: int
     amount: float
@@ -210,6 +209,54 @@ class FridgeStoreCommand:
     final_state: FoodPhysicalState | None = None
     strictly_weighed: bool | None = None
     is_cooked_weight: bool = False
+
+
+@dataclass(frozen=True)
+class FridgeStoreCommand:
+    """Store a new container: a food, a recipe or the leftovers of a plate (§4.8.5)."""
+
+    user_id: int
+    location: StorageLocation
+    contents: tuple[FridgeContent, ...]
+    name: str | None = None
+
+
+# How many equal containers the leftovers of one plate can be split into at
+# confirm (frontend_conventions.md §7.14): a sanity limit, not a kitchen one.
+LEFTOVER_CONTAINERS_RANGE = NumericRange(1, 10)
+
+
+@dataclass(frozen=True)
+class LeftoverPlan:
+    """What to do with what was left of a plate at confirm (measurement §4.8.5).
+    `location` None = not saved."""
+
+    plate_id: int
+    location: StorageLocation | None
+    containers: int = 1
+    name: str | None = None
+
+
+def parse_leftover_containers(raw) -> int:
+    """Required whole number of containers, from 1 to 10."""
+    try:
+        containers = parse_number(raw, "containers", LEFTOVER_CONTAINERS_RANGE, integer=True)
+    except ValidationError as error:
+        raise ValidationError("Split the leftovers into 1 to 10 containers.", fields=error.fields) from error
+    if containers is None:
+        raise ValidationError("Say into how many containers.", fields={"containers": "required"})
+    return int(containers)
+
+
+def merge_contents(contents) -> tuple[FridgeContent, ...]:
+    """Sum the amounts of the same ingredient (origin, preparation and weighing), in
+    the order they come: a container has no plates, so a recipe's are joined."""
+    merged: dict[tuple, FridgeContent] = {}
+    for content in contents:
+        key = (content.origin, content.origin_id, content.cooking, content.final_state, content.is_cooked_weight)
+        existing = merged.get(key)
+        merged[key] = replace(existing, amount=existing.amount + content.amount) if existing else content
+    return tuple(merged.values())
 
 
 @dataclass(frozen=True)

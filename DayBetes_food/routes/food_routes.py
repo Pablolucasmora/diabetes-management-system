@@ -11,7 +11,13 @@ from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.food.food_main import food_main, plate_selector_options
 from DayBetes_food.components.ui import render_fragment, render_page
 from DayBetes_food.http_errors import app_error_response, request_id
-from DayBetes_food.services.fridge import create_fridge_container, list_fridge_items, store_in_fridge, take_from_fridge
+from DayBetes_food.services.fridge import (
+    create_fridge_container,
+    list_fridge_items,
+    store_in_fridge,
+    store_recipe_in_fridge,
+    take_from_fridge,
+)
 from DayBetes_food.services.intake_event import confirm_planned_event
 from DayBetes_food.database.queries import (
     create_catalog_item,
@@ -218,7 +224,7 @@ from DayBetes_food.domain.recipe import (
 )
 from DayBetes_food.services.recipe import add_recipe_to_meal, copy_recipe, recipe_plates_with_portions
 from DayBetes_food.domain.recipe_plate import parse_recipe_plate_name
-from DayBetes_food.domain.fridge import FridgeStoreCommand, parse_take_fraction
+from DayBetes_food.domain.fridge import FridgeContent, FridgeStoreCommand, parse_take_fraction
 from DayBetes_food.domain.portion_detail import portion_macro_amount
 from DayBetes_food.components.food.recipe_add import RecipeAddForm
 from DayBetes_food.components.stats.stats_shared import MEAL_TYPE_LABELS
@@ -2933,13 +2939,17 @@ def setup_food_routes(rt):
                             FridgeStoreCommand(
                                 user_id=int(user_id),
                                 location=StorageLocation.FRIDGE,
-                                origin=PortionOrigin(entry_type),
-                                origin_id=entry_id,
-                                amount=leftover_grams,
-                                cooking=parsed_cooking,
-                                final_state=parsed_final_state,
-                                strictly_weighed=portion_defaults["strictly_weighed"],
-                                is_cooked_weight=(cooked_weight if kind is FoodEntryType.CATALOG else False),
+                                contents=(
+                                    FridgeContent(
+                                        origin=PortionOrigin(entry_type),
+                                        origin_id=entry_id,
+                                        amount=leftover_grams,
+                                        cooking=parsed_cooking,
+                                        final_state=parsed_final_state,
+                                        strictly_weighed=portion_defaults["strictly_weighed"],
+                                        is_cooked_weight=(cooked_weight if kind is FoodEntryType.CATALOG else False),
+                                    ),
+                                ),
                             ),
                         )
             except NotFoundError:
@@ -3019,13 +3029,17 @@ def setup_food_routes(rt):
                     FridgeStoreCommand(
                         user_id=int(user_id),
                         location=storage,
-                        origin=PortionOrigin(kind.value),
-                        origin_id=entry_id,
-                        amount=grams,
-                        cooking=parsed_cooking,
-                        final_state=parsed_final_state,
-                        strictly_weighed=weighed,
-                        is_cooked_weight=cooked_weight,
+                        contents=(
+                            FridgeContent(
+                                origin=PortionOrigin(kind.value),
+                                origin_id=entry_id,
+                                amount=grams,
+                                cooking=parsed_cooking,
+                                final_state=parsed_final_state,
+                                strictly_weighed=weighed,
+                                is_cooked_weight=cooked_weight,
+                            ),
+                        ),
                     ),
                 )
             except NotFoundError:
@@ -3411,6 +3425,40 @@ def setup_food_routes(rt):
                 message = _RECIPE_WITHOUT_INGREDIENTS if str(error) == "recipe_without_ingredients" else _MEAL_CONFIRMED
                 return app_error_response(request, ConflictError, message)
         return HTMLResponse("", headers={"HX-Trigger": json.dumps({"recipeAdded": {"event_id": event_id}})})
+
+    @rt("/food/fridge/store_recipe/{recipe_id}")
+    async def post(request: Request, recipe_id: int):
+        """Save a recipe into a new container from its step before adding, with its
+        servings and preparation (measurement §4.8.5, frontend §9.7). The meal and
+        plate of the form do not apply. Repeating it stores another container (§9.6).
+        Form validation answers 200 + fragment (§9.5); on success `fridgeStored`."""
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        form = await request.form()
+        try:
+            storage = parse_enum(StorageLocation, str(form.get("location") or ""), field="location")
+        except ValidationError as error:
+            return app_error_response(request, ValidationError, str(error))
+        if storage is None:
+            return app_error_response(request, ValidationError, "Choose the fridge or the freezer.")
+        with get_connection() as connection:
+            recipe = get_recipe(connection, int(user_id), recipe_id)
+            if recipe is None:
+                return app_error_response(request, NotFoundError, "Recipe not found.")
+            try:
+                store_recipe_in_fridge(
+                    connection, int(user_id), recipe_id, storage, _parse_recipe_add_request(form, recipe)
+                )
+            except ValidationError as error:
+                return _error_msg(str(error))
+            except NotFoundError:
+                return app_error_response(request, NotFoundError, "Recipe not found.")
+            except ConflictError:
+                return app_error_response(request, ConflictError, _RECIPE_WITHOUT_INGREDIENTS)
+        return HTMLResponse("", headers={"HX-Trigger": json.dumps({"fridgeStored": {"location": storage.value}})})
 
     @rt("/food/favorite/{entry_type}/{entry_id}")
     def post(request: Request, entry_type: str, entry_id: int, favorite: str = "", confirmed: str = ""):

@@ -619,6 +619,9 @@
   .w-xs {
     width: var(--container-xs);
   }
+  .max-w-\[40\%\] {
+    max-width: 40%;
+  }
   .max-w-\[55\%\] {
     max-width: 55%;
   }

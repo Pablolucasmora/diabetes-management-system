@@ -1,6 +1,7 @@
 from fasthtml.common import *
 
 from DayBetes_food.components.cart.cart_components import CartCard
+from DayBetes_food.components.cart.cart_leftovers import CartLeftoversModal
 from DayBetes_food.components.injection_zone import asset_busted
 
 
@@ -86,6 +87,8 @@ def cart_main(events, portions_by_event, plates_by_event=None, oob: bool = False
             cls="w-full px-1 flex flex-col gap-0.5",
         ),
         cart_events_list(events, portions_by_event, plates_by_event),
+        # Outside the cards, so repainting one does not remove an open pop-up.
+        CartLeftoversModal(),
         # With cache busting: /js/ is served with a one-week max-age
         # (main.py), so without the ?v= the browser would keep running the
         # previous version of the file after every change.

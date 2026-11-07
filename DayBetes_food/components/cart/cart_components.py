@@ -788,6 +788,9 @@ def _preparation_summary(sample) -> str:
         parts.append("weighed cooked")
     if sample.offset_minutes:
         parts.append(f"{int(sample.offset_minutes):+d} min")
+    # Taken from a container: it goes back there if the row is deleted (measurement §4.8.6).
+    if sample.source_fridge_id is not None:
+        parts.append("from a container")
     return " · ".join(parts)
 
 
@@ -1056,46 +1059,52 @@ def NotesSection(event):
     )
 
 
-def ConfirmSection(event, portions):
-    ingested_value_id = f"ingested_value_{event.id}"
-    return Form(
+def _EatenRow(plate_id: int, label: str):
+    """How much of one plate was eaten: empty is all of it, in % by default
+    (measurement_conventions.md §4.4, decision 2026-11-07)."""
+    value_id = f"ingested_value_{plate_id}"
+    unit_id = f"ingested_unit_{plate_id}"
+    return Div(
+        Input(type="hidden", name="plate_id", value=str(plate_id)),
         # The unit this control emits comes from the central units enum, the
         # same one the route validates: no loose literals are written here
         # (§4.3 of code_conventions.md, §11 of measurement_conventions.md;
         # finding 47 of audit/audit_intake_event.md).
+        Input(type="hidden", name="ingested_unit", value=AmountInputUnit.PERCENT.value, id=unit_id),
+        Label(label, cls="text-xs text-gray-600 shrink-0 max-w-[40%] truncate", **{"for": value_id}),
         Input(
-            type="hidden",
-            name="ingested_unit",
-            value=AmountInputUnit.GRAMS.value,
-            id=f"ingested_unit_{event.id}",
+            type="text",
+            id=value_id,
+            inputmode="decimal",
+            name="ingested_value",
+            aria_label=f"Eaten of {label}",
+            placeholder="All of it",
+            cls=f"{_FIELD_CLS} flex-1 min-w-0",
         ),
-        Div(
-            Label("Eaten", cls="text-xs text-gray-600 shrink-0", **{"for": ingested_value_id}),
-            Input(
-                type="text",
-                id=ingested_value_id,
-                inputmode="decimal",
-                name="ingested_value",
-                value=f"{float(event.ingested_amount or 0.0):.1f}" if event.ingested_amount is not None else "",
-                aria_label="Ingested amount",
-                placeholder="All of it",
-                cls=f"{_FIELD_CLS} flex-1 min-w-0",
+        Button(
+            AmountInputUnit.PERCENT.value,
+            type="button",
+            onclick=(
+                f"const hidden=document.getElementById('{unit_id}');"
+                f"hidden.value = hidden.value === '{AmountInputUnit.PERCENT.value}'"
+                f" ? '{AmountInputUnit.GRAMS.value}'"
+                f" : '{AmountInputUnit.PERCENT.value}';"
+                "this.innerText = hidden.value;"
             ),
-            Button(
-                AmountInputUnit.GRAMS.value,
-                type="button",
-                onclick=(
-                    f"const hidden=document.getElementById('ingested_unit_{event.id}');"
-                    f"hidden.value = hidden.value === '{AmountInputUnit.GRAMS.value}'"
-                    f" ? '{AmountInputUnit.PERCENT.value}'"
-                    f" : '{AmountInputUnit.GRAMS.value}';"
-                    "this.innerText = hidden.value;"
-                ),
-                aria_label="Toggle ingested amount unit",
-                cls=f"{_SOFT_BUTTON_CLS} px-3 py-2 min-w-12",
-            ),
-            cls="flex items-center gap-2",
+            aria_label="Toggle eaten unit",
+            cls=f"{_SOFT_BUTTON_CLS} px-3 py-2 min-w-12",
         ),
+        cls="flex items-center gap-2",
+    )
+
+
+def ConfirmSection(event, eaten_plates: list[tuple[int, str]]):
+    """What was eaten of each plate with ingredients, `(plate_id, shown name)`, and
+    the button. With one plate it reads just `Eaten`. A plate not eaten whole opens
+    the leftovers pop-up before confirming (frontend_conventions.md §7.14)."""
+    single = len(eaten_plates) == 1
+    return Form(
+        *[_EatenRow(plate_id, "Eaten" if single else f"Eaten · {label}") for plate_id, label in eaten_plates],
         Button(
             "Confirm meal",
             type="button",
@@ -1316,7 +1325,9 @@ def CartCard(event, portions, plates=()):
         ),
         InjectionZoneModal(event),
         Div(
-            ConfirmSection(event, portions),
+            ConfirmSection(
+                event, [(plate.id, plate_labels[plate.id]) for plate in plates if portions_by_plate.get(plate.id)]
+            ),
             cls="pt-4 border-t border-line-soft",
         ),
         id=f"cart_card_event_{event.id}",
