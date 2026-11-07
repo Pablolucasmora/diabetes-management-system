@@ -88,6 +88,8 @@
     --color-wash-blue: rgb(176 214 226 / 0.7);
     --color-wash-green: rgb(190 224 198 / 0.6);
     --color-wash-sun: rgb(246 222 170 / 0.6);
+    --color-ice: rgb(176 214 226);
+    --color-ice-deep: rgb(140 196 224);
   }
 }
 @layer base {
@@ -301,6 +303,9 @@
   .-right-1 {
     right: calc(var(--spacing) * -1);
   }
+  .-right-6 {
+    right: calc(var(--spacing) * -6);
+  }
   .right-0 {
     right: 0px;
   }
@@ -312,6 +317,9 @@
   }
   .bottom-24 {
     bottom: calc(var(--spacing) * 24);
+  }
+  .-left-6 {
+    left: calc(var(--spacing) * -6);
   }
   .left-0 {
     left: 0px;
@@ -1255,6 +1263,12 @@
   .text-green-700 {
     color: var(--color-green-700);
   }
+  .text-ice {
+    color: var(--color-ice);
+  }
+  .text-ice-deep {
+    color: var(--color-ice-deep);
+  }
   .text-muted {
     color: var(--color-muted);
   }
@@ -1839,6 +1853,16 @@
     pointer-events: none;
     background: radial-gradient(circle at 12% 8%, var(--color-wash-peach) 0, transparent 38%), radial-gradient(circle at 92% 28%, var(--color-wash-blue) 0, transparent 40%), radial-gradient(circle at 20% 70%, var(--color-wash-green) 0, transparent 42%), radial-gradient(circle at 85% 92%, var(--color-wash-sun) 0, transparent 40%), var(--color-page);
   }
+  body:has([data-fridge-list])::after {
+    --frost-width: min(9vw, 56px);
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: linear-gradient( 90deg, var(--color-wash-blue) 0, transparent var(--frost-width), transparent calc(100% - var(--frost-width)), var(--color-wash-blue) 100% );
+    opacity: 0.6;
+  }
 }
 @layer components {
   .web_container {
@@ -1928,6 +1952,68 @@
     @media (width >= 64rem) {
       width: var(--container-md);
     }
+  }
+  .fridge_tupper {
+    --lid: var(--color-wash-blue);
+    --seal: var(--color-ice);
+    position: relative;
+    padding-top: 1.3rem;
+  }
+  .fridge_tupper::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 0.45rem;
+    border-radius: 1rem 1rem 0 0;
+    background: var(--lid);
+    border-bottom: 2px solid var(--seal);
+    pointer-events: none;
+  }
+  .fridge_tupper::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 3.6rem;
+    height: 1.05rem;
+    margin-left: -1.8rem;
+    border-radius: 0.2rem 0.2rem 0.55rem 0.55rem;
+    background: var(--lid);
+    @supports (color: color-mix(in lab, red, red)) {
+      background: color-mix(in srgb, var(--lid) 60%, transparent);
+    }
+    border: 1px solid rgb(255 255 255 / 0.85);
+    pointer-events: none;
+  }
+  .fridge_freezer {
+    margin-top: calc(var(--spacing) * 3);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: calc(var(--spacing) * 2);
+    border-radius: var(--radius-3xl);
+    padding-inline: calc(var(--spacing) * 4);
+    padding-top: calc(var(--spacing) * 3);
+    padding-bottom: calc(var(--spacing) * 4);
+    @media (width >= 48rem) {
+      gap: calc(var(--spacing) * 3);
+    }
+    @media (width >= 64rem) {
+      gap: calc(var(--spacing) * 3);
+    }
+    background: color-mix(in srgb, rgb(140 196 224) 25%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      background: color-mix(in srgb, var(--color-ice-deep) 25%, transparent);
+    }
+  }
+  .fridge_freezer .fridge_tupper {
+    --lid: color-mix(in srgb, rgb(140 196 224) 80%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      --lid: color-mix(in srgb, var(--color-ice-deep) 80%, transparent);
+    }
+    --seal: var(--color-ice-deep);
   }
   dialog.db_modal {
     width: 100%;
@@ -2038,6 +2124,9 @@
   }
   #food-list > .food_entry:nth-child(n+6) {
     animation-delay: 120ms;
+  }
+  #food-list > .fridge_freezer {
+    animation: db-rise-in 260ms ease-out 120ms backwards;
   }
   [data-stagger="true"] > * {
     animation: db-rise-in 320ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;

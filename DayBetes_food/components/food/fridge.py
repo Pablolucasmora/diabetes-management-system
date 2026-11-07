@@ -147,25 +147,69 @@ def FridgeCard(item: FridgeItem, now: datetime):
         id=f"fridge_card_{fridge.id}",
         # Long press or right click: actions pop-up (§9.3.1, static/js/food_actions.js).
         data_food_actions="true",
-        cls="web_container food_entry rounded-2xl flex items-center justify-between",
+        cls="web_container food_entry fridge_tupper rounded-2xl flex items-center justify-between",
+    )
+
+
+_SNOWFLAKE_PATH = (
+    "M10 2v16M3.07 6l13.86 8M3.07 14l13.86-8"
+    "M8 3.5l2 1.5 2-1.5M8 16.5l2-1.5 2 1.5"
+    "M4 4.6l.4 2.5-2.3 1M15.6 4.6l-.4 2.5 2.3 1"
+    "M4 15.4l.4-2.5-2.3-1M15.6 15.4l-.4-2.5 2.3-1"
+)
+
+
+def _snowflake(cls: str):
+    """A small snowflake drawn with `currentColor` (frontend_conventions.md §9.8)."""
+    return NotStr(
+        f'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" '
+        f'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="{cls}">'
+        f'<path d="{_SNOWFLAKE_PATH}"/></svg>'
+    )
+
+
+def _fridge_title():
+    """The `Fridge` label with a snowflake on each side, out of the card column."""
+    flake_cls = "absolute top-0 h-3.5 w-3.5 text-ice"
+    return Div(
+        H2(STORAGE_LABELS[StorageLocation.FRIDGE], cls="web_section_label"),
+        _snowflake(f"{flake_cls} -left-6"),
+        _snowflake(f"{flake_cls} -right-6"),
+        # Marks the fridge list, which turns the frost on (static/css/input.css).
+        data_fridge_list="true",
+        cls="relative md:w-md lg:w-md w-xs mt-2",
     )
 
 
 def FridgeListContent(items: list[FridgeItem], now: datetime) -> tuple:
-    """The two sections, Fridge first, as children of #food-list."""
+    """The two sections, Fridge first, as children of #food-list; the freezer sits
+    on its own colder backdrop (frontend_conventions.md §9.8)."""
     if not items:
         return (
             P(
                 "Nothing stored yet. Save a food or a dish with Save to fridge, on its page or holding it in the list.",
+                data_fridge_list="true",
                 cls="text-sm text-gray-600 text-center md:w-md lg:w-md w-xs mt-2",
             ),
         )
-    nodes = []
-    for location in StorageLocation:
-        cards = [FridgeCard(item, now) for item in items if item.fridge.location is location]
-        nodes.append(H2(STORAGE_LABELS[location], cls="web_section_label md:w-md lg:w-md w-xs mt-2"))
-        nodes.extend(cards or [P("Empty.", cls="text-xs text-gray-500 md:w-md lg:w-md w-xs")])
-    return tuple(nodes)
+    column_width = "md:w-md lg:w-md w-xs"
+    empty_cls = f"text-xs text-gray-500 {column_width}"
+
+    def cards(location: StorageLocation) -> list:
+        found = [FridgeCard(item, now) for item in items if item.fridge.location is location]
+        return found or [P("Empty.", cls=empty_cls)]
+
+    freezer = Div(
+        H2(
+            _snowflake("h-3.5 w-3.5 text-ice-deep"),
+            STORAGE_LABELS[StorageLocation.FREEZER],
+            cls=f"web_section_label flex items-center gap-1 {column_width}",
+        ),
+        # The tuppers keep the column width; the backdrop grows around them.
+        *cards(StorageLocation.FREEZER),
+        cls="fridge_freezer",
+    )
+    return (_fridge_title(), *cards(StorageLocation.FRIDGE), freezer)
 
 
 def FridgeListOob(items: list[FridgeItem], now: datetime):
