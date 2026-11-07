@@ -340,7 +340,7 @@ portion_detail
 
 #### 4.8.2 Caducidad
 
-`expires_at` se calcula al guardar y al cambiar de sitio, sumando al momento del cambio la duración de su nuevo sitio: **10 días en la nevera y 90 en el congelador**, con margen a propósito. Las dos duraciones son constantes de `domain/` declaradas una vez. El usuario puede cambiar la fecha a mano. Caducar no tiene efecto en los datos: solo cambia cómo se pinta (`frontend_conventions.md` §9.8).
+`expires_at` se calcula al guardar y al cambiar de sitio, sumando al momento del cambio la duración de su nuevo sitio: **10 días en la nevera y 90 en el congelador**, con margen a propósito. Las dos duraciones son constantes de `domain/` declaradas una vez. El usuario puede cambiar la fecha a mano: elige un día y el tupper vale hasta el final de ese día en hora local, que se guarda en UTC (§9). No puede ser anterior al día en que entró (`ck_fridge_expires_after_stored`). Caducar no tiene efecto en los datos: solo cambia cómo se pinta (`frontend_conventions.md` §9.8).
 
 #### 4.8.3 Cantidades
 

@@ -439,10 +439,10 @@ Decisión 2026-11-05. El modelo está en `measurement_conventions.md` §4.7 y el
 Pestaña `Fridge` de la píldora `Food` (§9.3). Modelo y cantidades en `measurement_conventions.md` §4.8.
 
 - **Arriba**, el selector de comida de la cabecera y, junto a él, el de tanda (§7.7): son el destino del `+` de cada tupper.
-- **Dos secciones**, `Fridge` y debajo `Freezer` (`web_section_label`), con todos los tuppers abiertos, sin paginar ni buscador: nunca habrá muchos por usuario. Dentro de cada sección, por `expires_at`, el que caduca antes primero.
+- **Dos secciones**, `Fridge` y debajo `Freezer` (`web_section_label`), con todos los tuppers abiertos, sin paginar ni buscador: nunca habrá muchos por usuario, y lo escrito en el buscador de la cabecera no filtra esta pestaña. Dentro de cada sección, por `expires_at`, el que caduca antes primero. Una sección sin tuppers dice `Empty.`.
 - **Cada tupper es una tarjeta** con el nombre, un resumen del contenido, los días desde que entró y los que le quedan (`3 days in · 7 left`) y el peso real, si se conoce. A la derecha, el `+`, que abre el paso de sacar (abajo), y un botón que lo mueve al otro sitio, sin confirmación porque se deshace con el mismo botón.
-- **Caducado**: la tarjeta se pinta en rojo (`expired`) y cambia sus botones por `Discard` y `Eat`. `Eat` es el `+` con 100 %.
-- **Pulsación larga** (§9.3.1): `Rename`, `Expiry date`, `Content weight` y `Discard`. Tirar pide confirmación.
+- **Caducado**: lleva la etiqueta `Expired` y la línea de días en `danger`, no un borde rojo, porque la tarjeta es de cristal (§8). Sus botones pasan a ser `Discard` y `Eat`. `Eat` es el `+` con 100 %.
+- **Pulsación larga** (§9.3.1), en el mismo pop-up que las filas de alimentos: `Edit` y `Discard`. `Edit` es un formulario con el nombre, la fecha de caducidad y el peso real, que se guardan juntos (`code_conventions.md` §3.4). Un nombre vacío vuelve al derivado y un peso vacío, a sin pesar. Tirar pide confirmación, también desde el `Discard` de un caducado.
 - **Sacar.** Un paso previo como el de §9.7: la cantidad en % (100 % por defecto) y, solo si el tupper tiene peso real, el cambio a gramos (`measurement_conventions.md` §4.8.3). `Add to meal` lo añade a la comida y tanda elegidas.
 - **Vacío**: una línea que explica cómo se guarda un tupper (desde *Add to* de un alimento o al confirmar una comida).
 

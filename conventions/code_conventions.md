@@ -1124,6 +1124,23 @@ guardar una tanda o una comida como receta, `recipeSaved`.
 Añadir un botón nuevo al carrito obliga a elegir una de las filas de esta
 tabla o a añadir una nueva; no se deja el `hx-target` implícito.
 
+#### Contrato HTMX de la nevera
+
+La pestaña `Fridge` de Food (`frontend_conventions.md` §9.8, `routes/fridge_routes.py`) sigue el
+modelo del carrito: cada acción exige `HX-Request` (`403` si falta), lleva `hx-target` explícito y
+devuelve la lista entera de tuppers, que es pequeña. Los errores que no son de formulario viajan
+por el canal de error visible (`error_conventions.md` §7.1).
+
+| Acción | `hx-target` | `hx-swap` | Fragmento de éxito |
+|---|---|---|---|
+| `GET /food/fridge/{id}/actions`, `…/actions/edit`, `…/actions/discard` (vistas del pop-up de acciones) | `#food_actions_modal_body` | `innerHTML` | la vista; `static/js/food_actions.js` abre el pop-up al llegar la primera |
+| `POST /food/fridge/{id}/location` (`location`) | `#food-list` | `innerHTML` | la lista. Repetirla es un no-op (§6.3) |
+| `POST /food/fridge/{id}/discard` | `#food-list` | `innerHTML` | la lista y el evento `fridgeChanged`, que cierra el pop-up |
+| `POST /food/fridge/{id}/edit` (`name`, `expires_at`, `content_weight`) | `#fridge_edit_message` | `innerHTML` | cuerpo vacío, la lista fuera de banda (`#food-list`) y `fridgeChanged`. Un error de validación es `200` con `ModalFormError` en ese mismo destino (excepción de formulario de esta sección) |
+| `POST /food/fridge/store/{entry_type}/{id}` (ficha del alimento, `frontend_conventions.md` §9.4) | el mensaje de la ficha | `innerHTML` | `HX-Redirect` a `/food`, como `/food/log` |
+
+Eventos `HX-Trigger`: `fridgeChanged` y, en los errores, `appError`.
+
 ### 9.6 Entrada, estados de carga y repetición
 
 La entrada se extrae y valida según la sección 7 antes de crear el `Request` o `Command`. El usuario autenticado procede del contexto de sesión.
