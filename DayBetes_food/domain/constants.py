@@ -196,6 +196,17 @@ class ConservationMethod(str, Enum):
 
 
 @unique
+class StorageLocation(str, Enum):
+    """Where a container (`fridge`) is kept (measurement_conventions.md 4.8).
+
+    Not `ConservationMethod`: that one describes a portion, this one a
+    container. There is no pantry at room temperature (decision 2026-11-07).
+    """
+    FRIDGE = "fridge"
+    FREEZER = "freezer"
+
+
+@unique
 class GlycemicIndex(str, Enum):
     """Declared absorption speed of a manual dish (measurement_conventions.md
     §5.5). Not a measured GI. Existing codes kept (§4.2); `none` added."""

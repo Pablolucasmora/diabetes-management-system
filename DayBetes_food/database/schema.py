@@ -25,6 +25,7 @@ from DayBetes_food.domain.constants import (
     MealType,
     Nutriscore,
     PrefillSource,
+    StorageLocation,
     sql_in_list,
 )
 from DayBetes_food.domain.search_text import search_text_sql
@@ -33,6 +34,7 @@ from DayBetes_food.domain.food import (
     FOOD_CONFIDENCE_MIN,
     FOOD_DEFAULT_PORTION_RANGE,
 )
+from DayBetes_food.domain.fridge import FRIDGE_CONTENT_WEIGHT_RANGE
 from DayBetes_food.domain.meal_type_schedule import AUTO_ASSIGNABLE_MEAL_TYPES
 from DayBetes_food.domain.nutrition import NUTRIENT_LIMITS, NumericRange
 from DayBetes_food.domain.recipe import RECIPE_MEAL_TYPES, RECIPE_SERVINGS_RANGE
@@ -137,6 +139,20 @@ def recipe_check_constraints() -> dict[str, str]:
         ),
         "ck_recipe_name_normalized": r"name <> '' AND name = regexp_replace(btrim(name), '\s+', ' ', 'g')",
         "ck_recipe_servings": _range_check("servings", RECIPE_SERVINGS_RANGE),
+    }
+
+
+def fridge_check_constraints() -> dict[str, str]:
+    """CHECK name -> expression of `fridge` (§4.4, §12.1). The same list feeds the
+    CREATE TABLE and db_init._ensure_fridge_schema."""
+    return {
+        "ck_fridge_location": f"location IN ({sql_in_list(StorageLocation)})",
+        "ck_fridge_name_normalized": (
+            r"name IS NULL OR (name <> '' AND name = regexp_replace(btrim(name), '\s+', ' ', 'g'))"
+        ),
+        "ck_fridge_content_weight": _range_check("content_weight", FRIDGE_CONTENT_WEIGHT_RANGE),
+        "ck_fridge_expires_after_stored": "expires_at > stored_at",
+        "ck_fridge_closed_after_stored": "closed_at IS NULL OR closed_at >= stored_at",
     }
 
 
@@ -484,14 +500,48 @@ class DBSchema:
     );
     """
 
-    fridge = """
+    @classmethod
+    def fridge(cls):
+        """A container in the fridge or the freezer. Lifecycle and contract:
+        code_conventions.md §11.2.6; model: measurement_conventions.md §4.8."""
+        check_lines = ",\n".join(
+            f"        CONSTRAINT {name} CHECK ({expression})" for name, expression in fridge_check_constraints().items()
+        )
+        return f"""
     CREATE TABLE IF NOT EXISTS fridge (
-        id SERIAL PRIMARY KEY,
-        users_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        tupper_name VARCHAR(255), -- Name given to the container, e.g. "Monday Carrillera"
-        entry_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
-        is_compound BOOLEAN DEFAULT FALSE, -- Whether it has more than one ingredient
-        total_tupper_weight REAL -- For display purposes on the fridge page
+        id SERIAL CONSTRAINT pk_fridge PRIMARY KEY,
+        users_id INTEGER NOT NULL
+            CONSTRAINT fk_fridge_users_id_users
+            REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR(255), -- NULL = name derived from its ingredients (measurement 4.6.3); stored normalized
+        location VARCHAR(20) NOT NULL, -- StorageLocation: where it is now; past places are in fridge_move
+        stored_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, -- when it entered the fridge or the freezer
+        expires_at TIMESTAMPTZ NOT NULL, -- set by the app from domain.fridge.default_expires_at; editable (4.8.2)
+        content_weight REAL, -- real weight of the content in grams, weighed by the user; never derived from the portions (4.8.3)
+        closed_at TIMESTAMPTZ, -- NULL = still in the fridge or the freezer (§11.2.6)
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+{check_lines}
+    );
+    """
+
+    # Dependent of `fridge` (code_conventions.md §11.2.1): each row is one change of
+    # place, the history the study reads to know how long a container was frozen
+    # (measurement_conventions.md 4.8.4). Rows are never updated.
+    fridge_move = f"""
+    CREATE TABLE IF NOT EXISTS fridge_move (
+        id SERIAL CONSTRAINT pk_fridge_move PRIMARY KEY,
+        fridge_id INTEGER NOT NULL
+            CONSTRAINT fk_fridge_move_fridge_id_fridge
+            REFERENCES fridge(id) ON DELETE CASCADE,
+        from_location VARCHAR(20) NOT NULL
+            CONSTRAINT ck_fridge_move_from_location
+            CHECK (from_location IN ({sql_in_list(StorageLocation)})),
+        to_location VARCHAR(20) NOT NULL
+            CONSTRAINT ck_fridge_move_to_location
+            CHECK (to_location IN ({sql_in_list(StorageLocation)})),
+        moved_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT ck_fridge_move_locations_differ CHECK (from_location <> to_location)
     );
     """
 
@@ -678,6 +728,11 @@ class DBSchema:
             REFERENCES recipe(id) ON DELETE CASCADE,
         CONSTRAINT ck_portion_detail_single_destination
             CHECK (num_nonnulls(intake_event_id, fridge_id, recipe_id) = 1),
+        source_fridge_id INTEGER
+            CONSTRAINT fk_portion_detail_source_fridge_id_fridge
+            REFERENCES fridge(id) ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED, -- The container an event portion was taken from (measurement 4.8.4). An eaten portion is clinical history, so a referenced container cannot be deleted (code §11.2.6). Deferred on purpose (code §11.8): RESTRICT, or a non-deferred NO ACTION, is checked inside each cascade, so deleting a user failed when it reached the container before the event portion that references it
+        CONSTRAINT ck_portion_detail_source_fridge_only_for_event
+            CHECK (source_fridge_id IS NULL OR intake_event_id IS NOT NULL),
 
         plate_id INTEGER
             CONSTRAINT fk_portion_detail_plate_id_intake_plate

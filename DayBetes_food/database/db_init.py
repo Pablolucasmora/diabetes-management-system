@@ -11,6 +11,7 @@ from DayBetes_food.database.queries.crud import fuzzy_compact_sql
 from DayBetes_food.database.schema import (
     DBSchema,
     catalog_check_constraints,
+    fridge_check_constraints,
     manual_intake_check_constraints,
     recipe_check_constraints,
 )
@@ -1212,6 +1213,123 @@ def _ensure_recipe_plate_schema(cursor):
             WHERE recipe_plate_id IS NOT NULL;
             """
         )
+
+
+# Columns of the table as it was created before the decision of 2026-11-07. No code
+# ever wrote them (measurement_conventions.md 4.8.1).
+_FRIDGE_LEGACY_COLUMNS = ("tupper_name", "entry_date", "is_compound", "total_tupper_weight")
+
+_FRIDGE_CONSTRAINT_RENAMES = {
+    "fridge_pkey": "pk_fridge",
+    "fridge_users_id_fkey": "fk_fridge_users_id_users",
+}
+
+
+def _ensure_fridge_schema(cursor):
+    """`fridge`, `fridge_move` and `portion_detail.source_fridge_id` (code §11.2.6,
+    measurement §4.8). Idempotent.
+
+    The old table had no writer, so it is reshaped in place only while it is empty.
+    If it has rows, the migration stops: what to do with them is a data decision
+    (§12.4, §12.7), not something to infer here.
+    """
+    legacy = [column for column in _FRIDGE_LEGACY_COLUMNS if _has_column(cursor, "fridge", column)]
+    if legacy:
+        cursor.execute("SELECT count(*) AS total FROM fridge;")
+        total = cursor.fetchone()["total"]
+        if total:
+            raise RuntimeError(
+                f"fridge has {total} rows with the pre-2026-11-07 columns {legacy}; "
+                "they cannot be reshaped without an explicit data decision (code_conventions.md 12.7)."
+            )
+        for column in legacy:
+            cursor.execute(sql.SQL("ALTER TABLE fridge DROP COLUMN {};").format(sql.Identifier(column)))
+
+    # The table is empty here or already has these columns, so NOT NULL without a
+    # default is safe: stored_at and expires_at are always given by the app.
+    new_columns = (
+        ("name", "VARCHAR(255)"),
+        ("location", "VARCHAR(20) NOT NULL"),
+        ("stored_at", "TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP"),
+        ("expires_at", "TIMESTAMPTZ NOT NULL"),
+        ("content_weight", "REAL"),
+        ("closed_at", "TIMESTAMPTZ"),
+        ("created_at", "TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP"),
+        ("updated_at", "TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP"),
+    )
+    for column, definition in new_columns:
+        if not _has_column(cursor, "fridge", column):
+            # The definitions are code constants, not request data (§11.9).
+            cursor.execute(
+                sql.SQL("ALTER TABLE fridge ADD COLUMN {} " + definition + ";").format(sql.Identifier(column))
+            )
+    cursor.execute(
+        "SELECT is_nullable FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'fridge' AND column_name = 'users_id';"
+    )
+    if cursor.fetchone()["is_nullable"] == "YES":
+        # Fails on its own if a container has no owner.
+        cursor.execute("ALTER TABLE fridge ALTER COLUMN users_id SET NOT NULL;")
+
+    for old_name, new_name in _FRIDGE_CONSTRAINT_RENAMES.items():
+        if _constraint_exists(cursor, "fridge", old_name) and not _constraint_exists(cursor, "fridge", new_name):
+            cursor.execute(
+                sql.SQL("ALTER TABLE fridge RENAME CONSTRAINT {} TO {};").format(
+                    sql.Identifier(old_name), sql.Identifier(new_name)
+                )
+            )
+    for name, expression in fridge_check_constraints().items():
+        if not _constraint_exists(cursor, "fridge", name):
+            cursor.execute(
+                sql.SQL("ALTER TABLE fridge ADD CONSTRAINT {} CHECK ({});").format(
+                    sql.Identifier(name), sql.SQL(expression)
+                )
+            )
+    # The fridge page lists the open containers of a user, the soonest to expire first.
+    _create_index_once(
+        cursor, "idx_fridge_users_id_open", "ON fridge (users_id, expires_at) WHERE closed_at IS NULL"
+    )
+    # Place history of a container, in order (measurement §4.8.4); also serves the CASCADE.
+    _create_index_once(cursor, "idx_fridge_move_fridge_id", "ON fridge_move (fridge_id, moved_at)")
+
+    if not _has_column(cursor, "portion_detail", "source_fridge_id"):
+        cursor.execute("ALTER TABLE portion_detail ADD COLUMN source_fridge_id INTEGER;")
+    # Deferred NO ACTION, not RESTRICT (§11.8): RESTRICT, and a non-deferred NO
+    # ACTION, are checked inside each cascade, so deleting a user failed when the
+    # cascade reached the container before the event portion that references it.
+    # Checked at commit, it still blocks discarding a container something was eaten
+    # from. A first version of this FK with another action is replaced.
+    cursor.execute(
+        "SELECT confdeltype, condeferrable, condeferred FROM pg_constraint "
+        "WHERE conrelid = 'public.portion_detail'::regclass "
+        "AND conname = 'fk_portion_detail_source_fridge_id_fridge';"
+    )
+    existing_fk = cursor.fetchone()
+    if existing_fk is not None and not (
+        existing_fk["confdeltype"] == "a" and existing_fk["condeferrable"] and existing_fk["condeferred"]
+    ):
+        cursor.execute("ALTER TABLE portion_detail DROP CONSTRAINT fk_portion_detail_source_fridge_id_fridge;")
+        existing_fk = None
+    if existing_fk is None:
+        cursor.execute(
+            "ALTER TABLE portion_detail ADD CONSTRAINT fk_portion_detail_source_fridge_id_fridge "
+            "FOREIGN KEY (source_fridge_id) REFERENCES fridge(id) "
+            "ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED;"
+        )
+    if not _constraint_exists(cursor, "portion_detail", "ck_portion_detail_source_fridge_only_for_event"):
+        cursor.execute(
+            "ALTER TABLE portion_detail ADD CONSTRAINT ck_portion_detail_source_fridge_only_for_event "
+            "CHECK (source_fridge_id IS NULL OR intake_event_id IS NOT NULL);"
+        )
+    # The content of a container is read by fridge_id, which is also the target of its
+    # ON DELETE CASCADE. source_fridge_id is checked by RESTRICT when a container is
+    # discarded, and is NULL in almost every row, hence partial (§11.7).
+    _create_index_once(cursor, "idx_portion_detail_fridge_id", "ON portion_detail (fridge_id) WHERE fridge_id IS NOT NULL")
+    _create_index_once(
+        cursor,
+        "idx_portion_detail_source_fridge_id",
+        "ON portion_detail (source_fridge_id) WHERE source_fridge_id IS NOT NULL",
+    )
 
 
 def _create_index_once(cursor, name: str, definition: str) -> None:
@@ -2502,7 +2620,8 @@ def init_db():
             DBSchema.manual_intake(),
             DBSchema.off_product(),
             DBSchema.ciqual_food(),
-            DBSchema.fridge,
+            DBSchema.fridge(),
+            DBSchema.fridge_move,
             DBSchema.tags,
             DBSchema.recipe(),
             DBSchema.user_favorites,
@@ -2543,6 +2662,8 @@ def init_db():
         # foreign key, so their DDL cannot run earlier (§12.3).
         _ensure_portion_detail_schema(cur)
         _ensure_recipe_plate_schema(cur)
+        # After portion_detail: it adds source_fridge_id there.
+        _ensure_fridge_schema(cur)
         _remove_legacy_user_sessions(cur)
         _remove_legacy_user_hidden_catalog(cur)
         _remove_legacy_user_columns(cur)
