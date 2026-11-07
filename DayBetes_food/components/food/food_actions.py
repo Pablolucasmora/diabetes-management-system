@@ -13,7 +13,7 @@ import json
 
 from fasthtml.common import *
 
-from DayBetes_food.components.food.food_shared import FORM_FIELD_CLS, STORAGE_LABELS
+from DayBetes_food.components.food.food_shared import AmountUnitField, STORAGE_LABELS
 from DayBetes_food.components.modal import (
     MODAL_NAME_CLS,
     ModalLayer,
@@ -238,23 +238,7 @@ def FoodActionsStore(entry_type: FoodEntryType, entry_id: int, entry: FoodEntryS
     return Div(
         actions_header("Save to fridge", entry.name or "Unnamed", back_url=food_actions_url(entry_type, entry_id)),
         Form(
-            Div(
-                Label("Amount", cls="text-xs text-gray-700", **{"for": "food_actions_store_amount"}),
-                Div(
-                    Input(
-                        type="text",
-                        id="food_actions_store_amount",
-                        name="amount_value",
-                        value="1" if has_serving else f"{INITIAL_AMOUNT_WITHOUT_SERVING_G:g}",
-                        inputmode="decimal",
-                        onclick="this.select()",
-                        cls=f"{FORM_FIELD_CLS} flex-1 min-w-0",
-                    ),
-                    Select(*units, name="amount_unit", aria_label="Unit", cls=f"{FORM_FIELD_CLS} w-auto"),
-                    cls="flex items-center gap-2",
-                ),
-                cls="flex flex-col gap-1",
-            ),
+            AmountUnitField("food_actions_store_amount", "1" if has_serving else f"{INITIAL_AMOUNT_WITHOUT_SERVING_G:g}", units),
             Div(id=FOOD_ACTIONS_STORE_MESSAGE_ID),
             Div(
                 *[

@@ -610,9 +610,6 @@
   .w-\[min\(52vw\,calc\(100vw-1\.5rem\)\)\] {
     width: min(52vw, calc(100vw - 1.5rem));
   }
-  .w-auto {
-    width: auto;
-  }
   .w-fit {
     width: fit-content;
   }
@@ -621,6 +618,9 @@
   }
   .w-xs {
     width: var(--container-xs);
+  }
+  .max-w-\[55\%\] {
+    max-width: 55%;
   }
   .max-w-full {
     max-width: 100%;

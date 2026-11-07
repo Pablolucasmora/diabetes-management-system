@@ -18,7 +18,7 @@ from DayBetes_food.components.food.food_actions import (
     actions_option,
     actions_view_attrs,
 )
-from DayBetes_food.components.food.food_shared import FORM_FIELD_CLS, STORAGE_LABELS
+from DayBetes_food.components.food.food_shared import AmountUnitField, FORM_FIELD_CLS, STORAGE_LABELS
 from DayBetes_food.components.modal import close_modal_js, modal_confirm_button, modal_secondary_button
 from DayBetes_food.domain.constants import AmountInputUnit, StorageLocation
 from DayBetes_food.domain.fridge import FRIDGE_NAME_MAX_LENGTH, FridgeItem, other_location
@@ -282,23 +282,7 @@ def FridgeTakeForm(item: FridgeItem):
     return Div(
         actions_header("Add to meal", item.display_name, back_url=fridge_actions_url(fridge.id)),
         Form(
-            Div(
-                Label("Amount", cls="text-xs text-gray-700", **{"for": "fridge_take_amount"}),
-                Div(
-                    Input(
-                        type="text",
-                        id="fridge_take_amount",
-                        name="amount_value",
-                        value="100",
-                        inputmode="decimal",
-                        onclick="this.select()",
-                        cls=f"{FORM_FIELD_CLS} flex-1 min-w-0",
-                    ),
-                    Select(*units, name="amount_unit", aria_label="Unit", cls=f"{FORM_FIELD_CLS} w-auto"),
-                    cls="flex items-center gap-2",
-                ),
-                cls="flex flex-col gap-1",
-            ),
+            AmountUnitField("fridge_take_amount", "100", units),
             P("It goes to the meal and plate chosen in Add to.", cls="text-xs text-gray-500"),
             Div(id=FRIDGE_TAKE_MESSAGE_ID),
             Div(
