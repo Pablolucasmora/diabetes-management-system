@@ -1,9 +1,9 @@
-// Actions pop-up of a food row (frontend_conventions.md §9.3.1). Holding a
-// row of the Food list for HOLD_MS without moving, or a right click on it,
-// asks the server for the menu (components/food/food_actions.py) and opens
-// the pop-up once it is in. Releasing after a long press does not open the
-// food's detail. Presentation only: the options and what they do come from
-// the server.
+// Actions pop-up of a row of the Food list (frontend_conventions.md §9.3.1),
+// a food or a container of the fridge (§9.8). Holding a row for HOLD_MS
+// without moving, or a right click on it, asks the server for the menu
+// (components/food/food_actions.py, components/food/fridge.py) and opens the
+// pop-up once it is in. Releasing after a long press does not open the food's
+// detail. Presentation only: the options and what they do come from the server.
 (function () {
   if (window.__dbFoodActionsBootstrapped) return;
   window.__dbFoodActionsBootstrapped = true;

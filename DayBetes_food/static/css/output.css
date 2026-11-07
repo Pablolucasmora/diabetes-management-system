@@ -586,6 +586,9 @@
   .w-12 {
     width: calc(var(--spacing) * 12);
   }
+  .w-14 {
+    width: calc(var(--spacing) * 14);
+  }
   .w-16 {
     width: calc(var(--spacing) * 16);
   }
@@ -618,6 +621,12 @@
   }
   .w-xs {
     width: var(--container-xs);
+  }
+  .max-w-\[40\%\] {
+    max-width: 40%;
+  }
+  .max-w-\[55\%\] {
+    max-width: 55%;
   }
   .max-w-full {
     max-width: 100%;
@@ -1039,6 +1048,9 @@
   .px-2 {
     padding-inline: calc(var(--spacing) * 2);
   }
+  .px-2\.5 {
+    padding-inline: calc(var(--spacing) * 2.5);
+  }
   .px-3 {
     padding-inline: calc(var(--spacing) * 3);
   }
@@ -1200,6 +1212,9 @@
   }
   .break-all {
     word-break: break-all;
+  }
+  .whitespace-nowrap {
+    white-space: nowrap;
   }
   .whitespace-pre-line {
     white-space: pre-line;
@@ -1458,6 +1473,12 @@
     --tw-scale-z: 110%;
     scale: var(--tw-scale-x) var(--tw-scale-y);
   }
+  .group-has-\[\[data-keep-weighed\]\:checked\]\/keep\:grid:is(:where(.group\/keep):has(:is([data-keep-weighed]:checked)) *) {
+    display: grid;
+  }
+  .group-has-\[\[data-keep-weighed\]\:checked\]\/keep\:hidden:is(:where(.group\/keep):has(:is([data-keep-weighed]:checked)) *) {
+    display: none;
+  }
   .peer-checked\:border-ink:is(:where(.peer):checked ~ *) {
     border-color: var(--color-ink);
   }
@@ -1648,6 +1669,9 @@
     .md\:grid-cols-3 {
       grid-template-columns: repeat(3, minmax(0, 1fr));
     }
+    .md\:grid-cols-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
     .md\:flex-row {
       flex-direction: row;
     }
@@ -1757,6 +1781,9 @@
     .lg\:translate-x-29 {
       --tw-translate-x: calc(var(--spacing) * 29);
       translate: var(--tw-translate-x) var(--tw-translate-y);
+    }
+    .lg\:grid-cols-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
     }
     .lg\:gap-2 {
       gap: calc(var(--spacing) * 2);

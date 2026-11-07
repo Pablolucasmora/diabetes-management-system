@@ -1099,8 +1099,10 @@ petición y el swap `outerHTML` lo destruye.
 | `POST /cart/portion/{portion_id}/amount` (payload `amount_value` + `amount_unit`), `…/offset`, `…/move`, `…/delete` | `#cart_card_event_{id}` | `outerHTML` | `CartCard(event, portions, plates)` |
 | `POST /cart/portion/{portion_id}/strictly_weighed` (`…/macros_quality` se retiró el 2026-10-09: es un dato del alimento, `measurement_conventions.md` §6.11) | `#macros_summary_event_{id}` | `outerHTML` | `Div(MacrosSummary(...), id="macros_summary_event_{id}")` + swap OOB del propio control, `#portion_flag_{campo}_{portion_id}` (`PortionTriStateFlag`) |
 | `POST /cart/portion/{portion_id}/is_cooked_weight` | `#macros_summary_event_{id}` | `outerHTML` | `Div(MacrosSummary(...), id="macros_summary_event_{id}")` |
+| `POST /cart/portion/{portion_id}/fridge` (guardar parte en la nevera, `frontend_conventions.md` §7.15) | `#cart_card_event_{id}` | `outerHTML` | `CartCard(event, portions, plates)` y el evento `fridgeStored` |
 | `POST /cart/event/{id}/plate`, `POST /cart/plate/{plate_id}/name`, `…/offset`, `…/apply_offset`, `…/delete` | `#cart_card_event_{id}` | `outerHTML` | `CartCard(event, portions, plates)` |
-| `delete`, `confirm` | `#cart_card_event_{id}` | `outerHTML` | cuerpo vacío (la tarjeta desaparece) y, si no queda ningún evento planificado, swap OOB de `#cart_body` con el carrito vacío |
+| `delete`, `confirm` | `#cart_card_event_{id}` | `outerHTML` | cuerpo vacío (la tarjeta desaparece) y, si no queda ningún evento planificado, swap OOB de `#cart_body` con el carrito vacío. `confirm` añade el evento `mealConfirmed` con el id de la comida |
+| `confirm` con una tanda no comida entera y sin `leftovers_reviewed` | `#cart_leftovers_body` (`HX-Retarget`) | `innerHTML` (`HX-Reswap`) | el pop-up de sobras (`frontend_conventions.md` §7.14), sin escribir nada; el mismo patrón que la confirmación de quitar un favorito. Un error de validación del plan de sobras es `200` con `ModalFormError` reenviado a `#cart_leftovers_message` |
 | `POST /cart/event/{event_id}/recipe` y `POST /cart/plate/{plate_id}/recipe` (guardar la comida o la tanda como receta, `frontend_conventions.md` §7.13) | `#cart_card_event_{id}`, declarado pero sin swap | `none` | cuerpo vacío y el evento `recipeSaved` (`HX-Trigger`); `static/js/cart_units.js` muestra el aviso de éxito `Recipe saved`. La tarjeta no cambia |
 | `archive`, `restore` | página completa del carrito | `outerHTML` | `cart_main(...)`; no están enlazadas desde ninguna tarjeta todavía |
 
@@ -1118,11 +1120,33 @@ Fragmento de error: ninguno. Las acciones del carrito son ediciones en línea,
 no un formulario de guardado, así que **no** aplican la excepción de `200` +
 fragmento de esta misma sección: conservan el status semántico de su categoría
 y el aviso viaja por el canal de error visible definido en
-`error_conventions.md` §7. Eventos `HX-Trigger`: `appError` y, en el éxito de
-guardar una tanda o una comida como receta, `recipeSaved`.
+`error_conventions.md` §7. Eventos `HX-Trigger`: `appError`; en el éxito de
+guardar una tanda o una comida como receta, `recipeSaved`; y al confirmar, `mealConfirmed`,
+que cierra el pop-up de sobras (`static/js/fridge.js`).
 
 Añadir un botón nuevo al carrito obliga a elegir una de las filas de esta
 tabla o a añadir una nueva; no se deja el `hx-target` implícito.
+
+#### Contrato HTMX de la nevera
+
+La pestaña `Fridge` de Food (`frontend_conventions.md` §9.8, `routes/fridge_routes.py`) sigue el
+modelo del carrito: cada acción exige `HX-Request` (`403` si falta), lleva `hx-target` explícito y
+devuelve la lista entera de tuppers, que es pequeña. Los errores que no son de formulario viajan
+por el canal de error visible (`error_conventions.md` §7.1).
+
+| Acción | `hx-target` | `hx-swap` | Fragmento de éxito |
+|---|---|---|---|
+| `GET /food/fridge/{id}/actions`, `…/actions/edit`, `…/actions/discard` (vistas del pop-up de acciones) | `#food_actions_modal_body` | `innerHTML` | la vista; `static/js/food_actions.js` abre el pop-up al llegar la primera |
+| `POST /food/fridge/{id}/location` (`location`) | `#food-list` | `innerHTML` | la lista. Repetirla es un no-op (§6.3) |
+| `POST /food/fridge/{id}/discard` | `#food-list` | `innerHTML` | la lista y el evento `fridgeChanged`, que cierra el pop-up |
+| `POST /food/fridge/{id}/edit` (`name`, `expires_at`, `content_weight`) | `#fridge_edit_message` | `innerHTML` | cuerpo vacío, la lista fuera de banda (`#food-list`) y `fridgeChanged`. Un error de validación es `200` con `ModalFormError` en ese mismo destino (excepción de formulario de esta sección) |
+| `GET /food/fridge/{id}/actions/take` (vista de sacar) | `#food_actions_modal_body` | `innerHTML` | la vista |
+| `POST /food/fridge/{id}/take` (`amount_value`, `amount_unit`, y `intake_event_id` y `plate_id` de la cabecera) | `#fridge_take_message`; `none` desde `Eat` | `innerHTML` | cuerpo vacío, la lista fuera de banda y `fridgeChanged` y `fridgeTaken`. Un error de validación es `200` con `ModalFormError` |
+| `GET /food/actions/{entry_type}/{id}/fridge` (guardar desde la fila) | `#food_actions_modal_body` | `innerHTML` | la vista |
+| `POST /food/fridge/store_recipe/{recipe_id}` (paso previo de una receta, `frontend_conventions.md` §9.7) | `#recipe_add_error` | `innerHTML` | cuerpo vacío y `fridgeStored`, que cierra también ese pop-up. Validación: `200` + fragmento |
+| `POST /food/fridge/store/{entry_type}/{id}` (desde la ficha, `frontend_conventions.md` §9.4, o desde la fila) | el mensaje de la ficha o `#food_actions_store_message` | `innerHTML` | cuerpo vacío y `fridgeStored` con el sitio. El error de validación es `200`: `ModalFormError` dentro del pop-up, que la ruta reconoce por `HX-Target`, y el mensaje de la ficha fuera |
+
+Eventos `HX-Trigger`: `fridgeChanged` (cierra el pop-up), `fridgeTaken` y `fridgeStored` (avisos de éxito, porque la página no muestra la comida ni el tupper nuevo), en `static/js/fridge.js`, y, en los errores, `appError`.
 
 ### 9.6 Entrada, estados de carga y repetición
 
@@ -1306,6 +1330,8 @@ La clasificación de cada tabla se declara en este registro, que es el sitio ún
 | `off_product` | **Datos de referencia**, sin propietario: los ven todos los usuarios y la app no los escribe (`init_db` le retira esos permisos). | Físico: cada carga reemplaza la tabla entera, en una transacción (`scripts/off/load_off.sh`). | `measurement_conventions.md` §12.2. |
 | `ciqual_food` | **Datos de referencia**, igual que `off_product`. | Físico: cada carga reemplaza la tabla (`scripts/ciqual/load_ciqual.sh`). | `measurement_conventions.md` §12.3. |
 | `portion_detail` | **Dependent** de su destino (`intake_event`, `recipe` o `fridge`); hereda su propietario y su ciclo de vida. | `CASCADE` desde el destino. El borrado físico es apropiado en recetas y en eventos `planned`; en un evento `consumed` es histórico clínico y hoy lo impide la ruta, no la query (limitación declarada). | `audit/audit_portion_detail.md`; `measurement_conventions.md` §6.9.3; `audit/deuda_pendiente.md`, `portion_detail` H27. |
+| `fridge` | **Híbrida por uso**: un tupper del que nunca se ha sacado nada es no archivable; uno con alguna porción consumida que lo referencia es histórico. Contrato completo en §11.2.6. | Físico si nada lo referencia; si no, `closed_at`. `CASCADE` desde `users`. | Decisión del usuario (2026-11-07). |
+| `fridge_move` | **Dependent** de `fridge`: historial de cambios de sitio. | `CASCADE` desde `fridge`. | Decisión del usuario (2026-11-07). |
 
 #### 11.2.2 Contrato de ciclo de vida de `catalog`
 
@@ -1406,6 +1432,19 @@ Decisión del usuario del 2026-11-06. Es la tabla puente entre un usuario y sus 
 - **Recetas.** Borrar o despublicar una receta no tiene retención: quien la tiene en favoritos la pierde, aunque la fila de una receta despublicada se puede quitar. Se revisa en la fase 2, con la propuesta anotada en `audit/deuda_pendiente.md`: conservarla como los alimentos archivados, porque un aviso tras un borrado físico llega tarde.
 - **Timestamps.** Solo `created_at`: las filas nunca se actualizan, así que un `updated_at` no cambiaría nunca. En las filas anteriores a esta decisión es la fecha de la migración (§12.7).
 - **Auditoría de cambios** (§11.10): no se requiere, porque no es dato clínico ni alimenta modelos.
+
+#### 11.2.6 Contrato de `fridge`
+
+Decisión del usuario del 2026-11-07. Cada fila es **un tupper** guardado en la nevera o en el congelador: sobras de una comida, una tanda cocinada para varios días o algo que llega hecho (un tupper que te dan). No hay despensa a temperatura ambiente. El modelo y las cantidades están en `measurement_conventions.md` §4.8.
+
+- **Propietario.** `users_id`, `NOT NULL`, propietario y actor a la vez; en Python, `user_id` (§3.5). Es privada: solo su propietario la lee y la escribe, con la condición en el SQL.
+- **Contenido.** Sus ingredientes son porciones de `portion_detail` con destino `fridge_id`, escaladas como las de una receta. Un tupper de un solo alimento tiene una sola porción.
+- **Abierto y cerrado.** Un tupper con `closed_at` nulo está en la nevera o en el congelador. Se cierra con un motivo, `closed_reason`: `emptied` al sacar lo último que queda y `discarded` al tirarlo si ya se había sacado algo. Un tupper cerrado no se lista. Solo uno vaciado se reabre, cuando vuelve lo sacado de él porque se borra la comida o el ingrediente antes de confirmar (`measurement_conventions.md` §4.8.6).
+- **Tirar.** Si ninguna porción de una comida lo referencia (`portion_detail.source_fridge_id`), se borra físicamente con su contenido y su historial: lo que se tira no se guarda. Si alguna lo referencia, se cierra como tirado, porque esas porciones son histórico clínico. La base lo impide con una FK `NO ACTION DEFERRABLE INITIALLY DEFERRED` (§11.8): con `RESTRICT` la comprobación se hace dentro de cada cascada y borrar un usuario fallaba si la cascada llegaba al tupper antes que a la porción que lo referencia. Como el error saldría en el commit, la query de tirar comprueba antes si hay porciones que lo referencian.
+- **Caducar no borra.** Un tupper caducado sigue abierto y se marca en la interfaz hasta que el usuario lo tira o se lo come (`frontend_conventions.md` §9.8).
+- **Cambiar de sitio.** Actualiza `location`, recalcula `expires_at` (`measurement_conventions.md` §4.8) y añade una fila a `fridge_move` en la misma transacción.
+- **Borrado del usuario.** `CASCADE` desde `users`, como el resto de sus datos.
+- **Auditoría de cambios** (§11.10): no se requiere. El dato del estudio son las porciones consumidas y `fridge_move`, que es en sí el historial.
 
 ### 11.3 Soft-delete
 

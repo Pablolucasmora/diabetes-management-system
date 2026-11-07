@@ -265,13 +265,3 @@ def RescueMarkButton(entry_type: str, entry_id: int, is_rescue: bool):
         data_skip_page_loading="true",
         id=f"rescue_mark_{entry_type}_{entry_id}",
     )
-
-
-def RescueFormError(message: str):
-    """Validation message inside the pop-up (code_conventions.md §9.5). Solid,
-    not glass: it sits in a solid card (frontend_conventions.md §8)."""
-    return P(
-        message,
-        role="alert",
-        cls="text-sm text-danger bg-danger/5 border border-danger/25 rounded-xl px-3 py-2",
-    )

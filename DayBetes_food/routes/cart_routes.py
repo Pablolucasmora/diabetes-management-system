@@ -1,8 +1,20 @@
+import json
 import re
 
 from fasthtml.common import *
 from DayBetes_food.components.cart.cart_main import cart_main, cart_events_list
-from DayBetes_food.components.cart.cart_components import CartCard, MacrosSummary, PortionTriStateFlag
+from DayBetes_food.components.cart.cart_components import (
+    CartCard,
+    MacrosSummary,
+    PortionTriStateFlag,
+    plate_display_name,
+)
+from DayBetes_food.components.cart.cart_leftovers import (
+    CART_LEFTOVERS_BODY_ID,
+    CART_LEFTOVERS_MESSAGE_ID,
+    LeftoversForm,
+)
+from DayBetes_food.components.modal import ModalFormError
 from DayBetes_food.components.cart.cart_shared import (
     calculate_macro_summary_metrics,
     portion_name,
@@ -13,7 +25,6 @@ import math
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.time_utils import local_naive_to_utc_aware, local_today, to_local, APP_TIMEZONE
 from DayBetes_food.database.queries import (
-    delete_portion_detail,
     get_portion_detail,
     list_portions_by_event,
     list_portions_by_events,
@@ -31,7 +42,6 @@ from DayBetes_food.database.queries import (
     list_intake_plates_by_events,
     update_intake_plate_name,
     set_injection_zone,
-    delete_intake_event,
     archive_intake_event,
     restore_intake_event,
     get_intake_event,
@@ -49,9 +59,11 @@ from DayBetes_food.domain.constants import (
     FoodPhysicalState,
     InjectionZone,
     IntakeEventState,
+    KeepPartMode,
     MealType,
     PortionDestination,
     PortionOrigin,
+    StorageLocation,
     parse_enum,
     parse_optional_id,
 )
@@ -66,11 +78,24 @@ from DayBetes_food.domain.intake_plate import (
     INTAKE_PLATE_OFFSET_MAX_MINUTES,
     INTAKE_PLATE_OFFSET_MIN_MINUTES,
     IntakePlateCreate,
+    PlateEaten,
+)
+from DayBetes_food.domain.fridge import (
+    LeftoverPlan,
+    parse_fridge_name,
+    parse_keep_part,
+    parse_optional_containers,
 )
 from DayBetes_food.domain.portion_detail import PortionDetailUpdate, amount_to_grams
 from DayBetes_food.http_errors import app_error_response
-from DayBetes_food.services.intake_event import confirm_planned_event
+from DayBetes_food.services.intake_event import (
+    confirm_planned_event,
+    plates_with_leftovers,
+    delete_planned_event,
+    delete_planned_portion,
+)
 from DayBetes_food.domain.recipe import parse_recipe_name
+from DayBetes_food.services.fridge import keep_part_in_fridge
 from DayBetes_food.services.recipe import save_event_as_recipe, save_plate_as_recipe
 from DayBetes_food.errors import (
     AuthenticationError,
@@ -374,6 +399,85 @@ _SAVE_RECIPE_CONFLICTS = {
 }
 
 
+def _parse_eaten(form) -> tuple[PlateEaten, ...]:
+    """What was eaten of each plate in the confirm form (§7.1): the `plate_id` list,
+    and per plate `ingested_value_<plate_id>` and `ingested_unit_<plate_id>` (named
+    after the plate so the browser draft keeps each one, frontend §7.14). An empty
+    value is the whole plate; anything else must be a finite number >= 0 (findings
+    32 and 33); the range is checked against the plate in the service. A missing
+    unit is a 422, never grams by default (finding 47)."""
+    eaten = []
+    for raw_id in form.getlist("plate_id"):
+        plate_id = parse_optional_id(str(raw_id), "plate")
+        if plate_id is None:
+            raise ValidationError("eaten_plate_missing")
+        unit = _parse_ingested_unit(str(form.get(f"ingested_unit_{plate_id}") or ""))
+        text = str(form.get(f"ingested_value_{plate_id}") or "").strip()
+        value = None
+        if text:
+            try:
+                value = _to_float(text)
+            except ValueError as exc:
+                raise ValidationError("eaten_value_not_valid") from exc
+            if not math.isfinite(value) or value < 0:
+                raise ValidationError("eaten_value_not_valid")
+        eaten.append(PlateEaten(plate_id=plate_id, value=value, unit=unit))
+    return tuple(eaten)
+
+
+def _parse_leftover_plans(form) -> tuple[LeftoverPlan, ...]:
+    """The plan of the leftovers pop-up (§7.1): the aligned `leftover_plate_id` /
+    `leftover_containers` / `leftover_name` lists, and the place of each plate in
+    `leftover_location_<plate_id>` (radios, one group per plate). An empty place is
+    "don't keep"; empty containers is one; the name is optional."""
+    plate_ids = form.getlist("leftover_plate_id")
+    containers = form.getlist("leftover_containers")
+    names = form.getlist("leftover_name")
+    if not len(plate_ids) == len(containers) == len(names):
+        raise ValidationError("The leftovers of the form are incomplete.")
+    plans = []
+    for raw_id, raw_containers, raw_name in zip(plate_ids, containers, names):
+        plate_id = parse_optional_id(str(raw_id), "plate")
+        if plate_id is None:
+            raise ValidationError("The leftovers of the form are incomplete.")
+        location_field = f"leftover_location_{plate_id}"
+        if location_field not in form:
+            raise ValidationError("Choose where to keep each plate.")
+        plans.append(
+            LeftoverPlan(
+                plate_id=plate_id,
+                location=parse_enum(StorageLocation, str(form.get(location_field)), field="location"),
+                containers=parse_optional_containers(raw_containers),
+                name=parse_fridge_name(raw_name),
+            )
+        )
+    return tuple(plans)
+
+
+def _leftovers_form_error(message: str):
+    """Validation message of the leftovers pop-up, inside it (§9.5): its confirm
+    targets the card, so the message is retargeted."""
+    response = render_fragment(ModalFormError(message))
+    response.headers["HX-Retarget"] = f"#{CART_LEFTOVERS_MESSAGE_ID}"
+    response.headers["HX-Reswap"] = "innerHTML"
+    return response
+
+
+def _leftovers_response(connection, user_id: int, event_id: int, eaten, pending):
+    """The leftovers pop-up instead of the card (the same pattern as the favorite
+    removal of food_routes): nothing has been written yet."""
+    portions = list_portions_by_event(connection, user_id, event_id)
+    labels = {
+        plate.id: plate_display_name(plate, [p for p in portions if p.plate_id == plate.id])
+        for plate in list_intake_plates(connection, event_id)
+    }
+    plates = [(plate_id, labels[plate_id], fraction, plate_portions) for plate_id, fraction, plate_portions in pending]
+    response = render_fragment(LeftoversForm(event_id, list(eaten), plates))
+    response.headers["HX-Retarget"] = f"#{CART_LEFTOVERS_BODY_ID}"
+    response.headers["HX-Reswap"] = "innerHTML"
+    return response
+
+
 def setup_cart_routes(rt):
     @rt("/cart")
     def get(req):
@@ -541,7 +645,8 @@ def setup_cart_routes(rt):
             return _error(request, AuthenticationError, _NO_SESSION)
         with get_connection() as connection:
             try:
-                delete_intake_event(connection, user_id=int(user_id), event_id=event_id)
+                with connection.transaction():
+                    delete_planned_event(connection, int(user_id), event_id)
             except NotFoundError:
                 return _error(request, NotFoundError, _EVENT_GONE)
             except ConflictError:
@@ -751,12 +856,62 @@ def setup_cart_routes(rt):
                 portion = get_portion_detail(connection, int(user_id), portion_id)
                 event_id = _portion_event_id(connection, int(user_id), portion)
                 with connection.transaction():
-                    delete_portion_detail(connection, int(user_id), portion_id, commit=False)
+                    delete_planned_portion(connection, int(user_id), portion)
             except NotFoundError:
                 return _error(request, NotFoundError, _INGREDIENT_GONE)
             except ConflictError:
                 return _error(request, ConflictError, _EVENT_NOT_PLANNED)
             return _card_response(request, connection, int(user_id), event_id)
+
+    @rt("/cart/portion/{portion_id}/fridge")
+    def post(
+        request: Request,
+        portion_id: int,
+        keep_mode: str = "",
+        plate_percent: str = "",
+        cooked_total: str = "",
+        plated_grams: str = "",
+        location: str = "",
+        containers: str = "",
+    ):
+        """Keep part of a cooked ingredient on its plate and the rest in new containers
+        (measurement_conventions.md §4.8.5, frontend §7.15): what stays is given in %
+        or weighed (`cooked_total` and `plated_grams`). Planned meals only.
+
+        Inline action of the cart: it answers with the card and `fridgeStored`, and an
+        error keeps its semantic status (§9.5). Repeating it splits the rest again.
+        """
+        if request.headers.get("HX-Request") != "true":
+            return _error(request, AuthorizationError, _NOT_HTMX)
+        user_id = get_current_user_id()
+        if not user_id:
+            return _error(request, AuthenticationError, _NO_SESSION)
+        try:
+            mode = parse_enum(KeepPartMode, keep_mode, field="keep_mode")
+            if mode is None:
+                raise ValidationError("Say how much stays on the plate.")
+            keep = parse_keep_part(mode, plate_percent, cooked_total, plated_grams)
+            storage = parse_enum(StorageLocation, location, field="location")
+            if storage is None:
+                raise ValidationError("Choose the fridge or the freezer.")
+            count = parse_optional_containers(containers)
+        except ValidationError as error:
+            return _error(request, ValidationError, str(error))
+        with get_connection() as connection:
+            try:
+                portion = get_portion_detail(connection, int(user_id), portion_id)
+                event_id = _portion_event_id(connection, int(user_id), portion)
+                with connection.transaction():
+                    keep_part_in_fridge(connection, int(user_id), portion, keep, storage, count)
+            except NotFoundError:
+                return _error(request, NotFoundError, _INGREDIENT_GONE)
+            except ConflictError:
+                return _error(request, ConflictError, _EVENT_NOT_PLANNED)
+            except ValidationError as error:
+                return _error(request, ValidationError, str(error))
+            response = _card_response(request, connection, int(user_id), event_id)
+        response.headers["HX-Trigger"] = json.dumps({"fridgeStored": {"location": storage.value}})
+        return response
 
     @rt("/cart/portion/{portion_id}/move")
     def post(request: Request, portion_id: int, target_plate_id: str = ""):
@@ -1134,23 +1289,23 @@ def setup_cart_routes(rt):
 
 
     @rt("/cart/event/{event_id}/confirm")
-    def post(
-        request: Request,
-        event_id: int,
-        ingested_value: str = "",
-        ingested_unit: str = AmountInputUnit.GRAMS.value,
-    ):
+    async def post(request: Request, event_id: int):
         """
-        Confirm the event (planned -> consumed). ingested_value/ingested_unit
-        represent how much of the served plate was actually eaten:
-        - empty -> 100% is assumed (the whole plate).
-        - ingested_unit == "%" -> fraction = ingested_value / 100.
-        - ingested_unit == "g" -> fraction = ingested_value / total_amount
-          (live sum of amount, computed in this same request).
-        There are no other units: any other value is a 422, never grams by
-        default (finding 47).
-        The fraction must end up in (0, 1] (decision 2026-09-22); out of range is a 422.
-        See measurement_conventions.md §4.4/§6.9.1 (decision 2026-09-10).
+        Confirm the event (planned -> consumed), measurement_conventions.md §4.4/§6.9.1.
+
+        The form says how much of each plate was eaten (decision 2026-11-07): the
+        `plate_id` list, `ingested_value_<plate_id>` and `ingested_unit_<plate_id>`. An empty value is the
+        whole plate; `%` is a percentage and `g` a mass against the plate's live
+        total. There are no other units: any other value is a 422, never grams by
+        default (finding 47). The fraction must end up in (0, 1] (decision
+        2026-09-22); out of range is a 422.
+
+        If a plate was not eaten whole and the form does not say
+        `leftovers_reviewed=true`, nothing is written: the answer is the leftovers
+        pop-up, retargeted to its body (frontend_conventions.md §7.14), whose own
+        confirm comes back here with the aligned `leftover_*` lists. A validation
+        error of those is a message inside the pop-up (200, §9.5). On success the
+        card goes away and `mealConfirmed` closes the pop-up.
         """
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
@@ -1160,23 +1315,16 @@ def setup_cart_routes(rt):
 
         # 1) Validation of the HTTP payload that does not depend on the database
         # state (§7.1): it happens before opening anything.
+        form = await request.form()
         try:
-            unit = _parse_ingested_unit(ingested_unit)
+            eaten = _parse_eaten(form)
+            reviewed = _parse_strict_bool(str(form.get("leftovers_reviewed") or ""))
         except ValidationError:
-            return _error(request, ValidationError, "The unit of the amount eaten is not valid.")
-        raw_value = (ingested_value or "").strip()
-        value = None
-        if raw_value != "":
-            try:
-                value = _to_float(raw_value)
-            except (TypeError, ValueError):
-                # Non-numeric: validation_error → 422 (finding 33: same
-                # behaviour here as in the rest of the route).
-                return _error(request, ValidationError, "The amount eaten is not a valid number.")
-            # NaN/Infinity must not be stored: explicit rejection (finding 32),
-            # instead of relying only on the fraction comparison to discard them.
-            if not math.isfinite(value) or value < 0:
-                return _error(request, ValidationError, "The amount eaten is not a valid number.")
+            return _error(request, ValidationError, "The amount eaten is not valid.")
+        try:
+            plans = _parse_leftover_plans(form)
+        except ValidationError as error:
+            return _leftovers_form_error(str(error))
 
         with get_connection() as connection:
             # 2) Authorize before reading anything from the event (§5.3; closes finding 19).
@@ -1186,6 +1334,14 @@ def setup_cart_routes(rt):
                 return _error(request, NotFoundError, _EVENT_GONE)
             except ConflictError:
                 return _error(request, ConflictError, "That meal has already been confirmed.")
+
+            if not reviewed:
+                try:
+                    pending = plates_with_leftovers(connection, int(user_id), event_id, eaten)
+                except ValidationError:
+                    return _error(request, ValidationError, "The amount eaten is not valid.")
+                if pending:
+                    return _leftovers_response(connection, int(user_id), event_id, eaten, pending)
 
             try:
                 # 3) Everything that depends on the database state happens
@@ -1197,22 +1353,18 @@ def setup_cart_routes(rt):
                 with connection.transaction():
                     # Shared confirm path, also used by the rescue pop-up
                     # (services/intake_event.py, frontend_conventions.md §9.6).
-                    confirm_planned_event(
-                        connection,
-                        int(user_id),
-                        event_id,
-                        ingested_value=value,
-                        ingested_unit=unit,
-                    )
+                    confirm_planned_event(connection, int(user_id), event_id, eaten=eaten, leftovers=plans)
             except NotFoundError:
                 return _error(request, NotFoundError, _EVENT_GONE)
             except ConflictError as error:
                 if str(error) == "intake_event_without_portions":
-                    return _error(request, 
+                    return _error(request,
                         ConflictError,
                         "A meal without ingredients cannot be confirmed.",
                     )
                 return _error(request, ConflictError, "That meal has already been confirmed.")
             except ValidationError:
                 return _error(request, ValidationError, "The amount eaten is not valid.")
-            return _removal_response(connection, int(user_id))
+            response = _removal_response(connection, int(user_id))
+        response.headers["HX-Trigger"] = json.dumps({"mealConfirmed": {"event_id": event_id}})
+        return response

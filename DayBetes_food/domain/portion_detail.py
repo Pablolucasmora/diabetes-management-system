@@ -142,6 +142,7 @@ class PortionDetailRead:
     strictly_weighed: bool | None   # None = no data (decision 2026-09-18)
     is_cooked_weight: bool
     offset_minutes: int | None
+    source_fridge_id: int | None   # the container it was taken from (measurement §4.8.4)
     created_at: datetime
     updated_at: datetime
     source: PortionSourceRead
@@ -162,6 +163,7 @@ class PortionDetailCreate:
     strictly_weighed: bool | None = None
     is_cooked_weight: bool = False
     offset_minutes: int | None = None
+    source_fridge_id: int | None = None
 
 
 @dataclass(frozen=True)

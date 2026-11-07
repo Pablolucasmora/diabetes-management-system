@@ -16,6 +16,7 @@ from DayBetes_food.components.cart.cart_shared import (
     portion_name,
     unit_amount,
 )
+from DayBetes_food.components.food.food_shared import STORAGE_LABELS
 from DayBetes_food.components.injection_zone import (
     BASE_INJECTION_ZONE_IMAGE,
     INJECTION_ZONE_IMAGE_BY_ZONE,
@@ -29,8 +30,10 @@ from DayBetes_food.domain.constants import (
     CookingMethod,
     FoodPhysicalState,
     InjectionZone,
+    KeepPartMode,
     MealType,
     PortionOrigin,
+    StorageLocation,
 )
 from DayBetes_food.domain.recipe import RECIPE_NAME_MAX_LENGTH
 from DayBetes_food.domain.intake_event import (
@@ -788,6 +791,9 @@ def _preparation_summary(sample) -> str:
         parts.append("weighed cooked")
     if sample.offset_minutes:
         parts.append(f"{int(sample.offset_minutes):+d} min")
+    # Taken from a container: it goes back there if the row is deleted (measurement §4.8.6).
+    if sample.source_fridge_id is not None:
+        parts.append("from a container")
     return " · ".join(parts)
 
 
@@ -813,6 +819,98 @@ def _settings_group(title: str, *content):
         P(title, cls="web_section_label"),
         *content,
         cls="flex flex-col gap-2 pt-3 border-t border-line-soft",
+    )
+
+
+def PillRadio(name: str, value: str, label: str, checked: bool, *, compact: bool = False, **attrs):
+    """One option of a small set, as a pill; the checked one is ink. `compact` for
+    a pill that shares a row with a field. Also used by the leftovers pop-up."""
+    size = "px-2 py-1 text-xs" if compact else "px-3 py-1.5 text-sm"
+    return Label(
+        Input(type="radio", name=name, value=value, checked=checked, cls="peer sr-only", **attrs),
+        Span(
+            label,
+            cls=f"""
+                inline-flex {size} rounded-full border border-line cursor-pointer
+                bg-control text-stone-900 peer-checked:bg-ink peer-checked:text-white peer-checked:border-ink
+            """,
+        ),
+        cls="cursor-pointer",
+    )
+
+
+def _number_field(label: str, name: str, field_id: str, *, decimal: bool = True, placeholder: str = ""):
+    return Div(
+        Label(label, cls="text-xs text-gray-600", **{"for": field_id}),
+        Input(
+            type="text",
+            id=field_id,
+            name=name,
+            inputmode="decimal" if decimal else "numeric",
+            placeholder=placeholder,
+            cls=f"{_FIELD_CLS} w-full min-w-0",
+        ),
+        cls="flex flex-col gap-1 min-w-0",
+    )
+
+
+def ContainersField(name: str):
+    """How many equal containers: empty is one (measurement §4.8.5)."""
+    return Div(
+        Input(
+            type="text",
+            name=name,
+            inputmode="numeric",
+            placeholder="1",
+            aria_label="Containers",
+            cls=f"{_FIELD_CLS} w-14",
+        ),
+        Span("containers", cls="text-xs text-gray-600"),
+        cls="flex items-center gap-2",
+    )
+
+
+def _KeepPartForm(portion_id: int, card_target: str, modal_id: str):
+    """After cooking: what stays on the plate, in % or weighed, and where the rest
+    goes (frontend_conventions.md §7.15). The weighed fields show only with
+    `Weighed` checked, with CSS (`group-has`), without script."""
+    return Form(
+        Div(
+            PillRadio("keep_mode", KeepPartMode.PERCENT.value, "In %", True),
+            PillRadio("keep_mode", KeepPartMode.WEIGHED.value, "Weighed", False, data_keep_weighed="true"),
+            cls="flex items-center gap-2",
+        ),
+        Div(
+            _number_field("On the plate (%)", "plate_percent", f"keep_percent_{portion_id}", placeholder="50"),
+            cls="group-has-[[data-keep-weighed]:checked]/keep:hidden",
+        ),
+        Div(
+            _number_field("Cooked total (g)", "cooked_total", f"keep_total_{portion_id}"),
+            _number_field("On the plate (g)", "plated_grams", f"keep_plated_{portion_id}"),
+            cls="hidden grid-cols-2 gap-2 group-has-[[data-keep-weighed]:checked]/keep:grid",
+        ),
+        Div(
+            Div(
+                *[
+                    PillRadio("location", location.value, STORAGE_LABELS[location], location is StorageLocation.FRIDGE)
+                    for location in StorageLocation
+                ],
+                cls="flex items-center gap-2",
+            ),
+            ContainersField("containers"),
+            cls="flex items-center justify-between gap-2 flex-wrap",
+        ),
+        modal_confirm_button(
+            "Keep the rest",
+            cls="w-full py-2.5",
+            hx_post=f"/cart/portion/{portion_id}/fridge",
+            hx_include="closest form",
+            hx_target=card_target,
+            hx_swap="outerHTML",
+            onclick=close_modal_js(modal_id),
+        ),
+        onsubmit="return false;",
+        cls="group/keep flex flex-col gap-2",
     )
 
 
@@ -878,6 +976,23 @@ def IngredientSettingsModal(event, plate, sample, item_key, ingredient_name, pla
                 cls="flex items-center justify-between gap-2",
             ),
         ) if shows_cooked_weight else None,
+        # Folded: it is needed only after cooking, and open it fills the pop-up.
+        Details(
+            Summary(
+                P("Keep part in fridge", cls="web_section_label"),
+                Span("›", cls="text-lg leading-none text-gray-500 transition-transform group-open:rotate-90"),
+                cls="flex items-center justify-between gap-2 cursor-pointer list-none [&::-webkit-details-marker]:hidden",
+            ),
+            Div(
+                P(
+                    "Cooked more than you eat? Say what goes on the plate; the rest goes to a container.",
+                    cls="text-xs text-gray-600",
+                ),
+                _KeepPartForm(portion_id, card_target, modal_id),
+                cls="flex flex-col gap-2 pt-2",
+            ),
+            cls="group pt-3 border-t border-line-soft",
+        ),
         _settings_group(
             "Timing and plate",
             Div(
@@ -1056,46 +1171,55 @@ def NotesSection(event):
     )
 
 
-def ConfirmSection(event, portions):
-    ingested_value_id = f"ingested_value_{event.id}"
-    return Form(
-        # The unit this control emits comes from the central units enum, the
-        # same one the route validates: no loose literals are written here
-        # (§4.3 of code_conventions.md, §11 of measurement_conventions.md;
-        # finding 47 of audit/audit_intake_event.md).
+def eaten_draft_key(event_id: int) -> str:
+    """Key of the browser draft of the eaten fields of a meal (frontend §7.14). The
+    same prefix is in static/js/fridge.js, which clears it when the meal is confirmed."""
+    return f"cart_eaten_{event_id}"
+
+
+def _EatenRow(plate_id: int, label: str):
+    """How much of one plate was eaten: empty is all of it, in % by default
+    (measurement_conventions.md §4.4, decision 2026-11-07). The value and the unit
+    (a pair of radios) are named after the plate: a draft is kept by field name
+    (static/js/form_drafts.js), so each plate needs its own."""
+    value_id = f"ingested_value_{plate_id}"
+    return Div(
+        Input(type="hidden", name="plate_id", value=str(plate_id)),
+        Label(label, cls="text-xs text-gray-600 shrink-0 max-w-[40%] truncate", **{"for": value_id}),
         Input(
-            type="hidden",
-            name="ingested_unit",
-            value=AmountInputUnit.GRAMS.value,
-            id=f"ingested_unit_{event.id}",
+            type="text",
+            id=value_id,
+            inputmode="decimal",
+            name=f"ingested_value_{plate_id}",
+            aria_label=f"Eaten of {label}",
+            placeholder="All of it",
+            cls=f"{_FIELD_CLS} flex-1 min-w-0",
         ),
+        # The units come from the central enum the route validates: no loose
+        # literals here (§4.3 of code_conventions.md; finding 47).
         Div(
-            Label("Eaten", cls="text-xs text-gray-600 shrink-0", **{"for": ingested_value_id}),
-            Input(
-                type="text",
-                id=ingested_value_id,
-                inputmode="decimal",
-                name="ingested_value",
-                value=f"{float(event.ingested_amount or 0.0):.1f}" if event.ingested_amount is not None else "",
-                aria_label="Ingested amount",
-                placeholder="All of it",
-                cls=f"{_FIELD_CLS} flex-1 min-w-0",
-            ),
-            Button(
-                AmountInputUnit.GRAMS.value,
-                type="button",
-                onclick=(
-                    f"const hidden=document.getElementById('ingested_unit_{event.id}');"
-                    f"hidden.value = hidden.value === '{AmountInputUnit.GRAMS.value}'"
-                    f" ? '{AmountInputUnit.PERCENT.value}'"
-                    f" : '{AmountInputUnit.GRAMS.value}';"
-                    "this.innerText = hidden.value;"
-                ),
-                aria_label="Toggle ingested amount unit",
-                cls=f"{_SOFT_BUTTON_CLS} px-3 py-2 min-w-12",
-            ),
-            cls="flex items-center gap-2",
+            *[
+                PillRadio(
+                    f"ingested_unit_{plate_id}", unit.value, unit.value, unit is AmountInputUnit.PERCENT, compact=True
+                )
+                for unit in (AmountInputUnit.PERCENT, AmountInputUnit.GRAMS)
+            ],
+            role="radiogroup",
+            aria_label=f"Unit of what was eaten of {label}",
+            cls="flex items-center gap-1 shrink-0",
         ),
+        cls="flex items-center gap-2",
+    )
+
+
+def ConfirmSection(event, eaten_plates: list[tuple[int, str]]):
+    """What was eaten of each plate with ingredients, `(plate_id, shown name)`, and
+    the button. With one plate it reads just `Eaten`. A plate not eaten whole opens
+    the leftovers pop-up before confirming (frontend_conventions.md §7.14). What is
+    typed is a draft kept in this browser until the meal is confirmed."""
+    single = len(eaten_plates) == 1
+    return Form(
+        *[_EatenRow(plate_id, "Eaten" if single else f"Eaten · {label}") for plate_id, label in eaten_plates],
         Button(
             "Confirm meal",
             type="button",
@@ -1105,6 +1229,9 @@ def ConfirmSection(event, portions):
             hx_target=f"#cart_card_event_{event.id}",
             hx_swap="outerHTML",
         ),
+        data_draft_key=eaten_draft_key(event.id),
+        data_draft_done_event="mealConfirmed",
+        onsubmit="return false;",
         cls="flex flex-col gap-3",
     )
 
@@ -1316,7 +1443,9 @@ def CartCard(event, portions, plates=()):
         ),
         InjectionZoneModal(event),
         Div(
-            ConfirmSection(event, portions),
+            ConfirmSection(
+                event, [(plate.id, plate_labels[plate.id]) for plate in plates if portions_by_plate.get(plate.id)]
+            ),
             cls="pt-4 border-t border-line-soft",
         ),
         id=f"cart_card_event_{event.id}",

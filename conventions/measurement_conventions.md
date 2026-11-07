@@ -127,10 +127,10 @@ No almacenar “1 porción” como si fuera `1 g`. El valor persistido siempre d
 
 - `amount` (`portion_detail`): cantidad servida o puesta en el plato **mientras el evento está `planned`**. En el instante de `confirm` (transición `planned -> consumed`), se sobrescribe **una única vez** por la cantidad realmente consumida de ese ingrediente (ver fórmula abajo). Desde ese momento, para un evento `consumed`, `amount` deja de significar "lo servido" y pasa a significar "lo consumido". Las porciones de un evento confirmado siguen siendo editables (§6.9.3); lo que esa edición obliga a recalcular está descrito allí.
 - **cantidad cocinada**: no es una columna. Es un campo del formulario (`total_amount_g`) que solo existe en el instante de emplatar, para calcular el sobrante que se guarda en `fridge`. `portion_detail` nunca la persiste (decisión 2026-09-18).
-- `total_amount`: suma de `amount` de las porciones de un evento, calculada siempre en vivo (§4.1), nunca almacenada. Antes de confirmar es la cantidad servida total; en el instante de confirmar es el denominador usado para interpretar `ingested_value` cuando se introduce en gramos.
-- `ingested_amount` (`intake_event`): único campo persistido a nivel de evento con el total realmente consumido. Es un snapshot (§6.9) calculado en el propio `confirm` como `total_amount (en ese instante) * fracción`.
-- `fracción`: número en `(0, 1]` que representa la proporción del plato servido que se ha consumido. Se obtiene de los campos `ingested_value`/`ingested_unit` del formulario de confirmación: si `ingested_unit = "%"`, `fracción = ingested_value / 100`; si es gramos, `fracción = ingested_value_g / total_amount`. Si el usuario no rellena `ingested_value`, `fracción = 1.0` (se asume que se ha comido todo el plato). Un valor fuera de `(0, 1]` se rechaza como `validation_error` (`422`), no se recorta silenciosamente. **`0` no es un valor admisible** (decisión 2026-09-22): si no se ha comido nada del evento, el evento se borra, no se confirma.
-- cantidad sobrante por ingrediente: `amount_original - amount_final` (equivalente a `amount_original * (1 - fracción)`). Solo puede calcularse en el propio instante de `confirm`, antes de sobrescribir la fila, porque `amount_original` no se conserva después. Mientras no exista la funcionalidad de nevera (`fridge`, tabla sin implementar — `audit/deuda_pendiente.md`), este sobrante no se persiste en ningún sitio: se pierde igual que se perdía antes de esta decisión.
+- `total_amount`: suma de `amount` de las porciones de un evento, calculada siempre en vivo (§4.1), nunca almacenada. Antes de confirmar es la cantidad servida total. El total de una tanda es la misma suma sobre sus porciones; en el instante de confirmar es el denominador usado para interpretar `ingested_value` de esa tanda cuando se introduce en gramos.
+- `ingested_amount` (`intake_event`): único campo persistido a nivel de evento con el total realmente consumido. Es un snapshot (§6.9) calculado en el propio `confirm` como la suma, tanda a tanda, de `total de la tanda * fracción de la tanda`.
+- `fracción`: número en `(0, 1]` que representa la proporción **de una tanda** que se ha consumido (**por tanda** desde la decisión 2026-11-07: de una se puede dejar un 25 % y de otra comérsela entera). Se obtiene de los campos `ingested_value`/`ingested_unit` de esa tanda en el formulario de confirmación: si `ingested_unit = "%"`, `fracción = ingested_value / 100`; si es gramos, `fracción = ingested_value_g / total de la tanda`. Si el usuario no rellena `ingested_value`, `fracción = 1.0` (se asume que se ha comido toda la tanda). La interfaz ofrece % por defecto. Una tanda que el formulario no menciona se ha comido entera; una que no es de esa comida, o repetida, es `422`. Un valor fuera de `(0, 1]` se rechaza como `validation_error` (`422`), no se recorta silenciosamente. **`0` no es un valor admisible** (decisión 2026-09-22): si no se ha comido nada del evento, el evento se borra, no se confirma.
+- cantidad sobrante por ingrediente: `amount_original - amount_final` (equivalente a `amount_original * (1 - fracción de su tanda)`). Solo puede calcularse en el propio instante de `confirm`, antes de sobrescribir la fila, porque `amount_original` no se conserva después. Si el usuario lo pide en el pop-up de sobras, se guarda en tuppers nuevos en esa misma transacción (§4.8.5); si no, se pierde.
 
 Excepción documentada a la regla general de §1 ("el valor original introducido por el usuario no se sobreescribe cuando sea necesario conservarlo para trazabilidad"): esta sobreescritura de `amount` en `confirm` es la única excepción admitida, limitada a esta tabla y a esta transición de estado (decisión 2026-09-10). Ningún otro campo ni tabla puede apoyarse en este precedente sin una decisión propia.
 
@@ -139,8 +139,8 @@ Reglas:
 ```text
 0 < amount <= 100000        # cota de cordura superior, la misma de §6.9.2
 amount finito               # NaN e Infinity se rechazan con 422 y con CHECK
-0 < fracción <= 1
-ingested_amount = total_amount (en el instante de confirmar) * fracción
+0 < fracción de cada tanda <= 1
+ingested_amount = Σ (total de la tanda * fracción de la tanda), en el instante de confirmar
 ```
 
 La cota inferior es **`> 0`** (decisión 2026-09-22): una porción de cantidad `0` no describe
@@ -233,6 +233,15 @@ WHERE plate_id IS NOT NULL
 
 `amount` guarda lo que el usuario pesó (§5.2), y 100 g pesados en crudo y 100 g pesados en cocido son cantidades de alimento distintas: sumarlas en una fila con un único valor de la casilla convertiría mal una de las dos. Por eso la misma comida pesada en crudo y en cocido son dos filas aparte, y solo se suman cuando la casilla coincide.
 
+**`source_fridge_id` forma parte de la clave** (2026-11-07). El índice es `uq_portion_detail_plate_origin_preparation_source`:
+
+```text
+UNIQUE NULLS NOT DISTINCT (plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state, is_cooked_weight, source_fridge_id)
+WHERE plate_id IS NOT NULL
+```
+
+Lo sacado de un tupper vuelve a él si se borra la comida (§4.8.6), así que no se suma con el mismo alimento añadido de otra forma ni con lo sacado de otro tupper. Dos veces del mismo tupper en la misma tanda sí se suman. La clave de las tandas de receta (§4.7) no cambia: una receta no tiene porciones sacadas de un tupper.
+
 **Es un índice único parcial, no un constraint de tabla, y el `WHERE` no es opcional.** `plate_id` es nulo en las porciones con destino `recipe` y `fridge`, y con `NULLS NOT DISTINCT` esos nulos se consideran iguales entre sí: sin el filtro, el mismo alimento con la misma preparación en **dos recetas distintas** chocaría como si fuera un duplicado. La unicidad es dentro de la tanda y solo aplica a las porciones que tienen tanda.
 
 **La fusión es real en la base, no solo visual** (decisión 2026-09-19). Antes de esta regla, añadir dos veces el mismo alimento insertaba dos filas y `group_portions` las sumaba solo al pintar; la fusión física ocurría únicamente si el usuario editaba la cantidad desde el carrito. A partir de aquí, la inserción fusiona en la propia tabla, para que el análisis no tenga que deduplicar.
@@ -302,6 +311,75 @@ portion_detail
 - `strictly_weighed` e `is_cooked_weight` se copian de la porción de la receta (§6.11). No hay `strictly_weighed = TRUE` por defecto: venir de una receta no demuestra que hoy se haya pesado. `Weighed cooked` se ajusta en la receta y `Strictly weighted` en el carrito.
 - Sin evento elegido se crea uno, con el nombre de la receta y su tipo de comida o, si no tiene, el de la franja horaria (§7.14 de `code_conventions.md`).
 - El offset de cada tanda nueva es el automático (§4.5). Lo demás (offset, hora, inyección) se ajusta en el carrito, donde se pueden añadir más alimentos.
+
+### 4.8 Nevera y congelador (decisión 2026-11-07)
+
+Un tupper (`fridge`) guarda comida ya hecha en la nevera o en el congelador. Ciclo de vida y propiedad en `code_conventions.md` §11.2.6.
+
+#### 4.8.1 Modelo
+
+```text
+fridge
+  id
+  users_id        -> users  ON DELETE CASCADE, NOT NULL
+  name            VARCHAR(255)  -- NULL = nombre derivado de los ingredientes (4.6.3)
+  location        StorageLocation: 'fridge' | 'freezer'
+  stored_at       TIMESTAMPTZ   -- cuándo entró
+  expires_at      TIMESTAMPTZ   -- editable
+  content_weight  REAL NULL     -- peso real del contenido, en gramos (4.8.3)
+  closed_at       TIMESTAMPTZ NULL
+  closed_reason   FridgeCloseReason: 'emptied' | 'discarded', NULL si y solo si está abierto
+  created_at / updated_at
+
+fridge_move
+  id
+  fridge_id       -> fridge  ON DELETE CASCADE
+  from_location, to_location   StorageLocation, distintos
+  moved_at        TIMESTAMPTZ
+
+portion_detail
+  fridge_id          destino: la porción es contenido del tupper (sin tanda ni offset)
+  source_fridge_id   -> fridge  ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED
+                     (code_conventions.md §11.2.6), NULL salvo en porciones de un
+                     intake_event sacadas de un tupper
+```
+
+- `is_compound` y `total_tupper_weight` desaparecen: lo primero se deduce del número de porciones y lo segundo lo sustituye `content_weight`.
+- Las porciones de un tupper no entran en el índice de unicidad de §4.6.4 ni se fusionan, igual que hoy.
+- `StorageLocation` es una whitelist técnica de `domain/` (§4.6 de `code_conventions.md`). No es `ConservationMethod`: esta describe una porción y aquella un tupper.
+
+#### 4.8.2 Caducidad
+
+`expires_at` se calcula al guardar y al cambiar de sitio, sumando al momento del cambio la duración de su nuevo sitio: **10 días en la nevera y 90 en el congelador**, con margen a propósito. Las dos duraciones son constantes de `domain/` declaradas una vez. El usuario puede cambiar la fecha a mano: elige un día y el tupper vale hasta el final de ese día en hora local, que se guarda en UTC (§9). No puede ser anterior al día en que entró (`ck_fridge_expires_after_stored`). Caducar no tiene efecto en los datos: solo cambia cómo se pinta (`frontend_conventions.md` §9.8).
+
+#### 4.8.3 Cantidades
+
+- Las porciones del tupper guardan `amount` con el mismo significado que en una receta: la cantidad del ingrediente tal como se registró, cruda o cocida según `is_cooked_weight` (§5.2). Por eso su suma no es el peso real del tupper.
+- `content_weight` es el **peso real del contenido**, pesado por el usuario. Es opcional: se puede rellenar al guardar o después. Nunca se deduce de las porciones.
+- **Sacar de un tupper** se expresa con una fracción en `(0, 1]`, **en % y con 100 % por defecto**. En gramos solo se admite si el tupper tiene `content_weight`: `fracción = gramos / content_weight`. Sin él, el selector de gramos no se ofrece y el servidor rechaza los gramos con `422`.
+- Las porciones creadas en la comida son las del tupper multiplicadas por la fracción y conservan `is_cooked_weight`, `strictly_weighed` y la preparación. Se descuenta **al añadirlo a la comida** (§4.8.6), en la misma transacción: las del tupper se reducen por `1 - fracción` y `content_weight`, si existe, en la misma proporción.
+- Con fracción `1` el tupper se cierra como vaciado (`closed_reason = 'emptied'`) y **conserva su contenido y su peso tal como estaban**, para poder volver (§4.8.6). Ese contenido no se lista.
+
+#### 4.8.4 Conservación de las porciones sacadas
+
+Cada porción creada lleva `source_fridge_id` y una `conservation` (`fridge` o `freezer`) copiada del tupper: **el sitio donde ha pasado más tiempo** desde `stored_at` hasta que se saca, contado con `fridge_move`. Si empatan, `freezer`. Así unas lentejas que pasaron meses congeladas y dos días descongelándose cuentan como congeladas. La regla se puede revisar; el historial completo queda en `fridge_move` para el análisis.
+
+#### 4.8.5 Cómo entra un tupper
+
+- **A mano**, desde la ficha de un alimento o de un plato, con `Save to fridge` o `Save to freezer`, o desde el pop-up de acciones de su fila (`frontend_conventions.md` §9.3.1, §9.4). Crea un tupper nuevo con la cantidad indicada.
+- **Después de cocinar, desde el carrito**, para lo que se cocina de golpe y se reparte ya cocinado (decisión 2026-11-07, `frontend_conventions.md` §7.15): de un ingrediente de una comida `planned` se dice qué parte se queda en el plato, en % o pesando el total cocinado y lo emplatado (`fracción = emplatado / total`). La porción se queda con `amount * fracción` y el resto, `amount * (1 - fracción)`, va a uno o más tuppers iguales, con su preparación y pesada. Pesado, cada tupper recibe además su parte del peso real (`total - emplatado`). Se hace en una transacción, y borrar después la comida no lo deshace.
+- **Al emplatar** desde la ficha de un alimento: si la cantidad total cocinada es mayor que la puesta en el plato (más allá del redondeo de la pantalla), la diferencia se guarda **en ese momento** como tupper nuevo de ese alimento **en la nevera**, con su misma preparación y pesada, en la misma transacción que la porción del plato. Se crea aunque luego se borre la comida, porque el tupper existe igual.
+- **Al confirmar una comida** en la que alguna tanda no se comió entera (§6.9.1): antes de confirmar aparece el pop-up de sobras (`frontend_conventions.md` §7.14). Por cada una de esas tandas, el usuario elige dónde guardarla (nevera por defecto, congelador o no guardarla), en cuántos tuppers iguales (de 1 a 10) y con qué nombre (vacío, el derivado). Cada tupper recibe `amount * (1 - fracción) / tuppers` de cada ingrediente, con su preparación y pesada, sin `conservation`. Se confirma y se guarda en la misma transacción. Lo sacado de un tupper que sobre va a uno nuevo, no vuelve al suyo.
+- **Desde una receta**, en su paso previo, con las raciones y la preparación de ese formulario: un tupper con el nombre de la receta y sus tandas unidas, sumando el mismo ingrediente.
+
+#### 4.8.6 Sacar y devolver (decisión 2026-11-07)
+
+- **Lo sacado se descuenta al añadirlo a una comida `planned`**, como al sacarlo de la nevera de verdad.
+- **Si se borra esa comida o ese ingrediente antes de confirmar, vuelve al tupper**, para poder sacarlo otra vez. Vuelve lo que la comida tiene de ese tupper en ese momento, también si se cambió la cantidad en el carrito: cada ingrediente se suma al mismo del tupper (origen, preparación y pesada) o se añade.
+- **El peso real** vuelve con el mismo peso por gramo que tenía el contenido del tupper, que sacar en proporción no cambia. Sin peso real, sigue sin él.
+- **Un tupper vaciado se reabre** con lo devuelto: su contenido anterior, que solo servía para calcular ese peso por gramo, se sustituye. **Un tupper tirado** (`closed_reason = 'discarded'`) no recibe nada: lo devuelto se pierde con la comida.
+- **Una comida confirmada no devuelve nada**: lo sacado ya se comió, y archivarla no lo cambia.
+- Varios tuppers se bloquean siempre en el mismo orden (`code_conventions.md` §6.8).
 
 ## 5. Información nutricional
 
@@ -609,14 +687,14 @@ El único punto donde se persiste algo es la transición `planned -> consumed`, 
 
 1. Se leen las porciones actuales del evento (`portion_detail`, todavía sin tocar).
 2. `total_amount = SUM(amount)` de esas porciones, calculado en vivo (§4.4).
-3. `amount_confidence` (§6.3-§6.4) se calcula sobre esas porciones **antes** de escalarlas. Al ser una proporción (peso que cumple una condición / peso total), una escala uniforme de todas las porciones por el mismo factor no cambia el resultado, así que da igual calcularla antes o después del paso 5. `quality_confidence` y `*_coverage` no se guardan (§6.9.4).
-4. Se obtiene la `fracción` (`(0, 1]`) a partir de `ingested_value`/`ingested_unit`, según la fórmula de §4.4. Fuera de rango es `422`.
-5. `UPDATE portion_detail SET amount = amount * fracción WHERE intake_event_id = ...`: una sola sentencia SQL para todas las porciones del evento, no un recálculo recursivo en Python.
-6. `intake_event.ingested_amount = total_amount (paso 2) * fracción`, junto con `amount_confidence` (paso 3) y la transición de `state`.
+3. Se obtiene la `fracción` de cada tanda (`(0, 1]`) a partir de sus `ingested_value`/`ingested_unit`, según la fórmula de §4.4. Fuera de rango es `422`.
+4. `amount_confidence` (§6.3-§6.4) se calcula sobre las porciones **ya multiplicadas por la fracción de su tanda**, en memoria. Hasta el 2026-11-07 se calculaba antes de escalar, porque con una sola fracción daba igual; con una por tanda, escalar cambia la proporción. `quality_confidence` y `*_coverage` no se guardan (§6.9.4).
+5. Si una tanda no se comió entera y el usuario eligió guardar lo que quedó, se crean sus tuppers con `amount * (1 - fracción)` (§4.8.5). Después, `UPDATE portion_detail SET amount = amount * fracción WHERE plate_id = ...`: una sola sentencia SQL por cada tanda no comida entera, no un recálculo recursivo en Python.
+6. `intake_event.ingested_amount = Σ (total de la tanda * fracción de la tanda)`, junto con `amount_confidence` (paso 4) y la transición de `state`.
 
 No hay ninguna otra columna de cantidad que tocar: desde la decisión 2026-09-18 `portion_detail` solo tiene `amount`. El mecanismo de guardar en la nevera la diferencia entre lo cocinado y lo servido sigue ocurriendo antes, en el momento de emplatar, y no lee ni escribe ninguna columna de esta tabla: la cantidad cocinada solo existe como campo del formulario (§4.4).
 
-Pendiente, fuera de alcance de esta decisión (ver `audit/deuda_pendiente.md`): cuando exista la tabla `fridge` como funcionalidad real, el sobrante por ingrediente (`amount_original - amount_final`, calculable solo en el paso 5, antes de sobrescribir) se escribirá en la misma transacción del `confirm`, condicionado a una confirmación explícita del usuario (popup, solo si `fracción < 1`, con un número de días de conservación configurable, por defecto 7).
+El sobrante por ingrediente (`amount_original - amount_final`, calculable solo antes del paso 5) se escribe en la misma transacción del `confirm`, si el usuario lo pide en el pop-up de sobras, que solo aparece cuando alguna tanda tiene `fracción < 1` (decisión 2026-11-07, que sustituye a la nota pendiente de la decisión 2026-09-10; la caducidad es la de §4.8.2).
 
 ### 6.9.2 Límite de masa de `intake_event.ingested_amount` (decisión 2026-09-10)
 

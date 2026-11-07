@@ -14,10 +14,12 @@ measured against the same `meal_time` (§4.6).
 from dataclasses import dataclass
 from datetime import datetime
 
+from DayBetes_food.domain.constants import AmountInputUnit
 from DayBetes_food.domain.portion_detail import (
     PORTION_DETAIL_OFFSET_MAX_MINUTES,
     PORTION_DETAIL_OFFSET_MIN_MINUTES,
 )
+from DayBetes_food.errors import ValidationError
 
 # Maximum length of intake_plate.name, equal to the column's VARCHAR(255)
 # (database/schema.py). §7.3 requires declaring the maximum length per field
@@ -109,3 +111,29 @@ def derive_plate_name(ingredient_names: list[str]) -> str:
     if not first_words:
         return INTAKE_PLATE_EMPTY_NAME
     return ", ".join(first_words)
+
+
+@dataclass(frozen=True)
+class PlateEaten:
+    """How much of a plate was eaten, as typed at confirm (measurement §4.4). `value`
+    None = all of it; otherwise a finite number >= 0 in `unit` (% or grams)."""
+
+    plate_id: int
+    value: float | None
+    unit: AmountInputUnit
+
+
+def eaten_fraction(eaten: PlateEaten | None, plate_total: float) -> float:
+    """Fraction of a plate that was eaten, in (0, 1] (decision 2026-09-22). Grams
+    are against the plate's live total; no entry means all of it (§4.4)."""
+    if eaten is None or eaten.value is None:
+        return 1.0
+    if eaten.unit is AmountInputUnit.PERCENT:
+        fraction = eaten.value / 100.0
+    else:
+        if plate_total <= 0:
+            raise ValidationError("total_amount_not_positive")
+        fraction = eaten.value / plate_total
+    if not (0.0 < fraction <= 1.0):
+        raise ValidationError("fraction_out_of_range")
+    return fraction

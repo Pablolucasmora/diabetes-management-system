@@ -1,10 +1,14 @@
-"""The step before adding a recipe to a meal (frontend_conventions.md §9.7)."""
+"""The step before adding a recipe to a meal, or saving it to the fridge
+(frontend_conventions.md §9.7)."""
+
+import json
 
 from fasthtml.common import *
 
+from DayBetes_food.components.food.food_shared import STORAGE_LABELS
 from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.components.modal import ModalLayer, close_modal_js
-from DayBetes_food.domain.constants import ConservationMethod, CookingMethod, FoodPhysicalState
+from DayBetes_food.domain.constants import ConservationMethod, CookingMethod, FoodPhysicalState, StorageLocation
 from DayBetes_food.domain.intake_plate import derive_plate_name
 
 RECIPE_ADD_MODAL_ID = "recipe_add_modal"
@@ -111,6 +115,26 @@ def RecipeAddForm(recipe, groups: list[tuple], intake_event_id: str, plate_id: s
                 type="submit",
                 cls="web_button px-4 py-2 text-sm rounded-xl bg-black text-white border-black",
             ),
+            cls="grid grid-cols-2 gap-2",
+        ),
+        # Or the same servings into a new container (measurement §4.8.5).
+        Div(
+            *[
+                Button(
+                    f"Save to {STORAGE_LABELS[location].lower()}",
+                    type="button",
+                    cls="web_button px-4 py-2 text-sm rounded-xl",
+                    hx_post=f"/food/fridge/store_recipe/{recipe.id}",
+                    hx_vals=json.dumps({"location": location.value}),
+                    hx_include="closest form",
+                    hx_target="#recipe_add_error",
+                    hx_swap="innerHTML",
+                    hx_push_url="false",
+                    data_skip_page_loading="true",
+                    **{"hx-disabled-elt": "this"},
+                )
+                for location in StorageLocation
+            ],
             cls="grid grid-cols-2 gap-2",
         ),
         hx_post=f"/add_recipe/{recipe.id}",

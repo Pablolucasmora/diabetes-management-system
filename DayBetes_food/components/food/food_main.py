@@ -55,7 +55,8 @@ def plate_selector_options(connection, user_id: int, event_id: int):
     return options, default_plate_id
 
 
-def food_main(connection):
+def food_main(connection, selected_filter: str = "all"):
+    """The Food page. `selected_filter` is the pill it opens on (frontend §9.3)."""
     user_id = get_current_user_id()
     events = list_planned_intake_events(connection, int(user_id)) if user_id else []
 
@@ -81,7 +82,7 @@ def food_main(connection):
         ),
         QuickCreateButtons(),
         SearchInput(),
-        Filters(),
+        Filters(selected_filter),
         MealSelector(
             events,
             selected_id=selected_event_id,
@@ -101,7 +102,7 @@ def food_main(connection):
         Div(
             "Loading...",
             id="food-list",
-            hx_get="/food/list?filter=all&search_mode=recommended&page=1",
+            hx_get=f"/food/list?filter={selected_filter}&search_mode=recommended&page=1",
             hx_trigger="load",
             hx_swap="innerHTML",
             data_skip_page_loading="true",

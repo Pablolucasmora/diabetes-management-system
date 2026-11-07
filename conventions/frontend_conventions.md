@@ -227,6 +227,29 @@ Decisión 2026-11-05; sustituye a la versión provisional del 2026-10-18.
 
 **Después de guardar** el usuario se queda en el carrito: se cierra el pop-up y sale el aviso `Recipe saved`.
 
+### 7.14 Confirmar: lo comido por tanda y las sobras (decisión 2026-11-07)
+
+- Encima de `Confirm meal` hay un campo `Eaten` **por cada tanda con ingredientes**, con el nombre de la tanda si hay más de una. Vacío significa que se comió entera (`All of it`). Se escribe en **% por defecto** y dos pastillas eligen `%` o `g`; los gramos se comparan con el total de esa tanda (`measurement_conventions.md` §4.4).
+- **Lo escrito en `Eaten` es un borrador**: se guarda en el navegador y vuelve tras recargar, hasta que la comida se confirma (`static/js/form_drafts.js`). Como el borrador se guarda por nombre de campo, el valor y la unidad llevan el id de su tanda (`ingested_value_<tanda>`, `ingested_unit_<tanda>`). Confirmado desde el pop-up de sobras, `mealConfirmed` lleva el id de la comida y `static/js/fridge.js` borra ese borrador.
+- Si todas las tandas se comieron enteras, `Confirm meal` confirma directamente.
+- Si alguna no, aparece antes el **pop-up de sobras** (`cart_leftovers_modal`), sin haber escrito nada. Por cada una de esas tandas muestra lo que queda de cada ingrediente y pide, con los mismos controles que `Keep part in fridge` (§7.15): dónde guardarlo (pastillas `Fridge`, por defecto, `Freezer` o `Don't keep`, que llevan el id de la tanda en el nombre), en cuántos tuppers iguales (de 1 a 10; vacío es uno) y con qué nombre (vacío, el derivado de sus ingredientes). Su `Confirm meal` confirma la comida y guarda los tuppers juntos (`measurement_conventions.md` §4.8.5); `Cancel` lo cierra sin confirmar.
+- Un error del plan de sobras sale dentro del pop-up; uno de lo comido, en el aviso global (`error_conventions.md` §7.1), y el pop-up sigue abierto.
+- **Borradores en general** (`static/js/form_drafts.js`): un formulario con `data-draft-key` guarda lo escrito en el navegador y lo recupera en los campos vacíos. Se descarta al guardar: con un `HX-Redirect` o, en un formulario que se queda en la página, con el evento que nombra `data-draft-done-event`. El token CSRF nunca va en un borrador.
+
+### 7.15 Guardar parte de un ingrediente en la nevera (decisión 2026-11-07)
+
+Para lo que se cocina de golpe (pasta, quinoa): se añade al carrito con lo pesado antes de cocinar y, ya cocinado, se reparte entre el plato y la nevera.
+
+- En el pop-up `Adjust` de cada ingrediente de una comida planificada, la sección `Keep part in fridge`. Lo que se queda en el plato se dice de una de dos formas:
+  - `In %`: el porcentaje del ingrediente que va al plato.
+  - `Weighed`: el total cocinado (la olla) y lo que se pone en el plato, los dos pesados. La fracción es plato / total, exacta sin factores de cocción.
+- La sección está **plegada**: se abre con su título, porque solo hace falta después de cocinar y abierta ocupa el pop-up.
+- Debajo, dónde va el resto (`Fridge` por defecto o `Freezer`) y en cuántos tuppers iguales (vacío es uno). `Keep the rest` lo hace: la fila se queda con su parte, el resto va a tuppers nuevos (`measurement_conventions.md` §4.8.5), la tarjeta se repinta y aparece el aviso `Saved to the fridge`. Con `Weighed`, cada tupper lleva su parte del peso real.
+- Los campos de `Weighed` solo se ven con esa opción marcada, con CSS (`group-has`), sin script.
+- No se guarda como borrador: el reparto se decide en el momento (decisión del usuario, 2026-11-07).
+- Es una acción en línea del carrito: un error sale en el aviso global (`code_conventions.md` §9.5).
+- Borrar después la comida no deshace el reparto: lo guardado ya está en la nevera.
+
 ## 8. Superficies, contraste y colores
 
 Decisión 2026-10-10 (rediseño de la interfaz, rama `feat/ui-refresh`). La web conserva su identidad: tonos cálidos, esquinas redondeadas, el logo y la isla de navegación inferior. Las superficies son de **cristal líquido** (vidrio esmerilado translúcido, como en iOS) sobre un fondo beige muy claro con manchas de color suaves. Todo se define una sola vez en `static/css/input.css`.
@@ -282,13 +305,14 @@ Se construyen con los bloques de `components/food/foods.py`. No se monta un form
 
 ### 9.2 Inicio
 
-Arriba, el saludo con el nombre de usuario (`Hi <usuario>`). Debajo, en este orden: la comida en curso (*Current meal*, que abre el carrito), las formas de añadir comida, la inyección y el rescate (`Log rescue`, §9.6).
+Arriba, el saludo con el nombre de usuario (`Hi <usuario>`). Debajo, en este orden: la comida en curso (*Current meal*, que abre el carrito), las formas de añadir comida, la inyección y el rescate (`Log rescue`, §9.6). Entre las formas de añadir comida está `From fridge`, que abre Food en la píldora `Fridge` (§9.8), con la comida en curso elegida en *Add to* como siempre.
 
 ### 9.3 Food
 
 - La cabecera es fija arriba (`sticky`) y usa `web_glass_strong` (§8). Lleva el botón del rayo, que abre el pop-up de rescate (§9.6), el menú "+", el buscador, los filtros y el selector de comida (*Add to*). Mientras el menú "+" está abierto, la capa `#food_menu_scrim` desenfoca el resto de la página (§8).
 - **Filtros** (decisión 2026-11-06). Se ajustan con un botón negro dentro del buscador, a la derecha, que abre un pop-up (`ModalLayer`, §8, id `food_filters_modal`) con `Cancel` y `Confirm`, y `Reset` arriba a la derecha, que quita todos los filtros. Lo elegido es un borrador, también el `Reset`: solo `Confirm` lo aplica y refresca la lista; `Cancel` o pulsar fuera lo descartan. El botón solo aparece en las listas que tienen algo que filtrar y lleva una marca mientras hay un filtro activo, porque desde fuera del pop-up no se vería. Por ahora, solo `Recipes`, con el tipo de comida: una selección múltiple de píldoras, que busca entre todos los elegidos (`code_conventions.md` §11.7). Un filtro nuevo es un control en el pop-up y un campo oculto que incluyen las peticiones de la lista.
 - El `+` de una receta abre el paso previo (§9.7).
+- **Cinco píldoras**: `Search`, `Food`, `Recipes`, `Favs` y `Fridge` (decisión 2026-11-07: la nevera tiene píldora propia para que se llegue a ella de un toque, §9.8). En móvil van más juntas (`gap-1.5`) para que quepan las cinco. `/food?filter=fridge` abre la página en `Fridge`; otro valor es un `422`.
 - Cada alimento de la lista es una tarjeta con el nombre, la marca u origen debajo y los carbohidratos por 100 g. Los propios llevan la etiqueta `Mine` y los archivados, `Archived`. Las listas van agrupadas bajo etiquetas de sección (`web_section_label`).
 - Sin búsqueda, la lista muestra 15 resultados y carga la página siguiente al llegar al final. Con búsqueda muestra 8 y las páginas siguientes, también de 8, se piden con un botón `Load more`, pequeño y centrado, porque debajo está la sección de Open Food Facts (`measurement_conventions.md` §12.2) y la carga automática no dejaría llegar a ella. Debajo van `From Ciqual` y `From Open Food Facts`, con 8 resultados cada una y su propio `Load more` (`/food/list/external`).
 
@@ -302,6 +326,7 @@ Decisión 2026-10-27, acordada con el usuario como prueba de diseño.
   - `Edit food` / `Edit manual` / `Edit recipe`: solo si es suyo y está activo. Abre la página de editar.
   - `Make a copy`: siempre, también en lo propio (decisión 2026-10-27, `code_conventions.md` §11.2.2). Pide la misma confirmación que el detalle, usa `POST /food/copy/...` y abre la edición de la copia.
   - `Add to recipe`: solo para alimentos y platos (`catalog`, `manual_intake`), porque una receta no puede ser ingrediente. Lista las recetas propias del usuario. Al elegir una, se añade con la cantidad inicial de siempre (una ración, o 100 g si no tiene) usando la ruta de añadir ingrediente que ya existe, que suma la cantidad solo si el alimento ya estaba en esa tanda con la misma preparación (`measurement_conventions.md` §4.7). Si la receta tiene dos o más tandas, una vista más pregunta a cuál (decisión 2026-11-05). El pop-up se cierra y aparece el aviso `Added to <receta>` (`dbShowAppNotice`).
+  - `Save to fridge`: solo para alimentos y platos. Una vista con la cantidad, que empieza en una ración o en 100 g si no tiene, y dos botones, `To fridge` y `To freezer`, que crean un tupper nuevo (`measurement_conventions.md` §4.8.5). El pop-up se cierra y aparece el aviso `Saved to the fridge` o `Saved to the freezer` (decisión 2026-11-07).
 
 **Respuestas HTMX**
 
@@ -335,6 +360,8 @@ Errores, por el canal común: sin sesión, `401`; tipo desconocido, `favorite` a
 
 
 De arriba abajo: el nombre y sus datos, *Add to*, la cantidad (con *Advanced* para la preparación), `Strictly weighted` (§7.1, `measurement_conventions.md` §6.11), *Macros Summary* y *Details*. Debajo, las acciones: `Edit` y `Log`; si el usuario no puede editarlo, `Make a copy` ocupa el sitio de `Edit`. Si puede editarlo, `Make a copy` va en su propia fila debajo, encima de `Publish` (decisión 2026-10-27). Copiar pide confirmación y abre la edición de la copia. Entra bloque a bloque (§10). En un alimento o plato propio y activo aparece además el botón `Rescue` (§9.6).
+
+En un alimento o un plato, debajo de `Edit` y `Log food`, dos botones visibles, `Save to fridge` y `Save to freezer` (decisión 2026-11-07, que sustituye a ofrecerlos dentro de *Add to*, donde no se encontraban): guardan la cantidad de arriba entera en un tupper nuevo, con su preparación y pesada y sin plato (`measurement_conventions.md` §4.8.5). La página no cambia y aparece el aviso `Saved to the fridge` o `Saved to the freezer`. Una receta se guarda desde su paso previo (§9.7). Al registrar con `Log food`, si la cantidad cocinada es mayor que la del plato, la línea `Will be saved in fridge` dice lo que se guarda en un tupper de la nevera, y se guarda de verdad.
 
 ### 9.5 Carrito
 
@@ -411,6 +438,7 @@ Decisión 2026-11-05. El modelo está en `measurement_conventions.md` §4.7 y el
 - Una línea por ingrediente, con su cantidad por ración. Se despliega para cambiar `cooking`, `final_state` y `conservation`, ya rellenos con lo de la receta. Con varias tandas, agrupadas y con un aviso de que entran como tandas nuevas.
 - `POST /add_recipe/{id}` recibe la comida, la tanda, las raciones y la preparación por ingrediente, nunca cantidades. Validación: `200` + fragmento en `#recipe_add_error`. Una comida o tanda que no existe, `404`; una comida ya confirmada o una receta sin ingredientes, `409`. Al terminar, el evento `recipeAdded` cierra el pop-up y muestra `Added to the meal`.
 - Repetirlo añade la receta otra vez: es otra ración, no un duplicado (§9.6 de `code_conventions.md`). El botón se deshabilita durante la petición.
+- Debajo, `Save to fridge` y `Save to freezer` guardan esas mismas raciones, con la preparación elegida, en un tupper nuevo con el nombre de la receta (decisión 2026-11-07, `measurement_conventions.md` §4.8.5). La comida y la tanda no se usan. El pop-up se cierra y aparece el aviso `Saved to the fridge` o `Saved to the freezer`.
 
 **Tandas en la ficha**
 
@@ -430,6 +458,18 @@ Decisión 2026-11-05. El modelo está en `measurement_conventions.md` §4.7 y el
 **Tipos de comida**: el formulario tiene el tipo principal (`Meal type`) y, en píldoras, los adicionales (`Also for`). El principal es el que toma una comida creada desde la receta; los adicionales solo sirven para encontrarla con el filtro (decisión 2026-11-06). Elegir adicionales sin principal da un error de validación.
 
 **Notas**: texto libre del usuario, con una caja de 8 filas que no selecciona el texto al tocarla y hasta `RECIPE_NOTES_MAX_LENGTH` caracteres. Un borrador se descarta al guardar con éxito, para que no vuelva a rellenar un campo vaciado a propósito (en los tres formularios de alimentos).
+
+### 9.8 Nevera (decisión 2026-11-07)
+
+Píldora `Fridge` de Food (§9.3). Modelo y cantidades en `measurement_conventions.md` §4.8.
+
+- **Arriba**, el selector de comida de la cabecera y, junto a él, el de tanda (§7.7): son el destino del `+` de cada tupper.
+- **Dos secciones**, `Fridge` y debajo `Freezer` (`web_section_label`), con todos los tuppers abiertos, sin paginar ni buscador: nunca habrá muchos por usuario, y lo escrito en el buscador de la cabecera no filtra esta pestaña. Dentro de cada sección, por `expires_at`, el que caduca antes primero. Una sección sin tuppers dice `Empty.`.
+- **Cada tupper es una tarjeta** con el nombre, su contenido con la cantidad guardada de cada ingrediente (para que se vea lo que queda tras sacar una parte), los días desde que entró y los que le quedan (`3 days in · 7 days left`) y el peso real, si se conoce. A la derecha, un botón que lo mueve al otro sitio, sin confirmación porque se deshace con el mismo botón, y el `+`, que abre el paso de sacar (abajo).
+- **Caducado**: lleva la etiqueta `Expired` y la línea de días en `danger`, no un borde rojo, porque la tarjeta es de cristal (§8). Sus botones pasan a ser `Discard` y `Eat`. `Eat` es el `+` con 100 %.
+- **Pulsación larga** (§9.3.1), en el mismo pop-up que las filas de alimentos: `Edit` y `Discard`. `Edit` es un formulario con el nombre, la fecha de caducidad y el peso real, que se guardan juntos (`code_conventions.md` §3.4). Un nombre vacío vuelve al derivado y un peso vacío, a sin pesar. Tirar pide confirmación, también desde el `Discard` de un caducado.
+- **Sacar.** Una vista del pop-up de acciones: la cantidad en % (100 % por defecto) y, solo si el tupper tiene peso real, gramos (`measurement_conventions.md` §4.8.3). `Add to meal` lo añade a la comida y tanda elegidas en la cabecera, el pop-up se cierra, la lista se repinta y aparece el aviso `Added to your meal`. Si luego se borra la comida o el ingrediente en el carrito, vuelve al tupper (§4.8.6).
+- **Vacío**: una línea que explica cómo se guarda un tupper (desde la página de un alimento o un plato).
 
 ## 10. Movimiento
 
