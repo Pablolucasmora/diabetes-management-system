@@ -15,6 +15,7 @@ from DayBetes_food.domain.constants import (
     CookingMethod,
     FoodPhysicalState,
     FridgeCloseReason,
+    KeepPartMode,
     PortionOrigin,
     StorageLocation,
 )
@@ -219,6 +220,7 @@ class FridgeStoreCommand:
     location: StorageLocation
     contents: tuple[FridgeContent, ...]
     name: str | None = None
+    content_weight: float | None = None
 
 
 # How many equal containers the leftovers of one plate can be split into at
@@ -235,6 +237,45 @@ class LeftoverPlan:
     location: StorageLocation | None
     containers: int = 1
     name: str | None = None
+
+
+@dataclass(frozen=True)
+class KeepPart:
+    """The part of an ingredient that stays on the plate, `fraction` in (0, 1), and
+    the real weight of the rest when it was weighed (measurement §4.8.5)."""
+
+    fraction: float
+    rest_weight: float | None
+
+
+_KEEP_PERCENT_RANGE = NumericRange(0, 100, minimum_exclusive=True)
+_WEIGHT_RANGE = NumericRange(0, MASS_SANITY_MAX_G, minimum_exclusive=True)
+
+
+def parse_keep_part(mode: KeepPartMode, plate_percent, cooked_total, plated_grams) -> KeepPart:
+    """What stays on the plate, in % or weighed (the cooked total and what was
+    plated, so the fraction is exact without cooking factors). Something has to go
+    to the fridge and something has to stay: 0 and 100 % are rejected."""
+    if mode is KeepPartMode.PERCENT:
+        percent = parse_number(plate_percent, "plate_percent", _KEEP_PERCENT_RANGE)
+        if percent is None or percent >= 100:
+            raise ValidationError("Keep on the plate more than 0 % and less than 100 %.", fields={"plate_percent": "invalid"})
+        return KeepPart(fraction=percent / 100.0, rest_weight=None)
+    try:
+        total = parse_number(cooked_total, "cooked_total", _WEIGHT_RANGE)
+        plated = parse_number(plated_grams, "plated_grams", _WEIGHT_RANGE)
+    except ValidationError as error:
+        raise ValidationError("The weights must be numbers greater than 0 g.", fields=error.fields) from error
+    if total is None or plated is None:
+        raise ValidationError("Weigh the cooked total and what goes on the plate.", fields={"cooked_total": "required"})
+    if plated >= total:
+        raise ValidationError("What goes on the plate must weigh less than the cooked total.", fields={"plated_grams": "invalid"})
+    return KeepPart(fraction=plated / total, rest_weight=total - plated)
+
+
+def parse_optional_containers(raw) -> int:
+    """Containers of a form whose field starts empty: empty is one (§4.8.5)."""
+    return 1 if not str(raw or "").strip() else parse_leftover_containers(raw)
 
 
 def parse_leftover_containers(raw) -> int:

@@ -1,3 +1,4 @@
+import json
 import re
 
 from fasthtml.common import *
@@ -58,6 +59,7 @@ from DayBetes_food.domain.constants import (
     FoodPhysicalState,
     InjectionZone,
     IntakeEventState,
+    KeepPartMode,
     MealType,
     PortionDestination,
     PortionOrigin,
@@ -78,7 +80,13 @@ from DayBetes_food.domain.intake_plate import (
     IntakePlateCreate,
     PlateEaten,
 )
-from DayBetes_food.domain.fridge import LeftoverPlan, parse_fridge_name, parse_leftover_containers
+from DayBetes_food.domain.fridge import (
+    LeftoverPlan,
+    parse_fridge_name,
+    parse_keep_part,
+    parse_leftover_containers,
+    parse_optional_containers,
+)
 from DayBetes_food.domain.portion_detail import PortionDetailUpdate, amount_to_grams
 from DayBetes_food.http_errors import app_error_response
 from DayBetes_food.services.intake_event import (
@@ -88,6 +96,7 @@ from DayBetes_food.services.intake_event import (
     delete_planned_portion,
 )
 from DayBetes_food.domain.recipe import parse_recipe_name
+from DayBetes_food.services.fridge import keep_part_in_fridge
 from DayBetes_food.services.recipe import save_event_as_recipe, save_plate_as_recipe
 from DayBetes_food.errors import (
     AuthenticationError,
@@ -853,6 +862,56 @@ def setup_cart_routes(rt):
             except ConflictError:
                 return _error(request, ConflictError, _EVENT_NOT_PLANNED)
             return _card_response(request, connection, int(user_id), event_id)
+
+    @rt("/cart/portion/{portion_id}/fridge")
+    def post(
+        request: Request,
+        portion_id: int,
+        keep_mode: str = "",
+        plate_percent: str = "",
+        cooked_total: str = "",
+        plated_grams: str = "",
+        location: str = "",
+        containers: str = "",
+    ):
+        """Keep part of a cooked ingredient on its plate and the rest in new containers
+        (measurement_conventions.md §4.8.5, frontend §7.15): what stays is given in %
+        or weighed (`cooked_total` and `plated_grams`). Planned meals only.
+
+        Inline action of the cart: it answers with the card and `fridgeStored`, and an
+        error keeps its semantic status (§9.5). Repeating it splits the rest again.
+        """
+        if request.headers.get("HX-Request") != "true":
+            return _error(request, AuthorizationError, _NOT_HTMX)
+        user_id = get_current_user_id()
+        if not user_id:
+            return _error(request, AuthenticationError, _NO_SESSION)
+        try:
+            mode = parse_enum(KeepPartMode, keep_mode, field="keep_mode")
+            if mode is None:
+                raise ValidationError("Say how much stays on the plate.")
+            keep = parse_keep_part(mode, plate_percent, cooked_total, plated_grams)
+            storage = parse_enum(StorageLocation, location, field="location")
+            if storage is None:
+                raise ValidationError("Choose the fridge or the freezer.")
+            count = parse_optional_containers(containers)
+        except ValidationError as error:
+            return _error(request, ValidationError, str(error))
+        with get_connection() as connection:
+            try:
+                portion = get_portion_detail(connection, int(user_id), portion_id)
+                event_id = _portion_event_id(connection, int(user_id), portion)
+                with connection.transaction():
+                    keep_part_in_fridge(connection, int(user_id), portion, keep, storage, count)
+            except NotFoundError:
+                return _error(request, NotFoundError, _INGREDIENT_GONE)
+            except ConflictError:
+                return _error(request, ConflictError, _EVENT_NOT_PLANNED)
+            except ValidationError as error:
+                return _error(request, ValidationError, str(error))
+            response = _card_response(request, connection, int(user_id), event_id)
+        response.headers["HX-Trigger"] = json.dumps({"fridgeStored": {"location": storage.value}})
+        return response
 
     @rt("/cart/portion/{portion_id}/move")
     def post(request: Request, portion_id: int, target_plate_id: str = ""):

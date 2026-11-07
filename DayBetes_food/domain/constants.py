@@ -207,6 +207,14 @@ class StorageLocation(str, Enum):
 
 
 @unique
+class KeepPartMode(str, Enum):
+    """How the part of an ingredient that stays on the plate is given, when the rest
+    goes to the fridge after cooking (measurement_conventions.md §4.8.5)."""
+    PERCENT = "percent"   # % of the ingredient that stays on the plate
+    WEIGHED = "weighed"   # the cooked total and what was plated, both weighed
+
+
+@unique
 class FridgeCloseReason(str, Enum):
     """Why a container left the fridge (code_conventions.md §11.2.6). An emptied one
     reopens if what was taken from it goes back; a discarded one never does."""

@@ -36,6 +36,7 @@ from DayBetes_food.domain.fridge import (
     FridgeRead,
     FridgeContent,
     FridgeStoreCommand,
+    KeepPart,
     LeftoverPlan,
     conservation_when_taken,
     merge_contents,
@@ -87,6 +88,7 @@ def create_fridge_container(connection, command: FridgeStoreCommand) -> int:
             stored_at=stored_at,
             expires_at=default_expires_at(command.location, stored_at),
             name=command.name,
+            content_weight=command.content_weight,
         ),
         commit=False,
     )
@@ -158,6 +160,45 @@ def store_recipe_in_fridge(
                 user_id=user_id, location=location, contents=merge_contents(contents), name=recipe.name
             ),
         )
+
+
+def keep_part_in_fridge(
+    connection,
+    user_id: int,
+    portion: PortionDetailRead,
+    keep: KeepPart,
+    location: StorageLocation,
+    containers: int,
+) -> None:
+    """After cooking, before eating: `keep.fraction` of an ingredient of a planned
+    meal stays on its plate and the rest goes into `containers` equal new containers
+    (measurement §4.8.5). With a weighed split each one gets its share of the real
+    weight. Deleting the meal later does not undo it: the food is in the fridge.
+    Runs inside the caller's transaction, which already checked the meal is planned.
+
+    Raises:
+        NotFoundError: the ingredient or a food is not visible anymore.
+        ValidationError: an amount leaves the limits.
+    """
+    share = (1.0 - keep.fraction) / containers
+    contents = (
+        FridgeContent(
+            origin=portion.origin,
+            origin_id=portion.origin_id,
+            amount=portion.amount * share,
+            cooking=portion.cooking,
+            final_state=portion.final_state,
+            strictly_weighed=portion.strictly_weighed,
+            is_cooked_weight=portion.is_cooked_weight,
+        ),
+    )
+    weight = keep.rest_weight / containers if keep.rest_weight is not None else None
+    for _ in range(containers):
+        create_fridge_container(
+            connection,
+            FridgeStoreCommand(user_id=user_id, location=location, contents=contents, content_weight=weight),
+        )
+    update_portion_amount(connection, user_id, portion.id, portion.amount * keep.fraction, commit=False)
 
 
 def store_plate_leftovers(

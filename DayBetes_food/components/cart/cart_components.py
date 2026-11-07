@@ -16,6 +16,7 @@ from DayBetes_food.components.cart.cart_shared import (
     portion_name,
     unit_amount,
 )
+from DayBetes_food.components.food.food_shared import STORAGE_LABELS
 from DayBetes_food.components.injection_zone import (
     BASE_INJECTION_ZONE_IMAGE,
     INJECTION_ZONE_IMAGE_BY_ZONE,
@@ -29,8 +30,10 @@ from DayBetes_food.domain.constants import (
     CookingMethod,
     FoodPhysicalState,
     InjectionZone,
+    KeepPartMode,
     MealType,
     PortionOrigin,
+    StorageLocation,
 )
 from DayBetes_food.domain.recipe import RECIPE_NAME_MAX_LENGTH
 from DayBetes_food.domain.intake_event import (
@@ -819,6 +822,95 @@ def _settings_group(title: str, *content):
     )
 
 
+def _pill_radio(name: str, value: str, label: str, checked: bool, **attrs):
+    """One option of a small set, as a pill; the checked one is ink."""
+    return Label(
+        Input(type="radio", name=name, value=value, checked=checked, cls="peer sr-only", **attrs),
+        Span(
+            label,
+            cls="""
+                inline-flex px-3 py-1.5 rounded-full border border-line text-sm cursor-pointer
+                bg-control text-stone-900 peer-checked:bg-ink peer-checked:text-white peer-checked:border-ink
+            """,
+        ),
+        cls="cursor-pointer",
+    )
+
+
+def _number_field(label: str, name: str, field_id: str, *, decimal: bool = True, placeholder: str = ""):
+    return Div(
+        Label(label, cls="text-xs text-gray-600", **{"for": field_id}),
+        Input(
+            type="text",
+            id=field_id,
+            name=name,
+            inputmode="decimal" if decimal else "numeric",
+            placeholder=placeholder,
+            cls=f"{_FIELD_CLS} w-full min-w-0",
+        ),
+        cls="flex flex-col gap-1 min-w-0",
+    )
+
+
+def _KeepPartForm(portion_id: int, card_target: str, modal_id: str):
+    """After cooking: what stays on the plate, in % or weighed, and where the rest
+    goes (frontend_conventions.md §7.15). What is typed is a draft kept in this
+    browser until it is saved (static/js/form_drafts.js). The weighed fields show
+    only with `Weighed` checked, with CSS (`group-has`), so a restored draft shows
+    the right ones too."""
+    return Form(
+        Div(
+            _pill_radio("keep_mode", KeepPartMode.PERCENT.value, "In %", True),
+            _pill_radio("keep_mode", KeepPartMode.WEIGHED.value, "Weighed", False, data_keep_weighed="true"),
+            cls="flex items-center gap-2",
+        ),
+        Div(
+            _number_field("On the plate (%)", "plate_percent", f"keep_percent_{portion_id}", placeholder="50"),
+            cls="group-has-[[data-keep-weighed]:checked]/keep:hidden",
+        ),
+        Div(
+            _number_field("Cooked total (g)", "cooked_total", f"keep_total_{portion_id}"),
+            _number_field("On the plate (g)", "plated_grams", f"keep_plated_{portion_id}"),
+            cls="hidden grid-cols-2 gap-2 group-has-[[data-keep-weighed]:checked]/keep:grid",
+        ),
+        Div(
+            Div(
+                *[
+                    _pill_radio("location", location.value, STORAGE_LABELS[location], location is StorageLocation.FRIDGE)
+                    for location in StorageLocation
+                ],
+                cls="flex items-center gap-2",
+            ),
+            Div(
+                Input(
+                    type="text",
+                    name="containers",
+                    inputmode="numeric",
+                    placeholder="1",
+                    aria_label="Containers",
+                    cls=f"{_FIELD_CLS} w-14",
+                ),
+                Span("containers", cls="text-xs text-gray-600"),
+                cls="flex items-center gap-2",
+            ),
+            cls="flex items-center justify-between gap-2 flex-wrap",
+        ),
+        modal_confirm_button(
+            "Keep the rest",
+            cls="w-full py-2.5",
+            hx_post=f"/cart/portion/{portion_id}/fridge",
+            hx_include="closest form",
+            hx_target=card_target,
+            hx_swap="outerHTML",
+            onclick=close_modal_js(modal_id),
+        ),
+        data_draft_key=f"cart_keep_part_{portion_id}",
+        data_draft_done_event="fridgeStored",
+        onsubmit="return false;",
+        cls="group/keep flex flex-col gap-2",
+    )
+
+
 def IngredientSettingsModal(event, plate, sample, item_key, ingredient_name, plates, plate_labels, card_target):
     """Everything about an ingredient that is not its amount, in a pop-up:
     how it was prepared, how it was weighed, when it was eaten and its plate.
@@ -881,6 +973,12 @@ def IngredientSettingsModal(event, plate, sample, item_key, ingredient_name, pla
                 cls="flex items-center justify-between gap-2",
             ),
         ) if shows_cooked_weight else None,
+        _settings_group(
+            "Keep part in fridge",
+            P("Cooked more than you eat? Say what goes on the plate; the rest goes to a container.",
+              cls="text-xs text-gray-600"),
+            _KeepPartForm(portion_id, card_target, modal_id),
+        ),
         _settings_group(
             "Timing and plate",
             Div(

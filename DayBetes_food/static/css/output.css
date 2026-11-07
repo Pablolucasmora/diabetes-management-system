@@ -586,6 +586,9 @@
   .w-12 {
     width: calc(var(--spacing) * 12);
   }
+  .w-14 {
+    width: calc(var(--spacing) * 14);
+  }
   .w-16 {
     width: calc(var(--spacing) * 16);
   }
@@ -1469,6 +1472,12 @@
     --tw-scale-y: 110%;
     --tw-scale-z: 110%;
     scale: var(--tw-scale-x) var(--tw-scale-y);
+  }
+  .group-has-\[\[data-keep-weighed\]\:checked\]\/keep\:grid:is(:where(.group\/keep):has(:is([data-keep-weighed]:checked)) *) {
+    display: grid;
+  }
+  .group-has-\[\[data-keep-weighed\]\:checked\]\/keep\:hidden:is(:where(.group\/keep):has(:is([data-keep-weighed]:checked)) *) {
+    display: none;
   }
   .peer-checked\:border-ink:is(:where(.peer):checked ~ *) {
     border-color: var(--color-ink);
