@@ -303,6 +303,66 @@ portion_detail
 - Sin evento elegido se crea uno, con el nombre de la receta y su tipo de comida o, si no tiene, el de la franja horaria (§7.14 de `code_conventions.md`).
 - El offset de cada tanda nueva es el automático (§4.5). Lo demás (offset, hora, inyección) se ajusta en el carrito, donde se pueden añadir más alimentos.
 
+### 4.8 Nevera y congelador (decisión 2026-11-07)
+
+Un tupper (`fridge`) guarda comida ya hecha en la nevera o en el congelador. Ciclo de vida y propiedad en `code_conventions.md` §11.2.6.
+
+#### 4.8.1 Modelo
+
+```text
+fridge
+  id
+  users_id        -> users  ON DELETE CASCADE, NOT NULL
+  name            VARCHAR(255)  -- NULL = nombre derivado de los ingredientes (4.6.3)
+  location        StorageLocation: 'fridge' | 'freezer'
+  stored_at       TIMESTAMPTZ   -- cuándo entró
+  expires_at      TIMESTAMPTZ   -- editable
+  content_weight  REAL NULL     -- peso real del contenido, en gramos (4.8.3)
+  closed_at       TIMESTAMPTZ NULL
+  created_at / updated_at
+
+fridge_move
+  id
+  fridge_id       -> fridge  ON DELETE CASCADE
+  from_location, to_location   StorageLocation, distintos
+  moved_at        TIMESTAMPTZ
+
+portion_detail
+  fridge_id          destino: la porción es contenido del tupper (sin tanda ni offset)
+  source_fridge_id   -> fridge  ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED
+                     (code_conventions.md §11.2.6), NULL salvo en porciones de un
+                     intake_event sacadas de un tupper
+```
+
+- `is_compound` y `total_tupper_weight` desaparecen: lo primero se deduce del número de porciones y lo segundo lo sustituye `content_weight`.
+- Las porciones de un tupper no entran en el índice de unicidad de §4.6.4 ni se fusionan, igual que hoy.
+- `StorageLocation` es una whitelist técnica de `domain/` (§4.6 de `code_conventions.md`). No es `ConservationMethod`: esta describe una porción y aquella un tupper.
+
+#### 4.8.2 Caducidad
+
+`expires_at` se calcula al guardar y al cambiar de sitio, sumando al momento del cambio la duración de su nuevo sitio: **10 días en la nevera y 90 en el congelador**, con margen a propósito. Las dos duraciones son constantes de `domain/` declaradas una vez. El usuario puede cambiar la fecha a mano. Caducar no tiene efecto en los datos: solo cambia cómo se pinta (`frontend_conventions.md` §9.8).
+
+#### 4.8.3 Cantidades
+
+- Las porciones del tupper guardan `amount` con el mismo significado que en una receta: la cantidad del ingrediente tal como se registró, cruda o cocida según `is_cooked_weight` (§5.2). Por eso su suma no es el peso real del tupper.
+- `content_weight` es el **peso real del contenido**, pesado por el usuario. Es opcional: se puede rellenar al guardar o después. Nunca se deduce de las porciones.
+- **Sacar de un tupper** se expresa con una fracción en `(0, 1]`, **en % y con 100 % por defecto**. En gramos solo se admite si el tupper tiene `content_weight`: `fracción = gramos / content_weight`. Sin él, el selector de gramos no se ofrece y el servidor rechaza los gramos con `422`.
+- Las porciones creadas en la comida son las del tupper multiplicadas por la fracción y conservan `is_cooked_weight` y la preparación. Al descontarlo (cuándo, en §4.8.6), las del tupper se reducen por `1 - fracción` y `content_weight`, si existe, en la misma proporción. Con fracción `1`, el tupper se cierra (`closed_at`) en la misma transacción.
+
+#### 4.8.4 Conservación de las porciones sacadas
+
+Cada porción creada lleva `source_fridge_id` y una `conservation` (`fridge` o `freezer`) copiada del tupper: **el sitio donde ha pasado más tiempo** desde `stored_at` hasta que se saca, contado con `fridge_move`. Si empatan, `freezer`. Así unas lentejas que pasaron meses congeladas y dos días descongelándose cuentan como congeladas. La regla se puede revisar; el historial completo queda en `fridge_move` para el análisis.
+
+#### 4.8.5 Cómo entra un tupper
+
+- **A mano**, desde la ficha de un alimento, de un plato o de una receta, eligiendo `Fridge` o `Freezer` en *Add to* (`frontend_conventions.md` §9.4). Crea un tupper nuevo con lo indicado.
+- **Al emplatar** desde la ficha de un alimento: si la cantidad total cocinada es mayor que la puesta en el plato, la diferencia se guarda **en ese momento** como tupper nuevo de ese alimento, en la misma transacción que la porción del plato. Se crea aunque luego se borre la comida, porque el tupper existe igual.
+- **Al confirmar una comida** con sobras: pendiente de cerrar la fracción por tanda y su denominador en gramos (§4.4). Se documentará con esa decisión.
+
+#### 4.8.6 Pendiente de decidir
+
+- **Cuándo se descuenta lo sacado.** Si al añadirlo a una comida `planned` o al confirmarla, y qué pasa con el tupper si esa comida o la porción se borran antes de confirmar.
+
 ## 5. Información nutricional
 
 ### 5.1 Unidad canónica por 100 gramos

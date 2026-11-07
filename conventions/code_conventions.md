@@ -1306,6 +1306,8 @@ La clasificación de cada tabla se declara en este registro, que es el sitio ún
 | `off_product` | **Datos de referencia**, sin propietario: los ven todos los usuarios y la app no los escribe (`init_db` le retira esos permisos). | Físico: cada carga reemplaza la tabla entera, en una transacción (`scripts/off/load_off.sh`). | `measurement_conventions.md` §12.2. |
 | `ciqual_food` | **Datos de referencia**, igual que `off_product`. | Físico: cada carga reemplaza la tabla (`scripts/ciqual/load_ciqual.sh`). | `measurement_conventions.md` §12.3. |
 | `portion_detail` | **Dependent** de su destino (`intake_event`, `recipe` o `fridge`); hereda su propietario y su ciclo de vida. | `CASCADE` desde el destino. El borrado físico es apropiado en recetas y en eventos `planned`; en un evento `consumed` es histórico clínico y hoy lo impide la ruta, no la query (limitación declarada). | `audit/audit_portion_detail.md`; `measurement_conventions.md` §6.9.3; `audit/deuda_pendiente.md`, `portion_detail` H27. |
+| `fridge` | **Híbrida por uso**: un tupper del que nunca se ha sacado nada es no archivable; uno con alguna porción consumida que lo referencia es histórico. Contrato completo en §11.2.6. | Físico si nada lo referencia; si no, `closed_at`. `CASCADE` desde `users`. | Decisión del usuario (2026-11-07). |
+| `fridge_move` | **Dependent** de `fridge`: historial de cambios de sitio. | `CASCADE` desde `fridge`. | Decisión del usuario (2026-11-07). |
 
 #### 11.2.2 Contrato de ciclo de vida de `catalog`
 
@@ -1406,6 +1408,19 @@ Decisión del usuario del 2026-11-06. Es la tabla puente entre un usuario y sus 
 - **Recetas.** Borrar o despublicar una receta no tiene retención: quien la tiene en favoritos la pierde, aunque la fila de una receta despublicada se puede quitar. Se revisa en la fase 2, con la propuesta anotada en `audit/deuda_pendiente.md`: conservarla como los alimentos archivados, porque un aviso tras un borrado físico llega tarde.
 - **Timestamps.** Solo `created_at`: las filas nunca se actualizan, así que un `updated_at` no cambiaría nunca. En las filas anteriores a esta decisión es la fecha de la migración (§12.7).
 - **Auditoría de cambios** (§11.10): no se requiere, porque no es dato clínico ni alimenta modelos.
+
+#### 11.2.6 Contrato de `fridge`
+
+Decisión del usuario del 2026-11-07. Cada fila es **un tupper** guardado en la nevera o en el congelador: sobras de una comida, una tanda cocinada para varios días o algo que llega hecho (un tupper que te dan). No hay despensa a temperatura ambiente. El modelo y las cantidades están en `measurement_conventions.md` §4.8.
+
+- **Propietario.** `users_id`, `NOT NULL`, propietario y actor a la vez; en Python, `user_id` (§3.5). Es privada: solo su propietario la lee y la escribe, con la condición en el SQL.
+- **Contenido.** Sus ingredientes son porciones de `portion_detail` con destino `fridge_id`, escaladas como las de una receta. Un tupper de un solo alimento tiene una sola porción.
+- **Abierto y cerrado.** Un tupper con `closed_at` nulo está en la nevera o en el congelador. Se cierra al sacar lo último que queda o al tirarlo si ya se había sacado algo; un tupper cerrado no se lista ni se reabre.
+- **Tirar.** Si ninguna porción de una comida lo referencia (`portion_detail.source_fridge_id`), se borra físicamente con su contenido y su historial: lo que se tira no se guarda. Si alguna lo referencia, se cierra (`closed_at`), porque esas porciones son histórico clínico. La base lo impide con una FK `NO ACTION DEFERRABLE INITIALLY DEFERRED` (§11.8): con `RESTRICT` la comprobación se hace dentro de cada cascada y borrar un usuario fallaba si la cascada llegaba al tupper antes que a la porción que lo referencia. Como el error saldría en el commit, la query de tirar comprueba antes si hay porciones que lo referencian.
+- **Caducar no borra.** Un tupper caducado sigue abierto y se marca en la interfaz hasta que el usuario lo tira o se lo come (`frontend_conventions.md` §9.8).
+- **Cambiar de sitio.** Actualiza `location`, recalcula `expires_at` (`measurement_conventions.md` §4.8) y añade una fila a `fridge_move` en la misma transacción.
+- **Borrado del usuario.** `CASCADE` desde `users`, como el resto de sus datos.
+- **Auditoría de cambios** (§11.10): no se requiere. El dato del estudio son las porciones consumidas y `fridge_move`, que es en sí el historial.
 
 ### 11.3 Soft-delete
 
