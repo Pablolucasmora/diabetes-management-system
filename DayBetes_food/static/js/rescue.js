@@ -242,8 +242,11 @@
   });
 
   // Success of POST /food/rescue/log (HX-Trigger).
-  document.body.addEventListener("rescueRegistered", function () {
+  // The pop-up also logs other meal types without insulin (§9.6).
+  document.body.addEventListener("rescueRegistered", function (event) {
+    var detail = event && event.detail ? event.detail : null;
+    var isRescue = !detail || !detail.meal_type || detail.meal_type === "rescue";
     if (window.dbCloseModal) window.dbCloseModal(MODAL_ID);
-    if (window.dbShowAppNotice) window.dbShowAppNotice("Rescue registered");
+    if (window.dbShowAppNotice) window.dbShowAppNotice(isRescue ? "Rescue registered" : "Meal registered");
   });
 })();

@@ -1,5 +1,8 @@
-from fasthtml.common import *
+import json
 from datetime import datetime
+
+from fasthtml.common import *
+from DayBetes_food.components.modal import ModalFormError
 from DayBetes_food.components.settings.settings_main import (
     settings_main,
     tags_settings_page,
@@ -27,18 +30,28 @@ from DayBetes_food.database.queries import (
     upsert_meal_type_window,
     delete_meal_type_window,
 )
-from DayBetes_food.domain.constants import InsulinType, InjectionZone, MealType, parse_optional_id
-from DayBetes_food.domain.insulin import InsulinInjectionUpdate, parse_insulin_units
+from DayBetes_food.domain.constants import InsulinType, InjectionZone, MealType, parse_enum, parse_optional_id
+from DayBetes_food.domain.insulin import InsulinInjectionUpdate, parse_insulin_units, parse_shot_local
 from DayBetes_food.domain.meal_type_schedule import (
     AUTO_ASSIGNABLE_MEAL_TYPES,
     resolve_meal_type_window,
 )
-from DayBetes_food.errors import ValidationError, NotFoundError
+from DayBetes_food.errors import AuthenticationError, AuthorizationError, NotFoundError, ValidationError
+from DayBetes_food.http_errors import app_error_response
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.time_utils import local_naive_to_utc_aware, APP_TIMEZONE
 
 
 INJECTIONS_PAGE_SIZE = 15
+_NOT_HTMX = "This action only works from the app."
+_NO_SESSION = "Your session has expired."
+_INJECTION_GONE = "That injection no longer exists."
+
+
+def _injection_updated(modal_id: str) -> HTMLResponse:
+    """Empty body and `injectionUpdated`: static/js/insulin_pens.js closes the pop-up
+    and repaints the injection log."""
+    return HTMLResponse("", headers={"HX-Trigger": json.dumps({"injectionUpdated": {"modal": modal_id}})})
 
 
 def _injection_pens(connection, user_id: int, rows) -> tuple[list, dict]:
@@ -228,17 +241,20 @@ def setup_settings_routes(rt):
 
     @rt("/settings/injections/{injection_id}/delete")
     def post(req: Request, injection_id: int):
+        """Delete an injection. Errors go through the visible error channel
+        (error_conventions.md §7.1); success is `injectionUpdated`, which closes the
+        pop-up and repaints the log."""
         if req.headers.get("HX-Request") != "true":
-            return HTMLResponse(status_code=403)
+            return app_error_response(req, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
         if not user_id:
-            return HTMLResponse(status_code=401)
+            return app_error_response(req, AuthenticationError, _NO_SESSION)
         with get_connection() as connection:
             try:
                 delete_insulin_injection(connection, user_id=int(user_id), injection_id=int(injection_id))
             except NotFoundError:
-                return HTMLResponse(status_code=404)
-            return HTMLResponse(status_code=200)
+                return app_error_response(req, NotFoundError, _INJECTION_GONE)
+        return _injection_updated(f"settings_injection_delete_{injection_id}")
 
     @rt("/settings/injections/{injection_id}/update")
     def post(
@@ -250,49 +266,37 @@ def setup_settings_routes(rt):
         shot_hour: str = "",
         shot_date: str = "",
     ):
+        """Edit an injection (frontend_conventions.md §9.9). A form error is 200 +
+        message inside the pop-up (code §9.5); success is `injectionUpdated`."""
         if req.headers.get("HX-Request") != "true":
-            return HTMLResponse(status_code=403)
+            return app_error_response(req, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
         if not user_id:
-            return HTMLResponse(status_code=401)
-
-        # Parse date and time
+            return app_error_response(req, AuthenticationError, _NO_SESSION)
+        # The pen ('' = keep an old injection without one), the zone, required in
+        # this form, and the dose: optional for rapid, required for basal (§8.1).
         try:
-            parsed_time = datetime.strptime((shot_hour or "").strip(), "%H:%M").time()
-            parsed_date = datetime.strptime((shot_date or "").strip(), "%Y-%m-%d").date()
-            shot_time_local = datetime.combine(parsed_date, parsed_time)
-            shot_time = local_naive_to_utc_aware(shot_time_local)
-        except ValueError:
-            return HTMLResponse(status_code=422)
-
-        # Parse the pen ('' = keep an old injection without one) and the dose
-        # (optional for rapid, required for basal: validate_insulin_dose, §8.1).
-        try:
+            shot_time = local_naive_to_utc_aware(parse_shot_local(shot_hour, shot_date))
             pen_id = parse_optional_id(insulin_pen_id, "insulin_pen_id")
+            injection_zone = parse_enum(InjectionZone, zone, field="zone", normalize=str.lower)
+            if injection_zone is None:
+                raise ValidationError("Choose the injection zone.", fields={"zone": "required"})
             units_value = parse_insulin_units(units)
-        except ValidationError:
-            return HTMLResponse(status_code=422)
-
-        # Parse zone (optional)
-        injection_zone = None
-        if zone and zone.strip():
-            try:
-                injection_zone = InjectionZone(zone.strip().lower())
-            except ValueError:
-                return HTMLResponse(status_code=422)
+        except ValidationError as error:
+            return render_fragment(ModalFormError(str(error)))
 
         with get_connection() as connection:
             # The type is the one of the pen's brand (measurement §8.4); without a
             # pen, the injection keeps its own. The UPDATE checks the pen fits.
+            current = get_insulin_injection(connection, int(user_id), int(injection_id))
+            if current is None:
+                return app_error_response(req, NotFoundError, _INJECTION_GONE)
             if pen_id is None:
-                current = get_insulin_injection(connection, int(user_id), int(injection_id))
-                if current is None:
-                    return HTMLResponse(status_code=404)
                 parsed_insulin_type = current.insulin_type
             else:
                 pen = get_insulin_pen(connection, int(user_id), pen_id)
                 if pen is None:
-                    return HTMLResponse(status_code=404)
+                    return app_error_response(req, NotFoundError, "That pen no longer exists.")
                 parsed_insulin_type = pen.insulin_type
             payload = InsulinInjectionUpdate(
                 insulin_type=parsed_insulin_type,
@@ -308,8 +312,9 @@ def setup_settings_routes(rt):
                     injection_id=int(injection_id),
                     payload=payload,
                 )
-            except ValidationError:
-                return HTMLResponse(status_code=422)
+            except ValidationError as error:
+                return render_fragment(ModalFormError(str(error)))
             except NotFoundError:
-                return HTMLResponse(status_code=404)
-            return HTMLResponse(status_code=200)
+                # The row is there (read above): the chosen pen does not fit it.
+                return render_fragment(ModalFormError("That pen is no longer in use. Choose another one."))
+        return _injection_updated(f"settings_injection_edit_{injection_id}")

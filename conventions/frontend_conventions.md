@@ -373,7 +373,7 @@ La página empieza con la etiqueta `CART`, el título *Planned meals* y una lín
 
 ### 9.6 Rescate
 
-Decisión 2026-10-11. Un rescate es lo que se toma para tratar una hipoglucemia. Se registra desde un pop-up y crea directamente una comida ya consumida.
+Decisión 2026-10-11. Un rescate es lo que se toma para tratar una hipoglucemia. Se registra desde un pop-up y crea directamente una comida ya consumida. Desde el 2026-11-08 el mismo pop-up sirve de añadido rápido para otros tipos de comida (unas pastillas o un papel de glucosa que no son un rescate): se elige el tipo, con `Rescue` por defecto.
 
 **Dónde está**
 
@@ -400,7 +400,7 @@ Decisión 2026-10-11. Un rescate es lo que se toma para tratar una hipoglucemia.
 
 **Diseño**
 
-- Compacto, para que quepa en la pantalla de un móvil: el título `Rescue` con una × para cerrar, el buscador, la lista, las líneas, la fecha y la hora en una fila sin etiqueta, y *Cancel* / *Log rescue* a todo el ancho. Sin textos de ayuda fijos.
+- Compacto, para que quepa en la pantalla de un móvil: el título `Rescue` con una × para cerrar, el buscador, la lista, las líneas, el tipo de comida (un `<select>` de `MealType` con `Rescue` elegido), la fecha y la hora en una fila sin etiqueta, y *Cancel* / *Log rescue* a todo el ancho. Con otro tipo, el botón dice *Log meal*. Sin textos de ayuda fijos.
 - Nada sobresale de la tarjeta en el móvil. Un nombre de alimento largo ocupa como mucho dos líneas y después se corta con "…" (`line-clamp-2`, `break-words` para una palabra sin espacios). La fecha y la hora van en columnas `minmax(0, 1fr)` con `appearance-none` y el texto centrado, porque iOS da a esos controles nativos un ancho propio mayor que la columna (§3).
 
 **Fecha y hora**
@@ -409,7 +409,7 @@ Decisión 2026-10-11. Un rescate es lo que se toma para tratar una hipoglucemia.
 
 **Qué se guarda** (`POST /food/rescue/log`)
 
-- Cada envío crea un evento nuevo, aunque haya un rescate reciente: `meal_type = rescue`, `insulin_dose = FALSE` (un rescate no lleva insulina y nunca crea una inyección automática), una sola tanda con offset 0 y una porción por línea. Si un alimento se repite con la misma preparación, se suman sus cantidades (`measurement_conventions.md` §4.6.4).
+- Cada envío crea un evento nuevo, aunque haya un rescate reciente: `meal_type` el elegido (`rescue` por defecto; vacío o desconocido es un error de validación), `insulin_dose = FALSE` (lo que se registra aquí no lleva insulina y nunca crea una inyección automática, sea del tipo que sea), una sola tanda con offset 0 y una porción por línea. Si un alimento se repite con la misma preparación, se suman sus cantidades (`measurement_conventions.md` §4.6.4).
 - El evento se crea en `planned` y se confirma al 100 % en la misma transacción, con la misma confirmación que usa el carrito (`services/intake_event.py`). Así calcula `ingested_amount` y `amount_confidence` con las mismas reglas que cualquier comida (`measurement_conventions.md` §6.9.1).
 - Todo va en una transacción. Si una línea no es válida, no se guarda nada.
 
@@ -420,7 +420,7 @@ Decisión 2026-10-11. Un rescate es lo que se toma para tratar una hipoglucemia.
 | `GET /food/rescue/form` | `#rescue_modal_body` | `innerHTML` | el formulario, con la lista inicial de alimentos dentro | sin sesión: `401` por el canal de errores |
 | `GET /food/rescue/options?q=` (solo al escribir en el buscador) | `#rescue_picker_results` | `innerHTML` | la lista de alimentos | — |
 | `GET /food/rescue/line/{entry_type}/{entry_id}` | `#rescue_lines` | `beforeend` | una línea | `404` por el canal de errores (`error_conventions.md` §7.1) |
-| `POST /food/rescue/log` | `#rescue_form_error` | `innerHTML` | cuerpo vacío y el evento `rescueRegistered` (`HX-Trigger`). `static/js/rescue.js` cierra el pop-up y muestra el aviso de éxito `Rescue registered` (`dbShowAppNotice`, `error_conventions.md` §7.1) | validación: `200` y el mensaje en `#rescue_form_error` (`code_conventions.md` §9.5). Sesión, alimento inexistente o conflicto: su status por el canal de errores |
+| `POST /food/rescue/log` | `#rescue_form_error` | `innerHTML` | cuerpo vacío y el evento `rescueRegistered` (`HX-Trigger`, con el `meal_type`). `static/js/rescue.js` cierra el pop-up y muestra el aviso de éxito `Rescue registered`, o `Meal registered` con otro tipo (`dbShowAppNotice`, `error_conventions.md` §7.1) | validación: `200` y el mensaje en `#rescue_form_error` (`code_conventions.md` §9.5). Sesión, alimento inexistente o conflicto: su status por el canal de errores |
 
 Todas exigen el header `HX-Request` (`403` si falta).
 
@@ -489,6 +489,7 @@ Modelo en `measurement_conventions.md` §8.4.
 - **Etiqueta de un boli**, igual en todos los selectores: marca, formato y lo que queda (`NovoRapid · Cartridge · 140 U left`, con `≈` si es aproximado). Los selectores listan solo bolis abiertos, el que caduca antes primero, y terminan en la opción `+ New pen`, que no se guarda: abre el pop-up de abrir boli y, al crearlo, el boli nuevo queda elegido en ese selector. No hay opción "sin boli".
 - **Pop-up de abrir boli** (`New pen`, en la sección `Insulin` del menú, en los selectores y en ajustes). Marca (las activas del usuario, con su tipo, más `+ New brand`, que despliega sus campos: nombre, tipo, días de uso, 30 por defecto, y unidades por boli, 300 por defecto), formato y fecha en que se saca de la nevera, hoy por defecto. Marca y formato empiezan sin elegir (§6). Al guardar, la caducidad es esa fecha más los días de la marca.
 - **Formulario de inyección del menú.** En vez del tipo, el selector de boli, y el tipo sale de su marca. La dosis (`Dose (U)`) es obligatoria si el boli es de basal y opcional si es de rápida.
+- **Errores de los formularios de inyección** (menú y edición del registro, 2026-11-08). Los comprueba el servidor, no `alert()`: boli, zona (obligatoria en los dos), fecha y hora, y dosis. Un error de formulario sale dentro del pop-up (`#menu_injection_error`, `#settings_injection_error_{id}`) y el pop-up sigue abierto; el resto, por el aviso global. Solo se cierra al guardar: `injectionLogged` repinta el menú y avisa `Injection logged`, e `injectionUpdated` repinta el registro (también al borrar).
 - **Carrito.** Con `Insulin` marcado, debajo de la fila, en una línea: el botón de la zona, el selector de boli (solo de rápida) y la dosis, que se guardan solos al cambiar, como el resto del carrito. El boli viene elegido con el de por defecto; si no hay ninguno, el selector muestra `Choose pen` y confirmar avisa.
 - **Ajustes, `Insulin pens`** (2026-11-08). Un menú con el mismo diseño que la página principal de ajustes y dos botones, `Pens` y `Brands`, cada uno con su página (`/settings/insulin/pens` y `/settings/insulin/brands`), que vuelve a ese menú con `Back`.
   - **Pens**: los bolis abiertos, el que caduca antes primero. Cada fila dice marca y formato, los días desde que se abrió y los que le quedan (`3 days in · 27 days left`) y las unidades que quedan. A punto de acabarse, la línea afectada va en `warning`; caducado, lleva `Expired` y la línea de días en `danger`, y el botón `Discard` se ve en la fila sin tener que abrirla. Al tocar una fila: `Edit` (formato, caducidad y capacidad) y `Discard`, que pide confirmación. Abajo, `New pen`.

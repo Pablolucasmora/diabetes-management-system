@@ -130,7 +130,6 @@ def quick_actions(latest_event, portions, pens=(), brands=()):
     now = local_now()
     modal_id = "menu_injection_modal"
     open_js = open_modal_js(modal_id)
-    close_js = close_modal_js(modal_id)
     selector_js = (
         f"const box=document.getElementById('{modal_id}');"
         "if(!box) return;"
@@ -349,25 +348,18 @@ def quick_actions(latest_event, portions, pens=(), brands=()):
             ),
             Div(*zone_buttons, cls="flex flex-wrap gap-2"),
             Input(type="hidden", name="zone", value="", data_menu_injection_zone_input="true"),
-                Div(
-                    modal_confirm_button(
-                        "OK",
-                        cls="ml-auto",
-                        hx_post="/menu/injection_log",
-                        hx_include="closest form",
-                        hx_target="#main_content",
+            # Form errors land here (code_conventions.md §9.5); the pop-up closes
+            # only on success, with `injectionLogged` (static/js/insulin_pens.js).
+            Div(id="menu_injection_error"),
+            Div(
+                modal_confirm_button(
+                    "OK",
+                    cls="ml-auto",
+                    hx_post="/menu/injection_log",
+                    hx_include="closest form",
+                    hx_target="#menu_injection_error",
                     hx_swap="innerHTML",
-                    onclick=(
-                        "const form=this.form;"
-                        "const z=form?form.querySelector('[data-menu-injection-zone-input]'):null;"
-                        "if(!z||!z.value){alert('Select a zone first.');return false;}"
-                        "const t=form?form.querySelector('[data-pen-select]'):null;"
-                        "const o=t?t.options[t.selectedIndex]:null;"
-                        "if(!t||!t.value||t.value==='new'){alert('Choose the pen.');return false;}"
-                        "const b=form?form.querySelector('input[name=units]'):null;"
-                        "if(o&&o.dataset.insulinType==='basal'&&(!b||!b.value)){alert('Enter the basal dose.');return false;}"
-                        + close_js
-                    ),
+                    hx_disabled_elt="this",
                 ),
             ),
             cls="flex flex-col gap-3",
