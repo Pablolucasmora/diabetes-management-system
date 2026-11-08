@@ -1353,6 +1353,8 @@ La clasificación de cada tabla se declara en este registro, que es el sitio ún
 | `fridge_move` | **Dependent** de `fridge`: historial de cambios de sitio, de solo inserción (el rol de ejecución no puede modificar ni borrar filas). | `CASCADE` desde `fridge`. | Decisión del usuario (2026-11-07), `audit/audits/audit_fridge.md`. |
 | `insulin_brand` | **Híbrida por uso**: una marca sin bolis es no archivable; una con algún boli es archivable (`deleted_at`), sin `restore_`. Contrato completo en §11.2.7. | Físico si ningún boli la usa; si no, `deleted_at`. `CASCADE` desde `users`. | Decisión del usuario (2026-11-08). |
 | `insulin_pen` | **Híbrida por uso**, como `fridge`: un boli sin inyecciones es no archivable; uno con alguna es histórico y se cierra (`closed_at`). Contrato completo en §11.2.7. | Físico si ninguna inyección lo referencia; si no, `closed_at`. `CASCADE` desde `users`. | Decisión del usuario (2026-11-08). |
+| `tags` | **Mixta**: las de sistema (`SystemTag`, sin propietario) son de todos y fijas; las personales son de un usuario. Non-archivable. Contrato completo en §11.2.8. | Físico, solo las personales y solo su propietario; sus enlaces se van con ellas (`CASCADE`). `CASCADE` desde `users`. | Decisión del usuario (2026-11-08), `audit/audits/audit_tags.md`. |
+| `linked_tags` | **Dependent** de su usuario, su etiqueta y su alimento, plato o receta. Privada. Contrato completo en §11.2.8. | Físico: al quitar la etiqueta, y `CASCADE` desde `users`, `tags`, `catalog`, `manual_intake` y `recipe`. | Decisión del usuario (2026-11-08), `audit/audits/audit_tags.md`. |
 
 #### 11.2.2 Contrato de ciclo de vida de `catalog`
 
@@ -1433,7 +1435,7 @@ Decisión del usuario del 2026-11-05. Una receta es una comida o un plato recurr
 - **No es histórico.** Lo confirmado referencia a los alimentos, nunca a la receta: cambiarla o borrarla no toca ninguna comida. Tampoco guarda datos del estudio.
 - **Propietario y visibilidad.** `users_id` es el propietario y es `NOT NULL`; en Python se expone como `user_id` (§3.5). La lee quien la posee o quien la ve publicada. Solo el propietario la edita o la borra. Todo va en SQL: `get_recipe` y `list_recipes` llevan la visibilidad en el `WHERE`, y `update_recipe` y `delete_recipe` al propietario.
 - **Quien no es propietario** la usa, la marca como favorita, la copia y la añade a su carrito. No ve controles de edición (§9.4 de `frontend_conventions.md`).
-- **Campos.** `name` normalizado (`normalize_food_text`, `ck_recipe_name_normalized`); `notes`, texto libre del usuario de hasta `RECIPE_NOTES_MAX_LENGTH` que puede contener toda la preparación; `meal_type` opcional, sin `rescue`, que tiene su propio flujo, y es el tipo principal: el que toma una comida creada desde la receta; `extra_meal_types`, otros tipos con los que también se come, que solo sirven para encontrarla (decisión 2026-11-06). Necesitan un principal y no lo repiten (`ck_recipe_extra_meal_types_need_main`); `servings` opcional, entero de 1 a 100; `created_at` y `updated_at`. La preparación de cada ingrediente son campos de su porción, no notas.
+- **Campos.** `name` normalizado (`normalize_food_text`, `ck_recipe_name_normalized`); `notes`, texto libre del usuario de hasta `RECIPE_NOTES_MAX_LENGTH` que puede contener toda la preparación; `meal_type` opcional, sin `rescue`, que tiene su propio flujo (`exercise` sí, 2026-11-08), y es el tipo principal: el que toma una comida creada desde la receta; `extra_meal_types`, otros tipos con los que también se come, que solo sirven para encontrarla (decisión 2026-11-06). Necesitan un principal y no lo repiten (`ck_recipe_extra_meal_types_need_main`); `servings` opcional, entero de 1 a 100; `created_at` y `updated_at`. La preparación de cada ingrediente son campos de su porción, no notas.
 - **Editar** es una sustitución completa: un opcional vacío se guarda como `NULL` (§3.4). Gana la última escritura (§6.7, §6.10).
 - **Unicidad.** `uq_recipe_personal_name` por propietario y `uq_recipe_published_name` entre publicadas, sobre `lower(name)`. Una receta no tiene marca, así que el duplicado es solo el nombre. Se puede llamar igual que la receta publicada de otra persona.
 - **Copiar** (§11.2.2) crea una receta personal y editable, en favoritos, con sus tipos de comida, notas, raciones, tandas con ingredientes e ingredientes. No copia etiquetas. La original no se toca.
@@ -1481,6 +1483,22 @@ Decisión del usuario del 2026-11-08. Modelo y cálculo de lo que queda en `meas
 - **Borrado del usuario.** `CASCADE` desde `users`, como el resto de sus datos.
 - **Auditoría de cambios** (§11.10): no se requiere. El dato del estudio son las inyecciones.
 - **Timestamps.** Las dos llevan `created_at` y `updated_at`, que se escribe en cada `UPDATE`.
+
+#### 11.2.8 Contrato de `tags` y `linked_tags`
+
+Decisión del usuario del 2026-11-08 (`audit/audits/audit_tags.md`). Sustituye a las etiquetas globales y al botón provisional `Rescue` (decisión 2026-10-11).
+
+- **Dos clases de etiqueta.** Las **de sistema** no tienen propietario (`users_id` nulo) y se identifican por `system_key`, un valor de `SystemTag` (`rescue`, `exercise`), nunca por el nombre, que solo se muestra. Las crea el bootstrap si faltan, y nadie las renombra, recolorea ni borra. Las **personales** son de un usuario (`users_id`), sin `system_key`. `ck_tags_owner` exige una cosa o la otra.
+- **Visibilidad.** Cada usuario ve y usa las de sistema y las suyas. Las de otro usuario no existen para él: editarlas, borrarlas o enlazarlas da `404` (§5.4).
+- **Nombre.** Obligatorio, normalizado (`ck_tags_name_normalized`) y de hasta `TAG_NAME_MAX_LENGTH` caracteres (40; la columna admite 100). Único por propietario sin distinguir mayúsculas: `uq_tags_users_id_name` sobre `(users_id, lower(name)) WHERE users_id IS NOT NULL`. Una personal no puede llamarse como una de sistema: lo comprueba la query que escribe. Un choque es `409`.
+- **Color.** `#RRGGBB` (lo que da el selector) o el `hsl(h s% l%)` que se calcula del nombre al crearla. `ck_tags_color` lo exige, porque el valor acaba dentro de un atributo `style`.
+- **Enlace (`linked_tags`).** Una fila dice que un usuario puso una etiqueta en un alimento, plato o receta: `users_id`, `tag_id` y exactamente una de `catalog_id`, `manual_intake_id`, `recipe_id` (`ck_linked_tags_one_entry`). Es **privada**: nadie lee los enlaces de otro, así que etiquetar un alimento de la biblioteca general o publicado no cambia nada para los demás. Se puede etiquetar todo lo que el usuario ve, retenidos incluidos (regla de visibilidad de §11.4.1), con una etiqueta de sistema o suya: las dos condiciones van en el `INSERT`. Una fila por usuario, etiqueta y entrada (`uq_linked_tags_users_id_tag_id_<columna>`).
+- **Operación.** `set_entry_tag(..., linked)` deja el enlace como se pide, y repetirla no hace nada (§6.3). No hay reemplazo en bloque de todas las etiquetas de una entrada.
+- **Borrado.** Una etiqueta personal se borra físicamente y sus enlaces con ella. Todo hace `CASCADE` desde `users`; los enlaces, también desde su etiqueta y su entrada. Ninguna de las dos es dato clínico: el tipo de comida de cada evento es lo que cuenta para el estudio.
+- **Copias.** Copiar un alimento, plato o receta no copia sus etiquetas.
+- **Timestamps.** Solo `created_at` en las dos (decisión 2026-11-06 sobre tablas sin cambios con valor). `description` existe y no se usa (fase 2).
+- **Auditoría de cambios** (§11.10): no se requiere.
+- **Datos anteriores** (migración única, `_migrate_tags_to_owners`, backfill técnico de §12.7). `Rescate` pasó a ser la de sistema `rescue`. Cada enlace tomó el propietario de su alimento, porque hasta entonces solo él podía etiquetarlo, y cada etiqueta, el de sus enlaces (con una copia por propietario si había más de uno). Se borró una etiqueta sin enlaces y se fusionaron las del mismo propietario que solo se distinguían en mayúsculas (`Alto en fibra` / `alto en fibra`).
 
 
 Una entidad archivable utiliza un campo nullable `deleted_at`.
