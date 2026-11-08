@@ -1,4 +1,4 @@
-"""Rescue pop-up and the provisional Rescue button (frontend_conventions.md §9.6).
+"""Quick log pop-up: rescue and exercise (frontend_conventions.md §9.6).
 
 The pop-up is one `ModalLayer` whose body is requested from the server each
 time it opens, so the date and time are those of that moment and the form
@@ -18,7 +18,8 @@ from DayBetes_food.components.modal import (
     modal_secondary_button,
 )
 from DayBetes_food.components.stats.stats_shared import MEAL_TYPE_LABELS
-from DayBetes_food.domain.constants import AmountInputUnit, MealType
+from DayBetes_food.domain.constants import AmountInputUnit, MealType, SystemTag
+from DayBetes_food.domain.tag import SYSTEM_TAG_MEAL_TYPE
 
 RESCUE_MODAL_ID = "rescue_modal"
 
@@ -76,16 +77,53 @@ def _carbs_meta(carbs_100g: float | None, serving_g: float | None) -> str:
     return f"{carbs_100g:.0f} g carbs / 100 g"
 
 
-def RescueForm(date_value: str, time_value: str, options: list[dict]):
-    """Body of the pop-up: title, food picker, lines, time and actions. Compact:
+_TAB_LABELS = {SystemTag.RESCUE: "Rescue", SystemTag.EXERCISE: "Exercise"}
+_TAB_CLS = "rounded-md px-3 py-1 text-sm font-semibold cursor-pointer transition-colors"
+_TAB_ACTIVE_CLS = "bg-white text-gray-900 shadow-sm"
+_TAB_IDLE_CLS = "text-gray-600 hover:text-gray-900"
+
+
+def _submit_label(meal_type: MealType) -> str:
+    return "Log rescue" if meal_type is MealType.RESCUE else "Log meal"
+
+
+def _kind_tabs(kind: SystemTag):
+    """One tab per system tag; each offers the foods with its tag and selects its
+    meal type below (static/js/rescue.js). Rescue is the default (§9.6)."""
+    return Div(
+        *[
+            Button(
+                _TAB_LABELS[tab],
+                type="button",
+                role="tab",
+                aria_selected="true" if tab is kind else "false",
+                data_rescue_tab=tab.value,
+                data_meal_type=SYSTEM_TAG_MEAL_TYPE[tab].value,
+                data_active_cls=_TAB_ACTIVE_CLS,
+                data_idle_cls=_TAB_IDLE_CLS,
+                cls=f"{_TAB_CLS} {_TAB_ACTIVE_CLS if tab is kind else _TAB_IDLE_CLS}",
+            )
+            for tab in SystemTag
+        ],
+        role="tablist",
+        aria_label="What it is for",
+        cls="inline-flex rounded-lg bg-control border border-line p-0.5 gap-0.5",
+    )
+
+
+def RescueForm(date_value: str, time_value: str, options: list[dict], kind: SystemTag = SystemTag.RESCUE):
+    """Body of the pop-up: tabs, food picker, lines, time and actions. Compact:
     it has to fit a phone screen with the keyboard closed. It arrives with the
     initial food list inside, so it is painted in one go (§9.6)."""
+    meal_type = SYSTEM_TAG_MEAL_TYPE[kind]
     return Form(
         Div(
-            P("Rescue", cls="text-lg font-semibold text-gray-900"),
+            _kind_tabs(kind),
             modal_icon_button("×", aria_label="Close", onclick=close_modal_js(RESCUE_MODAL_ID)),
             cls="flex items-center justify-between gap-3",
         ),
+        # The tab the food list follows; not stored: the meal type below is what counts.
+        Input(type="hidden", id="rescue_kind_input", name="kind", value=kind.value),
         Div(
             Label(
                 Span(_SEARCH_ICON, cls="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted"),
@@ -105,11 +143,12 @@ def RescueForm(date_value: str, time_value: str, options: list[dict]):
                 cls="relative block",
             ),
             Div(
-                RescueOptions(options, searching=False),
+                RescueOptions(options, searching=False, kind=kind),
                 id="rescue_picker_results",
                 hx_get="/food/rescue/options",
-                hx_trigger="input changed delay:220ms from:#rescue_search_input",
-                hx_include="#rescue_search_input",
+                # rescueKind: a tab was chosen (static/js/rescue.js).
+                hx_trigger="input changed delay:220ms from:#rescue_search_input, rescueKind",
+                hx_include="#rescue_search_input, #rescue_kind_input",
                 # Explicit: otherwise it inherits the form's hx-target
                 # (#rescue_form_error) and the results land below the list.
                 hx_target="this",
@@ -126,14 +165,15 @@ def RescueForm(date_value: str, time_value: str, options: list[dict]):
             id="rescue_add_another",
             cls="hidden self-start text-sm font-medium text-gray-600 hover:text-gray-900 cursor-pointer",
         ),
-        # The meal type, rescue by default: glucose tablets or strips that are
-        # not a rescue go in as a snack or another type (§9.6, 2026-11-08).
+        # The meal type follows the tab and can still be changed: glucose tablets
+        # that are not a rescue go in as a snack or another type (§9.6).
         Select(
             *[
-                Option(MEAL_TYPE_LABELS[meal_type.value], value=meal_type.value, selected=meal_type is MealType.RESCUE)
-                for meal_type in MealType
+                Option(MEAL_TYPE_LABELS[option.value], value=option.value, selected=option is meal_type)
+                for option in MealType
             ],
             name="meal_type",
+            id="rescue_meal_type",
             aria_label="Meal type",
             onchange=(
                 "var b=document.getElementById('rescue_submit');"
@@ -154,7 +194,7 @@ def RescueForm(date_value: str, time_value: str, options: list[dict]):
             # The pop-up buttons are type="button": this one submits the form
             # through htmx with requestSubmit().
             modal_confirm_button(
-                "Log rescue",
+                _submit_label(meal_type),
                 id="rescue_submit",
                 disabled=True,
                 onclick="this.form.requestSubmit();",
@@ -171,14 +211,16 @@ def RescueForm(date_value: str, time_value: str, options: list[dict]):
     )
 
 
-def RescueOptions(rows: list[dict], searching: bool):
-    """Foods of the picker: rescue foods first. One compact row per food."""
+_EMPTY_MESSAGES = {
+    SystemTag.RESCUE: "No rescue foods yet. Search any food, or tag one as Rescue: the ones you log show up here.",
+    SystemTag.EXERCISE: "No exercise foods yet. Search any food, or tag one as Exercise: the ones you log show up here.",
+}
+
+
+def RescueOptions(rows: list[dict], searching: bool, kind: SystemTag = SystemTag.RESCUE):
+    """Foods of the picker: the tab's foods first. One compact row per food."""
     if not rows:
-        message = (
-            "No foods match that search."
-            if searching
-            else "No rescue foods yet. Search any food: the ones you log show up here next time."
-        )
+        message = "No foods match that search." if searching else _EMPTY_MESSAGES[kind]
         return P(message, cls="text-xs text-gray-600 px-1 py-1")
     return Div(
         *[
@@ -263,21 +305,4 @@ def RescueLine(entry_type: str, entry_id: int, name: str, serving_g: float | Non
         data_rescue_line=f"{entry_type}:{entry_id}",
         data_rescue_serving_g=(f"{serving_g:.3f}" if serving_g is not None else ""),
         cls="rounded-xl bg-control border border-line px-3 py-2 flex flex-col gap-1.5",
-    )
-
-
-def RescueMarkButton(entry_type: str, entry_id: int, is_rescue: bool):
-    """Provisional two-state button of the food detail (§9.6): it shows what is
-    stored and asks for the opposite."""
-    return Button(
-        "Rescue food ✓" if is_rescue else "Mark as rescue food",
-        type="button",
-        aria_pressed="true" if is_rescue else "false",
-        cls="web_button w-full px-4 py-2 text-sm rounded-2xl",
-        hx_post=f"/food/rescue/mark/{entry_type}/{entry_id}",
-        hx_vals='{"rescue": "false"}' if is_rescue else '{"rescue": "true"}',
-        hx_target="this",
-        hx_swap="outerHTML",
-        data_skip_page_loading="true",
-        id=f"rescue_mark_{entry_type}_{entry_id}",
     )

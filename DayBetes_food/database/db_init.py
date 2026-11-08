@@ -16,6 +16,7 @@ from DayBetes_food.database.schema import (
     fridge_check_constraints,
     manual_intake_check_constraints,
     recipe_check_constraints,
+    tags_check_constraints,
 )
 from DayBetes_food.domain.catalog import CATALOG_BARCODE_MAX_LENGTH, CATALOG_BARCODE_MIN_LENGTH
 from DayBetes_food.domain.search_text import search_text_sql
@@ -29,8 +30,11 @@ from DayBetes_food.domain.constants import (
     FoodCategory,
     FoodPhysicalState,
     FridgeCloseReason,
+    SystemTag,
     sql_in_list,
 )
+from DayBetes_food.domain.recipe import RECIPE_MEAL_TYPES
+from DayBetes_food.domain.tag import SYSTEM_TAG_DEFAULTS
 
 logger = logging.getLogger(__name__)
 
@@ -1131,6 +1135,10 @@ def _ensure_recipe_schema(cursor):
             )
     if _constraint_exists(cursor, "recipe", "recipe_meal_type_check"):
         cursor.execute("ALTER TABLE recipe DROP CONSTRAINT recipe_meal_type_check;")
+    # A meal type added to the enum must reach them (§4.4).
+    for name in ("ck_recipe_meal_type", "ck_recipe_extra_meal_types"):
+        if _check_lacks_values(cursor, "recipe", name, [meal_type.value for meal_type in RECIPE_MEAL_TYPES]):
+            cursor.execute(sql.SQL("ALTER TABLE recipe DROP CONSTRAINT {};").format(sql.Identifier(name)))
     for name, expression in recipe_check_constraints().items():
         if not _constraint_exists(cursor, "recipe", name):
             cursor.execute(
@@ -1556,20 +1564,227 @@ def _ensure_food_search_indexes(cursor):
         logger.warning("Food search indexes skipped: %s", exc)
 
 
-def _ensure_tags_color_schema(cursor):
-    if not _has_column(cursor, "tags", "color"):
-        cursor.execute("ALTER TABLE tags ADD COLUMN color VARCHAR(64);")
+def _check_lacks_values(cursor, table: str, name: str, values) -> bool:
+    """Whether the CHECK `name` exists and leaves out a value of its enum: a value
+    added to the enum must reach the constraint (§4.4). The values are constants."""
+    cursor.execute(
+        "SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint "
+        "WHERE conrelid = %(table)s::regclass AND conname = %(name)s;",
+        {"table": f"public.{table}", "name": name},
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return False
+    return any(f"'{value}'" not in row["definition"] for value in values)
+
+
+def _column_is_nullable(cursor, table: str, column: str) -> bool:
+    cursor.execute(
+        "SELECT is_nullable FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = %(table)s AND column_name = %(column)s;",
+        {"table": table, "column": column},
+    )
+    row = cursor.fetchone()
+    return row is not None and row["is_nullable"] == "YES"
+
+
+_TAGS_CONSTRAINT_RENAMES = {"tags_pkey": "pk_tags"}
+_LINKED_TAGS_CONSTRAINT_RENAMES = {
+    "linked_tags_pkey": "pk_linked_tags",
+    "linked_tags_tag_id_fkey": "fk_linked_tags_tag_id_tags",
+    "linked_tags_catalog_id_fkey": "fk_linked_tags_catalog_id_catalog",
+    "linked_tags_recipe_id_fkey": "fk_linked_tags_recipe_id_recipe",
+    "linked_tags_manual_intake_id_fkey": "fk_linked_tags_manual_intake_id_manual_intake",
+    "linked_tags_check": "ck_linked_tags_one_entry",
+}
+_LINKED_TAG_ENTRY_COLUMNS = ("catalog_id", "manual_intake_id", "recipe_id")
+
+
+def _migrate_tags_to_owners(cursor):
+    """One-off move from global tags to system and personal tags (§11.2.8), run
+    when linked_tags.users_id is first added. Technical backfill (§12.7):
+
+    - The old rescue tag (`rescate`, any case) becomes the system tag `rescue`;
+      if it was written more than once, the others are merged into it.
+    - A link takes the owner of its food: until now only the owner could tag it.
+      A link whose food has no owner cannot be attributed and is dropped.
+    - Every other tag goes to the owners of its links: the first one keeps the
+      row, any other gets a copy with its links. A tag no food carries is dropped.
+    - Tags of one owner that only differ in case are merged into the oldest.
+    """
+    cursor.execute(
+        "SELECT id FROM tags WHERE system_key IS NULL AND lower(btrim(name)) IN ('rescate', 'rescue') ORDER BY id;"
+    )
+    rescue_ids = [row["id"] for row in cursor.fetchall()]
+    if rescue_ids:
+        keep, others = rescue_ids[0], rescue_ids[1:]
+        if others:
+            cursor.execute(
+                "UPDATE linked_tags SET tag_id = %(keep)s WHERE tag_id = ANY(%(others)s);",
+                {"keep": keep, "others": others},
+            )
+            cursor.execute("DELETE FROM tags WHERE id = ANY(%(others)s);", {"others": others})
+        name, _color = SYSTEM_TAG_DEFAULTS[SystemTag.RESCUE]
+        cursor.execute(
+            "UPDATE tags SET system_key = %(key)s, name = %(name)s WHERE id = %(id)s;",
+            {"key": SystemTag.RESCUE.value, "name": name, "id": keep},
+        )
+
     cursor.execute(
         """
-        UPDATE tags
-        SET color = 'hsl(' || (
-            (('x' || substr(md5(lower(trim(name))), 1, 8))::bit(32)::int % 360 + 360) % 360
-        ) || ' 80% 90%)'
-        WHERE color IS NULL OR trim(color) = '';
+        UPDATE linked_tags lt SET users_id = c.created_by FROM catalog c WHERE lt.catalog_id = c.id;
+        UPDATE linked_tags lt SET users_id = m.created_by FROM manual_intake m WHERE lt.manual_intake_id = m.id;
+        UPDATE linked_tags lt SET users_id = r.users_id FROM recipe r WHERE lt.recipe_id = r.id;
+        DELETE FROM linked_tags WHERE users_id IS NULL OR tag_id IS NULL;
         """
     )
-    cursor.execute("ALTER TABLE tags ALTER COLUMN color SET DEFAULT 'hsl(0 80% 90%)';")
-    cursor.execute("ALTER TABLE tags ALTER COLUMN color SET NOT NULL;")
+
+    # Owners of each tag that has none yet, first owner first.
+    cursor.execute(
+        """
+        SELECT DISTINCT lt.tag_id, lt.users_id
+        FROM linked_tags lt
+        INNER JOIN tags t ON t.id = lt.tag_id
+        WHERE t.users_id IS NULL AND t.system_key IS NULL
+        ORDER BY lt.tag_id, lt.users_id;
+        """
+    )
+    owned: set[int] = set()
+    for row in cursor.fetchall():
+        tag_id, user_id = row["tag_id"], row["users_id"]
+        if tag_id not in owned:
+            owned.add(tag_id)
+            cursor.execute("UPDATE tags SET users_id = %(user_id)s WHERE id = %(tag_id)s;",
+                           {"user_id": user_id, "tag_id": tag_id})
+            continue
+        cursor.execute(
+            """
+            INSERT INTO tags (users_id, name, color, description)
+            SELECT %(user_id)s, name, color, description FROM tags WHERE id = %(tag_id)s
+            RETURNING id;
+            """,
+            {"user_id": user_id, "tag_id": tag_id},
+        )
+        copy_id = cursor.fetchone()["id"]
+        cursor.execute(
+            "UPDATE linked_tags SET tag_id = %(copy_id)s WHERE tag_id = %(tag_id)s AND users_id = %(user_id)s;",
+            {"copy_id": copy_id, "tag_id": tag_id, "user_id": user_id},
+        )
+    cursor.execute("DELETE FROM tags WHERE users_id IS NULL AND system_key IS NULL;")
+
+    # Same owner, same name ignoring case: the oldest row stays.
+    cursor.execute(
+        """
+        WITH ranked AS (
+            SELECT id, min(id) OVER (PARTITION BY users_id, lower(btrim(name))) AS keep_id
+            FROM tags WHERE users_id IS NOT NULL
+        )
+        UPDATE linked_tags lt SET tag_id = ranked.keep_id
+        FROM ranked WHERE lt.tag_id = ranked.id AND ranked.id <> ranked.keep_id;
+
+        DELETE FROM tags t
+        USING tags older
+        WHERE t.users_id IS NOT NULL AND older.users_id = t.users_id
+          AND lower(btrim(older.name)) = lower(btrim(t.name)) AND older.id < t.id;
+        """
+    )
+    # Normalized names (ck_tags_name_normalized), as Python always wrote them.
+    cursor.execute(
+        "UPDATE tags SET name = regexp_replace(btrim(name), '\\s+', ' ', 'g') "
+        "WHERE name <> regexp_replace(btrim(name), '\\s+', ' ', 'g');"
+    )
+    # The same link twice (nothing prevented it): the oldest stays.
+    for column in _LINKED_TAG_ENTRY_COLUMNS:
+        cursor.execute(
+            sql.SQL(
+                "DELETE FROM linked_tags lt USING linked_tags older "
+                "WHERE lt.{col} IS NOT NULL AND older.{col} = lt.{col} "
+                "AND older.users_id = lt.users_id AND older.tag_id = lt.tag_id AND older.id < lt.id;"
+            ).format(col=sql.Identifier(column))
+        )
+
+
+def _ensure_tags_schema(cursor):
+    """`tags` and `linked_tags` (code_conventions.md §11.2.8). Idempotent: every
+    step checks first, so an up-to-date database takes no lock (§12.2)."""
+    if not _has_column(cursor, "tags", "color"):
+        # Installs older than the color column: a pastel hue from the name.
+        cursor.execute("ALTER TABLE tags ADD COLUMN color VARCHAR(64) NOT NULL DEFAULT 'hsl(0 80% 90%)';")
+    for column, definition in (
+        ("users_id", "INTEGER"),
+        ("system_key", "VARCHAR(32)"),
+        ("created_at", "TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP"),
+    ):
+        if not _has_column(cursor, "tags", column):
+            cursor.execute(
+                sql.SQL("ALTER TABLE tags ADD COLUMN {} " + definition + ";").format(sql.Identifier(column))
+            )
+    if not _has_column(cursor, "linked_tags", "created_at"):
+        cursor.execute("ALTER TABLE linked_tags ADD COLUMN created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;")
+    if not _has_column(cursor, "linked_tags", "users_id"):
+        cursor.execute("ALTER TABLE linked_tags ADD COLUMN users_id INTEGER;")
+        _migrate_tags_to_owners(cursor)
+
+    # The old unique name was global: two users could not have the same tag.
+    if _constraint_exists(cursor, "tags", "tags_name_key"):
+        cursor.execute("ALTER TABLE tags DROP CONSTRAINT tags_name_key;")
+    for table, renames in (("tags", _TAGS_CONSTRAINT_RENAMES), ("linked_tags", _LINKED_TAGS_CONSTRAINT_RENAMES)):
+        for old_name, new_name in renames.items():
+            if _constraint_exists(cursor, table, old_name) and not _constraint_exists(cursor, table, new_name):
+                cursor.execute(
+                    sql.SQL("ALTER TABLE {} RENAME CONSTRAINT {} TO {};").format(
+                        sql.Identifier(table), sql.Identifier(old_name), sql.Identifier(new_name)
+                    )
+                )
+    if _index_exists(cursor, "tags_pkey"):  # a renamed PK constraint keeps its index name
+        cursor.execute("ALTER INDEX tags_pkey RENAME TO pk_tags;")
+    if _index_exists(cursor, "linked_tags_pkey"):
+        cursor.execute("ALTER INDEX linked_tags_pkey RENAME TO pk_linked_tags;")
+    for table, name, column in (("tags", "fk_tags_users_id_users", "users_id"),
+                                ("linked_tags", "fk_linked_tags_users_id_users", "users_id")):
+        if not _constraint_exists(cursor, table, name):
+            cursor.execute(
+                sql.SQL("ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES users(id) ON DELETE CASCADE;").format(
+                    sql.Identifier(table), sql.Identifier(name), sql.Identifier(column)
+                )
+            )
+    for column in ("users_id", "tag_id"):
+        if _column_is_nullable(cursor, "linked_tags", column):
+            cursor.execute(
+                sql.SQL("ALTER TABLE linked_tags ALTER COLUMN {} SET NOT NULL;").format(sql.Identifier(column))
+            )
+
+    if _check_lacks_values(cursor, "tags", "ck_tags_system_key", [key.value for key in SystemTag]):
+        cursor.execute("ALTER TABLE tags DROP CONSTRAINT ck_tags_system_key;")
+    for name, expression in tags_check_constraints().items():
+        if not _constraint_exists(cursor, "tags", name):
+            cursor.execute(
+                sql.SQL("ALTER TABLE tags ADD CONSTRAINT {} CHECK ({});").format(
+                    sql.Identifier(name), sql.SQL(expression)
+                )
+            )
+
+    # One row per system tag, and one personal tag per name and owner ignoring case.
+    _create_unique_index_once(cursor, "uq_tags_system_key", "ON tags (system_key) WHERE system_key IS NOT NULL")
+    _create_unique_index_once(cursor, "uq_tags_users_id_name", "ON tags (users_id, lower(name)) WHERE users_id IS NOT NULL")
+    for key, (name, color) in SYSTEM_TAG_DEFAULTS.items():
+        cursor.execute("SELECT 1 AS ok FROM tags WHERE system_key = %(key)s;", {"key": key.value})
+        if cursor.fetchone() is None:
+            cursor.execute(
+                "INSERT INTO tags (system_key, name, color) VALUES (%(key)s, %(name)s, %(color)s);",
+                {"key": key.value, "name": name, "color": color},
+            )
+
+    # One link per user, tag and food; the food's own index serves its CASCADE and
+    # its detail page, the tag's serves the CASCADE from tags.
+    for column in _LINKED_TAG_ENTRY_COLUMNS:
+        _create_unique_index_once(
+            cursor,
+            f"uq_linked_tags_users_id_tag_id_{column}",
+            f"ON linked_tags (users_id, tag_id, {column}) WHERE {column} IS NOT NULL",
+        )
+        _create_index_once(cursor, f"idx_linked_tags_{column}", f"ON linked_tags ({column}) WHERE {column} IS NOT NULL")
+    _create_index_once(cursor, "idx_linked_tags_tag_id", "ON linked_tags (tag_id)")
 
 
 def _ensure_food_brands_schema(cursor):
@@ -2718,7 +2933,7 @@ def init_db():
             # Before intake_event and insulin_injections: both reference insulin_pen.
             DBSchema.insulin_brand(),
             DBSchema.insulin_pen(),
-            DBSchema.tags,
+            DBSchema.tags(),
             DBSchema.recipe(),
             DBSchema.user_favorites,
             DBSchema.linked_tags,
@@ -2735,7 +2950,6 @@ def init_db():
 
         _ensure_food_brands_schema(cur)
         _ensure_trgm_search(cur)
-        _ensure_tags_color_schema(cur)
         _ensure_user_favorites_schema(cur)
         _ensure_copy_origin_schema(cur)
         _ensure_food_publication_schema(cur)
@@ -2755,6 +2969,8 @@ def init_db():
         _ensure_intake_event_schema(cur)
         _ensure_insulin_injections_schema(cur)
         _ensure_insulin_pen_schema(cur)
+        # After recipe, catalog and manual_intake: the one-off migration reads their owners.
+        _ensure_tags_schema(cur)
         # After intake_event: portion_detail plates depend on it through a
         # foreign key, so their DDL cannot run earlier (§12.3).
         _ensure_portion_detail_schema(cur)

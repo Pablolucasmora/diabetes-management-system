@@ -14,7 +14,7 @@ from DayBetes_food.components.food.food_actions import (
     food_card_id,
 )
 from DayBetes_food.components.food.food_shared import FORM_FIELD_CLS, STORAGE_LABELS
-from DayBetes_food.components.food.rescue import RescueMarkButton, RescueModal, rescue_open_attrs
+from DayBetes_food.components.food.rescue import RescueModal, rescue_open_attrs
 from DayBetes_food.components.modal import (
     ModalLayer,
     close_modal_js,
@@ -783,82 +783,6 @@ def _decimal_input(
     )
 
 
-def _tag_badge_style(tag_name: str) -> str:
-    text = (tag_name or "").strip().lower()
-    hue = 0
-    for ch in text:
-        hue = (hue * 31 + ord(ch)) % 360
-    return (
-        f"background:hsl({hue} 80% 90%);"
-        f"border-color:hsl({hue} 70% 55%);"
-        f"color:hsl({hue} 55% 28%);"
-    )
-
-
-TAGS_UI_ENABLED = False
-
-
-def _tags_multiselect_input(
-    tag_options: list[str] | None = None,
-    selected_tags: list[str] | None = None,
-    *,
-    label: str = "Tags",
-    field_name: str = "tags_json",
-    input_style: str = "",
-):
-    if not TAGS_UI_ENABLED:
-        return ""
-    options = sorted({(x or "").strip() for x in (tag_options or []) if (x or "").strip()})
-    selected = []
-    seen = set()
-    for raw in (selected_tags or []):
-        clean = " ".join((raw or "").strip().split())
-        key = clean.lower()
-        if clean and key not in seen:
-            seen.add(key)
-            selected.append(clean)
-    input_id = f"field_{field_name}_picker"
-    return Div(
-        _label_with_help(label, "Select one or more tags. You can add new ones with Add.", for_id=input_id),
-        Div(
-            Input(type="hidden", name=field_name, value=json.dumps(selected, ensure_ascii=True), data_tags_hidden="true"),
-            Input(
-                type="text",
-                id=input_id,
-                data_tags_input="true",
-                placeholder="Type to search tags",
-                autocomplete="off",
-                cls="web_input bg-white/60 rounded-lg border border-gray-300 px-2 py-1 text-base mr-1",
-                style=input_style,
-            ),
-            Div(
-                data_tags_suggestions="true",
-                cls="absolute left-0 right-0 top-full mt-1 z-[70] rounded-md border border-gray-200 bg-white shadow-lg overflow-hidden",
-                style="display:none;background:#fff;backdrop-filter:none;z-index:70;",
-            ),
-            Div(
-                *[
-                    Div(
-                        Span(tag, cls="text-xs font-semibold"),
-                        Button("x", type="button", data_tags_remove=tag, cls="ml-1 text-xs font-bold"),
-                        data_tags_chip=tag,
-                        cls="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs",
-                        style=_tag_badge_style(tag),
-                    )
-                    for tag in selected
-                ],
-                data_tags_chips="true",
-                cls="mt-2 flex flex-wrap gap-1.5",
-            ),
-            data_tags_multiselect="true",
-            data_tags_options=json.dumps(options, ensure_ascii=True),
-            data_tags_suggest_url="/food/tags/suggestions",
-            cls="relative",
-        ),
-        cls="flex flex-col gap-1 col-span-1 md:col-span-2",
-    )
-
-
 def _searchable_autocomplete_input(
     label: str,
     name: str,
@@ -1208,236 +1132,6 @@ def _searchable_autocomplete_bootstrap_script():
             bindAll();
           }
           document.body.addEventListener("htmx:afterSwap", bindAll);
-        })();
-        """
-    )
-
-
-def _tags_multiselect_bootstrap_script():
-    return Script(
-        """
-        (function () {
-          if (window.__dbTagsMultiBootstrappedV4) return;
-          window.__dbTagsMultiBootstrappedV4 = true;
-
-          function norm(v) { return String(v || "").trim().replace(/\\s+/g, " "); }
-          function fold(v) {
-            var text = norm(v).toLowerCase();
-            try {
-              return text.normalize("NFD").replace(/[\\u0300-\\u036f]/g, "");
-            } catch (_) {
-              return text;
-            }
-          }
-          function esc(v) {
-            return String(v || "")
-              .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-              .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-          }
-          function hue(tag) {
-            var s = String(tag || "").toLowerCase();
-            var h = 0;
-            for (var i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) % 360;
-            return h;
-          }
-          function chipStyle(tag) {
-            var h = hue(tag);
-            return "background:hsl(" + h + " 80% 90%);border-color:hsl(" + h + " 70% 55%);color:hsl(" + h + " 55% 28%);";
-          }
-          function parseHidden(hidden) {
-            try {
-              var arr = JSON.parse(hidden.value || "[]");
-              if (!Array.isArray(arr)) return [];
-              return arr.map(norm).filter(Boolean);
-            } catch (_) { return []; }
-          }
-          function writeHidden(hidden, arr) {
-            hidden.value = JSON.stringify(arr);
-            hidden.dispatchEvent(new Event("input", { bubbles: true }));
-            hidden.dispatchEvent(new Event("change", { bubbles: true }));
-          }
-          function readKnown() {
-            try {
-              var raw = window.localStorage ? window.localStorage.getItem("dbKnownTags") : null;
-              var arr = raw ? JSON.parse(raw) : [];
-              return Array.isArray(arr) ? arr.map(norm).filter(Boolean) : [];
-            } catch (_) { return []; }
-          }
-          function writeKnown(values) {
-            try {
-              if (!window.localStorage) return;
-              var seen = {};
-              var out = [];
-              for (var i = 0; i < values.length; i += 1) {
-                var v = norm(values[i]);
-                var k = v.toLowerCase();
-                if (!v || seen[k]) continue;
-                seen[k] = true;
-                out.push(v);
-              }
-              window.localStorage.setItem("dbKnownTags", JSON.stringify(out));
-            } catch (_) {}
-          }
-          function bindOne(root) {
-            if (!root || root.dataset.tagsBound === "1") return;
-            root.dataset.tagsBound = "1";
-            var input = root.querySelector("[data-tags-input='true']");
-            var box = root.querySelector("[data-tags-suggestions='true']");
-            var hidden = root.querySelector("[data-tags-hidden='true']");
-            var chips = root.querySelector("[data-tags-chips='true']");
-            if (!input || !box || !hidden || !chips) return;
-            // The open list has to rise above the cards below it, which
-            // means raising its glass ancestors too (dropdown_layer.js).
-            function raise(on) {
-              if (window.dbRaiseDropdown) window.dbRaiseDropdown(root, on);
-            }
-            var options = [];
-            try { options = JSON.parse(root.dataset.tagsOptions || "[]"); } catch (_) { options = []; }
-            options = options.concat(readKnown());
-            var suggestUrl = root.dataset.tagsSuggestUrl || "";
-            var selected = parseHidden(hidden);
-            function mergeOptions(items) {
-              if (!Array.isArray(items)) return;
-              var seen = {};
-              for (var i = 0; i < options.length; i += 1) {
-                var ok = norm(options[i]).toLowerCase();
-                if (ok) seen[ok] = true;
-              }
-              for (var j = 0; j < items.length; j += 1) {
-                var clean = norm(items[j]);
-                var key = clean.toLowerCase();
-                if (!clean || seen[key]) continue;
-                seen[key] = true;
-                options.push(clean);
-              }
-            }
-            function refreshOptions(q, done) {
-              if (done) done();
-              if (!suggestUrl) return;
-              var url = suggestUrl + "?q=" + encodeURIComponent(q || "");
-              fetch(url, { credentials: "same-origin" })
-                .then(function (res) { return res.ok ? res.json() : null; })
-                .then(function (payload) {
-                  if (payload && Array.isArray(payload.tags)) {
-                    mergeOptions(payload.tags);
-                    if (done) done();
-                  }
-                })
-                .catch(function () {});
-            }
-            function selectedSet() {
-              var s = {};
-              for (var i = 0; i < selected.length; i += 1) s[fold(selected[i])] = true;
-              return s;
-            }
-            function syncChips() {
-              chips.innerHTML = "";
-              for (var i = 0; i < selected.length; i += 1) {
-                var tag = selected[i];
-                var safe = esc(tag);
-                chips.insertAdjacentHTML("beforeend",
-                  "<div data-tags-chip='" + safe + "' class='inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs' style='" + chipStyle(tag) + "'>" +
-                  "<span class='text-xs font-semibold'>" + safe + "</span>" +
-                  "<button type='button' data-tags-remove='" + safe + "' class='ml-1 text-xs font-bold'>x</button>" +
-                  "</div>"
-                );
-              }
-              writeHidden(hidden, selected);
-              writeKnown(options.concat(selected));
-            }
-            function closeBox() { box.style.display = "none"; box.innerHTML = ""; raise(false); }
-            function render() {
-              var qRaw = norm(input.value);
-              var q = fold(qRaw);
-              var rows = [];
-              var sel = selectedSet();
-              var shown = 0;
-              for (var i = 0; i < options.length; i += 1) {
-                var name = norm(options[i]);
-                if (!name || sel[fold(name)]) continue;
-                if (q && fold(name).indexOf(q) === -1) continue;
-                var safe = esc(name);
-                rows.push("<li class='border-b border-gray-200'><button type='button' data-tags-pick='" + safe + "' class='w-full text-left px-3 py-2 bg-white hover:bg-gray-200 text-sm text-gray-800'>" + safe + "</button></li>");
-                shown += 1;
-                if (shown >= 12) break;
-              }
-              var exactExists = options.some(function (x) { return fold(x) === q; });
-              if (q && !exactExists && !sel[q]) {
-                rows.push("<li class='border-b border-gray-200'><button type='button' data-tags-add='true' class='w-full text-left px-3 py-2 bg-white hover:bg-gray-200 text-sm font-semibold text-gray-800'>Add: '" + esc(qRaw) + "'</button></li>");
-              }
-              if (!rows.length) { closeBox(); return; }
-              box.innerHTML = "<div class='p-0 max-h-44 overflow-y-auto'><ul>" + rows.join("") + "</ul></div>";
-              box.style.display = "block";
-              raise(true);
-            }
-            box.addEventListener("click", function (ev) {
-              var t = ev.target;
-              if (!t || !t.closest) return;
-              var pickBtn = t.closest("[data-tags-pick]");
-              if (pickBtn && box.contains(pickBtn)) {
-                var clean = norm(pickBtn.getAttribute("data-tags-pick"));
-                if (clean && !selectedSet()[fold(clean)]) selected.push(clean);
-                if (!options.some(function (x) { return fold(x) === fold(clean); })) options.push(clean);
-                input.value = "";
-                syncChips();
-                closeBox();
-                return;
-              }
-              var addBtn = t.closest("[data-tags-add='true']");
-              if (addBtn && box.contains(addBtn)) {
-                var add = norm(input.value);
-                if (!add) return;
-                if (!selectedSet()[fold(add)]) selected.push(add);
-                if (!options.some(function (x) { return fold(x) === fold(add); })) options.push(add);
-                input.value = "";
-                syncChips();
-                closeBox();
-              }
-            });
-            chips.addEventListener("click", function (ev) {
-              var t = ev.target;
-              if (!t || !t.closest) return;
-              var removeBtn = t.closest("[data-tags-remove]");
-              if (!removeBtn || !chips.contains(removeBtn)) return;
-              var rem = fold(removeBtn.getAttribute("data-tags-remove"));
-              selected = selected.filter(function (x) { return fold(x) !== rem; });
-              syncChips();
-            });
-            input.addEventListener("focus", function () {
-              render();
-              refreshOptions("", render);
-            });
-            input.addEventListener("input", function () {
-              render();
-              refreshOptions(norm(input.value), render);
-            });
-            input.addEventListener("blur", function () {
-              setTimeout(function () {
-                if (!root.contains(document.activeElement)) closeBox();
-              }, 0);
-            });
-            input.addEventListener("keydown", function (ev) { if (ev.key === "Escape") closeBox(); });
-            document.addEventListener("mousedown", function (ev) {
-              if (!root.contains(ev.target)) closeBox();
-            });
-            document.addEventListener("click", function (ev) {
-              if (!root.contains(ev.target)) closeBox();
-            });
-            render();
-            refreshOptions("", render);
-            syncChips();
-          }
-          function bindAll(scope) {
-            var root = scope || document;
-            var nodes = root.querySelectorAll("[data-tags-multiselect='true']");
-            for (var i = 0; i < nodes.length; i += 1) bindOne(nodes[i]);
-          }
-          if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { bindAll(document); });
-          else bindAll(document);
-          document.body.addEventListener("htmx:afterSwap", function (event) {
-            var target = event && event.detail ? event.detail.target : null;
-            bindAll(target || document);
-          });
         })();
         """
     )
@@ -1876,7 +1570,6 @@ def _form_page_shell(content, result_id: str, *scripts):
         Div(content, cls="w-full"),
         Div(id=result_id, cls="text-sm w-full"),
         _searchable_autocomplete_bootstrap_script(),
-        _tags_multiselect_bootstrap_script() if TAGS_UI_ENABLED else "",
         *scripts,
         data_hide_cart="true",
         cls="""
@@ -2010,7 +1703,6 @@ def CreateCatalogPage(
     subtype_options: list[str] | None = None,
     prefill: dict | None = None,
     existing_item_id: int | None = None,
-    tag_options: list[str] | None = None,
     off_notice: str | None = None,
     barcode_notice: str | None = None,
     alcohol_source_note: str | None = None,
@@ -2176,11 +1868,6 @@ def CreateCatalogPage(
             ),
             open_=details_open,
         ),
-        _tags_multiselect_input(
-            tag_options=tag_options,
-            selected_tags=[],
-            input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
-        ),
         _favorite_row(),
         _form_submit("Create food"),
         hx_post="/food/create/catalog",
@@ -2255,7 +1942,6 @@ def _manual_origin_input(origin_options: list[str] | None, value: str | None = N
 def CreateManualPage(
     subtype_options: list[str] | None = None,
     origin_options: list[str] | None = None,
-    tag_options: list[str] | None = None,
 ):
     """Reusable dish (code_conventions.md §11.2.3): name and carbs required."""
     result_id = "create_manual_result_page"
@@ -2311,11 +1997,6 @@ def CreateManualPage(
                 _macros_confidence_select(None),
                 _weighed_default_select(None),
             ),
-        ),
-        _tags_multiselect_input(
-            tag_options=tag_options,
-            selected_tags=[],
-            input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
         ),
         _favorite_row(),
         _form_submit("Create dish"),
@@ -2421,7 +2102,7 @@ def _recipe_extra_meal_types_field(selected):
     )
 
 
-def CreateRecipePage(tag_options: list[str] | None = None):
+def CreateRecipePage():
     result_id = "create_recipe_result_page"
     form = Form(
         _form_header("New recipe", _name_title_input("", "Name of the recipe", RECIPE_NAME_MAX_LENGTH)),
@@ -2443,11 +2124,6 @@ def CreateRecipePage(tag_options: list[str] | None = None):
                 cls="flex flex-col gap-1 md:col-span-2",
             ),
             hint="You add the ingredients on the next screen.",
-        ),
-        _tags_multiselect_input(
-            tag_options=tag_options,
-            selected_tags=[],
-            input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
         ),
         _favorite_row(),
         _form_submit("Create recipe"),
@@ -2492,27 +2168,10 @@ def _edit_actions(back_path: str):
     )
 
 
-def _edit_tags(tag_options, selected_tags):
-    # The tags UI is switched off for now; no empty card is drawn.
-    if not TAGS_UI_ENABLED:
-        return ""
-    return _form_section(
-        "Tags",
-        _tags_multiselect_input(
-            tag_options=tag_options,
-            selected_tags=selected_tags or [],
-            input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
-        ),
-        cols=1,
-    )
-
-
 def EditCatalogPage(
     entry: dict,
     brand_options: list[str] | None = None,
     subtype_options: list[str] | None = None,
-    tag_options: list[str] | None = None,
-    selected_tags: list[str] | None = None,
 ):
     result_id = f"edit_catalog_result_{entry['id']}"
     back_path = f"/food/item/catalog/{entry['id']}"
@@ -2571,7 +2230,6 @@ def EditCatalogPage(
             _labeled_input("Yuka (0-100)", "yuka", "number", step="1", inputmode="numeric", min_value=YUKA_MIN, max_value=YUKA_MAX, value=_input_value(entry.get("yuka"))),
             cols=3,
         ),
-        _edit_tags(tag_options, selected_tags),
         _edit_actions(back_path),
         hx_post=f"/food/edit/catalog/{entry['id']}",
         hx_target=f"#{result_id}",
@@ -2587,8 +2245,6 @@ def EditManualPage(
     entry: dict,
     subtype_options: list[str] | None = None,
     origin_options: list[str] | None = None,
-    tag_options: list[str] | None = None,
-    selected_tags: list[str] | None = None,
 ):
     """Full replacement of a reusable dish (H1). It opens in "per 100 g" mode
     with the stored values (measurement §5.4). Publishing is the detail page's
@@ -2658,7 +2314,6 @@ def EditManualPage(
             _weighed_default_select(entry.get("default_strictly_weighed")),
             hint="Where the macros come from and how sure you are about them.",
         ),
-        _edit_tags(tag_options, selected_tags),
         _edit_actions(back_path),
         Script(src=asset_busted("/js/manual_intake_form.js"), defer="defer"),
         hx_post=f"/food/edit/manual_intake/{entry['id']}",
@@ -2674,8 +2329,6 @@ def EditManualPage(
 
 def EditRecipePage(
     entry: dict,
-    tag_options: list[str] | None = None,
-    selected_tags: list[str] | None = None,
 ):
     result_id = f"edit_recipe_result_{entry['id']}"
     back_path = f"/food/item/recipe/{entry['id']}"
@@ -2699,7 +2352,6 @@ def EditRecipePage(
                 cls="flex flex-col gap-1 md:col-span-2",
             ),
         ),
-        _edit_tags(tag_options, selected_tags),
         _edit_actions(back_path),
         hx_post=f"/food/edit/recipe/{entry['id']}",
         hx_target=f"#{result_id}",
@@ -3345,7 +2997,7 @@ def FoodDetailPage(
     summary: dict,
     recipe_portions: list | None = None,
     recipe_plates: list | None = None,
-    tags: list[dict] | list[str] | None = None,
+    tags_block="",
     events: list | None = None,
     plate_options: list | None = None,
     selected_plate_id: int | None = None,
@@ -3358,7 +3010,6 @@ def FoodDetailPage(
     is_library: bool = False,
     has_serving: bool = True,
     cooking_factor: float | None = None,
-    is_rescue: bool = False,
 ):
     can_archive = can_edit if can_archive is None else can_archive
     # catalog and manual_intake are archived (§11.2.2, §11.2.3) under can_archive;
@@ -3501,28 +3152,8 @@ def FoodDetailPage(
                         if is_archived
                         else (P(state_text, cls="text-xs text-gray-500") if state_text else "")
                     ),
-                    (
-                        Div(
-                            *[
-                                Span(
-                                    (tag.get("name") if isinstance(tag, dict) else str(tag)),
-                                    cls="inline-flex items-center rounded-full border px-2 py-1 text-xs font-semibold",
-                                    style=(
-                                        (
-                                            f"background:{str(tag.get('color') or '')};"
-                                            if isinstance(tag, dict) and str(tag.get("color") or "").strip()
-                                            else _tag_badge_style(str(tag.get("name") if isinstance(tag, dict) else tag))
-                                        )
-                                        + "border-color:rgba(0,0,0,0.2);color:rgba(17,24,39,0.95);"
-                                    ),
-                                )
-                                for tag in (tags or [])
-                            ],
-                            cls="flex flex-wrap gap-1.5 pt-1",
-                        )
-                        if TAGS_UI_ENABLED and tags
-                        else ""
-                    ),
+                    # The user's own tags on this entry (frontend_conventions.md §9.4.1).
+                    tags_block,
                     cls="flex flex-col gap-1",
                 ),
                 (
@@ -3814,13 +3445,6 @@ def FoodDetailPage(
                 cls="w-full",
             )
             if can_publish
-            else ""
-        ),
-        # Provisional while the tags interface is hidden: only for a food or
-        # dish the user can edit (frontend_conventions.md §9.6).
-        (
-            Div(RescueMarkButton(entry_type, int(entry["id"]), is_rescue), cls="w-full")
-            if archivable and can_edit and not TAGS_UI_ENABLED
             else ""
         ),
         ConfirmActionModal(

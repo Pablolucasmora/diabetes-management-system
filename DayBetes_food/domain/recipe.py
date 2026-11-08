@@ -179,7 +179,6 @@ class RecipeRequest:
     notes: str | None
     servings: int | None
     favorite: bool | None  # None = field absent (edit form)
-    tags: list[str] | None  # None = field absent
 
 
 @dataclass(frozen=True)

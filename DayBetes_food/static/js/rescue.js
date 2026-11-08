@@ -1,8 +1,9 @@
-// Rescue pop-up (frontend_conventions.md §9.6). Presentation only: the lines
-// are painted by the server and the server converts every amount. This
-// shows the picker or the "+ Add another food" button, removes lines, moves
-// an amount with − / +, adds a repeated food to its line and closes the
-// pop-up when the rescue is registered. Nothing is stored in localStorage
+// Quick log pop-up, Rescue and Exercise tabs (frontend_conventions.md §9.6).
+// Presentation only: the lines are painted by the server and the server
+// converts every amount. This switches the tab (its food list and the meal
+// type below), shows the picker or the "+ Add another food" button, removes
+// lines, moves an amount with − / +, adds a repeated food to its line and
+// closes the pop-up when the meal is registered. Nothing is stored in localStorage
 // and no field takes the focus on its own (it would open a phone keyboard).
 //
 // Motion (frontend_conventions.md §10) uses the helpers every pop-up shares
@@ -87,6 +88,37 @@
     if (submit) submit.disabled = lineCount() === 0;
   }
 
+  function submitLabel(mealType) {
+    return mealType === "rescue" ? "Log rescue" : "Log meal";
+  }
+
+  // A tab selects its meal type below (it can still be changed) and asks the
+  // server for its food list, keeping what is typed in the search.
+  function chooseTab(tab) {
+    var kind = tab.getAttribute("data-rescue-tab");
+    var input = byId("rescue_kind_input");
+    if (!kind || !input || input.value === kind) return;
+    input.value = kind;
+    var tabs = tab.parentNode ? tab.parentNode.querySelectorAll("[data-rescue-tab]") : [];
+    tabs.forEach(function (el) {
+      var active = el === tab;
+      el.setAttribute("aria-selected", active ? "true" : "false");
+      String(el.getAttribute("data-active-cls") || "").split(" ").forEach(function (c) {
+        if (c) el.classList.toggle(c, active);
+      });
+      String(el.getAttribute("data-idle-cls") || "").split(" ").forEach(function (c) {
+        if (c) el.classList.toggle(c, !active);
+      });
+    });
+    var mealType = tab.getAttribute("data-meal-type");
+    var select = byId("rescue_meal_type");
+    if (select && mealType) select.value = mealType;
+    var submit = byId("rescue_submit");
+    if (submit && select) submit.textContent = submitLabel(select.value);
+    var results = byId("rescue_picker_results");
+    if (results && window.htmx) window.htmx.trigger(results, "rescueKind");
+  }
+
   function formatAmount(value) {
     return String(Math.round(value * 100) / 100);
   }
@@ -141,6 +173,11 @@
     var target = event.target;
     if (!target || !target.closest || !target.closest("#rescue_form")) return;
 
+    var tab = target.closest("[data-rescue-tab]");
+    if (tab) {
+      chooseTab(tab);
+      return;
+    }
     var pick = target.closest("[data-rescue-pick]");
     if (pick) {
       if (addToExistingLine(pick.getAttribute("data-rescue-pick"))) {

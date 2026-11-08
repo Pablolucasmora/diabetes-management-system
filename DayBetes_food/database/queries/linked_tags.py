@@ -1,185 +1,112 @@
-"""Queries for the `linked_tags` bridge table (catalog/manual_intake/recipe <-> tags).
+"""Queries for the `linked_tags` bridge table (code_conventions.md §11.2.8).
 
-`set_entry_tags` creates or reuses tags when linking them (same criterion as
-`ensure_tag`), so it reuses the normalization helpers of `crud.py` instead
-of duplicating them.
+A link is private: one user put one of their tags (or a system tag) on one
+food, dish or recipe they can see. Every query carries the user in the SQL
+(§5.3); nobody reads another user's links.
 """
 
+from psycopg import sql
+from psycopg.errors import ForeignKeyViolation
+
+from DayBetes_food.database.mappers import tag_read_from_row
 from DayBetes_food.database.queries.crud import (
+    _RECIPE_VISIBLE,
+    _execute_query,
     _execute_query_many,
-    _normalize_tag_name,
-    _tag_color_from_name,
+    _food_visibility_sql,
 )
+from DayBetes_food.domain.constants import FoodEntryType, PortionOrigin
+from DayBetes_food.domain.tag import TagRead
+from DayBetes_food.errors import NotFoundError
+
+_ENTRY_COLUMNS = {  # technical whitelist (§4.6); each table is named after its entry type
+    FoodEntryType.CATALOG: "catalog_id",
+    FoodEntryType.MANUAL_INTAKE: "manual_intake_id",
+    FoodEntryType.RECIPE: "recipe_id",
+}
 
 
-def get_entry_tags(connection, entry_type: str, entry_id: int) -> list[dict]:
-    entry_col = {"catalog": "catalog_id", "manual_intake": "manual_intake_id", "recipe": "recipe_id"}.get(entry_type)
-    if not entry_col or not entry_id:
-        return []
-    query = f"""
-        SELECT t.id, t.name, t.color
+def _visible_sql(entry_type: FoodEntryType) -> str:
+    """What the user can see, retained foods included: what they can use, they can tag."""
+    if entry_type is FoodEntryType.RECIPE:
+        return _RECIPE_VISIBLE
+    return _food_visibility_sql(PortionOrigin(entry_type.value), "entity", include_retained=True)
+
+
+def list_entry_tags(connection, user_id: int, entry_type: FoodEntryType, entry_id: int) -> list[TagRead]:
+    """The tags this user put on the entry: system ones first, then by name."""
+    query = sql.SQL(
+        """
+        SELECT t.id, t.users_id, t.system_key, t.name, t.color
         FROM linked_tags lt
         INNER JOIN tags t ON t.id = lt.tag_id
-        WHERE lt.{entry_col} = %(entry_id)s
-        ORDER BY lower(t.name), t.id;
-    """
-    return _execute_query_many(connection, query, {"entry_id": entry_id}, commit=False)
+        WHERE lt.users_id = %(user_id)s AND lt.{column} = %(entry_id)s
+        ORDER BY (t.system_key IS NULL), lower(t.name), t.id;
+        """
+    ).format(column=sql.Identifier(_ENTRY_COLUMNS[entry_type]))
+    rows = _execute_query_many(connection, query, {"user_id": user_id, "entry_id": entry_id}, commit=False)
+    return [tag_read_from_row(row) for row in rows]
 
 
-def set_entry_tags(
+def set_entry_tag(
     connection,
-    entry_type: str,
+    user_id: int,
+    entry_type: FoodEntryType,
     entry_id: int,
-    tag_names: list[str],
+    tag_id: int,
+    linked: bool,
     commit: bool = True,
-) -> bool:
-    entry_col = {"catalog": "catalog_id", "manual_intake": "manual_intake_id", "recipe": "recipe_id"}.get(entry_type)
-    if not entry_col or not entry_id:
-        return False
+) -> None:
+    """Leaves the tag on the entry as the caller asked, so repeating it is a no-op (§6.3).
 
-    unique_names = []
-    seen = set()
-    for raw in tag_names or []:
-        clean = _normalize_tag_name(raw)
-        key = clean.lower()
-        if not clean or key in seen:
-            continue
-        seen.add(key)
-        unique_names.append(clean)
-
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(f"DELETE FROM linked_tags WHERE {entry_col} = %(entry_id)s;", {"entry_id": entry_id})
-            for name in unique_names:
-                cursor.execute(
-                    """
-                    INSERT INTO tags (name, color)
-                    VALUES (%(name)s, %(color)s)
-                    ON CONFLICT (name) DO UPDATE SET
-                        color = COALESCE(NULLIF(tags.color, ''), EXCLUDED.color);
-                    """,
-                    {"name": name, "color": _tag_color_from_name(name)},
-                )
-                cursor.execute(
-                    "SELECT id FROM tags WHERE lower(trim(name)) = lower(trim(%(name)s)) LIMIT 1;",
-                    {"name": name},
-                )
-                tag_row = cursor.fetchone()
-                if not tag_row or tag_row.get("id") is None:
-                    continue
-                cursor.execute(
-                    f"""
-                    INSERT INTO linked_tags (tag_id, {entry_col})
-                    VALUES (%(tag_id)s, %(entry_id)s);
-                    """,
-                    {"tag_id": int(tag_row["id"]), "entry_id": entry_id},
-                )
-        if commit:
-            connection.commit()
-        return True
-    except Exception:
-        if commit:
-            connection.rollback()
-        raise
-
-
-_TAG_ENTRY_COLUMNS = {"catalog": "catalog_id", "manual_intake": "manual_intake_id", "recipe": "recipe_id"}
-
-
-def entry_has_tag(connection, entry_type: str, entry_id: int, tag_name: str) -> bool:
-    """Whether the entry is linked to the tag named `tag_name` (case-insensitive)."""
-    entry_col = _TAG_ENTRY_COLUMNS.get(entry_type)
-    clean = _normalize_tag_name(tag_name)
-    if not entry_col or not entry_id or not clean:
-        return False
-    query = f"""
-        SELECT 1
-        FROM linked_tags lt
-        INNER JOIN tags t ON t.id = lt.tag_id
-        WHERE lt.{entry_col} = %(entry_id)s
-          AND lower(trim(t.name)) = lower(%(name)s)
-        LIMIT 1;
+    Linking needs an entry the user can see and a tag they can use (system or
+    their own), both checked in the INSERT; otherwise NotFoundError (§5.4).
+    Unlinking needs nothing: the final state is always "not linked".
     """
-    with connection.cursor() as cursor:
-        cursor.execute(query, {"entry_id": entry_id, "name": clean})
-        return cursor.fetchone() is not None
-
-
-def add_entry_tag(connection, entry_type: str, entry_id: int, tag_name: str, commit: bool = True) -> None:
-    """Link one tag to the entry, creating the tag if needed, without touching
-    its other tags (frontend_conventions.md §9.6). Idempotent: linking a tag
-    that is already linked does nothing. Ownership is the caller's job."""
-    entry_col = _TAG_ENTRY_COLUMNS.get(entry_type)
-    clean = _normalize_tag_name(tag_name)
-    if not entry_col or not entry_id or not clean:
-        raise ValueError(f"Invalid tag link: {entry_type!r} {entry_id!r} {tag_name!r}")
+    column = sql.Identifier(_ENTRY_COLUMNS[entry_type])
+    params = {"user_id": user_id, "visibility_user_id": user_id, "entry_id": entry_id, "tag_id": tag_id}
+    if not linked:
+        _execute_query(
+            connection,
+            sql.SQL(
+                "DELETE FROM linked_tags WHERE users_id = %(user_id)s AND tag_id = %(tag_id)s "
+                "AND {column} = %(entry_id)s RETURNING id;"
+            ).format(column=column),
+            params,
+            commit=commit,
+        )
+        return
+    query = sql.SQL(
+        """
+        INSERT INTO linked_tags (users_id, tag_id, {column})
+        SELECT %(user_id)s, t.id, entity.id
+        FROM tags t, {table} entity
+        WHERE t.id = %(tag_id)s AND (t.users_id IS NULL OR t.users_id = %(user_id)s)
+          AND entity.id = %(entry_id)s AND {visible}
+        ON CONFLICT DO NOTHING
+        RETURNING id;
+        """
+    ).format(
+        column=column,
+        table=sql.Identifier(entry_type.value),
+        visible=sql.SQL(_visible_sql(entry_type)),
+    )
     try:
-        with connection.cursor() as cursor:
-            # The tag is matched case-insensitively ("Rescate" is stored
-            # capitalized): it is only created when no spelling of it exists.
-            cursor.execute(
-                """
-                INSERT INTO tags (name, color)
-                SELECT %(name)s::text, %(color)s::text
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM tags WHERE lower(trim(name)) = lower(%(name)s::text)
-                )
-                ON CONFLICT (name) DO NOTHING;
-                """,
-                {"name": clean, "color": _tag_color_from_name(clean)},
-            )
-            # linked_tags has no unique key: the NOT EXISTS keeps it
-            # idempotent, against any spelling of the tag.
-            cursor.execute(
-                f"""
-                INSERT INTO linked_tags (tag_id, {entry_col})
-                SELECT t.id, %(entry_id)s
-                FROM (
-                    SELECT id FROM tags
-                    WHERE lower(trim(name)) = lower(%(name)s)
-                    ORDER BY id
-                    LIMIT 1
-                ) t
-                WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM linked_tags lt
-                    INNER JOIN tags lt_tag ON lt_tag.id = lt.tag_id
-                    WHERE lt.{entry_col} = %(entry_id)s
-                      AND lower(trim(lt_tag.name)) = lower(%(name)s)
-                );
-                """,
-                {"entry_id": entry_id, "name": clean},
-            )
-        if commit:
-            connection.commit()
-    except Exception:
-        if commit:
-            connection.rollback()
-        raise
-
-
-def remove_entry_tag(connection, entry_type: str, entry_id: int, tag_name: str, commit: bool = True) -> None:
-    """Unlink one tag from the entry without touching its other tags. The tag
-    itself stays in `tags`. Ownership is the caller's job."""
-    entry_col = _TAG_ENTRY_COLUMNS.get(entry_type)
-    clean = _normalize_tag_name(tag_name)
-    if not entry_col or not entry_id or not clean:
-        raise ValueError(f"Invalid tag link: {entry_type!r} {entry_id!r} {tag_name!r}")
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                f"""
-                DELETE FROM linked_tags lt
-                USING tags t
-                WHERE t.id = lt.tag_id
-                  AND lt.{entry_col} = %(entry_id)s
-                  AND lower(trim(t.name)) = lower(%(name)s);
-                """,
-                {"entry_id": entry_id, "name": clean},
-            )
-        if commit:
-            connection.commit()
-    except Exception:
-        if commit:
-            connection.rollback()
-        raise
+        row = _execute_query(connection, query, params, commit=commit)
+    except ForeignKeyViolation as exc:
+        # The entry or the tag was deleted between the SELECT and the foreign key check.
+        raise NotFoundError("Not found.") from exc
+    if row is not None:
+        return
+    # Nothing inserted: already linked, or the entry or the tag is not available.
+    exists = _execute_query(
+        connection,
+        sql.SQL(
+            "SELECT 1 AS ok FROM linked_tags WHERE users_id = %(user_id)s AND tag_id = %(tag_id)s "
+            "AND {column} = %(entry_id)s;"
+        ).format(column=column),
+        params,
+        commit=False,
+    )
+    if exists is None:
+        raise NotFoundError("Not found.")

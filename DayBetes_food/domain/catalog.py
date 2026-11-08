@@ -212,6 +212,5 @@ class CatalogItemRequest:
     default_strictly_weighed: bool | None  # copied to each new portion
     macros_confidence: int | None  # declared, ordinal 0-2
     favorite: bool | None
-    tags: list[str] | None
     prefill_source: PrefillSource | None = None
     prefill_source_id: str | None = None

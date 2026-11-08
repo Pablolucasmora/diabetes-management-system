@@ -198,7 +198,6 @@ class ManualIntakeRequest:
     macros_quality: bool | None
     default_strictly_weighed: bool | None
     favorite: bool | None  # None = field absent (edit form)
-    tags: list[str] | None  # None = field absent
 
 
 @dataclass(frozen=True)

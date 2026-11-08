@@ -29,9 +29,11 @@ from DayBetes_food.domain.constants import (
     PenFormat,
     PrefillSource,
     StorageLocation,
+    SystemTag,
     sql_in_list,
 )
 from DayBetes_food.domain.search_text import search_text_sql
+from DayBetes_food.domain.tag import TAG_COLOR_PATTERN
 from DayBetes_food.domain.food import (
     FOOD_CONFIDENCE_MAX,
     FOOD_CONFIDENCE_MIN,
@@ -164,6 +166,18 @@ def fridge_check_constraints() -> dict[str, str]:
         "ck_fridge_closed_after_stored": "closed_at IS NULL OR closed_at >= stored_at",
         "ck_fridge_closed_reason": f"closed_reason IS NULL OR closed_reason IN ({sql_in_list(FridgeCloseReason)})",
         "ck_fridge_closed_reason_iff_closed": "(closed_at IS NULL) = (closed_reason IS NULL)",
+    }
+
+
+def tags_check_constraints() -> dict[str, str]:
+    """CHECK name -> expression of `tags` (code_conventions.md §11.2.8).
+    The same list feeds the CREATE TABLE and db_init._ensure_tags_schema."""
+    return {
+        "ck_tags_system_key": f"system_key IS NULL OR system_key IN ({sql_in_list(SystemTag)})",
+        # A system tag has no owner; a personal tag has one and no key.
+        "ck_tags_owner": "(users_id IS NULL) = (system_key IS NOT NULL)",
+        "ck_tags_name_normalized": r"name <> '' AND name = regexp_replace(btrim(name), '\s+', ' ', 'g')",
+        "ck_tags_color": f"color ~ '{TAG_COLOR_PATTERN}'",
     }
 
 
@@ -643,12 +657,25 @@ class DBSchema:
     );
     """
 
-    tags = """
+    @classmethod
+    def tags(cls):
+        """System tags (no owner, SystemTag key) and personal tags of one user
+        (code_conventions.md §11.2.8). Unique indexes in db_init._ensure_tags_schema."""
+        check_lines = ",\n".join(
+            f"        CONSTRAINT {name} CHECK ({expression})" for name, expression in tags_check_constraints().items()
+        )
+        return f"""
     CREATE TABLE IF NOT EXISTS tags (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(100) UNIQUE NOT NULL, -- Tag name, such as "low fat", "high protein"...
-        color VARCHAR(64) NOT NULL DEFAULT 'hsl(0 80% 90%)',
-        description TEXT -- Description of what the tag means
+        id SERIAL CONSTRAINT pk_tags PRIMARY KEY,
+        users_id INTEGER -- owner of a personal tag; NULL on a system tag
+            CONSTRAINT fk_tags_users_id_users
+            REFERENCES users(id) ON DELETE CASCADE,
+        system_key VARCHAR(32), -- SystemTag; identifies a system tag, its name is only shown
+        name VARCHAR(100) NOT NULL, -- stored normalized; unique per owner ignoring case (uq_tags_users_id_name)
+        color VARCHAR(64) NOT NULL DEFAULT 'hsl(0 80% 90%)', -- #RRGGBB or hsl(); ends in a style attribute
+        description TEXT, -- unused for now (phase 2)
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+{check_lines}
     );
     """
 
@@ -702,18 +729,24 @@ class DBSchema:
     );
     """
 
+    # Dependent of its user, its tag and its food (code_conventions.md §11.2.8): one
+    # user put one tag on one food, dish or recipe. Private: nobody else reads it.
+    # Unique indexes in db_init._ensure_tags_schema.
     linked_tags = """
     CREATE TABLE IF NOT EXISTS linked_tags (
-        id SERIAL PRIMARY KEY,
-        tag_id INTEGER REFERENCES tags(id) ON DELETE CASCADE,
-        
-        catalog_id INTEGER REFERENCES catalog(id) ON DELETE CASCADE,
-        recipe_id INTEGER REFERENCES recipe(id) ON DELETE CASCADE,
-        manual_intake_id INTEGER REFERENCES manual_intake(id) ON DELETE CASCADE,
-        
-        -- Postgres function to count how many of these fields are non-null.
-        -- Ensures the tag is assigned to one and only one entity.
-        CHECK (num_nonnulls(catalog_id, recipe_id, manual_intake_id) = 1)
+        id SERIAL CONSTRAINT pk_linked_tags PRIMARY KEY,
+        users_id INTEGER NOT NULL
+            CONSTRAINT fk_linked_tags_users_id_users REFERENCES users(id) ON DELETE CASCADE,
+        tag_id INTEGER NOT NULL
+            CONSTRAINT fk_linked_tags_tag_id_tags REFERENCES tags(id) ON DELETE CASCADE,
+        catalog_id INTEGER
+            CONSTRAINT fk_linked_tags_catalog_id_catalog REFERENCES catalog(id) ON DELETE CASCADE,
+        recipe_id INTEGER
+            CONSTRAINT fk_linked_tags_recipe_id_recipe REFERENCES recipe(id) ON DELETE CASCADE,
+        manual_intake_id INTEGER
+            CONSTRAINT fk_linked_tags_manual_intake_id_manual_intake REFERENCES manual_intake(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT ck_linked_tags_one_entry CHECK (num_nonnulls(catalog_id, recipe_id, manual_intake_id) = 1)
     );
     """
 

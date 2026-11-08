@@ -66,14 +66,13 @@ from DayBetes_food.database.queries import (
     get_subtype_suggestions,
     get_subtype_label,
     get_manual_origin_suggestions,
-    get_tag_suggestions,
-    get_entry_tags,
-    set_entry_tags,
     get_consumed_food_usage_rankings,
     get_rescue_entries_suggestions,
-    add_entry_tag,
-    remove_entry_tag,
-    entry_has_tag,
+    list_tags,
+    get_tag_by_name,
+    create_tag,
+    list_entry_tags,
+    set_entry_tag,
     update_intake_event,
     update_portion_amount,
     update_portion_detail_fields,
@@ -178,10 +177,10 @@ from DayBetes_food.components.food.food_actions import (
 )
 from DayBetes_food.components.food.fridge import FridgeListContent, FridgeListOob
 from DayBetes_food.components.modal import ModalFormError
+from DayBetes_food.components.food.tags import EntryTags
 from DayBetes_food.components.food.rescue import (
     RescueForm,
     RescueLine,
-    RescueMarkButton,
     RescueOptions,
 )
 from DayBetes_food.components.food.foods import catalog_entry_view, manual_intake_entry_view, recipe_entry_view
@@ -210,7 +209,8 @@ from DayBetes_food.components.food.foods import (
     PlateSelector,
 )
 from DayBetes_food.database.connection import get_connection
-from DayBetes_food.domain.constants import RESCUE_TAG_NAME, IntakeEventState, MealType
+from DayBetes_food.domain.constants import IntakeEventState, MealType, SystemTag
+from DayBetes_food.domain.tag import TagCreate, parse_tag_name, tag_color_from_name
 from DayBetes_food.domain.intake_event import INTAKE_EVENT_NAME_MAX_LENGTH, IntakeEventCreate, IntakeEventUpdate
 from DayBetes_food.domain.intake_plate import IntakePlateCreate, auto_offset_minutes, derive_plate_name
 from DayBetes_food.domain.recipe import (
@@ -396,7 +396,6 @@ def _parse_catalog_item_request(
     default_strictly_weighed,
     macros_confidence,
     favorite=None,
-    tags_json=None,
     smart_raw="",
     prefill_source="",
     prefill_source_id="",
@@ -435,7 +434,6 @@ def _parse_catalog_item_request(
     parsed_default_strictly_weighed = _parse_optional_bool(default_strictly_weighed)
     parsed_macros_confidence = parse_declared_confidence(macros_confidence, field="macros_confidence")
     parsed_favorite = None if favorite is None else _parse_strict_bool(favorite)
-    tags = _parse_tags_json(tags_json) if tags_json is not None else None
     parsed_prefill_source, parsed_prefill_source_id = parse_prefill_reference(prefill_source, prefill_source_id)
     return CatalogItemRequest(
         name=parsed_name,
@@ -456,7 +454,6 @@ def _parse_catalog_item_request(
         default_strictly_weighed=parsed_default_strictly_weighed,
         macros_confidence=parsed_macros_confidence,
         favorite=parsed_favorite,
-        tags=tags,
         prefill_source=parsed_prefill_source,
         prefill_source_id=parsed_prefill_source_id,
     )
@@ -542,7 +539,7 @@ def _parse_optional_bool(raw: str | None) -> bool | None:
 
 
 def _parse_recipe_request(
-    *, name, meal_type, extra_meal_types, notes, servings, favorite=None, tags_json=None
+    *, name, meal_type, extra_meal_types, notes, servings, favorite=None
 ) -> RecipeRequest:
     """The only parser of the recipe create and edit forms (§7.1, §7.11)."""
     main_meal_type = parse_recipe_meal_type(meal_type)
@@ -553,7 +550,6 @@ def _parse_recipe_request(
         notes=parse_recipe_notes(notes),
         servings=parse_recipe_servings(servings),
         favorite=None if favorite is None else _parse_strict_bool(favorite),
-        tags=None if tags_json is None else _parse_tags_json(tags_json),
     )
 
 
@@ -605,7 +601,6 @@ def _parse_manual_intake_request(
     macros_quality,
     default_strictly_weighed,
     favorite=None,
-    tags_json=None,
     smart_raw=None,
     **nutrient_fields,
 ) -> ManualIntakeRequest:
@@ -648,7 +643,6 @@ def _parse_manual_intake_request(
         macros_quality=_parse_optional_bool(macros_quality),
         default_strictly_weighed=_parse_optional_bool(default_strictly_weighed),
         favorite=None if favorite is None else _parse_strict_bool(favorite),
-        tags=_parse_tags_json(tags_json) if tags_json is not None else None,
     )
 
 
@@ -741,6 +735,17 @@ def _quick_add_create(req: QuickAddRequest, user_id: int) -> ManualIntakeCreate:
     )
 
 
+def _entry_tags_block(connection, user_id: int, kind: FoodEntryType, entry_id: int, open_panel: bool = False):
+    """The tags block of a detail page, painted from what is stored (§9.4.1)."""
+    return EntryTags(
+        kind.value,
+        entry_id,
+        linked=list_entry_tags(connection, user_id, kind, entry_id),
+        available=list_tags(connection, user_id),
+        open_panel=open_panel,
+    )
+
+
 def _get_rescue_food(connection, user_id: int, origin: PortionOrigin, entry_id: int):
     """A food or dish of the rescue pop-up, read with the SQL visibility rule.
     None if the user cannot see it."""
@@ -752,15 +757,6 @@ def _get_rescue_food(connection, user_id: int, origin: PortionOrigin, entry_id: 
 def _rescue_error(message: str):
     """Validation error of the rescue pop-up: 200 + message inside the form (§9.5)."""
     return render_fragment(ModalFormError(message))
-
-
-def _has_rescue_tag(tags) -> bool:
-    """Whether the detail's tags include the rescue one (§9.6)."""
-    wanted = RESCUE_TAG_NAME.lower()
-    return any(
-        str((tag.get("name") if isinstance(tag, dict) else tag) or "").strip().lower() == wanted
-        for tag in (tags or [])
-    )
 
 
 def _portion_defaults(item: CatalogItemRead | ManualIntakeRead) -> dict:
@@ -910,28 +906,6 @@ def _is_allowed_choice(value: str, options: list[str] | None) -> bool:
         return False
     allowed = _normalized_choice_set(options)
     return _normalize_text(text) in allowed
-
-
-def _parse_tags_json(raw: str) -> list[str]:
-    """Parse the tags field. Empty clears the tags; malformed JSON is a 422 (§7.2)."""
-    text = (raw or "").strip()
-    if not text:
-        return []
-    try:
-        payload = json.loads(text)
-    except ValueError:
-        raise ValidationError("Invalid tags.", fields={"tags_json": "invalid"})
-    if not isinstance(payload, list):
-        raise ValidationError("Invalid tags.", fields={"tags_json": "invalid"})
-    tags = []
-    seen = set()
-    for item in payload:
-        tag = " ".join(str(item or "").strip().split())
-        key = tag.lower()
-        if tag and key not in seen:
-            seen.add(key)
-            tags.append(tag)
-    return tags
 
 
 def _macro_value(portion, macro_key: str):
@@ -1690,7 +1664,6 @@ def setup_food_routes(rt):
             # Autocomplete only; validation is SQL (F4.1).
             brands = get_food_brand_suggestions(connection, search="", limit=500)
             subtypes = get_subtype_suggestions(connection, search="", limit=500)
-            tags = get_tag_suggestions(connection, search="", limit=500)
         if valid_barcode and prefill is None and off_notice is None and not existing_item_id:
             off_notice = "Product not found. You can fill the form by hand."
         prefill_view = _prefill_view(prefill, valid_barcode, prefill_source_id) if prefill else {"barcode": clean}
@@ -1712,7 +1685,6 @@ def setup_food_routes(rt):
             lambda _: CreateCatalogPage(
                 brand_options=brands,
                 subtype_options=subtypes,
-                tag_options=tags,
                 prefill=prefill_view,
                 existing_item_id=existing_item_id,
                 off_notice=off_notice,
@@ -1733,51 +1705,49 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             subtypes = get_subtype_suggestions(connection, search="", limit=500)
             origins = get_manual_origin_suggestions(connection, int(user_id), limit=500)
-            tags = get_tag_suggestions(connection, search="", limit=500)
         return render_page(
             request,
-            lambda _: CreateManualPage(subtype_options=subtypes, origin_options=origins, tag_options=tags),
+            lambda _: CreateManualPage(subtype_options=subtypes, origin_options=origins),
             show_cart=False,
         )
 
     @rt("/food/create/recipe/form")
     def get(request: Request):
-        with get_connection() as connection:
-            tags = get_tag_suggestions(connection, search="", limit=500)
-        return render_page(request, lambda _: CreateRecipePage(tag_options=tags), show_cart=False)
-
-    @rt("/food/tags/suggestions")
-    def get(request: Request, q: str = ""):
-        with get_connection() as connection:
-            tags = get_tag_suggestions(connection, search=(q or "").strip(), limit=500)
-        return JSONResponse({"tags": tags})
-
-    # Rescue pop-up and provisional Rescue button (frontend_conventions.md §9.6).
+        return render_page(request, lambda _: CreateRecipePage(), show_cart=False)
 
     @rt("/food/rescue/form")
-    def get(request: Request):
+    def get(request: Request, kind: str = ""):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()
         if not user_id:
             return app_error_response(request, AuthenticationError, "Your session has expired.")
+        try:
+            tab = parse_enum(SystemTag, kind, field="kind") or SystemTag.RESCUE
+        except ValidationError as error:
+            return app_error_response(request, error, str(error))
         # The initial food list travels with the form: a single response,
         # so the pop-up opens complete instead of growing twice (§9.6).
         with get_connection() as connection:
-            rows = get_rescue_entries_suggestions(connection, user_id=int(user_id), search="", limit=30)
+            rows = get_rescue_entries_suggestions(connection, int(user_id), tab, search="", limit=30)
         now = local_now()
-        return render_fragment(RescueForm(now.strftime("%Y-%m-%d"), now.strftime("%H:%M"), rows))
+        return render_fragment(RescueForm(now.strftime("%Y-%m-%d"), now.strftime("%H:%M"), rows, tab))
 
     @rt("/food/rescue/options")
-    def get(request: Request, q: str = ""):
+    def get(request: Request, q: str = "", kind: str = ""):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()
         if not user_id:
             return app_error_response(request, AuthenticationError, "Your session has expired.")
+        try:
+            tab = parse_enum(SystemTag, kind, field="kind") or SystemTag.RESCUE
+        except ValidationError as error:
+            return app_error_response(request, error, str(error))
+        search = (q or "").strip()
         with get_connection() as connection:
-            rows = get_rescue_entries_suggestions(connection, user_id=int(user_id), search=(q or "").strip(), limit=30)
-        return render_fragment(RescueOptions(rows, searching=bool((q or "").strip())))
+            rows = get_rescue_entries_suggestions(connection, int(user_id), tab, search=search, limit=30)
+        return render_fragment(RescueOptions(rows, searching=bool(search), kind=tab))
 
     @rt("/food/rescue/line/{entry_type}/{entry_id}")
     def get(request: Request, entry_type: str, entry_id: int):
@@ -1921,29 +1891,69 @@ def setup_food_routes(rt):
                 return _rescue_error("The total amount must be at most 100000 g.")
         return HTMLResponse("", headers={"HX-Trigger": json.dumps({"rescueRegistered": {"meal_type": meal_type.value}})})
 
-    @rt("/food/rescue/mark/{entry_type}/{entry_id}")
-    def post(request: Request, entry_type: str, entry_id: int, rescue: str = ""):
+    # Tags of a food, dish or recipe on its detail page (frontend_conventions.md §9.4.1).
+
+    @rt("/food/tags/{entry_type}/{entry_id}")
+    def post(request: Request, entry_type: str, entry_id: int, tag_id: str = "", linked: str = "", open: str = ""):
+        """Leaves the tag on the entry as asked: repeating it is a no-op (§6.3)."""
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()
         if not user_id:
             return app_error_response(request, AuthenticationError, "Your session has expired.")
+        kind = _parse_food_entry_type(entry_type)
+        if kind is None:
+            return app_error_response(request, ValidationError, _UNKNOWN_ENTRY_TYPE)
+        # Required: an empty value would read as False and take the tag off (§7.4, §7.6).
+        if not linked.strip():
+            return app_error_response(request, ValidationError, "Say whether to add or remove the tag.")
         try:
-            origin = PortionOrigin(entry_type)
-            marked = _parse_strict_bool(rescue)
-        except (ValueError, ValidationError):
-            return app_error_response(request, ValidationError, "The request is not valid.")
+            parsed_tag_id = parse_optional_id(tag_id, "tag_id")
+            wanted = _parse_strict_bool(linked)
+            keep_open = _parse_strict_bool(open)
+        except ValidationError as error:
+            return app_error_response(request, error, str(error))
+        if parsed_tag_id is None:
+            return app_error_response(request, ValidationError, "Choose a tag.")
         with get_connection() as connection:
-            item = _get_rescue_food(connection, int(user_id), origin, entry_id)
-            # Only the owner of an active food changes its tags (§9.6).
-            if item is None or not item.can_edit:
-                return app_error_response(request, NotFoundError, "Food not found.")
-            if marked:
-                add_entry_tag(connection, origin.value, entry_id, RESCUE_TAG_NAME)
-            else:
-                remove_entry_tag(connection, origin.value, entry_id, RESCUE_TAG_NAME)
-            is_rescue = entry_has_tag(connection, origin.value, entry_id, RESCUE_TAG_NAME)
-        return render_fragment(RescueMarkButton(origin.value, entry_id, is_rescue))
+            try:
+                set_entry_tag(connection, int(user_id), kind, entry_id, parsed_tag_id, wanted)
+            except NotFoundError:
+                return app_error_response(request, NotFoundError, "That food or tag is not available.")
+            return render_fragment(_entry_tags_block(connection, int(user_id), kind, entry_id, keep_open))
+
+    @rt("/food/tags/{entry_type}/{entry_id}/new")
+    def post(request: Request, entry_type: str, entry_id: int, name: str = ""):
+        """Puts a tag on the entry by its name: an existing tag of the user (or a
+        system one) is reused, otherwise a personal tag is created."""
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        kind = _parse_food_entry_type(entry_type)
+        if kind is None:
+            return app_error_response(request, ValidationError, _UNKNOWN_ENTRY_TYPE)
+        try:
+            clean_name = parse_tag_name(name)
+        except ValidationError as error:
+            return app_error_response(request, error, str(error))
+        with get_connection() as connection:
+            try:
+                with connection.transaction():
+                    tag = get_tag_by_name(connection, int(user_id), clean_name)
+                    tag_id = tag.id if tag else create_tag(
+                        connection,
+                        TagCreate(user_id=int(user_id), name=clean_name, color=tag_color_from_name(clean_name)),
+                        commit=False,
+                    )
+                    set_entry_tag(connection, int(user_id), kind, entry_id, tag_id, True, commit=False)
+            except NotFoundError:
+                return app_error_response(request, NotFoundError, "That food is not available.")
+            except ConflictError as error:
+                # Created by another request at the same time: repeating it reuses the tag.
+                return app_error_response(request, error, str(error))
+            return render_fragment(_entry_tags_block(connection, int(user_id), kind, entry_id, True))
 
     @rt("/food/actions/{entry_type}/{entry_id}")
     def get(request: Request, entry_type: str, entry_id: int):
@@ -2057,7 +2067,7 @@ def setup_food_routes(rt):
                 if item is None:
                     raise NotFoundError("Food not found.")
                 summary = _catalog_detail_summary(item)
-                tags = get_entry_tags(connection, "catalog", entry_id)
+                tags_block = _entry_tags_block(connection, int(user_id), kind, entry_id) if user_id else ""
                 events = list_planned_intake_events(connection, int(user_id)) if user_id else []
                 plate_options, selected_plate_id = (
                     plate_selector_options(connection, int(user_id), events[0].id) if events else ([], None)
@@ -2070,7 +2080,6 @@ def setup_food_routes(rt):
                         entry=catalog_entry_view(item),
                         summary=summary,
                         recipe_portions=None,
-                        tags=tags,
                         events=events,
                         plate_options=plate_options,
                         selected_plate_id=selected_plate_id,
@@ -2082,7 +2091,7 @@ def setup_food_routes(rt):
                         is_library=item.is_library,
                         has_serving=item.default_portion is not None,
                         cooking_factor=item.cooking_factor,
-                        is_rescue=_has_rescue_tag(tags),
+                        tags_block=tags_block,
                     ),
                     show_cart=False,
                 )
@@ -2092,7 +2101,7 @@ def setup_food_routes(rt):
                 if manual_item is None:
                     raise NotFoundError("Dish not found.")
                 summary = _manual_intake_detail_summary(manual_item)
-                tags = get_entry_tags(connection, "manual_intake", entry_id)
+                tags_block = _entry_tags_block(connection, int(user_id), kind, entry_id)
                 events = list_planned_intake_events(connection, int(user_id))
                 plate_options, selected_plate_id = (
                     plate_selector_options(connection, int(user_id), events[0].id) if events else ([], None)
@@ -2105,7 +2114,6 @@ def setup_food_routes(rt):
                         entry=manual_intake_entry_view(manual_item),
                         summary=summary,
                         recipe_portions=None,
-                        tags=tags,
                         events=events,
                         plate_options=plate_options,
                         selected_plate_id=selected_plate_id,
@@ -2116,7 +2124,7 @@ def setup_food_routes(rt):
                         is_archived=manual_item.is_archived,
                         has_serving=manual_item.default_portion is not None,
                         cooking_factor=None,
-                        is_rescue=_has_rescue_tag(tags),
+                        tags_block=tags_block,
                     ),
                     show_cart=False,
                 )
@@ -2127,7 +2135,7 @@ def setup_food_routes(rt):
             recipe_portions = list_viewable_recipe_portions(connection, int(user_id), entry_id)
             recipe_plates = list_recipe_plates(connection, int(user_id), entry_id)
             summary = _recipe_summary(entry, recipe_portions)
-            tags = get_entry_tags(connection, entry_type, entry_id)
+            tags_block = _entry_tags_block(connection, int(user_id), kind, entry_id)
             can_edit = recipe.can_edit
             can_delete = can_edit
             events = list_planned_intake_events(connection, int(user_id)) if user_id else []
@@ -2146,13 +2154,13 @@ def setup_food_routes(rt):
                 summary=summary,
                 recipe_portions=recipe_portions,
                 recipe_plates=recipe_plates,
-                tags=tags,
                 events=events,
                 plate_options=plate_options,
                 selected_plate_id=selected_plate_id,
                 can_edit=can_edit,
                 can_delete=can_delete,
                 is_archived=False,
+                tags_block=tags_block,
             ),
             show_cart=False,
         )
@@ -2633,16 +2641,12 @@ def setup_food_routes(rt):
                     )
                 brands = get_food_brand_suggestions(connection, search="", limit=500)
                 subtypes = get_subtype_suggestions(connection, search="", limit=500)
-                tags = get_tag_suggestions(connection, search="", limit=500)
-                selected_tags = [str(row.get("name") or "") for row in get_entry_tags(connection, "catalog", entry_id)]
                 return render_page(
                     request,
                     lambda _: EditCatalogPage(
                         entry=catalog_entry_view(item),
                         brand_options=brands,
                         subtype_options=subtypes,
-                        tag_options=tags,
-                        selected_tags=selected_tags,
                     ),
                     show_cart=False,
                 )
@@ -2657,16 +2661,12 @@ def setup_food_routes(rt):
                     )
                 subtypes = get_subtype_suggestions(connection, search="", limit=500)
                 origins = get_manual_origin_suggestions(connection, int(user_id), limit=500)
-                tags = get_tag_suggestions(connection, search="", limit=500)
-                selected_tags = [str(row.get("name") or "") for row in get_entry_tags(connection, "manual_intake", entry_id)]
                 return render_page(
                     request,
                     lambda _: EditManualPage(
                         entry=manual_intake_entry_view(manual_item),
                         subtype_options=subtypes,
                         origin_options=origins,
-                        tag_options=tags,
-                        selected_tags=selected_tags,
                     ),
                     show_cart=False,
                 )
@@ -2676,14 +2676,10 @@ def setup_food_routes(rt):
             if not recipe.can_edit:
                 raise AuthorizationError("Only the owner can edit this recipe. Create a copy to edit it.")
             entry = recipe_entry_view(recipe)
-            tags = get_tag_suggestions(connection, search="", limit=500)
-            selected_tags = [str(row.get("name") or "") for row in get_entry_tags(connection, "recipe", entry_id)]
             return render_page(
                 request,
                 lambda _: EditRecipePage(
                     entry=entry,
-                    tag_options=tags,
-                    selected_tags=selected_tags,
                 ),
                 show_cart=False,
             )
@@ -3571,7 +3567,6 @@ def setup_food_routes(rt):
         macros_quality: str = "",
         default_strictly_weighed: str = "",
         macros_confidence: str = "",
-        tags_json: str | None = None,
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -3599,7 +3594,6 @@ def setup_food_routes(rt):
                 macros_quality=macros_quality,
                 default_strictly_weighed=default_strictly_weighed,
                 macros_confidence=macros_confidence,
-                tags_json=tags_json,
                 calories_100g=calories_100g,
                 carbs_100g=carbs_100g,
                 sugars_100g=sugars_100g,
@@ -3622,8 +3616,6 @@ def setup_food_routes(rt):
                         _catalog_update(req, brand_id, subtype),
                         commit=False,
                     )
-                    if req.tags is not None:
-                        set_entry_tags(connection, "catalog", entry_id, req.tags, commit=False)
             except ValidationError as error:
                 return _error_msg(str(error))
             except NotFoundError:
@@ -3657,7 +3649,6 @@ def setup_food_routes(rt):
         macros_confidence: str = "",
         macros_quality: str = "",
         default_strictly_weighed: str = "",
-        tags_json: str | None = None,
     ):
         """Full replacement of a reusable dish (H1): an empty optional field is
         stored as NULL. Publishing is the detail page's action, not a field here."""
@@ -3680,7 +3671,6 @@ def setup_food_routes(rt):
                 macros_confidence=macros_confidence,
                 macros_quality=macros_quality,
                 default_strictly_weighed=default_strictly_weighed,
-                tags_json=tags_json,
                 calories_100g=calories_100g,
                 carbs_100g=carbs_100g,
                 sugars_100g=sugars_100g,
@@ -3705,8 +3695,6 @@ def setup_food_routes(rt):
                         _manual_intake_update(req, subtype_value),
                         commit=False,
                     )
-                    if req.tags is not None:
-                        set_entry_tags(connection, "manual_intake", manual_intake_id, req.tags, commit=False)
             except ValidationError as error:
                 return _error_msg(str(error))
             except NotFoundError:
@@ -3724,7 +3712,6 @@ def setup_food_routes(rt):
         extra_meal_types: list[str] | None = None,
         notes: str = "",
         servings: str = "",
-        tags_json: str | None = None,
     ):
         """Full replacement (§3.4): an empty optional field is stored as NULL. There
         is no way to publish from here until phase 2 (§11.4.1)."""
@@ -3740,7 +3727,6 @@ def setup_food_routes(rt):
                 extra_meal_types=extra_meal_types,
                 notes=notes,
                 servings=servings,
-                tags_json=tags_json,
             )
         except ValidationError as error:
             # Form validation: 200 + fragment inside the form (§9.5).
@@ -3766,8 +3752,6 @@ def setup_food_routes(rt):
                         ),
                         commit=False,
                     )
-                    if req.tags is not None:
-                        set_entry_tags(connection, "recipe", recipe_id, req.tags, commit=False)
             except NotFoundError:
                 return app_error_response(request, NotFoundError, "Recipe not found.")
             except ConflictError as error:
@@ -3796,7 +3780,6 @@ def setup_food_routes(rt):
         default_strictly_weighed: str = "",
         macros_confidence: str = "",
         favorite: str = "",
-        tags_json: str | None = None,
         catalog_smart_macros_raw: str = "",
         prefill_source: str = "",
         prefill_source_id: str = "",
@@ -3830,7 +3813,6 @@ def setup_food_routes(rt):
                 default_strictly_weighed=default_strictly_weighed,
                 macros_confidence=macros_confidence,
                 favorite=favorite,
-                tags_json=tags_json,
                 smart_raw=catalog_smart_macros_raw,
                 prefill_source=prefill_source,
                 prefill_source_id=prefill_source_id,
@@ -3849,12 +3831,10 @@ def setup_food_routes(rt):
                         _catalog_create(req, int(user_id), brand_id, subtype),
                         commit=False,
                     )
-                    # The food is born personal (R5). Favorite and tags are user data.
+                    # The food is born personal (R5). The favorite is user data.
                     set_user_favorite(
                         connection, int(user_id), FoodEntryType.CATALOG, created_id, bool(req.favorite), commit=False
                     )
-                    if req.tags is not None:
-                        set_entry_tags(connection, "catalog", created_id, req.tags, commit=False)
                     if target_recipe_id is not None:
                         # Chosen from a recipe's ingredient search (frontend §9.7).
                         if _editable_recipe(connection, user_id, target_recipe_id) is None:
@@ -3898,7 +3878,6 @@ def setup_food_routes(rt):
         macros_quality: str = "",
         default_strictly_weighed: str = "",
         favorite: str = "",
-        tags_json: str | None = None,
         manual_smart_macros_raw: str = "",
     ):
         if request.headers.get("HX-Request") != "true":
@@ -3922,7 +3901,6 @@ def setup_food_routes(rt):
                 macros_quality=macros_quality,
                 default_strictly_weighed=default_strictly_weighed,
                 favorite=favorite,
-                tags_json=tags_json,
                 smart_raw=manual_smart_macros_raw,
                 caffeine=caffeine,
                 alcohol=alcohol,
@@ -3939,12 +3917,10 @@ def setup_food_routes(rt):
                         _manual_intake_create(req, int(user_id), subtype_value),
                         commit=False,
                     )
-                    # The dish is born personal (§11.4.1). Favorite and tags are user data.
+                    # The dish is born personal (§11.4.1). The favorite is user data.
                     set_user_favorite(
                         connection, int(user_id), FoodEntryType.MANUAL_INTAKE, created_id, bool(req.favorite), commit=False
                     )
-                    if req.tags is not None:
-                        set_entry_tags(connection, "manual_intake", created_id, req.tags, commit=False)
             except ValidationError as error:
                 return _error_msg(str(error))
             except ConflictError as error:
@@ -4044,7 +4020,6 @@ def setup_food_routes(rt):
         notes: str = "",
         servings: str = "",
         favorite: str = "",
-        tags_json: str | None = None,
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -4059,7 +4034,6 @@ def setup_food_routes(rt):
                 notes=notes,
                 servings=servings,
                 favorite=favorite,
-                tags_json=tags_json,
             )
         except ValidationError as error:
             return _error_msg(str(error))
@@ -4082,8 +4056,6 @@ def setup_food_routes(rt):
                     set_user_favorite(
                         connection, int(user_id), FoodEntryType.RECIPE, created_id, bool(req.favorite), commit=False
                     )
-                    if req.tags:
-                        set_entry_tags(connection, "recipe", created_id, req.tags, commit=False)
             except ConflictError as error:
                 return app_error_response(request, error, str(error))
         return HTMLResponse("", headers={"HX-Redirect": f"/food/item/recipe/{created_id}"})

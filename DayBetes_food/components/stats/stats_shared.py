@@ -19,6 +19,7 @@ MEAL_TYPE_LABELS = {
     "dinner": "Dinner",
     "snack": "Snack",
     "rescue": "Rescue",
+    "exercise": "Exercise",
     "untyped": "No type",
 }
 

@@ -37,6 +37,9 @@ class MealType(str, Enum):
     DINNER = "dinner"
     SNACK = "snack"
     RESCUE = "rescue"
+    # Fuel taken for exercise, whatever the glucose (study_conventions.md §N).
+    # Always chosen by hand, like snack and rescue: never by the schedule.
+    EXERCISE = "exercise"
 
 
 @unique
@@ -121,10 +124,13 @@ class PortionDestination(str, Enum):
 MASS_SANITY_MAX_G = 100000
 
 
-# Name of the global tag that marks a food as a rescue food
-# (frontend_conventions.md §9.6). It keeps the value already stored in
-# `tags`: a persisted value is not renamed (code_conventions.md §4.2).
-RESCUE_TAG_NAME = "rescate"
+@unique
+class SystemTag(str, Enum):
+    """Tags every user has, identified by `tags.system_key` and never renamed
+    or deleted (code_conventions.md §11.2.8). Each one has a tab of the quick
+    log pop-up and the meal type of the same name (frontend_conventions.md §9.6)."""
+    RESCUE = "rescue"
+    EXERCISE = "exercise"
 
 
 @unique
