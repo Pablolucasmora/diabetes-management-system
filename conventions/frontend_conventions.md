@@ -306,6 +306,7 @@ Se construyen con los bloques de `components/food/foods.py`. No se monta un form
 - **Lo que casi nunca hace falta va plegado** (`_optional_section`, un `<details>`): *More details*, con subgrupos (`_form_subgroup`) y una línea que resume qué hay dentro. Empieza cerrado. Se abre solo cuando ya trae datos, por ejemplo los que rellena el escáner. Es lo que evita que un formulario abrume.
 - **Al final**, `Favorite` en su propia fila (`_favorite_row`), marcado por defecto en los formularios de alta, y una única acción principal a todo el ancho (`_form_submit`, `web_button_primary`: `Create food`, `Save`, `Add to meal`…).
 - Las páginas de editar siguen el mismo esquema, con las secciones del alimento en vez de pasos numerados.
+- Los formularios no llevan etiquetas: se ponen desde la ficha (§9.4.1), también en lo que el usuario no puede editar.
 
 ### 9.2 Inicio
 
@@ -363,9 +364,24 @@ Errores, por el canal común: sin sesión, `401`; tipo desconocido, `favorite` a
 **Receta** (decisión 2026-11-05). De arriba abajo: el nombre, *Add to*, *Macros Summary*, *Details*, los ingredientes y las notas, con sus saltos de línea. No hay cantidad ni `To plate`: `Add to meal` abre el paso previo (§9.7). Quien no es propietario ve los ingredientes en filas de solo lectura y solo puede copiarla y añadirla. Un macro que ningún ingrediente conoce se pinta `—`, y si solo lo conocen algunos se pinta su suma con una línea que lo dice (`measurement_conventions.md` §6.9.4). Lo que cambia los ingredientes repinta también el resumen (§6).
 
 
-De arriba abajo: el nombre y sus datos, *Add to*, la cantidad (con *Advanced* para la preparación), `Strictly weighted` (§7.1, `measurement_conventions.md` §6.11), *Macros Summary* y *Details*. Debajo, las acciones: `Edit` y `Log`; si el usuario no puede editarlo, `Make a copy` ocupa el sitio de `Edit`. Si puede editarlo, `Make a copy` va en su propia fila debajo, encima de `Publish` (decisión 2026-10-27). Copiar pide confirmación y abre la edición de la copia. Entra bloque a bloque (§10). En un alimento o plato propio y activo aparece además el botón `Rescue` (§9.6).
+De arriba abajo: el nombre y sus datos, *Add to*, la cantidad (con *Advanced* para la preparación), `Strictly weighted` (§7.1, `measurement_conventions.md` §6.11), *Macros Summary* y *Details*. Debajo, las acciones: `Edit` y `Log`; si el usuario no puede editarlo, `Make a copy` ocupa el sitio de `Edit`. Si puede editarlo, `Make a copy` va en su propia fila debajo, encima de `Publish` (decisión 2026-10-27). Copiar pide confirmación y abre la edición de la copia. Entra bloque a bloque (§10). Debajo del nombre, sus etiquetas (§9.4.1).
 
 En un alimento o un plato, debajo de `Edit` y `Log food`, dos botones visibles, `Save to fridge` y `Save to freezer` (decisión 2026-11-07, que sustituye a ofrecerlos dentro de *Add to*, donde no se encontraban): guardan la cantidad de arriba entera en un tupper nuevo, con su preparación y pesada y sin plato (`measurement_conventions.md` §4.8.5). La página no cambia y aparece el aviso `Saved to the fridge` o `Saved to the freezer`. Una receta se guarda desde su paso previo (§9.7). Al registrar con `Log food`, si la cantidad cocinada es mayor que la del plato, la línea `Will be saved in fridge` dice lo que se guarda en un tupper de la nevera, y se guarda de verdad.
+
+#### 9.4.1 Etiquetas en la ficha (decisión del usuario, 2026-11-08)
+
+Contrato de datos en `code_conventions.md` §11.2.8.
+
+- En la ficha de cualquier alimento, plato o receta que el usuario ve, sea suyo o no, debajo del nombre: sus etiquetas en esa entrada, como píldoras de su color con una × para quitarlas, las de sistema primero.
+- Debajo, `+ Tag` abre un `<details>` con el resto de etiquetas que puede usar (las de sistema y las suyas), cada una como píldora `+ Nombre`, y un campo `New tag` con `Add`. Escribir el nombre de una que ya existe, sin distinguir mayúsculas, la reutiliza; si no, crea una personal con un color sacado del nombre.
+- Cada acción repinta el bloque entero desde lo guardado (§6). Al añadir, el panel sigue abierto para poder añadir otra.
+
+| Acción | `hx-target` | `hx-swap` | Éxito | Error |
+|---|---|---|---|---|
+| `POST /food/tags/{entry_type}/{entry_id}` (`tag_id`, `linked=true\|false`, `open`) | `#entry_tags_{entry_type}_{entry_id}` | `outerHTML` | el bloque | `linked` ausente, id mal formado o tipo desconocido: `422`; entrada o etiqueta no disponibles: `404`. Por el canal de errores |
+| `POST /food/tags/{entry_type}/{entry_id}/new` (`name`) | `#entry_tags_{entry_type}_{entry_id}` | `outerHTML` | el bloque, con el panel abierto | nombre vacío o largo: `422`; entrada no disponible: `404`. Por el canal de errores |
+
+Las dos exigen el header `HX-Request` (`403` si falta).
 
 ### 9.5 Carrito
 
@@ -373,7 +389,7 @@ La página empieza con la etiqueta `CART`, el título *Planned meals* y una lín
 
 ### 9.6 Rescate
 
-Decisión 2026-10-11. Un rescate es lo que se toma para tratar una hipoglucemia. Se registra desde un pop-up y crea directamente una comida ya consumida. Desde el 2026-11-08 el mismo pop-up sirve de añadido rápido para otros tipos de comida (unas pastillas o un papel de glucosa que no son un rescate): se elige el tipo, con `Rescue` por defecto.
+Decisión 2026-10-11. Un rescate es lo que se toma para tratar una hipoglucemia. Se registra desde un pop-up y crea directamente una comida ya consumida. Desde el 2026-11-08 el mismo pop-up sirve de añadido rápido para otros tipos de comida (unas pastillas o un papel de glucosa que no son un rescate): se elige el tipo, con `Rescue` por defecto. Desde el mismo día tiene dos pestañas, `Rescue` (por defecto) y `Exercise`, una por etiqueta de sistema (`study_conventions.md` §N): cada una ofrece sus alimentos y elige su tipo de comida abajo, que se puede cambiar antes de confirmar.
 
 **Dónde está**
 
@@ -382,11 +398,11 @@ Decisión 2026-10-11. Un rescate es lo que se toma para tratar una hipoglucemia.
 
 **Qué alimentos se ofrecen**
 
-- Con el buscador vacío salen los alimentos de rescate: los que tienen la etiqueta de rescate y los que este usuario ya ha usado en comidas `rescue`, primero los usados más recientemente.
-- Al escribir, los resultados **sustituyen** a los alimentos de rescate en el mismo sitio, y al vaciar el buscador vuelven los de rescate. La lista declara su propio `hx-target`: sin él heredaría el del formulario (`#rescue_form_error`) y los resultados aparecerían debajo. Enter en el buscador (la tecla Buscar del teclado del móvil) no envía el rescate: solo cierra el teclado.
-- La búsqueda abarca todos los alimentos (`catalog`) y platos (`manual_intake`) que el usuario puede ver, con la misma regla de visibilidad que el resto de búsquedas, incluidos los archivados que conserva (`code_conventions.md` §11.2). Los de rescate van primero.
-- Cada opción es una fila `control` compacta (§8) con el nombre y, debajo, la marca u origen y los hidratos del alimento (por ración si la tiene, si no por 100 g). La lista tiene una altura máxima con scroll propio. Sin alimentos de rescate, una línea explica que basta con buscar cualquiera y que los registrados aparecerán ahí.
-- La etiqueta se identifica por la constante `RESCUE_TAG_NAME` de `domain/constants.py`, con el valor `rescate` que ya está guardado (un valor persistido no se renombra, `code_conventions.md` §4.2). Su nombre no se escribe a mano en el SQL.
+- Con el buscador vacío salen los alimentos de la pestaña: los que este usuario ha etiquetado con su etiqueta de sistema (`rescue` o `exercise`) y los que ya ha usado en comidas de ese tipo, primero los usados más recientemente. Cambiar de pestaña vuelve a pedir la lista con lo que haya escrito en el buscador.
+- Al escribir, los resultados **sustituyen** a los alimentos de la pestaña en el mismo sitio, y al vaciar el buscador vuelven los de la pestaña. La lista declara su propio `hx-target`: sin él heredaría el del formulario (`#rescue_form_error`) y los resultados aparecerían debajo. Enter en el buscador (la tecla Buscar del teclado del móvil) no envía el rescate: solo cierra el teclado.
+- La búsqueda abarca todos los alimentos (`catalog`) y platos (`manual_intake`) que el usuario puede ver, con la misma regla de visibilidad que el resto de búsquedas, incluidos los archivados que conserva (`code_conventions.md` §11.2). Ignora mayúsculas y acentos. Los de la pestaña van primero.
+- Cada opción es una fila `control` compacta (§8) con el nombre y, debajo, la marca u origen y los hidratos del alimento (por ración si la tiene, si no por 100 g). La lista tiene una altura máxima con scroll propio. Sin alimentos en la pestaña, una línea explica que basta con buscar cualquiera o etiquetarlo, y que los registrados aparecerán ahí.
+- La etiqueta de cada pestaña se identifica por su `system_key` (`SystemTag`), nunca por el nombre (`code_conventions.md` §11.2.8). El tipo de comida de cada una sale de `SYSTEM_TAG_MEAL_TYPE` (`domain/tag.py`).
 
 **Líneas**
 
@@ -400,7 +416,7 @@ Decisión 2026-10-11. Un rescate es lo que se toma para tratar una hipoglucemia.
 
 **Diseño**
 
-- Compacto, para que quepa en la pantalla de un móvil: el título `Rescue` con una × para cerrar, el buscador, la lista, las líneas, el tipo de comida (un `<select>` de `MealType` con `Rescue` elegido), la fecha y la hora en una fila sin etiqueta, y *Cancel* / *Log rescue* a todo el ancho. Con otro tipo, el botón dice *Log meal*. Sin textos de ayuda fijos.
+- Compacto, para que quepa en la pantalla de un móvil: las pestañas `Rescue` / `Exercise` en lugar del título, con una × para cerrar, el buscador, la lista, las líneas, el tipo de comida (un `<select>` de `MealType` con el de la pestaña elegido), la fecha y la hora en una fila sin etiqueta, y *Cancel* / *Log rescue* a todo el ancho. Con otro tipo, el botón dice *Log meal*. Sin textos de ayuda fijos.
 - Nada sobresale de la tarjeta en el móvil. Un nombre de alimento largo ocupa como mucho dos líneas y después se corta con "…" (`line-clamp-2`, `break-words` para una palabra sin espacios). La fecha y la hora van en columnas `minmax(0, 1fr)` con `appearance-none` y el texto centrado, porque iOS da a esos controles nativos un ancho propio mayor que la columna (§3).
 
 **Fecha y hora**
@@ -417,19 +433,16 @@ Decisión 2026-10-11. Un rescate es lo que se toma para tratar una hipoglucemia.
 
 | Acción | `hx-target` | `hx-swap` | Éxito | Error |
 |---|---|---|---|---|
-| `GET /food/rescue/form` | `#rescue_modal_body` | `innerHTML` | el formulario, con la lista inicial de alimentos dentro | sin sesión: `401` por el canal de errores |
-| `GET /food/rescue/options?q=` (solo al escribir en el buscador) | `#rescue_picker_results` | `innerHTML` | la lista de alimentos | — |
+| `GET /food/rescue/form?kind=` (`rescue` por defecto) | `#rescue_modal_body` | `innerHTML` | el formulario, con la lista inicial de alimentos dentro | sin sesión: `401`; `kind` desconocido: `422`. Por el canal de errores |
+| `GET /food/rescue/options?q=&kind=` (al escribir en el buscador o cambiar de pestaña) | `#rescue_picker_results` | `innerHTML` | la lista de alimentos | `kind` desconocido: `422` por el canal de errores |
 | `GET /food/rescue/line/{entry_type}/{entry_id}` | `#rescue_lines` | `beforeend` | una línea | `404` por el canal de errores (`error_conventions.md` §7.1) |
 | `POST /food/rescue/log` | `#rescue_form_error` | `innerHTML` | cuerpo vacío y el evento `rescueRegistered` (`HX-Trigger`, con el `meal_type`). `static/js/rescue.js` cierra el pop-up y muestra el aviso de éxito `Rescue registered`, o `Meal registered` con otro tipo (`dbShowAppNotice`, `error_conventions.md` §7.1) | validación: `200` y el mensaje en `#rescue_form_error` (`code_conventions.md` §9.5). Sesión, alimento inexistente o conflicto: su status por el canal de errores |
 
 Todas exigen el header `HX-Request` (`403` si falta).
 
-**Marcar un alimento como rescate (provisional)**
+**Marcar un alimento como rescate o ejercicio**
 
-- Mientras la interfaz de etiquetas siga oculta (`TAGS_UI_ENABLED = False`), el detalle de un alimento o plato (§9.4) muestra un botón `Rescue` de dos estados (`POST /food/rescue/mark/{entry_type}/{entry_id}`, `rescue=true|false`). Pone o quita **solo** la etiqueta `RESCUE_TAG_NAME` en `linked_tags` y no toca las demás. La respuesta vuelve a pintar el botón con lo que ha quedado guardado (§6).
-- Solo aparece si el usuario puede editar el alimento: es suyo y no está archivado. Es el mismo permiso que hoy permite cambiar sus etiquetas. Solo existe para `catalog` y `manual_intake`, no para recetas. Un alimento de la biblioteca general o de otro usuario se usa una vez buscándolo, y desde entonces sale por el historial.
-- La etiqueta es global: si se marca un alimento publicado, también aparece como rescate a los demás usuarios. Se acepta mientras dure la medida provisional.
-- Cuando vuelva la interfaz de etiquetas, el botón se quita y la etiqueta se gestiona con el selector normal (`audit/deuda_pendiente.md`).
+- Con las etiquetas de sistema `Rescue` y `Exercise` desde la ficha (§9.4.1), en cualquier alimento que el usuario vea. El botón provisional `Rescue` y `/food/rescue/mark/...` ya no existen (2026-11-08).
 
 ### 9.7 Recetas: paso previo, tandas e ingredientes
 
@@ -495,6 +508,23 @@ Modelo en `measurement_conventions.md` §8.4.
   - **Pens**: los bolis abiertos, el que caduca antes primero. Cada fila dice marca y formato, los días desde que se abrió y los que le quedan (`3 days in · 27 days left`) y las unidades que quedan. A punto de acabarse, la línea afectada va en `warning`; caducado, lleva `Expired` y la línea de días en `danger`, y el botón `Discard` se ve en la fila sin tener que abrirla. Al tocar una fila: `Edit` (formato, caducidad y capacidad) y `Discard`, que pide confirmación. Abajo, `New pen`.
   - **Brands**: las marcas activas con su tipo, sus días de uso y sus unidades por boli. Al tocar una fila: `Edit` y `Delete`, que pide confirmación (archiva si tiene bolis). El tipo no se puede cambiar si la marca tiene bolis. Abajo, `New brand`.
 - **Registro de inyecciones de ajustes.** Cada fila muestra su boli. Al editar una se elige el boli entre los abiertos y el que ya tenía; una inyección anterior a los bolis ofrece además dejarla sin boli.
+
+### 9.10 Ajustes, `Tags` (decisión del usuario, 2026-11-08)
+
+`/settings/tags`, desde el botón `Tags` de ajustes. Contrato de datos en `code_conventions.md` §11.2.8.
+
+- Arriba, `New tag` con `Add`, que crea una etiqueta personal y repinta la lista. Debajo, el buscador, que ignora mayúsculas y acentos.
+- La lista: primero las de sistema, como píldora con la marca `System` y sin acciones; después las del usuario, con el nombre editable en la propia fila (se guarda al cambiar, no en cada salida del campo), el color (el selector Pickr, con versión fija) y `Delete`, que pide confirmación y avisa de que se quita de todos los alimentos.
+- Cada cambio responde con la fila leída de nuevo por su id (§6).
+
+| Acción | `hx-target` | `hx-swap` | Éxito | Error |
+|---|---|---|---|---|
+| `GET /settings/tags/list?q=` | `#settings-tags-list` | `innerHTML` | la lista | — |
+| `POST /settings/tags` (`name`) | `#settings-tags-list` | `innerHTML` | la lista; el campo se vacía | `422` nombre; `409` ya existe o es de sistema |
+| `POST /settings/tags/{tag_id}/update` (`name`, `color`) | `#tag_row_{tag_id}` | `outerHTML` | la fila | `422` nombre o color; `404` no es suya (también una de sistema); `409` nombre ocupado |
+| `POST /settings/tags/{tag_id}/delete` | `#tag_row_{tag_id}` | `delete` | cuerpo vacío | `404` no es suya |
+
+Todas exigen el header `HX-Request` (`403` si falta) y los errores van por el canal común (`error_conventions.md` §7.1).
 
 ## 10. Movimiento
 

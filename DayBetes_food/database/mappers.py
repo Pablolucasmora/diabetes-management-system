@@ -25,6 +25,7 @@ from DayBetes_food.domain.constants import (
     PortionDestination,
     PortionOrigin,
     StorageLocation,
+    SystemTag,
 )
 from DayBetes_food.domain.fridge import FridgeMoveRead, FridgeRead
 from DayBetes_food.domain.insulin import InsulinInjectionRead
@@ -35,6 +36,7 @@ from DayBetes_food.domain.manual_intake import ManualIntakeRead
 from DayBetes_food.domain.off_product import OffProductRead
 from DayBetes_food.domain.recipe import RecipeRead
 from DayBetes_food.domain.recipe_plate import RecipePlateRead
+from DayBetes_food.domain.tag import TagRead
 from DayBetes_food.domain.portion_detail import PortionDetailRead, PortionSourceRead
 from DayBetes_food.domain.user_favorite import UserFavoriteAccess
 from DayBetes_food.errors import InfrastructureError
@@ -467,6 +469,24 @@ def portion_detail_read_from_row(row: dict) -> PortionDetailRead:
         )
     except KeyError as exc:
         raise InfrastructureError(f"Missing required field {exc} in portion_detail row") from exc
+
+
+def tag_read_from_row(row: dict) -> TagRead:
+    """Convert a SQL row of `tags` (queries/tags.py, queries/linked_tags.py).
+    Nullable: users_id (system tag) and system_key (personal tag). An unknown
+    system_key raises InfrastructureError (§4.3)."""
+    try:
+        system_key = row.get("system_key")
+        user_id = row.get("users_id")
+        return TagRead(
+            id=int(row["id"]),
+            user_id=int(user_id) if user_id is not None else None,
+            system_key=SystemTag(system_key) if system_key is not None else None,
+            name=row["name"],
+            color=row["color"],
+        )
+    except (KeyError, ValueError) as exc:
+        raise InfrastructureError(f"Invalid tags row: {exc}") from exc
 
 
 def insulin_brand_read_from_row(row: dict) -> InsulinBrandRead:

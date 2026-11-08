@@ -5,19 +5,20 @@ from fasthtml.common import *
 from DayBetes_food.components.modal import ModalFormError
 from DayBetes_food.components.settings.settings_main import (
     settings_main,
-    tags_settings_page,
-    tags_settings_list,
-    tag_settings_row,
     injections_settings_page,
     injections_settings_chunk,
     meal_type_schedule_settings_page,
     meal_type_schedule_row,
 )
+from DayBetes_food.components.settings.tags_settings import tag_settings_row, tags_settings_list, tags_settings_page
 from DayBetes_food.components.ui import render_page, render_fragment
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.database.queries import (
+    create_tag,
+    delete_tag,
+    get_tag,
+    list_tags,
     update_tag,
-    get_all_tags,
     list_insulin_injections,
     get_injection_shot_time_at_offset,
     update_insulin_injection,
@@ -36,7 +37,8 @@ from DayBetes_food.domain.meal_type_schedule import (
     AUTO_ASSIGNABLE_MEAL_TYPES,
     resolve_meal_type_window,
 )
-from DayBetes_food.errors import AuthenticationError, AuthorizationError, NotFoundError, ValidationError
+from DayBetes_food.domain.tag import TagCreate, TagUpdate, parse_tag_color, parse_tag_name, tag_color_from_name
+from DayBetes_food.errors import AuthenticationError, AuthorizationError, ConflictError, NotFoundError, ValidationError
 from DayBetes_food.http_errors import app_error_response
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.time_utils import local_naive_to_utc_aware, APP_TIMEZONE
@@ -73,37 +75,87 @@ def setup_settings_routes(rt):
             show_cart=True,
         )
 
+    # Settings Tags (frontend_conventions.md §9.10).
+
     @rt("/settings/tags")
     def get(req):
-        return render_page(req, lambda connection: tags_settings_page(connection), show_cart=False)
+        user_id = get_current_user_id()
+        if not user_id:
+            raise AuthenticationError("Your session has expired.")
+        return render_page(
+            req, lambda connection: tags_settings_page(list_tags(connection, int(user_id))), show_cart=False
+        )
 
     @rt("/settings/tags/list")
     def get(req, q: str = ""):
         if req.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(req, AuthenticationError, "Your session has expired.")
         with get_connection() as connection:
-            tags = get_all_tags(connection, search=(q or "").strip(), limit=1000)
-        return tags_settings_list(tags)
+            tags = list_tags(connection, int(user_id), search=q)
+        return render_fragment(tags_settings_list(tags, searching=bool((q or "").strip())))
 
-    @rt("/settings/tags/update")
-    def post(req: Request, tag_id: str = "", name: str = "", color: str = ""):
+    @rt("/settings/tags")
+    def post(req: Request, name: str = ""):
+        """Creates a personal tag and answers with the whole list."""
         if req.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
-        if not (tag_id or "").isdigit():
-            return HTMLResponse("Invalid tag id.", status_code=400)
-        clean_name = " ".join((name or "").strip().split())
-        clean_color = " ".join((color or "").strip().split())
-        if not clean_name or not clean_color:
-            return HTMLResponse("Name and color are required.", status_code=400)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(req, AuthenticationError, "Your session has expired.")
+        try:
+            clean_name = parse_tag_name(name)
+        except ValidationError as error:
+            return app_error_response(req, error, str(error))
         with get_connection() as connection:
-            ok = update_tag(connection, int(tag_id), clean_name, clean_color)
-        if not ok:
-            return HTMLResponse("Could not update tag.", status_code=400)
+            try:
+                create_tag(
+                    connection,
+                    TagCreate(user_id=int(user_id), name=clean_name, color=tag_color_from_name(clean_name)),
+                )
+            except ConflictError as error:
+                return app_error_response(req, error, str(error))
+            tags = list_tags(connection, int(user_id))
+        return render_fragment(tags_settings_list(tags))
+
+    @rt("/settings/tags/{tag_id}/update")
+    def post(req: Request, tag_id: int, name: str = "", color: str = ""):
+        """Renames or recolors one of the user's tags; the row is read again by id."""
+        if req.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(req, AuthenticationError, "Your session has expired.")
+        try:
+            payload = TagUpdate(name=parse_tag_name(name), color=parse_tag_color(color))
+        except ValidationError as error:
+            return app_error_response(req, error, str(error))
         with get_connection() as connection:
-            tags = get_all_tags(connection, search=clean_name, limit=1)
-        if not tags:
-            return HTMLResponse("")
-        return render_fragment(tag_settings_row(tags[0]))
+            try:
+                update_tag(connection, int(user_id), tag_id, payload)
+            except NotFoundError:
+                return app_error_response(req, NotFoundError, "Tag not found.")
+            except ConflictError as error:
+                return app_error_response(req, error, str(error))
+            tag = get_tag(connection, int(user_id), tag_id)
+        if tag is None:
+            return app_error_response(req, NotFoundError, "Tag not found.")
+        return render_fragment(tag_settings_row(tag))
+
+    @rt("/settings/tags/{tag_id}/delete")
+    def post(req: Request, tag_id: int):
+        """Deletes one of the user's tags and its links (§11.2.8); the row goes away."""
+        if req.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(req, AuthenticationError, "Your session has expired.")
+        with get_connection() as connection:
+            if not delete_tag(connection, int(user_id), tag_id):
+                return app_error_response(req, NotFoundError, "Tag not found.")
+        return HTMLResponse("")
 
     @rt("/settings/meal_type_schedule")
     def get(req):

@@ -15,7 +15,9 @@ from DayBetes_food.database.queries.crud import (
     _execute_query,
     _execute_query_many,
 )
-from DayBetes_food.domain.constants import RESCUE_TAG_NAME, IntakeEventState, MealType, PortionOrigin
+from DayBetes_food.domain.constants import IntakeEventState, PortionOrigin, SystemTag
+from DayBetes_food.domain.search_text import normalize_search_text, search_text_sql
+from DayBetes_food.domain.tag import SYSTEM_TAG_MEAL_TYPE
 from DayBetes_food.time_utils import APP_TIMEZONE
 
 
@@ -65,36 +67,37 @@ def get_subtype_label(connection, subtype: str) -> str | None:
     return str(row["label"]) if row and row.get("label") is not None else None
 
 
-def get_rescue_entries_suggestions(connection, user_id: int, search: str = "", limit: int = 50) -> list[dict]:
-    """Foods offered by the rescue pop-up (frontend_conventions.md §9.6).
+def get_rescue_entries_suggestions(
+    connection, user_id: int, kind: SystemTag = SystemTag.RESCUE, search: str = "", limit: int = 50
+) -> list[dict]:
+    """Foods offered by a tab of the quick log pop-up (frontend_conventions.md §9.6).
 
-    A food is a rescue food if it carries the RESCUE_TAG_NAME tag or if this
-    user already ate it in a `rescue` event. With an empty search only those
-    are returned, most recently used first. With a search, every visible
-    `catalog` and `manual_intake` row that matches is returned, rescue foods
-    first. Visibility is the shared SQL rule, retained rows included.
+    A food is suggested in the tab of `kind` if this user put that system tag
+    on it or already ate it in a meal of the tab's type (rescue or exercise).
+    With an empty search only those are returned, most recently used first.
+    With a search, every visible `catalog` and `manual_intake` row whose name or
+    brand/origin matches, ignoring case and accents, is returned, suggested
+    foods first. Visibility is the shared SQL rule, retained rows included.
     """
-    normalized = (search or "").strip()
+    term = normalize_search_text(search)
     params = {
         "visibility_user_id": user_id,
-        "rescue_tag": RESCUE_TAG_NAME,
-        "rescue_meal_type": MealType.RESCUE.value,
-        "q": normalized,
-        "q_like": f"%{normalized}%",
+        "system_key": kind.value,
+        "meal_type": SYSTEM_TAG_MEAL_TYPE[kind].value,
+        "q": term,
+        "q_like": f"%{term}%",
         "limit": max(1, min(int(limit or 50), 200)),
     }
     query = """
-        WITH rescue_tag AS (
-            SELECT id
-            FROM tags
-            WHERE lower(trim(name)) = lower(%(rescue_tag)s)
+        WITH kind_tag AS (
+            SELECT id FROM tags WHERE system_key = %(system_key)s
         ),
         rescue_history AS (
             SELECT pd.catalog_id, pd.manual_intake_id, MAX(ie.meal_time) AS last_used
             FROM portion_detail pd
             INNER JOIN intake_event ie ON ie.id = pd.intake_event_id
             WHERE ie.users_id = %(visibility_user_id)s
-              AND ie.meal_type = %(rescue_meal_type)s
+              AND ie.meal_type = %(meal_type)s
               AND ie.deleted_at IS NULL
             GROUP BY pd.catalog_id, pd.manual_intake_id
         ),
@@ -108,8 +111,8 @@ def get_rescue_entries_suggestions(connection, user_id: int, search: str = "", l
                 c.carbs_100g AS carbs_100g,
                 EXISTS (
                     SELECT 1 FROM linked_tags lt
-                    INNER JOIN rescue_tag rt ON rt.id = lt.tag_id
-                    WHERE lt.catalog_id = c.id
+                    INNER JOIN kind_tag kt ON kt.id = lt.tag_id
+                    WHERE lt.catalog_id = c.id AND lt.users_id = %(visibility_user_id)s
                 ) AS is_tagged,
                 rh.last_used
             FROM catalog c
@@ -127,8 +130,8 @@ def get_rescue_entries_suggestions(connection, user_id: int, search: str = "", l
                 m.carbs_100g AS carbs_100g,
                 EXISTS (
                     SELECT 1 FROM linked_tags lt
-                    INNER JOIN rescue_tag rt ON rt.id = lt.tag_id
-                    WHERE lt.manual_intake_id = m.id
+                    INNER JOIN kind_tag kt ON kt.id = lt.tag_id
+                    WHERE lt.manual_intake_id = m.id AND lt.users_id = %(visibility_user_id)s
                 ) AS is_tagged,
                 rh.last_used
             FROM manual_intake m
@@ -136,7 +139,7 @@ def get_rescue_entries_suggestions(connection, user_id: int, search: str = "", l
             WHERE {manual_visibility}
         )
         SELECT entry_type, entry_id, name, subtitle, serving_g, carbs_100g,
-               (is_tagged OR last_used IS NOT NULL) AS is_rescue
+               (is_tagged OR last_used IS NOT NULL) AS is_suggested
         FROM (
             SELECT * FROM catalog_rows
             UNION ALL
@@ -144,7 +147,7 @@ def get_rescue_entries_suggestions(connection, user_id: int, search: str = "", l
         ) src
         WHERE CASE
             WHEN %(q)s = '' THEN (is_tagged OR last_used IS NOT NULL)
-            ELSE (name ILIKE %(q_like)s OR subtitle ILIKE %(q_like)s)
+            ELSE ({name} LIKE %(q_like)s OR {subtitle} LIKE %(q_like)s)
         END
         ORDER BY (is_tagged OR last_used IS NOT NULL) DESC,
                  last_used DESC NULLS LAST,
@@ -153,6 +156,8 @@ def get_rescue_entries_suggestions(connection, user_id: int, search: str = "", l
     """.format(
         catalog_visibility=_food_visibility_sql(PortionOrigin.CATALOG, "c", include_retained=True),
         manual_visibility=_food_visibility_sql(PortionOrigin.MANUAL_INTAKE, "m", include_retained=True),
+        name=search_text_sql("name"),
+        subtitle=search_text_sql("subtitle"),
     )
     rows = _execute_query_many(connection, query, params, commit=False)
     out = []
@@ -168,7 +173,7 @@ def get_rescue_entries_suggestions(connection, user_id: int, search: str = "", l
                 "subtitle": str(row.get("subtitle") or "").strip(),
                 "serving_g": (float(serving_g) if serving_g is not None else None),
                 "carbs_100g": (float(row["carbs_100g"]) if row.get("carbs_100g") is not None else None),
-                "is_rescue": bool(row.get("is_rescue")),
+                "is_suggested": bool(row.get("is_suggested")),
             }
         )
     return out

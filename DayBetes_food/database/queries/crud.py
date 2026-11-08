@@ -11,11 +11,9 @@ This module no longer holds per-table CRUD functions (see code_conventions.md
   (`_build_fuzzy_search`), and the word search of
   the reference tables (`_search_reference_foods`);
 - the visibility rule of `catalog` and `manual_intake`, shared by `catalog.py`,
-  `manual_intake.py`, `entries.py` and `user_favorites.py`
+  `manual_intake.py`, `entries.py`, `user_favorites.py` and `linked_tags.py`
   (`_food_visibility_sql`, `_food_in_own_recipe_sql`), and the one of `recipe`,
-  shared by `recipe.py` and `user_favorites.py` (`_RECIPE_VISIBLE`);
-- tag normalization helpers shared by `tags.py` and `linked_tags.py`
-  (`_normalize_tag_name`, `_tag_color_from_name`);
+  shared by `recipe.py`, `user_favorites.py` and `linked_tags.py` (`_RECIPE_VISIBLE`);
 - constants shared across table modules (`TRGM_SIMILARITY_THRESHOLD`).
 
 Table-specific queries live in one module per table
@@ -442,20 +440,3 @@ def _food_visibility_sql(origin: PortionOrigin, alias: str, *, include_retained:
     if origin is PortionOrigin.MANUAL_INTAKE:
         rule = f"(NOT {a}.is_quick_add AND {rule})"
     return rule
-
-
-# ============================================
-# TAG NORMALIZATION HELPERS
-# (shared by tags.py and linked_tags.py)
-# ============================================
-
-def _normalize_tag_name(tag: str) -> str:
-    return " ".join((tag or "").strip().split())
-
-
-def _tag_color_from_name(tag_name: str) -> str:
-    text = _normalize_tag_name(tag_name).lower()
-    hue = 0
-    for ch in text:
-        hue = (hue * 31 + ord(ch)) % 360
-    return f"hsl({hue} 80% 90%)"
