@@ -242,6 +242,15 @@ WHERE plate_id IS NOT NULL
 
 Lo sacado de un tupper vuelve a él si se borra la comida (§4.8.6), así que no se suma con el mismo alimento añadido de otra forma ni con lo sacado de otro tupper. Dos veces del mismo tupper en la misma tanda sí se suman. La clave de las tandas de receta (§4.7) no cambia: una receta no tiene porciones sacadas de un tupper.
 
+**`ripeness` forma parte de la clave** (2026-11-12, decisión del usuario; campo en `study_conventions.md` §6.3). El índice es `uq_portion_detail_plate_origin_preparation_ripeness`, que sustituye al anterior:
+
+```text
+UNIQUE NULLS NOT DISTINCT (plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state, is_cooked_weight, source_fridge_id, ripeness)
+WHERE plate_id IS NOT NULL
+```
+
+Comparar la respuesta a una misma fruta según su madurez es la finalidad del campo, así que un plátano verde y uno muy maduro en la misma tanda son dos filas. Sin indicar es un valor más: solo se suman dos porciones si las dos están sin indicar o con la misma madurez. Al añadir, cambiar la preparación o mover de tanda se aplica la misma regla de fusión. La clave de las tandas de receta (§4.7) no cambia: una receta no tiene madurez.
+
 **Es un índice único parcial, no un constraint de tabla, y el `WHERE` no es opcional.** `plate_id` es nulo en las porciones con destino `recipe` y `fridge`, y con `NULLS NOT DISTINCT` esos nulos se consideran iguales entre sí: sin el filtro, el mismo alimento con la misma preparación en **dos recetas distintas** chocaría como si fuera un duplicado. La unicidad es dentro de la tanda y solo aplica a las porciones que tienen tanda.
 
 **La fusión es real en la base, no solo visual** (decisión 2026-09-19). Antes de esta regla, añadir dos veces el mismo alimento insertaba dos filas y `group_portions` las sumaba solo al pintar; la fusión física ocurría únicamente si el usuario editaba la cantidad desde el carrito. A partir de aquí, la inserción fusiona en la propia tabla, para que el análisis no tenga que deduplicar.
