@@ -39,7 +39,7 @@ def _portions_to_recipe_plate(
     connection, user_id: int, recipe_id: int, recipe_plate_id: int, portions: list[PortionDetailRead]
 ) -> None:
     """Copy portions into a plate of a recipe, with their amount, preparation,
-    strictly_weighed and is_cooked_weight (measurement §6.11)."""
+    amount_method and is_cooked_weight (measurement §6.11)."""
     for portion in portions:
         create_portion_detail(
             connection,
@@ -54,7 +54,7 @@ def _portions_to_recipe_plate(
                 cooking=portion.cooking,
                 conservation=portion.conservation,
                 final_state=portion.final_state,
-                strictly_weighed=portion.strictly_weighed,
+                amount_method=portion.amount_method,
                 is_cooked_weight=portion.is_cooked_weight,
             ),
             commit=False,
@@ -203,7 +203,7 @@ def add_recipe_to_meal(
       plate named after the recipe. One with several plates always creates its own,
       with their names, and ignores the chosen plate.
     - Amounts scale with the chosen servings. The preparation can be changed for this
-      meal, and it is not written to the recipe; strictly_weighed and is_cooked_weight
+      meal, and it is not written to the recipe; amount_method and is_cooked_weight
       are copied (measurement §6.11).
     - Same key in the plate -> the amounts add up (§4.6.4).
 
@@ -276,7 +276,7 @@ def add_recipe_to_meal(
                         cooking=preparation.cooking if preparation else portion.cooking,
                         conservation=preparation.conservation if preparation else portion.conservation,
                         final_state=preparation.final_state if preparation else portion.final_state,
-                        strictly_weighed=portion.strictly_weighed,
+                        amount_method=portion.amount_method,
                         is_cooked_weight=portion.is_cooked_weight,
                     ),
                     commit=False,

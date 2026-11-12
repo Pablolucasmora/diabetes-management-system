@@ -90,17 +90,20 @@ from DayBetes_food.database.queries import (
 )
 from DayBetes_food.domain.constants import (
     CLEAR,
+    PREFILL_MACROS_SOURCE,
     PathId,
     NOVA_MAX,
     NOVA_MIN,
     YUKA_MAX,
     YUKA_MIN,
     AmountInputUnit,
+    AmountMethod,
     ConservationMethod,
     CookingMethod,
     FoodCategory,
     FoodPhysicalState,
     GlycemicIndex,
+    MacrosSource,
     Nutriscore,
     NutrientEntryMode,
     PortionDestination,
@@ -191,9 +194,8 @@ from DayBetes_food.components.food.foods import catalog_entry_view, manual_intak
 from DayBetes_food.components.food.foods import (
     CONFIDENCE_LABELS,
     GLYCEMIC_INDEX_LABELS,
-    MACROS_QUALITY_LABELS,
-    WEIGHED_LABELS,
 )
+from DayBetes_food.components.food.food_shared import AMOUNT_METHOD_LABELS, MACROS_SOURCE_LABELS
 from DayBetes_food.components.food.foods import (
     CreateCatalogPage,
     ExternalFoodSection,
@@ -396,8 +398,8 @@ def _parse_catalog_item_request(
     alcohol,
     barcode,
     cooking_factor,
-    macros_quality,
-    default_strictly_weighed,
+    macros_source,
+    default_amount_method,
     macros_confidence,
     favorite=None,
     smart_raw="",
@@ -434,8 +436,8 @@ def _parse_catalog_item_request(
         fields["alcohol"] = alcohol
         nutrients = parse_nutrients(fields)
     parsed_barcode = parse_barcode(barcode)
-    parsed_macros_quality = _parse_optional_bool(macros_quality)
-    parsed_default_strictly_weighed = _parse_optional_bool(default_strictly_weighed)
+    parsed_macros_source = parse_enum(MacrosSource, macros_source, field="macros_source")
+    parsed_default_amount_method = parse_enum(AmountMethod, default_amount_method, field="default_amount_method")
     parsed_macros_confidence = parse_declared_confidence(macros_confidence, field="macros_confidence")
     parsed_favorite = None if favorite is None else _parse_strict_bool(favorite)
     parsed_prefill_source, parsed_prefill_source_id = parse_prefill_reference(prefill_source, prefill_source_id)
@@ -454,8 +456,8 @@ def _parse_catalog_item_request(
         nutrients=nutrients,
         barcode=parsed_barcode,
         cooking_factor=parsed_cooking_factor,
-        macros_quality=parsed_macros_quality,
-        default_strictly_weighed=parsed_default_strictly_weighed,
+        macros_source=parsed_macros_source,
+        default_amount_method=parsed_default_amount_method,
         macros_confidence=parsed_macros_confidence,
         favorite=parsed_favorite,
         prefill_source=parsed_prefill_source,
@@ -508,8 +510,8 @@ def _catalog_create(req: CatalogItemRequest, user_id: int, brand_id, subtype) ->
         nutrients=req.nutrients,
         barcode=req.barcode,
         cooking_factor=req.cooking_factor,
-        macros_quality=req.macros_quality,
-        default_strictly_weighed=req.default_strictly_weighed,
+        macros_source=req.macros_source,
+        default_amount_method=req.default_amount_method,
         macros_confidence=req.macros_confidence,
         prefill_source=req.prefill_source,
         prefill_source_id=req.prefill_source_id,
@@ -530,16 +532,10 @@ def _catalog_update(req: CatalogItemRequest, brand_id, subtype) -> CatalogItemUp
         nutrients=req.nutrients,
         barcode=req.barcode,
         cooking_factor=req.cooking_factor,
-        macros_quality=req.macros_quality,
-        default_strictly_weighed=req.default_strictly_weighed,
+        macros_source=req.macros_source,
+        default_amount_method=req.default_amount_method,
         macros_confidence=req.macros_confidence,
     )
-
-
-def _parse_optional_bool(raw: str | None) -> bool | None:
-    """Tri-state select of the dish defaults (frontend §6): '' -> None
-    ("unknown"); otherwise _parse_strict_bool (unknown value -> ValidationError, §7.6)."""
-    return None if (raw or "").strip() == "" else _parse_strict_bool(raw)
 
 
 def _parse_recipe_request(
@@ -602,8 +598,8 @@ def _parse_manual_intake_request(
     glycemic_index,
     ig_confidence,
     macros_confidence,
-    macros_quality,
-    default_strictly_weighed,
+    macros_source,
+    default_amount_method,
     favorite=None,
     smart_raw=None,
     **nutrient_fields,
@@ -644,8 +640,8 @@ def _parse_manual_intake_request(
         glycemic_index=parsed_glycemic_index,
         ig_confidence=parsed_ig_confidence,
         macros_confidence=parse_declared_confidence(macros_confidence, field="macros_confidence"),
-        macros_quality=_parse_optional_bool(macros_quality),
-        default_strictly_weighed=_parse_optional_bool(default_strictly_weighed),
+        macros_source=parse_enum(MacrosSource, macros_source, field="macros_source"),
+        default_amount_method=parse_enum(AmountMethod, default_amount_method, field="default_amount_method"),
         favorite=None if favorite is None else _parse_strict_bool(favorite),
     )
 
@@ -679,8 +675,8 @@ def _manual_intake_create(req: ManualIntakeRequest, user_id: int, subtype) -> Ma
         glycemic_index=req.glycemic_index,
         ig_confidence=req.ig_confidence,
         macros_confidence=req.macros_confidence,
-        macros_quality=req.macros_quality,
-        default_strictly_weighed=req.default_strictly_weighed,
+        macros_source=req.macros_source,
+        default_amount_method=req.default_amount_method,
     )
 
 
@@ -695,12 +691,12 @@ def _manual_intake_update(req: ManualIntakeRequest, subtype) -> ManualIntakeUpda
         glycemic_index=req.glycemic_index,
         ig_confidence=req.ig_confidence,
         macros_confidence=req.macros_confidence,
-        macros_quality=req.macros_quality,
-        default_strictly_weighed=req.default_strictly_weighed,
+        macros_source=req.macros_source,
+        default_amount_method=req.default_amount_method,
     )
 
 
-def _parse_quick_add_request(*, name, weight_g, smart_raw, notes) -> QuickAddRequest:
+def _parse_quick_add_request(*, name, weight_g, smart_raw, notes, macros_source="", amount_method="") -> QuickAddRequest:
     """Quick-add form (§11.2.3): the smart-macros text is always the total of
     what was eaten (measurement §5.4); name, estimated weight and carbs are
     required."""
@@ -714,13 +710,15 @@ def _parse_quick_add_request(*, name, weight_g, smart_raw, notes) -> QuickAddReq
         weight_g=weight,
         nutrients=nutrients,
         description=parse_manual_intake_description(notes),
+        macros_source=parse_enum(MacrosSource, macros_source, field="macros_source"),
+        amount_method=parse_enum(AmountMethod, amount_method, field="amount_method"),
     )
 
 
 def _quick_add_create(req: QuickAddRequest, user_id: int) -> ManualIntakeCreate:
     """A quick add stores only what its form asks (§11.2.3): the weight becomes
-    default_portion, default_strictly_weighed is FALSE because the weight is an
-    estimate, and everything else stays NULL."""
+    default_portion, its U1 and U2 (study §6.3) are the ones chosen, or NULL,
+    and everything else stays NULL."""
     return ManualIntakeCreate(
         created_by=user_id,
         origin_root_id=None,
@@ -733,8 +731,8 @@ def _quick_add_create(req: QuickAddRequest, user_id: int) -> ManualIntakeCreate:
         glycemic_index=None,
         ig_confidence=None,
         macros_confidence=None,
-        macros_quality=None,
-        default_strictly_weighed=False,
+        macros_source=req.macros_source,
+        default_amount_method=req.amount_method,
         is_quick_add=True,
     )
 
@@ -798,11 +796,11 @@ def _rescue_error(message: str):
 
 def _portion_defaults(item: CatalogItemRead | ManualIntakeRead) -> dict:
     """measurement_conventions.md §6.11: a new portion of a food is born with
-    the food's default_strictly_weighed, written when the portion is created
-    (§7.14). macros_quality is not copied: the portion reads the food's live.
+    the food's default_amount_method, written when the portion is created
+    (§7.14). macros_source is not copied: the portion reads the food's live.
     Every route that creates a portion from a catalog food or a manual dish
     must use it."""
-    return {"strictly_weighed": item.default_strictly_weighed}
+    return {"amount_method": item.default_amount_method}
 
 
 def _detail_origin(
@@ -877,6 +875,8 @@ def _prefill_view(prefill, barcode: str, source_id: str, source: PrefillSource =
         "barcode": barcode,
         "prefill_source": source.value,
         "prefill_source_id": source_id,
+        # U1 of the prefilled values (study §6.3); the user can change it.
+        "macros_source": PREFILL_MACROS_SOURCE[source].value,
         "name": prefill.name or "",
         "brand": prefill.brand or "",
         "category": prefill.category.value if prefill.category else "",
@@ -979,8 +979,8 @@ def _catalog_detail_summary(item) -> dict:
         ("Alcohol", item.alcohol),
         ("Barcode", item.barcode),
         ("Cooking factor", item.cooking_factor),
-        ("Macros quality", MACROS_QUALITY_LABELS.get(item.macros_quality)),
-        ("Weighed by default", WEIGHED_LABELS.get(item.default_strictly_weighed)),
+        ("Macros from", MACROS_SOURCE_LABELS.get(item.macros_source)),
+        ("Amount usually from", AMOUNT_METHOD_LABELS.get(item.default_amount_method)),
         ("Macros confidence", CONFIDENCE_LABELS.get(item.macros_confidence)),
     ]
     info_rows = [(label, fmt(value)) for label, value in candidates if value is not None]
@@ -1017,8 +1017,8 @@ def _manual_intake_detail_summary(item: ManualIntakeRead) -> dict:
         ("Glycemic index", GLYCEMIC_INDEX_LABELS.get(item.glycemic_index)),
         ("IG confidence", CONFIDENCE_LABELS.get(item.ig_confidence)),
         ("Macros confidence", CONFIDENCE_LABELS.get(item.macros_confidence)),
-        ("Macros quality", MACROS_QUALITY_LABELS.get(item.macros_quality)),
-        ("Weighed by default", WEIGHED_LABELS.get(item.default_strictly_weighed)),
+        ("Macros from", MACROS_SOURCE_LABELS.get(item.macros_source)),
+        ("Amount usually from", AMOUNT_METHOD_LABELS.get(item.default_amount_method)),
         ("Caffeine", None if item.caffeine is None else f"{fmt(item.caffeine)} mg/100 g"),
         ("Alcohol", None if item.alcohol is None else f"{fmt(item.alcohol)} g/100 g"),
     ]
@@ -2575,8 +2575,8 @@ def setup_food_routes(rt):
                             ),
                             barcode=source.barcode,
                             cooking_factor=source.cooking_factor,
-                            macros_quality=source.macros_quality,
-                            default_strictly_weighed=source.default_strictly_weighed,
+                            macros_source=source.macros_source,
+                            default_amount_method=source.default_amount_method,
                             macros_confidence=source.macros_confidence,
                         ),
                         commit=False,
@@ -2624,8 +2624,8 @@ def setup_food_routes(rt):
                             glycemic_index=source.glycemic_index,
                             ig_confidence=source.ig_confidence,
                             macros_confidence=source.macros_confidence,
-                            macros_quality=source.macros_quality,
-                            default_strictly_weighed=source.default_strictly_weighed,
+                            macros_source=source.macros_source,
+                            default_amount_method=source.default_amount_method,
                         ),
                         commit=False,
                     )
@@ -2869,7 +2869,7 @@ def setup_food_routes(rt):
         conservation: str = "",
         ripeness: str = "",
         is_cooked_weight: str = "",
-        strictly_weighed: str | None = None,
+        amount_method: str | None = None,
     ):
         """Add a food or a recipe from its page to a planned event.
 
@@ -2881,10 +2881,11 @@ def setup_food_routes(rt):
         cooked total is used to bound it and is not stored (decision
         2026-09-18). The JavaScript only repaints the numbers.
 
-        `strictly_weighed` is the tri-state control of the page, which starts
-        on the food's default (measurement_conventions.md §6.11): what it
-        sends is what the portion is born with. Absent (a request without the
-        control), the food's default applies as on every other path.
+        `amount_method` is the `Amount from` select of the page (U2, study
+        §6.3), which starts on the food's default (measurement_conventions.md
+        §6.11): what it sends is what the portion is born with, and empty is
+        "not given". Absent (a request without the control), the food's
+        default applies as on every other path.
         """
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -2897,9 +2898,9 @@ def setup_food_routes(rt):
         except ValidationError:
             return app_error_response(request, ValidationError, "The 'Cooked weight' checkbox could not be read.")
         try:
-            chosen_weighed = _parse_optional_bool(strictly_weighed)
+            chosen_amount_method = parse_enum(AmountMethod, amount_method, field="amount_method")
         except ValidationError:
-            return app_error_response(request, ValidationError, "The 'Strictly weighted' value could not be read.")
+            return app_error_response(request, ValidationError, "The 'Amount from' value could not be read.")
         try:
             unit = AmountInputUnit((amount_unit or "").strip())
             plated_unit = AmountInputUnit((plate_unit or "").strip())
@@ -2966,8 +2967,8 @@ def setup_food_routes(rt):
                     event_data = get_intake_event(connection, int(user_id), event_id)
                     offset_minutes = _event_auto_offset_minutes(event_data)
 
-                    if strictly_weighed is not None:
-                        portion_defaults["strictly_weighed"] = chosen_weighed
+                    if amount_method is not None:
+                        portion_defaults["amount_method"] = chosen_amount_method
                     target_plate_id = _resolve_event_plate(
                         connection, int(user_id), event_id, plate_id, offset_minutes
                     )
@@ -3007,7 +3008,7 @@ def setup_food_routes(rt):
                                         amount=leftover_grams,
                                         cooking=parsed_cooking,
                                         final_state=parsed_final_state,
-                                        strictly_weighed=portion_defaults["strictly_weighed"],
+                                        amount_method=portion_defaults["amount_method"],
                                         is_cooked_weight=(cooked_weight if kind is FoodEntryType.CATALOG else False),
                                     ),
                                 ),
@@ -3037,7 +3038,7 @@ def setup_food_routes(rt):
         cooking: str = "",
         final_state: str = "",
         is_cooked_weight: str = "",
-        strictly_weighed: str | None = None,
+        amount_method: str | None = None,
     ):
         """Save an amount of a food or a dish from its page as a new container in
         the fridge or the freezer (measurement_conventions.md §4.8.5, frontend §9.4).
@@ -3057,7 +3058,7 @@ def setup_food_routes(rt):
         try:
             storage = parse_enum(StorageLocation, location, field="location")
             cooked_weight = _parse_strict_bool(is_cooked_weight)
-            chosen_weighed = _parse_optional_bool(strictly_weighed)
+            chosen_amount_method = parse_enum(AmountMethod, amount_method, field="amount_method")
             parsed_cooking = parse_enum(CookingMethod, cooking, field="cooking")
             parsed_final_state = parse_enum(FoodPhysicalState, final_state, field="final_state")
         except ValidationError as error:
@@ -3085,7 +3086,7 @@ def setup_food_routes(rt):
                 return app_error_response(request, NotFoundError, str(error))
             except ValidationError as error:
                 return _store_error(request, str(error))
-            weighed = chosen_weighed if strictly_weighed is not None else origin_item.default_strictly_weighed
+            method = chosen_amount_method if amount_method is not None else origin_item.default_amount_method
             try:
                 store_in_fridge(
                     connection,
@@ -3099,7 +3100,7 @@ def setup_food_routes(rt):
                                 amount=grams,
                                 cooking=parsed_cooking,
                                 final_state=parsed_final_state,
-                                strictly_weighed=weighed,
+                                amount_method=method,
                                 is_cooked_weight=cooked_weight,
                             ),
                         ),
@@ -3609,8 +3610,8 @@ def setup_food_routes(rt):
         alcohol: str = "",
         barcode: str = "",
         cooking_factor: str = "",
-        macros_quality: str = "",
-        default_strictly_weighed: str = "",
+        macros_source: str = "",
+        default_amount_method: str = "",
         macros_confidence: str = "",
     ):
         if request.headers.get("HX-Request") != "true":
@@ -3636,8 +3637,8 @@ def setup_food_routes(rt):
                 alcohol=alcohol,
                 barcode=barcode,
                 cooking_factor=cooking_factor,
-                macros_quality=macros_quality,
-                default_strictly_weighed=default_strictly_weighed,
+                macros_source=macros_source,
+                default_amount_method=default_amount_method,
                 macros_confidence=macros_confidence,
                 calories_100g=calories_100g,
                 carbs_100g=carbs_100g,
@@ -3692,8 +3693,8 @@ def setup_food_routes(rt):
         glycemic_index: str = "",
         ig_confidence: str = "",
         macros_confidence: str = "",
-        macros_quality: str = "",
-        default_strictly_weighed: str = "",
+        macros_source: str = "",
+        default_amount_method: str = "",
     ):
         """Full replacement of a reusable dish (H1): an empty optional field is
         stored as NULL. Publishing is the detail page's action, not a field here."""
@@ -3714,8 +3715,8 @@ def setup_food_routes(rt):
                 glycemic_index=glycemic_index,
                 ig_confidence=ig_confidence,
                 macros_confidence=macros_confidence,
-                macros_quality=macros_quality,
-                default_strictly_weighed=default_strictly_weighed,
+                macros_source=macros_source,
+                default_amount_method=default_amount_method,
                 calories_100g=calories_100g,
                 carbs_100g=carbs_100g,
                 sugars_100g=sugars_100g,
@@ -3821,8 +3822,8 @@ def setup_food_routes(rt):
         alcohol: str = "",
         barcode: str = "",
         cooking_factor: str = "",
-        macros_quality: str = "",
-        default_strictly_weighed: str = "",
+        macros_source: str = "",
+        default_amount_method: str = "",
         macros_confidence: str = "",
         favorite: str = "",
         catalog_smart_macros_raw: str = "",
@@ -3854,8 +3855,8 @@ def setup_food_routes(rt):
                 alcohol=alcohol,
                 barcode=barcode,
                 cooking_factor=cooking_factor,
-                macros_quality=macros_quality,
-                default_strictly_weighed=default_strictly_weighed,
+                macros_source=macros_source,
+                default_amount_method=default_amount_method,
                 macros_confidence=macros_confidence,
                 favorite=favorite,
                 smart_raw=catalog_smart_macros_raw,
@@ -3920,8 +3921,8 @@ def setup_food_routes(rt):
         glycemic_index: str = "",
         ig_confidence: str = "",
         macros_confidence: str = "",
-        macros_quality: str = "",
-        default_strictly_weighed: str = "",
+        macros_source: str = "",
+        default_amount_method: str = "",
         favorite: str = "",
         manual_smart_macros_raw: str = "",
     ):
@@ -3943,8 +3944,8 @@ def setup_food_routes(rt):
                 glycemic_index=glycemic_index,
                 ig_confidence=ig_confidence,
                 macros_confidence=macros_confidence,
-                macros_quality=macros_quality,
-                default_strictly_weighed=default_strictly_weighed,
+                macros_source=macros_source,
+                default_amount_method=default_amount_method,
                 favorite=favorite,
                 smart_raw=manual_smart_macros_raw,
                 caffeine=caffeine,
@@ -3997,6 +3998,8 @@ def setup_food_routes(rt):
         default_portion: str = "",
         quick_smart_macros_raw: str = "",
         description: str = "",
+        macros_source: str = "",
+        amount_method: str = "",
         intake_event_id: str = "",
         plate_id: str = "",
     ):
@@ -4016,6 +4019,8 @@ def setup_food_routes(rt):
                 weight_g=default_portion,
                 smart_raw=quick_smart_macros_raw,
                 notes=description,
+                macros_source=macros_source,
+                amount_method=amount_method,
             )
         except ValidationError as error:
             return _error_msg(str(error))
@@ -4042,8 +4047,8 @@ def setup_food_routes(rt):
                             destination_id=event_id,
                             plate_id=target_plate_id,
                             amount=req.weight_g,
-                            # The dish default (measurement §6.11): FALSE.
-                            strictly_weighed=payload.default_strictly_weighed,
+                            # The quick add's own U2 (measurement §6.11, study §6.3).
+                            amount_method=payload.default_amount_method,
                         ),
                         commit=False,
                     )

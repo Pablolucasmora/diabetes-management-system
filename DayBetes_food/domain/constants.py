@@ -212,6 +212,54 @@ class Ripeness(str, Enum):
 
 
 @unique
+class MacrosSource(str, Enum):
+    """U1: where the macros of a food come from (study_conventions.md §6.3).
+    A fact of the food (`catalog`, `manual_intake`); NULL is "not given",
+    never "estimated"."""
+
+    LABEL = "label"
+    OFFICIAL = "official"
+    OPEN_FOOD_FACTS = "open_food_facts"
+    REFERENCE_DB = "reference_db"
+    INGREDIENTS = "ingredients"
+    AI_ESTIMATE = "ai_estimate"
+    OWN_ESTIMATE = "own_estimate"
+
+
+# U1 prefilled by the source of the create form (study §6.3): the user reviews it.
+PREFILL_MACROS_SOURCE = {
+    PrefillSource.OPEN_FOOD_FACTS: MacrosSource.OPEN_FOOD_FACTS,
+    PrefillSource.CIQUAL: MacrosSource.REFERENCE_DB,
+}
+
+
+# Published by whoever makes or sells the food: the macros that
+# quality_confidence counts (measurement_conventions.md §6.5).
+PUBLISHED_MACROS_SOURCES = frozenset(
+    {MacrosSource.LABEL, MacrosSource.OFFICIAL, MacrosSource.OPEN_FOOD_FACTS}
+)
+
+
+@unique
+class AmountMethod(str, Enum):
+    """U2: how the amount of a portion was obtained (study_conventions.md §6.3).
+    On each portion, with a default on the food; NULL is "not given"."""
+
+    KITCHEN_SCALE = "kitchen_scale"
+    POCKET_SCALE = "pocket_scale"
+    PACKAGE = "package"
+    HOUSEHOLD = "household"
+    EYEBALL = "eyeball"
+    AI_ESTIMATE = "ai_estimate"
+
+
+# Measured amounts: the ones amount_confidence counts (measurement_conventions.md §6.4).
+WEIGHED_AMOUNT_METHODS = frozenset(
+    {AmountMethod.KITCHEN_SCALE, AmountMethod.POCKET_SCALE, AmountMethod.PACKAGE}
+)
+
+
+@unique
 class StorageLocation(str, Enum):
     """Where a container (`fridge`) is kept (measurement_conventions.md 4.8).
 

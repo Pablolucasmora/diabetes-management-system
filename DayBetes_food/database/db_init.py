@@ -29,7 +29,9 @@ from DayBetes_food.domain.constants import (
     CookingMethod,
     FoodCategory,
     FoodPhysicalState,
+    AmountMethod,
     FridgeCloseReason,
+    MacrosSource,
     Ripeness,
     SystemTag,
     sql_in_list,
@@ -54,6 +56,32 @@ def _has_column(cursor, table: str, column: str) -> bool:
         {"table": table, "column": column},
     )
     return cursor.fetchone() is not None
+
+
+def _replace_boolean_with_list(cursor, table: str, old_column: str, new_column: str, true_value: str) -> None:
+    """U1/U2 (study_conventions.md §6.3, 2026-11-12): a yes/no column becomes a
+    closed list. Adds `new_column`, copies TRUE as `true_value` and drops the old
+    column; FALSE and NULL stay empty, nothing else is inferred. Idempotent: once
+    the old column is gone it only checks that the new one exists. Approved
+    destructive step (§12.4): the local values were exported before applying it
+    (audit/backups/u1_u2_before_2026-11-12.csv); production has its nightly copies.
+    The CHECK of the new column is added with the rest of the table's CHECKs."""
+    if not _has_column(cursor, table, new_column):
+        cursor.execute(
+            sql.SQL("ALTER TABLE {} ADD COLUMN {} VARCHAR(50);").format(
+                sql.Identifier(table), sql.Identifier(new_column)
+            )
+        )
+    if _has_column(cursor, table, old_column):
+        cursor.execute(
+            sql.SQL("UPDATE {table} SET {new} = %(value)s WHERE {old} IS TRUE AND {new} IS NULL;").format(
+                table=sql.Identifier(table), new=sql.Identifier(new_column), old=sql.Identifier(old_column)
+            ),
+            {"value": true_value},
+        )
+        cursor.execute(
+            sql.SQL("ALTER TABLE {} DROP COLUMN {};").format(sql.Identifier(table), sql.Identifier(old_column))
+        )
 
 
 def _column_data_type(cursor, table: str, column: str):
@@ -415,11 +443,14 @@ def _ensure_catalog_schema(cursor):
             f"ALTER TABLE catalog ALTER COLUMN barcode TYPE VARCHAR({CATALOG_BARCODE_MAX_LENGTH});"
         )
 
-    # ---- 5b. Declared quality, weighing and confidence (decision 2026-10-09) ----
-    # Existing rows start as NULL ("no data"): nothing is inferred.
+    # ---- 5b. Declared confidence (decision 2026-10-09) and U1/U2 (2026-11-12) ----
+    # Existing rows start as NULL ("no data"): nothing is inferred. The yes/no
+    # macros_quality and default_strictly_weighed became closed lists (study §6.3).
+    _replace_boolean_with_list(cursor, "catalog", "macros_quality", "macros_source", MacrosSource.LABEL.value)
+    _replace_boolean_with_list(
+        cursor, "catalog", "default_strictly_weighed", "default_amount_method", AmountMethod.KITCHEN_SCALE.value
+    )
     for column, definition in (
-        ("macros_quality", "BOOLEAN"),
-        ("default_strictly_weighed", "BOOLEAN"),
         ("macros_confidence", "INTEGER"),
     ):
         if not _has_column(cursor, "catalog", column):
@@ -673,7 +704,6 @@ def _ensure_manual_intake_schema(cursor):
         # Existing rows are reusable dishes: FALSE is a technical backfill.
         ("is_quick_add", "BOOLEAN NOT NULL DEFAULT FALSE"),
         ("macros_confidence", "INTEGER"),
-        ("default_strictly_weighed", "BOOLEAN"),
     ):
         if not _has_column(cursor, "manual_intake", column):
             cursor.execute(
@@ -691,8 +721,15 @@ def _ensure_manual_intake_schema(cursor):
         )
     if has_old_quality:
         cursor.execute("ALTER TABLE manual_intake RENAME COLUMN default_macros_quality TO macros_quality;")
-    elif not has_new_quality:
-        cursor.execute("ALTER TABLE manual_intake ADD COLUMN macros_quality BOOLEAN;")
+    # U1/U2 (study §6.3, 2026-11-12): both yes/no columns became closed lists.
+    # A dish's published macros come from its menu or website: TRUE -> official.
+    _replace_boolean_with_list(
+        cursor, "manual_intake", "macros_quality", "macros_source", MacrosSource.OFFICIAL.value
+    )
+    _replace_boolean_with_list(
+        cursor, "manual_intake", "default_strictly_weighed", "default_amount_method",
+        AmountMethod.KITCHEN_SCALE.value,
+    )
     if legacy_ig_scale:
         # Approved data correction (measurement §6.10, §12.7). It only runs while
         # the legacy CHECK existed, dropped in step 3 of this same transaction,
@@ -2326,6 +2363,11 @@ def _ensure_portion_detail_schema(cursor):
     # so no data predates its rule (§12.7). Its CHECKs are added below.
     if not _has_column(cursor, "portion_detail", "ripeness"):
         cursor.execute("ALTER TABLE portion_detail ADD COLUMN ripeness VARCHAR(50);")
+    # U2 (study §6.3, 2026-11-12): strictly_weighed became amount_method. Its
+    # CHECK is added below, with the ripeness ones.
+    _replace_boolean_with_list(
+        cursor, "portion_detail", "strictly_weighed", "amount_method", AmountMethod.KITCHEN_SCALE.value
+    )
 
     _DUPLICATE_PORTION_GROUPS = """
         WITH dup AS (
@@ -2509,6 +2551,16 @@ def _ensure_portion_detail_schema(cursor):
         cursor.execute(
             "ALTER TABLE portion_detail ADD CONSTRAINT ck_portion_detail_ripeness "
             "CHECK (ripeness IS NULL OR ripeness IN (" + sql_in_list(Ripeness) + "));"
+        )
+    # ---- How the amount was obtained (U2, study §6.3, 2026-11-12) ----
+    if _check_lacks_values(
+        cursor, "portion_detail", "ck_portion_detail_amount_method", [m.value for m in AmountMethod]
+    ):
+        cursor.execute("ALTER TABLE portion_detail DROP CONSTRAINT ck_portion_detail_amount_method;")
+    if not _constraint_exists(cursor, "portion_detail", "ck_portion_detail_amount_method"):
+        cursor.execute(
+            "ALTER TABLE portion_detail ADD CONSTRAINT ck_portion_detail_amount_method "
+            "CHECK (amount_method IS NULL OR amount_method IN (" + sql_in_list(AmountMethod) + "));"
         )
     if not _constraint_exists(cursor, "portion_detail", "ck_portion_detail_ripeness_event"):
         cursor.execute(

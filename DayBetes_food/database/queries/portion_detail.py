@@ -36,9 +36,10 @@ from DayBetes_food.errors import NotFoundError, ValidationError
 
 
 _PREPARATION_FIELDS = ("cooking", "conservation", "final_state", "ripeness")
-# macros_quality is not a portion flag since 2026-10-09: it is the food's
-# (measurement §6.11). portion_detail.macros_quality is kept unused.
-_FLAG_FIELDS = ("strictly_weighed", "is_cooked_weight")
+# The origin of the macros is not a portion field since 2026-10-09: it is the
+# food's (measurement §6.11). portion_detail.macros_quality is kept unused.
+# amount_method (U2, study §6.3) travels as its code, or None for "not given".
+_FLAG_FIELDS = ("amount_method", "is_cooked_weight")
 
 # Enum-keyed (T2.1): dynamic column composition uses `sql.Identifier` with
 # this whitelist, never an f-string built from caller input.
@@ -69,7 +70,7 @@ _PORTION_COLUMNS = """
     pd.conservation,
     pd.final_state,
     pd.ripeness,
-    pd.strictly_weighed,
+    pd.amount_method,
     pd.is_cooked_weight,
     pd.offset_minutes,
     pd.source_fridge_id,
@@ -81,7 +82,7 @@ _PORTION_COLUMNS = """
     im.subtype AS source_subtype,
     COALESCE(im.is_quick_add, FALSE) AS source_is_quick_add,
     c.cooking_factor AS source_cooking_factor,
-    COALESCE(c.macros_quality, im.macros_quality) AS source_macros_quality,
+    COALESCE(c.macros_source, im.macros_source) AS source_macros_source,
     COALESCE(c.calories_100g, im.calories_100g) AS source_calories_100g,
     COALESCE(c.carbs_100g, im.carbs_100g) AS source_carbs_100g,
     COALESCE(c.sugars_100g, im.sugars_100g) AS source_sugars_100g,
@@ -264,7 +265,7 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
         "conservation": conservation.value if conservation is not None else None,
         "final_state": final_state.value if final_state is not None else None,
         "ripeness": ripeness.value if ripeness is not None else None,
-        "strictly_weighed": payload.strictly_weighed,
+        "amount_method": payload.amount_method.value if payload.amount_method is not None else None,
         "is_cooked_weight": bool(payload.is_cooked_weight),
         "offset_minutes": offset_minutes,
         "source_fridge_id": payload.source_fridge_id,
@@ -287,14 +288,14 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
             amount, catalog_id, manual_intake_id,
             intake_event_id, recipe_id, fridge_id, plate_id, recipe_plate_id,
             cooking, conservation, final_state, ripeness,
-            strictly_weighed,
+            amount_method,
             is_cooked_weight, offset_minutes, source_fridge_id
         )
         VALUES (
             %(amount)s, %(catalog_id)s, %(manual_intake_id)s,
             %(intake_event_id)s, %(recipe_id)s, %(fridge_id)s, %(plate_id)s, %(recipe_plate_id)s,
             %(cooking)s, %(conservation)s, %(final_state)s, %(ripeness)s,
-            %(strictly_weighed)s,
+            %(amount_method)s,
             %(is_cooked_weight)s, %(offset_minutes)s, %(source_fridge_id)s
         )
         {conflict}
@@ -438,7 +439,8 @@ def update_portion_offset(connection, user_id: int, portion_id: int, offset_minu
 
 
 def update_portion_flag(connection, user_id: int, portion_id: int, field: str, value, commit: bool = True) -> None:
-    """Write one data quality flag of a portion.
+    """Write one data quality field of a portion: `amount_method` (its code or
+    None) or `is_cooked_weight`.
 
     `is_cooked_weight` is part of the uniqueness key (4.6.4, decision
     2026-09-23): if the new value makes the row equal to another one of the

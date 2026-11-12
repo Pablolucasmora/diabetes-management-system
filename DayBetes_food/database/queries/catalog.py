@@ -36,7 +36,7 @@ _CATALOG_COLUMNS = """
     entity.calories_100g, entity.carbs_100g, entity.sugars_100g, entity.fats_100g,
     entity.saturated_100g, entity.proteins_100g, entity.fiber_100g,
     entity.caffeine, entity.alcohol, entity.barcode, entity.cooking_factor,
-    entity.macros_quality, entity.default_strictly_weighed, entity.macros_confidence,
+    entity.macros_source, entity.default_amount_method, entity.macros_confidence,
     entity.is_published, entity.created_at, entity.updated_at, entity.deleted_at,
     EXISTS (SELECT 1 FROM user_favorites uf
             WHERE uf.user_id = %(visibility_user_id)s AND uf.catalog_id = entity.id) AS is_favorite,
@@ -68,8 +68,8 @@ _CATALOG_CREATE_COLUMNS = (
     "alcohol",
     "barcode",
     "cooking_factor",
-    "macros_quality",
-    "default_strictly_weighed",
+    "macros_source",
+    "default_amount_method",
     "macros_confidence",
     "prefill_source",
     "prefill_source_id",
@@ -118,8 +118,10 @@ def _create_params(payload: CatalogItemCreate) -> dict:
         "default_portion": payload.default_portion,
         "barcode": payload.barcode,
         "cooking_factor": payload.cooking_factor,
-        "macros_quality": payload.macros_quality,
-        "default_strictly_weighed": payload.default_strictly_weighed,
+        "macros_source": payload.macros_source.value if payload.macros_source is not None else None,
+        "default_amount_method": (
+            payload.default_amount_method.value if payload.default_amount_method is not None else None
+        ),
         "macros_confidence": payload.macros_confidence,
         "prefill_source": payload.prefill_source.value if payload.prefill_source else None,
         "prefill_source_id": payload.prefill_source_id,
@@ -140,8 +142,10 @@ def _update_fields(payload: CatalogItemUpdate) -> tuple[dict, set]:
         "default_portion": payload.default_portion,
         "barcode": payload.barcode,
         "cooking_factor": payload.cooking_factor,
-        "macros_quality": payload.macros_quality,
-        "default_strictly_weighed": payload.default_strictly_weighed,
+        "macros_source": payload.macros_source.value if payload.macros_source is not None else None,
+        "default_amount_method": (
+            payload.default_amount_method.value if payload.default_amount_method is not None else None
+        ),
         "macros_confidence": payload.macros_confidence,
         **_nutrient_params(payload.nutrients),
     }

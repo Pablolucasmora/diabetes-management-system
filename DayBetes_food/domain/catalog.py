@@ -11,7 +11,14 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 
-from DayBetes_food.domain.constants import FoodCategory, FoodPhysicalState, Nutriscore, PrefillSource
+from DayBetes_food.domain.constants import (
+    AmountMethod,
+    FoodCategory,
+    FoodPhysicalState,
+    MacrosSource,
+    Nutriscore,
+    PrefillSource,
+)
 from DayBetes_food.domain.food import normalize_food_text
 from DayBetes_food.domain.nutrition import NutrientValues, NumericRange, parse_number
 from DayBetes_food.errors import ValidationError
@@ -114,9 +121,10 @@ class CatalogItemRead:
     alcohol: float | None
     barcode: str | None
     cooking_factor: float | None
-    # Decision 2026-10-09 (measurement §6.10, §6.11). None = no data.
-    macros_quality: bool | None  # the food's data, read live by portions
-    default_strictly_weighed: bool | None  # copied to each new portion
+    # Decision 2026-10-09 (measurement §6.10, §6.11); U1/U2 since 2026-11-12
+    # (study §6.3). None = not given.
+    macros_source: MacrosSource | None  # U1: the food's data, read live by portions
+    default_amount_method: AmountMethod | None  # U2: copied to each new portion
     macros_confidence: int | None  # declared, ordinal 0-2
     is_published: bool
     created_at: datetime
@@ -153,9 +161,10 @@ class CatalogItemCreate:
     nutrients: NutrientValues
     barcode: str | None
     cooking_factor: float | None
-    # Decision 2026-10-09 (measurement §6.10, §6.11). None = no data.
-    macros_quality: bool | None  # the food's data, read live by portions
-    default_strictly_weighed: bool | None  # copied to each new portion
+    # Decision 2026-10-09 (measurement §6.10, §6.11); U1/U2 since 2026-11-12
+    # (study §6.3). None = not given.
+    macros_source: MacrosSource | None  # U1: the food's data, read live by portions
+    default_amount_method: AmountMethod | None  # U2: copied to each new portion
     macros_confidence: int | None  # declared, ordinal 0-2
     # Where the form's first values came from (measurement §12.1). None = typed.
     prefill_source: PrefillSource | None = None
@@ -182,9 +191,10 @@ class CatalogItemUpdate:
     nutrients: NutrientValues
     barcode: str | None
     cooking_factor: float | None
-    # Decision 2026-10-09 (measurement §6.10, §6.11). None = no data.
-    macros_quality: bool | None  # the food's data, read live by portions
-    default_strictly_weighed: bool | None  # copied to each new portion
+    # Decision 2026-10-09 (measurement §6.10, §6.11); U1/U2 since 2026-11-12
+    # (study §6.3). None = not given.
+    macros_source: MacrosSource | None  # U1: the food's data, read live by portions
+    default_amount_method: AmountMethod | None  # U2: copied to each new portion
     macros_confidence: int | None  # declared, ordinal 0-2
 
 
@@ -207,9 +217,10 @@ class CatalogItemRequest:
     nutrients: NutrientValues
     barcode: str | None
     cooking_factor: float | None
-    # Decision 2026-10-09 (measurement §6.10, §6.11). None = no data.
-    macros_quality: bool | None  # the food's data, read live by portions
-    default_strictly_weighed: bool | None  # copied to each new portion
+    # Decision 2026-10-09 (measurement §6.10, §6.11); U1/U2 since 2026-11-12
+    # (study §6.3). None = not given.
+    macros_source: MacrosSource | None  # U1: the food's data, read live by portions
+    default_amount_method: AmountMethod | None  # U2: copied to each new portion
     macros_confidence: int | None  # declared, ordinal 0-2
     favorite: bool | None
     prefill_source: PrefillSource | None = None

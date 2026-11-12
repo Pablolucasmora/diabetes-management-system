@@ -16,7 +16,7 @@ from DayBetes_food.components.cart.cart_shared import (
     portion_name,
     unit_amount,
 )
-from DayBetes_food.components.food.food_shared import STORAGE_LABELS
+from DayBetes_food.components.food.food_shared import AMOUNT_METHOD_LABELS, NOT_GIVEN_LABEL, STORAGE_LABELS
 from DayBetes_food.components.insulin_pen import PenSelect, units_text
 from DayBetes_food.components.injection_zone import (
     BASE_INJECTION_ZONE_IMAGE,
@@ -110,80 +110,32 @@ def _checkbox(
     )
 
 
-# Visible label of each tri-state flag (the interface is in English, 7.12).
-_TRI_STATE_FLAG_LABELS = {
-    "strictly_weighed": "Strictly weighted",
-}
+def amount_method_select_id(portion_id: int) -> str:
+    return f"portion_amount_method_{portion_id}"
 
 
-def tri_state_flag_id(name: str, portion_id: int) -> str:
-    """Stable id of a tri-state control, target of its own OOB repaint (9.5)."""
-    return f"portion_flag_{name}_{portion_id}"
+def PortionAmountMethodSelect(event_id: int, portion, ingredient_name: str):
+    """How the amount of a portion was obtained (U2, study_conventions.md §6.3).
 
-
-def PortionTriStateFlag(event_id: int, portion, name: str, ingredient_name: str, oob: bool = False):
-    """Tri-state control of one portion flag (`strictly_weighed`).
-
-    Single builder for the row and for the route response: the route repaints
-    this control out of band next to `MacrosSummary`, so the next state it
-    sends is always the one computed from the row just saved (9.5 cart HTMX
-    contract, frontend_conventions.md 6).
+    A native select shows its own new state, so the route only repaints the
+    event's macros summary (amount_confidence, 9.5). The empty option is
+    "not given" and is a state of its own (frontend_conventions.md 6).
     """
-    return _TriStateFlag(
-        name=name,
-        value=getattr(portion, name),
-        hx_post=f"/cart/portion/{portion.id}/{name}",
-        aria_label=f"{_TRI_STATE_FLAG_LABELS[name]} for {ingredient_name}",
+    current = portion.amount_method
+    return Select(
+        Option(NOT_GIVEN_LABEL, value="", selected=current is None),
+        *[
+            Option(label, value=method.value, selected=method is current)
+            for method, label in AMOUNT_METHOD_LABELS.items()
+        ],
+        id=amount_method_select_id(portion.id),
+        name="value",
+        aria_label=f"How the amount of {ingredient_name} was obtained",
+        cls=f"{_FIELD_CLS} min-w-0",
+        hx_post=f"/cart/portion/{portion.id}/amount_method",
+        hx_trigger="change",
         hx_target=f"#macros_summary_event_{event_id}",
         hx_swap="outerHTML",
-        element_id=tri_state_flag_id(name, portion.id),
-        oob=oob,
-    )
-
-
-def _TriStateFlag(
-    name: str,
-    value,
-    hx_post: str,
-    aria_label: str = "",
-    hx_target: str = "",
-    hx_swap: str = "",
-    element_id: str = "",
-    oob: bool = False,
-):
-    """Tri-state flag: NULL -> True -> False -> NULL (decision 2026-09-18).
-
-    A two-state checkbox cannot represent "no data": `NULL` must be visible and
-    distinguishable from an explicit `False` (frontend_conventions.md 6,
-    code_conventions.md 7.14). The next state is computed here, on the server,
-    and sent in `hx_vals`; the client does not decide the transition. The
-    "no data" state carries a small `–` marker next to the control.
-    """
-    if value is True:
-        next_value, glyph = "false", "✓"
-        style = "background-color:#111827;border-color:#111827;color:#ffffff;"
-    elif value is False:
-        next_value, glyph = "", ""
-        style = "background-color:#ffffff;border-color:#9ca3af;color:#111827;"
-    else:
-        next_value, glyph = "true", ""
-        style = "background-color:#ffffff;border-color:#d1d5db;color:#111827;"
-    return Div(
-        Button(
-            glyph,
-            type="button",
-            aria_label=aria_label or name.replace("_", " ").title(),
-            cls="w-5 h-5 rounded border flex items-center justify-center text-xs leading-none p-0",
-            style=style,
-            hx_post=hx_post,
-            hx_vals=json.dumps({"value": next_value}),
-            **({"hx_target": hx_target} if hx_target else {}),
-            **({"hx_swap": hx_swap} if hx_swap else {}),
-        ),
-        Span("–", cls="text-xs text-gray-500") if value is None else None,
-        cls="flex items-center gap-1",
-        **({"id": element_id} if element_id else {}),
-        **({"hx_swap_oob": "true"} if oob else {}),
     )
 
 
@@ -1128,8 +1080,8 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, diff
             cls="flex items-center gap-2",
         ),
         Div(
-            Label("Strictly weighted", cls="text-xs text-gray-600"),
-            PortionTriStateFlag(event.id, sample, "strictly_weighed", ingredient_name),
+            Label("Amount from", cls="text-xs text-gray-600 shrink-0", **{"for": amount_method_select_id(portion_id)}),
+            PortionAmountMethodSelect(event.id, sample, ingredient_name),
             cls="flex items-center gap-2",
         ),
         ConfirmActionModal(

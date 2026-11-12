@@ -67,7 +67,7 @@ Esto extiende `code_conventions.md` §7.14 ("Defaults mostrados en la interfaz",
 
 Consecuencias:
 
-- **Un campo de tres estados se pinta con un control de tres estados.** Una columna `BOOLEAN` nullable donde `NULL` significa "sin dato" no puede pintarse como un checkbox de dos posiciones: un checkbox vacío se lee como `False`, y `False` ("no estaba pesado") no es lo mismo que "no lo sé". El caso de referencia es `strictly_weighed` de `portion_detail` (decisión 2026-09-18; `macros_quality` lo fue hasta el 2026-10-09, cuando pasó a ser un dato del alimento): nace en `NULL`, el control cicla `NULL → True → False → NULL` a cada pulsación, y el estado sin dato se marca junto al control con un guion `–` pequeño para distinguirlo a simple vista de `False`.
+- **Un campo de tres estados se pinta con un control de tres estados.** Una columna `BOOLEAN` nullable donde `NULL` significa "sin dato" no puede pintarse como un checkbox de dos posiciones: un checkbox vacío se lee como `False`, y `False` ("no estaba pesado") no es lo mismo que "no lo sé". Lo mismo vale para una lista cerrada que admite "no indicado": su `<select>` tiene una opción vacía propia (`- Not given`), distinta de cualquier valor. Hoy no queda ningún campo de tres estados en las porciones: `strictly_weighed` (decisión 2026-09-18) pasó el 2026-11-12 a la lista `amount_method` (U2, `study_conventions.md` §6.3), y `macros_quality` dejó de ser de la porción el 2026-10-09.
 - **Un valor que el usuario no ha introducido no se pinta como introducido.** Si no hay valor fiable, el control muestra un estado "sin elegir" explícito (§7.14), no el primer valor del enum ni un cero de relleno.
 - **Un cálculo que la interfaz muestra pero no persiste debe decir que no se persiste**, o no mostrarse. Mostrar un número que parece guardado y no lo está es el mismo engaño con otra forma.
 - La regla aplica igual al estado que se muestra **después** de una acción: si un refresco parcial (§9.5 de `code_conventions.md`) repinta una tarjeta, lo repintado tiene que ser lo que hay en la fila, no lo que el cliente supone que quedó.
@@ -106,7 +106,7 @@ Cada tanda es un bloque visualmente separado, no un simple texto entre filas: al
 
 **Orden y fila de ingrediente** (decisión 2026-10-10, rediseño del carrito). La tarjeta se lee de arriba abajo en el orden en que se usa: qué comida es, qué lleva, lo que importa antes de comer y la confirmación. Por eso `Eating out` e `Insulin` bajan de la cabecera a un bloque *Before you confirm*, junto a las notas, y borrar la comida pasa a la cabecera, al lado del nombre.
 
-Cada `IngredientRow` muestra el nombre, una línea con la preparación (`raw · fridge · +15 min`, o `Preparation not set` si no hay ninguna), la cantidad con su unidad y la casilla `Strictly weighted`, que se cambia a menudo y por eso queda a la vista. Todo lo demás está en el pop-up **`Adjust`** de esa fila (`IngredientSettingsModal`): la preparación (`cooking`, `final_state`, `conservation`), `Weighed cooked`, el offset propio del ingrediente y el selector `Move` (§7.5). El pop-up es el sitio para corregir desde el carrito una preparación mal puesta u olvidada.
+Cada `IngredientRow` muestra el nombre, una línea con la preparación (`raw · fridge · +15 min`, o `Preparation not set` si no hay ninguna), la cantidad con su unidad y el selector `Amount from` (cómo se obtuvo la cantidad, U2), que se cambia a menudo y por eso queda a la vista. Todo lo demás está en el pop-up **`Adjust`** de esa fila (`IngredientSettingsModal`): la preparación (`cooking`, `final_state`, `conservation`), `Weighed cooked`, el offset propio del ingrediente y el selector `Move` (§7.5). El pop-up es el sitio para corregir desde el carrito una preparación mal puesta u olvidada.
 
 - La preparación se guarda con un botón (`Save preparation`), con los tres campos juntos. Un campo en `Not set` se guarda como `NULL` (§6). Los tres son parte de la clave única, así que guardar puede fusionar la fila con otra de la misma tanda (`measurement_conventions.md` §4.6.4), y por eso se repinta la tarjeta entera.
 - En una fruta (alimento de `catalog` con categoría `fruits`), el grupo añade `Ripeness` (`unripe`, `ripe`, `overripe` o `Not set`), que se guarda con el mismo botón y también es parte de la clave (decisión del usuario, 2026-11-12; `study_conventions.md` §6.3). La línea de preparación de la fila la muestra, y la marca de diferencias entre dos filas del mismo alimento también.
@@ -217,7 +217,7 @@ Decisión 2026-11-05; sustituye a la versión provisional del 2026-10-18.
 
 - Una receta personal (`code_conventions.md` §11.4.1) en favoritos, con el `meal_type` del evento. Un rescate lo deja vacío, porque una receta no puede ser de rescate.
 - La tanda da una receta de una tanda. La comida da una tanda por cada una con ingredientes, en el orden de `measurement_conventions.md` §4.6.1 y con su nombre, y omite las vacías.
-- Cada porción con su cantidad, preparación, `strictly_weighed` e `is_cooked_weight`. El offset y la madurez de una fruta no se copian: una receta no tiene madurez (`study_conventions.md` §6.3). La tanda y la comida no cambian.
+- Cada porción con su cantidad, preparación, `amount_method` e `is_cooked_weight`. El offset y la madurez de una fruta no se copian: una receta no tiene madurez (`study_conventions.md` §6.3). La tanda y la comida no cambian.
 
 **Cuándo no se guarda** (todas con su status por el canal de errores, `error_conventions.md` §7.1)
 
@@ -365,7 +365,7 @@ Errores, por el canal común: sin sesión, `401`; tipo desconocido, `favorite` a
 **Receta** (decisión 2026-11-05). De arriba abajo: el nombre, *Add to*, *Macros Summary*, *Details*, los ingredientes y las notas, con sus saltos de línea. No hay cantidad ni `To plate`: `Add to meal` abre el paso previo (§9.7). Quien no es propietario ve los ingredientes en filas de solo lectura y solo puede copiarla y añadirla. Un macro que ningún ingrediente conoce se pinta `—`, y si solo lo conocen algunos se pinta su suma con una línea que lo dice (`measurement_conventions.md` §6.9.4). Lo que cambia los ingredientes repinta también el resumen (§6).
 
 
-De arriba abajo: el nombre y sus datos, *Add to*, la cantidad (con *Advanced* para la preparación; en una fruta, también `Ripeness`, que solo se guarda al registrarla en una comida con `Log`, no al guardarla en un tupper), `Strictly weighted` (§7.1, `measurement_conventions.md` §6.11), *Macros Summary* y *Details*. Debajo, las acciones: `Edit` y `Log`; si el usuario no puede editarlo, `Make a copy` ocupa el sitio de `Edit`. Si puede editarlo, `Make a copy` va en su propia fila debajo, encima de `Publish` (decisión 2026-10-27). Copiar pide confirmación y abre la edición de la copia. Entra bloque a bloque (§10). Debajo del nombre, sus etiquetas (§9.4.1).
+De arriba abajo: el nombre y sus datos, *Add to*, la cantidad (con *Advanced* para la preparación; en una fruta, también `Ripeness`, que solo se guarda al registrarla en una comida con `Log`, no al guardarla en un tupper), `Amount from` (U2: cómo se obtiene la cantidad esta vez, que empieza en el valor por defecto del alimento; §7.1, `measurement_conventions.md` §6.11), *Macros Summary* y *Details*. Debajo, las acciones: `Edit` y `Log`; si el usuario no puede editarlo, `Make a copy` ocupa el sitio de `Edit`. Si puede editarlo, `Make a copy` va en su propia fila debajo, encima de `Publish` (decisión 2026-10-27). Copiar pide confirmación y abre la edición de la copia. Entra bloque a bloque (§10). Debajo del nombre, sus etiquetas (§9.4.1).
 
 En un alimento o un plato, debajo de `Edit` y `Log food`, dos botones visibles, `Save to fridge` y `Save to freezer` (decisión 2026-11-07, que sustituye a ofrecerlos dentro de *Add to*, donde no se encontraban): guardan la cantidad de arriba entera en un tupper nuevo, con su preparación y pesada y sin plato (`measurement_conventions.md` §4.8.5). La página no cambia y aparece el aviso `Saved to the fridge` o `Saved to the freezer`. Una receta se guarda desde su paso previo (§9.7). Al registrar con `Log food`, si la cantidad cocinada es mayor que la del plato, la línea `Will be saved in fridge` dice lo que se guarda en un tupper de la nevera, y se guarda de verdad.
 
@@ -467,7 +467,7 @@ Decisión 2026-11-05. El modelo está en `measurement_conventions.md` §4.7 y el
 - Borrar una tanda con ingredientes responde `409` y pide moverlos o borrarlos.
 - Toda acción repinta el bloque `#recipe_ingredients_{id}` y, fuera de banda, el resumen.
 
-**Por ingrediente**: cantidad, preparación y `Weighed cooked`, con el mismo criterio que el carrito (§7.4). `Strictly weighted` se ajusta en el carrito.
+**Por ingrediente**: cantidad, preparación y `Weighed cooked`, con el mismo criterio que el carrito (§7.4). `Amount from` se ajusta en el carrito.
 
 **Buscador de ingredientes** (`/food/recipe/{id}/ingredients/form`)
 
