@@ -36,7 +36,25 @@ def _header():
                 cls="text-sm font-medium text-gray-700 cursor-pointer px-1 py-1",
                 onclick=back_js("/menu"),
             ),
-            Span("ASSISTANT", cls="web_section_label"),
+            Div(
+                Span("ASSISTANT", cls="web_section_label"),
+                # The floating cart button is hidden here (data-hide-cart): this
+                # small one opens the cart without covering the composer (§9.11).
+                Button(
+                    Img(src="/images/ui/cart.svg", alt="", cls="h-4 w-4"),
+                    type="button",
+                    aria_label="Open the cart",
+                    cls="""
+                        h-8 w-8 rounded-full bg-surface border border-line-soft
+                        shadow-[0_2px_8px_rgba(80,60,40,0.12)] cursor-pointer
+                        flex items-center justify-center active:scale-95 transition-transform
+                    """,
+                    hx_get="/cart",
+                    hx_target="#main_content",
+                    hx_push_url="true",
+                ),
+                cls="flex items-center gap-3",
+            ),
             cls="flex items-center justify-between",
         ),
         H1("What did you eat?", cls="text-2xl font-bold text-gray-900"),
@@ -118,10 +136,11 @@ def AssistantPage():
     return Div(
         _header(),
         Div(_intro(), id="assistant_messages", cls="w-full flex flex-col gap-3"),
-        # At the bottom of the screen, above the island and the cart button;
-        # in the flow (sticky, not fixed) so a phone keyboard scrolls it into view.
-        Div(_composer(), cls="sticky bottom-40 w-full mt-auto"),
-        cls="w-full max-w-2xl mx-auto px-4 pt-6 pb-40 min-h-dvh flex flex-col gap-4",
+        # At the bottom of the screen, above the island; in the flow (sticky,
+        # not fixed) so a phone keyboard scrolls it into view.
+        Div(_composer(), cls="sticky bottom-28 w-full mt-auto"),
+        data_hide_cart="true",
+        cls="w-full max-w-2xl mx-auto px-4 pt-6 pb-28 min-h-dvh flex flex-col gap-4",
     )
 
 

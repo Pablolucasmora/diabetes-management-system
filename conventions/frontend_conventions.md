@@ -315,7 +315,7 @@ Arriba, el saludo con el nombre de usuario (`Hi <usuario>`). Debajo, en este ord
 
 ### 9.3 Food
 
-- La cabecera es fija arriba (`sticky`) y usa `web_glass_strong` (§8). Lleva el botón del rayo, que abre el pop-up de rescate (§9.6), el menú "+", el buscador, los filtros y el selector de comida (*Add to*). Mientras el menú "+" está abierto, la capa `#food_menu_scrim` desenfoca el resto de la página (§8).
+- La cabecera es fija arriba (`sticky`) y usa `web_glass_strong` (§8). Lleva el botón del rayo, que abre el pop-up de rescate (§9.6), la pestaña del asistente si está configurado (§9.11), el menú "+", el buscador, los filtros y el selector de comida (*Add to*). Mientras el menú "+" está abierto, la capa `#food_menu_scrim` desenfoca el resto de la página (§8).
 - **Filtros** (decisión 2026-11-06). Se ajustan con un botón negro dentro del buscador, a la derecha, que abre un pop-up (`ModalLayer`, §8, id `food_filters_modal`) con `Cancel` y `Confirm`, y `Reset` arriba a la derecha, que quita todos los filtros. Lo elegido es un borrador, también el `Reset`: solo `Confirm` lo aplica y refresca la lista; `Cancel` o pulsar fuera lo descartan. El botón solo aparece en las listas que tienen algo que filtrar y lleva una marca mientras hay un filtro activo, porque desde fuera del pop-up no se vería. Por ahora, solo `Recipes`, con el tipo de comida: una selección múltiple de píldoras, que busca entre todos los elegidos (`code_conventions.md` §11.7). Un filtro nuevo es un control en el pop-up y un campo oculto que incluyen las peticiones de la lista.
 - El `+` de una receta abre el paso previo (§9.7).
 - **Cinco píldoras**: `Search`, `Food`, `Recipes`, `Favs` y `Fridge` (decisión 2026-11-07: la nevera tiene píldora propia para que se llegue a ella de un toque, §9.8). En móvil van más juntas (`gap-1.5`) para que quepan las cinco. `/food?filter=fridge` abre la página en `Fridge`; otro valor es un `422`.
@@ -533,9 +533,12 @@ Todas exigen el header `HX-Request` (`403` si falta) y los errores van por el ca
 
 Contrato del servidor en `code_conventions.md` §8.12. Solo existe si el asistente está configurado.
 
-**Dónde está.** Página `/assistant`, con su acceso desde Inicio: el botón `Tell the assistant`, a todo el ancho, debajo de "What did you eat?" en *Add to your meal* (§9.2). El acceso desde la cabecera de Food queda para cuando el asistente envíe mensajes.
+**Dónde está.** Página `/assistant`, con dos accesos (decisión del usuario, 2026-11-12):
 
-**Página.** Cabecera como las de crear (§9.1): "‹ Back" a la izquierda y `ASSISTANT` a la derecha. Debajo, los mensajes de la conversación y, fijo abajo, el compositor: un `<textarea>` que crece con el texto hasta un máximo y luego hace scroll, y el botón de enviar. Ningún campo se enfoca solo al abrir la página en el móvil (mismo motivo que §9.6).
+- En Inicio, el botón `Tell the assistant`, a todo el ancho, debajo de "What did you eat?" en *Add to your meal* (§9.2).
+- En la cabecera de Food (§9.3), entre el rayo y el `+`: una pestaña rectangular `Tell the assistant` que cuelga del borde superior de la página. Ocupa el hueco entre los dos botones con margen a cada lado, no tiene margen ni borde arriba (sube por encima del relleno superior de la cabecera) y solo redondea las esquinas de abajo. Es sólida, como los botones de la cabecera (§8).
+
+**Página.** Cabecera como las de crear (§9.1): "‹ Back" a la izquierda y `ASSISTANT` a la derecha, seguido de un botón redondo pequeño con el icono del carrito que abre el carrito. El botón flotante del carrito no se muestra en esta página (`data-hide-cart`), porque taparía el compositor. Debajo, los mensajes de la conversación y, fijo abajo, el compositor: un `<textarea>` que crece con el texto hasta un máximo y luego hace scroll, y el botón de enviar. Ningún campo se enfoca solo al abrir la página en el móvil (mismo motivo que §9.6).
 
 **Mencionar un alimento con `/`.**
 

@@ -1427,7 +1427,7 @@ def _smart_macros_block(
     )
 
 
-def QuickCreateButtons():
+def QuickCreateButtons(assistant_enabled: bool = False):
     # Solid, not glass: they sit inside the glass header, and Safari paints
     # coloured seams with a backdrop-filter nested in another one
     # (frontend_conventions.md §8).
@@ -1475,6 +1475,28 @@ def QuickCreateButtons():
                 RescueModal(),
                 cls="relative flex justify-start",
             ),
+            # The assistant, as a tab hanging from the top edge of the page:
+            # it is pulled up over the header's top padding and has no top
+            # border, only rounded bottom corners (frontend_conventions.md §9.3).
+            Button(
+                Span("Tell the assistant", cls="truncate"),
+                type="button",
+                data_food_assistant_tab="true",
+                cls="""
+                    self-start flex-1 min-w-0 mx-3 md:mx-5
+                    -mt-2 md:-mt-7 h-14 md:h-[5.25rem] pt-2 md:pt-7 px-3
+                    bg-surface border border-t-0 border-line-soft
+                    shadow-[0_4px_14px_rgba(80,60,40,0.14)]
+                    rounded-b-2xl md:rounded-b-3xl
+                    text-sm font-semibold text-gray-900 cursor-pointer
+                    flex items-center justify-center
+                    transition-transform duration-150 active:scale-[0.98]
+                """,
+                hx_get="/assistant",
+                hx_target="#main_content",
+                hx_push_url="true",
+                **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
+            ) if assistant_enabled else "",
             Div(
                 Button(
                     Img(src="/images/ui/plus_icon.svg", alt="", cls="h-6 w-6"),
