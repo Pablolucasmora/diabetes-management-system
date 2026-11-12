@@ -709,8 +709,10 @@ class DBSchema:
             CONSTRAINT fk_assistant_conversation_intake_event_id_intake_event
             REFERENCES intake_event(id) ON DELETE SET NULL,
         model VARCHAR(100) NOT NULL, -- ASSISTANT_MODEL when it started; it is audit data, not a setting
+        without_meal BOOLEAN NOT NULL DEFAULT FALSE, -- `No meal` in Add to: only drafts of new foods and recipes, never a meal (§8.12)
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP -- last message or link to its meal
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, -- last message or link to its meal
+        CONSTRAINT ck_assistant_conversation_without_meal CHECK (NOT (without_meal AND intake_event_id IS NOT NULL))
     );
     """
 

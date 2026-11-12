@@ -119,6 +119,7 @@ class AssistantConversationRead:
     intake_event_id: int | None  # None: no meal yet, or its meal was deleted
     model: str
     created_at: datetime
+    without_meal: bool = False  # `No meal`: only drafts, never a meal (§8.12)
 
 
 @dataclass(frozen=True)
@@ -222,6 +223,27 @@ def require_turn_content(request: AssistantTurnRequest) -> None:
     """A message needs something to read: text, a mention or a photo."""
     if not request.text and not request.mentions and request.photo is None:
         raise ValidationError("Write what you ate.", fields={"message": "required"})
+
+
+# `Add to` (frontend §9.11): a meal id, "" for `New meal` (its first add creates
+# it) or this value for `No meal` (a chat for new foods and recipes only).
+NO_MEAL_CHOICE = "none"
+
+
+def parse_meal_choice(raw) -> tuple[int | None, bool]:
+    """`Add to` as `(event_id, without_meal)`.
+
+    Raises:
+        ValidationError: neither a meal id, nor empty, nor `none`.
+    """
+    text = str(raw or "").strip()
+    if text == NO_MEAL_CHOICE:
+        return None, True
+    if not text:
+        return None, False
+    if not text.isdigit() or int(text) <= 0:
+        raise ValidationError("Invalid meal.", fields={"meal": "invalid"})
+    return int(text), False
 
 
 def parse_tool_use_id(raw) -> str:

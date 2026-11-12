@@ -423,21 +423,32 @@ class ToolInputError(Exception):
 @dataclass
 class ToolContext:
     """What the tools of one message share: the user, the conversation and its
-    meal, which the first add creates when the conversation has none."""
+    meal, which the first add creates when the conversation has none. A `No meal`
+    conversation never gets one: it only drafts new foods and recipes (§8.12)."""
 
     connection: object
     user_id: int
     conversation_id: int | None  # None until the first answer is stored
     event_id: int | None
+    without_meal: bool = False
     meal_created: bool = field(default=False)
+
+    def require_meal_allowed(self) -> None:
+        if self.without_meal:
+            raise ToolInputError(
+                "This chat has no meal: nothing can go to the cart. Tell the user to choose a meal "
+                "or New meal in Add to."
+            )
 
     def target_event(self) -> int:
         """The planned meal to write to, created and linked on the first add.
 
         Raises:
+            ToolInputError: a `No meal` conversation.
             ConflictError: the meal was confirmed meanwhile.
             NotFoundError: the meal was deleted meanwhile.
         """
+        self.require_meal_allowed()
         event_id, created = resolve_target_event(self.connection, self.user_id, self.event_id)
         if created:
             self._link(event_id)
@@ -630,6 +641,7 @@ def _add_recipe(ctx: ToolContext, tool_input: dict) -> dict:
             servings = parse_recipe_add_servings(raw_servings)
         except ValidationError as error:
             raise ToolInputError(str(error)) from error
+    ctx.require_meal_allowed()
     if ctx.event_id is not None:
         # Fails here, not halfway, if the meal was confirmed or deleted meanwhile.
         ctx.target_event()

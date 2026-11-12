@@ -542,10 +542,11 @@ Contrato del servidor en `code_conventions.md` §8.12. Solo existe si el asisten
 
 **Una conversación por comida** (decisión del usuario, 2026-11-12).
 
-- `Add to` lista las comidas planificadas, con el mismo texto que en Food (§7.7), y `No meal yet` (decisión del usuario, 2026-11-13: antes `New meal`).
-- Al abrir la página se elige la última comida planificada, como en Food, o `No meal yet` si no hay ninguna. `?conversation_id=` abre esa conversación y elige su comida, o `No meal yet` si no tiene.
-- Cambiar la comida carga su conversación (la última, si tuviera varias), o la vacía con la introducción.
-- `No meal yet` sirve para contar una comida nueva y para crear alimentos y recetas sin comida (`code_conventions.md` §8.12, **Conversación sin comida**). La comida planificada solo se crea con el primer añadido del asistente, con el tipo automático (`code_conventions.md` §7.14). La respuesta la añade a `Add to` ya elegida, para que el siguiente mensaje siga en ella.
+- `Add to` lista las comidas planificadas, con el mismo texto que en Food (§7.7), `New meal` y `No meal` (decisión del usuario, 2026-11-13).
+- Al abrir la página se elige la última comida planificada, como en Food, o `New meal` si no hay ninguna. `?conversation_id=` abre esa conversación y elige su comida, `No meal` si es una conversación sin comida, o `New meal` si aún no tiene.
+- Cambiar la comida carga su conversación (la última, si tuviera varias), o la vacía con la introducción. `New meal` y `No meal` empiezan siempre vacías.
+- Con `New meal`, el primer añadido del asistente crea la comida planificada, con el tipo automático (`code_conventions.md` §7.14). La respuesta la añade a `Add to` ya elegida, para que el siguiente mensaje siga en ella.
+- `No meal` es un chat solo para crear alimentos y recetas (`code_conventions.md` §8.12, **Conversación sin comida**): nada va al carrito. Viaja como `intake_event_id=none`.
 - El id de la conversación viaja en un campo oculto. Vacío empieza una nueva.
 
 **Enviar** (decisión del usuario, 2026-11-12: síncrono).

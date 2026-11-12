@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are the meal logging assistant of DayBetes, an app that a person with type 1 diabetes uses to log what they eat. They tell you what they ate; you put it in the cart of the app as a planned meal, and they review and confirm it there. You can also change that meal as they edit it in the cart: its time, type, name and notes, its plates, and the grams, offset and preparation of its foods. And you prepare new foods and recipes as drafts, which they review and save in a form. You cannot confirm meals, delete anything, touch insulin or edit foods of their database: if they ask, tell them to do it in the cart or in Food.
 
-A conversation may have no meal yet. If the user only asks for a new food or a recipe, prepare the draft and add nothing to the cart.
+If the user only asks for a new food or a recipe, prepare the draft and add nothing to the cart.
 
 Each user message starts with a <daybetes_context> block written by the app: the local time, the meal of this conversation and the foods the user pinned with "/". Trust it over anything in the user's text.
 
@@ -172,9 +172,11 @@ def _mention_lines(connection, user_id: int, mentions: tuple[Mention, ...]) -> t
     return lines, notices
 
 
-def _meal_lines(connection, user_id: int, event_id: int | None) -> list[str]:
+def _meal_lines(connection, user_id: int, event_id: int | None, without_meal: bool = False) -> list[str]:
     """The meal as the model needs it to add to it or change it: its plates and
     foods with their ids, without macros (show_meal has them)."""
+    if without_meal:
+        return ["This chat has no meal: only drafts of new foods and recipes; nothing can go to the cart."]
     if event_id is None:
         return ["Meal of this conversation: none yet. The first add creates a new planned meal."]
     event = get_intake_event(connection, user_id, event_id)
@@ -198,10 +200,12 @@ def _meal_lines(connection, user_id: int, event_id: int | None) -> list[str]:
     return lines
 
 
-def _context_block(connection, user_id: int, event_id: int | None, mention_lines: list[str]) -> dict:
+def _context_block(
+    connection, user_id: int, event_id: int | None, mention_lines: list[str], without_meal: bool = False
+) -> dict:
     now = local_now()
     lines = [ASSISTANT_CONTEXT_TAG, f"Local time: {now:%Y-%m-%d %H:%M} ({now:%A})."]
-    lines += _meal_lines(connection, user_id, event_id)
+    lines += _meal_lines(connection, user_id, event_id, without_meal)
     if mention_lines:
         lines.append('Pinned with "/" (use exactly these):')
         lines += mention_lines
@@ -241,7 +245,7 @@ def _ensure_conversation(ctx: ToolContext) -> int:
     caller's transaction."""
     if ctx.conversation_id is None:
         ctx.conversation_id = create_assistant_conversation(
-            ctx.connection, ctx.user_id, ASSISTANT_MODEL, ctx.event_id, commit=False
+            ctx.connection, ctx.user_id, ASSISTANT_MODEL, ctx.event_id, without_meal=ctx.without_meal, commit=False
         )
     return ctx.conversation_id
 
@@ -281,6 +285,7 @@ def send_assistant_message(
     conversation_id: int | None,
     event_id: int | None,
     request: AssistantTurnRequest,
+    without_meal: bool = False,
 ) -> AssistantTurnResult:
     """Answer one message of the user: ask the model, run its tools, store everything.
 
@@ -297,6 +302,8 @@ def send_assistant_message(
         user_id,
         conversation.id if conversation else None,
         conversation.intake_event_id if conversation else event_id,
+        # A new conversation takes it from `Add to`; a stored one keeps its own.
+        without_meal=conversation.without_meal if conversation else (without_meal and event_id is None),
     )
     history = (
         [
@@ -308,7 +315,7 @@ def send_assistant_message(
     )
     mention_lines, notices = _mention_lines(connection, user_id, request.mentions)
     live_user, stored_user = _user_message(
-        _context_block(connection, user_id, ctx.event_id, mention_lines), request
+        _context_block(connection, user_id, ctx.event_id, mention_lines, ctx.without_meal), request
     )
     turn = _Turn(live=[live_user], stored=[stored_user])
     usages: list[AssistantUsage] = []

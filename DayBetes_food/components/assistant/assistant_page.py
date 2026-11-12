@@ -13,7 +13,13 @@ from DayBetes_food.components.food.foods import meal_option_label
 from DayBetes_food.components.food.rescue import carbs_meta
 from DayBetes_food.components.modal import MODAL_NAME_CLS
 from DayBetes_food.components.navigation import back_js
-from DayBetes_food.domain.assistant import ASSISTANT_TEXT_MAX_LENGTH, AddedCard, DraftCard, TurnView
+from DayBetes_food.domain.assistant import (
+    ASSISTANT_TEXT_MAX_LENGTH,
+    NO_MEAL_CHOICE,
+    AddedCard,
+    DraftCard,
+    TurnView,
+)
 from DayBetes_food.domain.constants import AmountMethod, AssistantDraftSource, FoodEntryType
 from DayBetes_food.domain.food_entry import MentionSuggestion
 
@@ -135,15 +141,16 @@ def _intro():
     )
 
 
-def AssistantMealSelect(events: list, selected_id: int | None, *, oob: bool = False):
+def AssistantMealSelect(events: list, selected_id: int | None, *, without_meal: bool = False, oob: bool = False):
     """Which meal the conversation writes to (§9.11): the planned meals, and
-    `No meal yet`, whose first add creates the meal; without adds it is a chat for new
-    foods and recipes. Changing it opens that meal's conversation."""
+    `New meal`, whose first add creates it, and `No meal`, a chat for new foods and
+    recipes only. Changing it opens that meal's conversation."""
     options = [
         Option(meal_option_label(event), value=str(event.id), selected=(event.id == selected_id))
         for event in events
     ]
-    options.append(Option("No meal yet", value="", selected=(selected_id is None)))
+    options.append(Option("New meal", value="", selected=(selected_id is None and not without_meal)))
+    options.append(Option("No meal", value=NO_MEAL_CHOICE, selected=without_meal))
     return Div(
         Label("Add to", cls="web_section_label shrink-0", **{"for": MEAL_SELECT_ID}),
         Select(
@@ -432,10 +439,17 @@ def _composer():
     )
 
 
-def AssistantPage(events: list, selected_event_id: int | None, conversation_id: int | None, turns: list[TurnView]):
+def AssistantPage(
+    events: list,
+    selected_event_id: int | None,
+    conversation_id: int | None,
+    turns: list[TurnView],
+    *,
+    without_meal: bool = False,
+):
     return Div(
         _header(),
-        AssistantMealSelect(events, selected_event_id),
+        AssistantMealSelect(events, selected_event_id, without_meal=without_meal),
         Div(AssistantThread(turns, conversation_id), id=THREAD_BOX_ID, cls="w-full"),
         _thinking(),
         # At the bottom of the screen, above the island; in the flow (sticky,

@@ -573,6 +573,7 @@ def assistant_conversation_read_from_row(row: dict) -> AssistantConversationRead
             intake_event_id=int(event_id) if event_id is not None else None,
             model=str(row["model"]),
             created_at=row["created_at"],
+            without_meal=bool(row["without_meal"]),
         )
     except (KeyError, ValueError) as exc:
         raise InfrastructureError(f"Invalid assistant conversation row: {exc}") from exc
