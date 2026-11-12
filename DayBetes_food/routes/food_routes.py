@@ -69,6 +69,7 @@ from DayBetes_food.database.queries import (
     get_consumed_food_usage_rankings,
     get_rescue_entries_suggestions,
     list_tags,
+    get_system_tag,
     get_tag_by_name,
     create_tag,
     list_entry_tags,
@@ -89,6 +90,7 @@ from DayBetes_food.database.queries import (
 )
 from DayBetes_food.domain.constants import (
     CLEAR,
+    PathId,
     NOVA_MAX,
     NOVA_MIN,
     YUKA_MAX,
@@ -177,7 +179,7 @@ from DayBetes_food.components.food.food_actions import (
 )
 from DayBetes_food.components.food.fridge import FridgeListContent, FridgeListOob
 from DayBetes_food.components.modal import ModalFormError
-from DayBetes_food.components.food.tags import EntryTags
+from DayBetes_food.components.food.tags import EntryTags, system_tag_for_label
 from DayBetes_food.components.food.rescue import (
     RescueForm,
     RescueLine,
@@ -744,6 +746,32 @@ def _entry_tags_block(connection, user_id: int, kind: FoodEntryType, entry_id: i
         available=list_tags(connection, user_id),
         open_panel=open_panel,
     )
+
+
+def _tag_id_for_name(connection, user_id: int, name: str) -> int:
+    """The tag the user means by a typed name, inside the caller's transaction: a
+    system tag by its label, one of their own by its name (ignoring case), or a new
+    personal tag (§9.4.1). A tag of that name created meanwhile by another request
+    is reused, not a 409: the insert runs in a savepoint (§6.2)."""
+    system_key = system_tag_for_label(name)
+    if system_key is not None:
+        tag = get_system_tag(connection, system_key)
+        if tag is None:
+            raise NotFoundError("Tag not found.")
+        return tag.id
+    tag = get_tag_by_name(connection, user_id, name)
+    if tag is not None:
+        return tag.id
+    try:
+        with connection.transaction():
+            return create_tag(
+                connection, TagCreate(user_id=user_id, name=name, color=tag_color_from_name(name)), commit=False
+            )
+    except ConflictError:
+        tag = get_tag_by_name(connection, user_id, name)
+        if tag is None:
+            raise
+        return tag.id
 
 
 def _get_rescue_food(connection, user_id: int, origin: PortionOrigin, entry_id: int):
@@ -1750,7 +1778,7 @@ def setup_food_routes(rt):
         return render_fragment(RescueOptions(rows, searching=bool(search), kind=tab))
 
     @rt("/food/rescue/line/{entry_type}/{entry_id}")
-    def get(request: Request, entry_type: str, entry_id: int):
+    def get(request: Request, entry_type: str, entry_id: PathId):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()
@@ -1894,7 +1922,7 @@ def setup_food_routes(rt):
     # Tags of a food, dish or recipe on its detail page (frontend_conventions.md §9.4.1).
 
     @rt("/food/tags/{entry_type}/{entry_id}")
-    def post(request: Request, entry_type: str, entry_id: int, tag_id: str = "", linked: str = "", open: str = ""):
+    def post(request: Request, entry_type: str, entry_id: PathId, tag_id: str = "", linked: str = "", open: str = ""):
         """Leaves the tag on the entry as asked: repeating it is a no-op (§6.3)."""
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -1923,9 +1951,9 @@ def setup_food_routes(rt):
             return render_fragment(_entry_tags_block(connection, int(user_id), kind, entry_id, keep_open))
 
     @rt("/food/tags/{entry_type}/{entry_id}/new")
-    def post(request: Request, entry_type: str, entry_id: int, name: str = ""):
-        """Puts a tag on the entry by its name: an existing tag of the user (or a
-        system one) is reused, otherwise a personal tag is created."""
+    def post(request: Request, entry_type: str, entry_id: PathId, name: str = ""):
+        """Puts a tag on the entry by its name: a system tag or one of the user's is
+        reused, otherwise a personal tag is created. Repeating it is a no-op (§6.3)."""
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()
@@ -1941,22 +1969,14 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             try:
                 with connection.transaction():
-                    tag = get_tag_by_name(connection, int(user_id), clean_name)
-                    tag_id = tag.id if tag else create_tag(
-                        connection,
-                        TagCreate(user_id=int(user_id), name=clean_name, color=tag_color_from_name(clean_name)),
-                        commit=False,
-                    )
+                    tag_id = _tag_id_for_name(connection, int(user_id), clean_name)
                     set_entry_tag(connection, int(user_id), kind, entry_id, tag_id, True, commit=False)
             except NotFoundError:
                 return app_error_response(request, NotFoundError, "That food is not available.")
-            except ConflictError as error:
-                # Created by another request at the same time: repeating it reuses the tag.
-                return app_error_response(request, error, str(error))
             return render_fragment(_entry_tags_block(connection, int(user_id), kind, entry_id, True))
 
     @rt("/food/actions/{entry_type}/{entry_id}")
-    def get(request: Request, entry_type: str, entry_id: int):
+    def get(request: Request, entry_type: str, entry_id: PathId):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()
@@ -1972,7 +1992,7 @@ def setup_food_routes(rt):
         return render_fragment(FoodActionsMenu(kind, entry_id, entry))
 
     @rt("/food/actions/{entry_type}/{entry_id}/recipes")
-    def get(request: Request, entry_type: str, entry_id: int):
+    def get(request: Request, entry_type: str, entry_id: PathId):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()
@@ -1995,7 +2015,7 @@ def setup_food_routes(rt):
         return render_fragment(FoodActionsRecipes(kind, entry_id, entry, recipes, several_plates))
 
     @rt("/food/actions/{entry_type}/{entry_id}/recipes/{recipe_id}/plates")
-    def get(request: Request, entry_type: str, entry_id: int, recipe_id: int):
+    def get(request: Request, entry_type: str, entry_id: PathId, recipe_id: PathId):
         """Which plate, for a recipe with several (frontend §9.3.1)."""
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -2023,7 +2043,7 @@ def setup_food_routes(rt):
         return render_fragment(FoodActionsRecipePlates(kind, entry_id, entry, recipe, plates))
 
     @rt("/food/actions/{entry_type}/{entry_id}/fridge")
-    def get(request: Request, entry_type: str, entry_id: int):
+    def get(request: Request, entry_type: str, entry_id: PathId):
         """Save a food or a dish into a new container from its row (frontend §9.3.1)."""
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -2040,7 +2060,7 @@ def setup_food_routes(rt):
         return render_fragment(FoodActionsStore(kind, entry_id, entry))
 
     @rt("/food/actions/{entry_type}/{entry_id}/copy")
-    def get(request: Request, entry_type: str, entry_id: int):
+    def get(request: Request, entry_type: str, entry_id: PathId):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()
@@ -2056,7 +2076,7 @@ def setup_food_routes(rt):
         return render_fragment(FoodActionsCopyConfirm(kind, entry_id, entry))
 
     @rt("/food/item/{entry_type}/{entry_id}")
-    def get(request: Request, entry_type: str, entry_id: int):
+    def get(request: Request, entry_type: str, entry_id: PathId):
         kind = _parse_food_entry_type(entry_type)
         if kind is None:
             raise ValidationError(_UNKNOWN_ENTRY_TYPE, fields={"entry_type": "invalid"})
@@ -2166,7 +2186,7 @@ def setup_food_routes(rt):
         )
 
     @rt("/food/recipe/{recipe_id}/ingredients/form")
-    def get(request: Request, recipe_id: int, recipe_plate_id: str = ""):
+    def get(request: Request, recipe_id: PathId, recipe_plate_id: str = ""):
         target_plate_id = parse_optional_id(recipe_plate_id, "plate")
         with get_connection() as connection:
             user_id = get_current_user_id()
@@ -2184,7 +2204,7 @@ def setup_food_routes(rt):
 
     @rt("/food/recipe/{recipe_id}/ingredients/list")
     def get(
-        request: Request, recipe_id: int, search: str = "", filter: str = "food", recipe_plate_id: str = "", page: int = 1
+        request: Request, recipe_id: PathId, search: str = "", filter: str = "food", recipe_plate_id: str = "", page: int = 1
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -2211,7 +2231,7 @@ def setup_food_routes(rt):
         return render_fragment(tuple(nodes))
 
     @rt("/food/recipe/{recipe_id}/ingredients/add/{entry_type}/{entry_id}")
-    def post(request: Request, recipe_id: int, entry_type: str, entry_id: int, recipe_plate_id: str = ""):
+    def post(request: Request, recipe_id: PathId, entry_type: str, entry_id: PathId, recipe_plate_id: str = ""):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         try:
@@ -2250,8 +2270,8 @@ def setup_food_routes(rt):
     @rt("/food/recipe/{recipe_id}/ingredient/{portion_id}/amount")
     def post(
         request: Request,
-        recipe_id: int,
-        portion_id: int,
+        recipe_id: PathId,
+        portion_id: PathId,
         amount_value: str = "",
         amount_unit: str = AmountInputUnit.PORTION.value,
     ):
@@ -2293,8 +2313,8 @@ def setup_food_routes(rt):
     @rt("/food/recipe/{recipe_id}/ingredient/{portion_id}/advanced")
     def post(
         request: Request,
-        recipe_id: int,
-        portion_id: int,
+        recipe_id: PathId,
+        portion_id: PathId,
         cooking: str = "",
         final_state: str = "",
         conservation: str = "",
@@ -2343,7 +2363,7 @@ def setup_food_routes(rt):
         return render_fragment(P("Saved", cls="text-green-700"))
 
     @rt("/food/recipe/{recipe_id}/ingredient/{portion_id}/delete")
-    def post(request: Request, recipe_id: int, portion_id: int):
+    def post(request: Request, recipe_id: PathId, portion_id: PathId):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
 
@@ -2358,7 +2378,7 @@ def setup_food_routes(rt):
             return _recipe_block_response(connection, int(user_id), recipe_id)
 
     @rt("/food/recipe/{recipe_id}/ingredient/{portion_id}/cooked")
-    def post(request: Request, recipe_id: int, portion_id: int, is_cooked_weight: str = ""):
+    def post(request: Request, recipe_id: PathId, portion_id: PathId, is_cooked_weight: str = ""):
         """`Weighed cooked` of an ingredient. It can make it equal to another row of the
         plate, and then they merge (measurement §4.6.4). `Strictly weighted` is set in the
         cart, not here (§4.7)."""
@@ -2388,7 +2408,7 @@ def setup_food_routes(rt):
             return _recipe_block_response(connection, int(user_id), recipe_id)
 
     @rt("/food/recipe/{recipe_id}/ingredient/{portion_id}/plate")
-    def post(request: Request, recipe_id: int, portion_id: int, recipe_plate_id: str = ""):
+    def post(request: Request, recipe_id: PathId, portion_id: PathId, recipe_plate_id: str = ""):
         """Move an ingredient to another plate of the recipe; same key -> they merge (§4.7)."""
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -2415,7 +2435,7 @@ def setup_food_routes(rt):
             return _recipe_block_response(connection, int(user_id), recipe_id)
 
     @rt("/food/recipe/{recipe_id}/plate")
-    def post(request: Request, recipe_id: int):
+    def post(request: Request, recipe_id: PathId):
         """A new empty plate at the end. Repeating it adds another (§9.6)."""
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -2446,7 +2466,7 @@ def setup_food_routes(rt):
             return _recipe_block_response(connection, int(user_id), recipe_id)
 
     @rt("/food/recipe/plate/{plate_id}/name")
-    def post(request: Request, plate_id: int, name: str = ""):
+    def post(request: Request, plate_id: PathId, name: str = ""):
         """Empty returns the plate to its derived name (measurement §4.6.3)."""
         try:
             parsed = parse_recipe_plate_name(name)
@@ -2459,7 +2479,7 @@ def setup_food_routes(rt):
         )
 
     @rt("/food/recipe/plate/{plate_id}/up")
-    def post(request: Request, plate_id: int):
+    def post(request: Request, plate_id: PathId):
         return _change_recipe_plate(
             request,
             plate_id,
@@ -2467,7 +2487,7 @@ def setup_food_routes(rt):
         )
 
     @rt("/food/recipe/plate/{plate_id}/down")
-    def post(request: Request, plate_id: int):
+    def post(request: Request, plate_id: PathId):
         return _change_recipe_plate(
             request,
             plate_id,
@@ -2475,7 +2495,7 @@ def setup_food_routes(rt):
         )
 
     @rt("/food/recipe/plate/{plate_id}/delete")
-    def post(request: Request, plate_id: int):
+    def post(request: Request, plate_id: PathId):
         """With ingredients it answers 409 (measurement §4.7)."""
         return _change_recipe_plate(
             request,
@@ -2484,7 +2504,7 @@ def setup_food_routes(rt):
         )
 
     @rt("/food/recipe/{recipe_id}/add/form")
-    def get(request: Request, recipe_id: int, intake_event_id: str = "", plate_id: str = ""):
+    def get(request: Request, recipe_id: PathId, intake_event_id: str = "", plate_id: str = ""):
         """The step before adding a recipe to a meal (frontend §9.7)."""
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -2598,7 +2618,7 @@ def setup_food_routes(rt):
         return HTMLResponse("", headers={"HX-Redirect": f"/food/edit/manual_intake/{created_id}/form"})
 
     @rt("/food/copy/{entry_type}/{entry_id}")
-    def post(request: Request, entry_type: str, entry_id: int):
+    def post(request: Request, entry_type: str, entry_id: PathId):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         kind = _parse_food_entry_type(entry_type)
@@ -2624,7 +2644,7 @@ def setup_food_routes(rt):
         return HTMLResponse("", headers={"HX-Redirect": f"/food/edit/recipe/{created_id}/form"})
 
     @rt("/food/edit/{entry_type}/{entry_id}/form")
-    def get(request: Request, entry_type: str, entry_id: int):
+    def get(request: Request, entry_type: str, entry_id: PathId):
         kind = _parse_food_entry_type(entry_type)
         if kind is None:
             raise ValidationError(_UNKNOWN_ENTRY_TYPE, fields={"entry_type": "invalid"})
@@ -2696,7 +2716,7 @@ def setup_food_routes(rt):
         return HTMLResponse("", headers={"HX-Redirect": "/food"})
 
     @rt("/food/archive/catalog/{catalog_id}")
-    def post(request: Request, catalog_id: int):
+    def post(request: Request, catalog_id: PathId):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()
@@ -2705,7 +2725,7 @@ def setup_food_routes(rt):
         return _archive_catalog_item(request, int(user_id), catalog_id)
 
     @rt("/food/publish/catalog/{catalog_id}")
-    def post(request: Request, catalog_id: int):
+    def post(request: Request, catalog_id: PathId):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()
@@ -2721,7 +2741,7 @@ def setup_food_routes(rt):
         return HTMLResponse("", headers={"HX-Redirect": f"/food/item/catalog/{catalog_id}"})
 
     @rt("/food/unpublish/catalog/{catalog_id}")
-    def post(request: Request, catalog_id: int):
+    def post(request: Request, catalog_id: PathId):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()
@@ -2752,7 +2772,7 @@ def setup_food_routes(rt):
         return HTMLResponse("", headers={"HX-Redirect": "/food"})
 
     @rt("/food/archive/manual_intake/{manual_intake_id}")
-    def post(request: Request, manual_intake_id: int):
+    def post(request: Request, manual_intake_id: PathId):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()
@@ -2761,7 +2781,7 @@ def setup_food_routes(rt):
         return _archive_manual_intake(request, int(user_id), manual_intake_id)
 
     @rt("/food/publish/manual_intake/{manual_intake_id}")
-    def post(request: Request, manual_intake_id: int):
+    def post(request: Request, manual_intake_id: PathId):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()
@@ -2777,7 +2797,7 @@ def setup_food_routes(rt):
         return HTMLResponse("", headers={"HX-Redirect": f"/food/item/manual_intake/{manual_intake_id}"})
 
     @rt("/food/unpublish/manual_intake/{manual_intake_id}")
-    def post(request: Request, manual_intake_id: int):
+    def post(request: Request, manual_intake_id: PathId):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()
@@ -2793,7 +2813,7 @@ def setup_food_routes(rt):
         return HTMLResponse("", headers={"HX-Redirect": f"/food/item/manual_intake/{manual_intake_id}"})
 
     @rt("/food/delete/recipe/{recipe_id}")
-    def post(request: Request, recipe_id: int):
+    def post(request: Request, recipe_id: PathId):
         """Physical delete of a recipe. `catalog` and `manual_intake` are
         archived, never deleted (`/food/archive/...`, §11.2)."""
         if request.headers.get("HX-Request") != "true":
@@ -2818,7 +2838,7 @@ def setup_food_routes(rt):
     def post(
         request: Request,
         entry_type: str,
-        entry_id: int,
+        entry_id: PathId,
         amount_value: str = "",
         amount_unit: str = AmountInputUnit.PORTION.value,
         plate_value: str = "",
@@ -2985,7 +3005,7 @@ def setup_food_routes(rt):
     def post(
         request: Request,
         entry_type: str,
-        entry_id: int,
+        entry_id: PathId,
         location: str = "",
         amount_value: str = "",
         amount_unit: str = AmountInputUnit.PORTION.value,
@@ -3263,7 +3283,7 @@ def setup_food_routes(rt):
         return render_fragment(tuple(cards + ([load_more] if load_more is not None else [])))
 
     @rt("/add_food/{food_id}")
-    def post(request: Request, food_id: int, intake_event_id: str = "", plate_id: str = ""):
+    def post(request: Request, food_id: PathId, intake_event_id: str = "", plate_id: str = ""):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
 
@@ -3314,7 +3334,7 @@ def setup_food_routes(rt):
             return HTMLResponse("", headers={"HX-Trigger": json.dumps(trigger)})
 
     @rt("/add_manual_intake/{manual_intake_id}")
-    def post(request: Request, manual_intake_id: int, intake_event_id: str = "", plate_id: str = ""):
+    def post(request: Request, manual_intake_id: PathId, intake_event_id: str = "", plate_id: str = ""):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
 
@@ -3367,7 +3387,7 @@ def setup_food_routes(rt):
     @rt("/food/fridge/{fridge_id}/take")
     def post(
         request: Request,
-        fridge_id: int,
+        fridge_id: PathId,
         amount_value: str = "",
         amount_unit: str = AmountInputUnit.PERCENT.value,
         intake_event_id: str = "",
@@ -3419,7 +3439,7 @@ def setup_food_routes(rt):
         return response
 
     @rt("/add_recipe/{recipe_id}")
-    async def post(request: Request, recipe_id: int):
+    async def post(request: Request, recipe_id: PathId):
         """Add a recipe to a meal (frontend §9.7). Repeating it adds it again: another
         serving, not a duplicate (§9.6). Form validation answers 200 + fragment (§9.5)."""
         if request.headers.get("HX-Request") != "true":
@@ -3454,7 +3474,7 @@ def setup_food_routes(rt):
         return HTMLResponse("", headers={"HX-Trigger": json.dumps(trigger)})
 
     @rt("/food/fridge/store_recipe/{recipe_id}")
-    async def post(request: Request, recipe_id: int):
+    async def post(request: Request, recipe_id: PathId):
         """Save a recipe into a new container from its step before adding, with its
         servings and preparation (measurement §4.8.5, frontend §9.7). The meal and
         plate of the form do not apply. Repeating it stores another container (§9.6).
@@ -3488,7 +3508,7 @@ def setup_food_routes(rt):
         return HTMLResponse("", headers={"HX-Trigger": json.dumps({"fridgeStored": {"location": storage.value}})})
 
     @rt("/food/favorite/{entry_type}/{entry_id}")
-    def post(request: Request, entry_type: str, entry_id: int, favorite: str = "", confirmed: str = ""):
+    def post(request: Request, entry_type: str, entry_id: PathId, favorite: str = "", confirmed: str = ""):
         """Sets the favorite to what the star asked for (frontend §9.3.2)."""
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -3541,7 +3561,7 @@ def setup_food_routes(rt):
     @rt("/food/edit/catalog/{entry_id}")
     def post(
         request: Request,
-        entry_id: int,
+        entry_id: PathId,
         name: str = "",
         brand: str = "",
         brand__added: str = "",
@@ -3627,7 +3647,7 @@ def setup_food_routes(rt):
     @rt("/food/edit/manual_intake/{manual_intake_id}")
     def post(
         request: Request,
-        manual_intake_id: int,
+        manual_intake_id: PathId,
         name: str = "",
         description: str = "",
         subtype: str = "",
@@ -3706,7 +3726,7 @@ def setup_food_routes(rt):
     @rt("/food/edit/recipe/{recipe_id}")
     def post(
         request: Request,
-        recipe_id: int,
+        recipe_id: PathId,
         name: str = "",
         meal_type: str = "",
         extra_meal_types: list[str] | None = None,

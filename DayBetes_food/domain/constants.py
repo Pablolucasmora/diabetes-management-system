@@ -8,7 +8,7 @@ routes/, components/, crud.py or schema.py.
 import re
 from enum import Enum, unique
 
-from DayBetes_food.errors import ValidationError
+from DayBetes_food.errors import MalformedRequestError, ValidationError
 
 
 @unique
@@ -285,14 +285,32 @@ _ID_TEXT = re.compile(r"[0-9]{1,10}")
 
 
 def parse_optional_id(raw, label: str) -> int | None:
-    """An id from a form or a URL (§7.8). Empty is None; anything malformed is a 422,
-    never silently "no id"."""
+    """An id from a form or a query string (§7.8). Empty is None; anything malformed
+    is a 422, never silently "no id". An id in the URL path is a PathId."""
     text = str(raw or "").strip()
     if not text:
         return None
     if not _ID_TEXT.fullmatch(text):
         raise ValidationError(f"Invalid {label}.", fields={label: "invalid"})
     return int(text)
+
+
+class PathId(int):
+    """An id in the URL path (§7.8), as the type of the route parameter
+    (`entry_id: PathId`): FastHTML builds it from the path segment.
+
+    Only ASCII digits, like parse_optional_id. With `int`, FastHTML used `int()`,
+    which takes other Unicode digits (`٨`, `８`) and underscores (`1_7`), and
+    answered a malformed id with a bare 404. A malformed id is a 400 through the
+    global boundary (error_conventions.md §3.1); a valid one with nothing visible
+    stays a 404 from the route.
+    """
+
+    def __new__(cls, raw):
+        text = str(raw)
+        if not _ID_TEXT.fullmatch(text):
+            raise MalformedRequestError("Invalid id in the URL path.")
+        return super().__new__(cls, int(text))
 
 
 class Clear:

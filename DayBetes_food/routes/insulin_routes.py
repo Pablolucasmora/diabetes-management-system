@@ -25,7 +25,7 @@ from DayBetes_food.database.queries import (
     update_insulin_brand,
     update_insulin_pen,
 )
-from DayBetes_food.domain.constants import InsulinType, PenFormat, parse_enum, parse_optional_id
+from DayBetes_food.domain.constants import InsulinType, PathId, PenFormat, parse_enum, parse_optional_id
 from DayBetes_food.domain.insulin_pen import (
     InsulinBrandCreate,
     InsulinBrandUpdate,
@@ -177,7 +177,7 @@ def setup_insulin_routes(rt):
         return HTMLResponse("", headers={"HX-Trigger": json.dumps(trigger)})
 
     @rt("/insulin/pens/{pen_id}/update")
-    def post(request: Request, pen_id: int, format: str = "", expires_date: str = "", capacity_units: str = ""):
+    def post(request: Request, pen_id: PathId, format: str = "", expires_date: str = "", capacity_units: str = ""):
         if request.headers.get("HX-Request") != "true":
             return app_error_response(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
@@ -203,7 +203,7 @@ def setup_insulin_routes(rt):
         return _changed(f"insulin_pen_edit_{pen_id}")
 
     @rt("/insulin/pens/{pen_id}/discard")
-    def post(request: Request, pen_id: int):
+    def post(request: Request, pen_id: PathId):
         if request.headers.get("HX-Request") != "true":
             return app_error_response(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
@@ -242,7 +242,7 @@ def setup_insulin_routes(rt):
 
     @rt("/insulin/brands/{brand_id}/update")
     def post(
-        request: Request, brand_id: int, name: str = "", insulin_type: str = "", in_use_days: str = "", pen_units: str = ""
+        request: Request, brand_id: PathId, name: str = "", insulin_type: str = "", in_use_days: str = "", pen_units: str = ""
     ):
         if request.headers.get("HX-Request") != "true":
             return app_error_response(request, AuthorizationError, _NOT_HTMX)
@@ -268,7 +268,7 @@ def setup_insulin_routes(rt):
         return _changed(f"insulin_brand_edit_{brand_id}")
 
     @rt("/insulin/brands/{brand_id}/delete")
-    def post(request: Request, brand_id: int):
+    def post(request: Request, brand_id: PathId):
         if request.headers.get("HX-Request") != "true":
             return app_error_response(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()

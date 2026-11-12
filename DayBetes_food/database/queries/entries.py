@@ -11,6 +11,7 @@ that is why they do not live in any individual table's file
 
 from DayBetes_food.database.queries.crud import (
     _build_fuzzy_search,
+    _escape_like,
     _food_visibility_sql,
     _execute_query,
     _execute_query_many,
@@ -85,7 +86,7 @@ def get_rescue_entries_suggestions(
         "system_key": kind.value,
         "meal_type": SYSTEM_TAG_MEAL_TYPE[kind].value,
         "q": term,
-        "q_like": f"%{term}%",
+        "q_like": f"%{_escape_like(term)}%",
         "limit": max(1, min(int(limit or 50), 200)),
     }
     query = """

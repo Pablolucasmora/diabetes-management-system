@@ -17,6 +17,7 @@ from DayBetes_food.components.modal import (
     modal_icon_button,
     modal_secondary_button,
 )
+from DayBetes_food.components.food.tags import SYSTEM_TAG_LABELS
 from DayBetes_food.components.stats.stats_shared import MEAL_TYPE_LABELS
 from DayBetes_food.domain.constants import AmountInputUnit, MealType, SystemTag
 from DayBetes_food.domain.tag import SYSTEM_TAG_MEAL_TYPE
@@ -77,7 +78,6 @@ def _carbs_meta(carbs_100g: float | None, serving_g: float | None) -> str:
     return f"{carbs_100g:.0f} g carbs / 100 g"
 
 
-_TAB_LABELS = {SystemTag.RESCUE: "Rescue", SystemTag.EXERCISE: "Exercise"}
 _TAB_CLS = "rounded-md px-3 py-1 text-sm font-semibold cursor-pointer transition-colors"
 _TAB_ACTIVE_CLS = "bg-white text-gray-900 shadow-sm"
 _TAB_IDLE_CLS = "text-gray-600 hover:text-gray-900"
@@ -93,7 +93,7 @@ def _kind_tabs(kind: SystemTag):
     return Div(
         *[
             Button(
-                _TAB_LABELS[tab],
+                SYSTEM_TAG_LABELS[tab],
                 type="button",
                 role="tab",
                 aria_selected="true" if tab is kind else "false",
@@ -211,9 +211,10 @@ def RescueForm(date_value: str, time_value: str, options: list[dict], kind: Syst
     )
 
 
+# Recipes are not offered here: a system tag on a recipe is only a mark (§9.4.1).
 _EMPTY_MESSAGES = {
-    SystemTag.RESCUE: "No rescue foods yet. Search any food, or tag one as Rescue: the ones you log show up here.",
-    SystemTag.EXERCISE: "No exercise foods yet. Search any food, or tag one as Exercise: the ones you log show up here.",
+    tag: f"No {label.lower()} foods yet. Search any food, or tag a food or dish as {label}: the ones you log show up here."
+    for tag, label in SYSTEM_TAG_LABELS.items()
 }
 
 

@@ -11,9 +11,25 @@ import re
 
 from fasthtml.common import *
 
+from DayBetes_food.domain.constants import SystemTag
 from DayBetes_food.domain.tag import TAG_NAME_MAX_LENGTH, TagRead
 
 _HEX_RE = re.compile(r"^#([0-9A-Fa-f]{6})$")
+
+# Name shown for each system tag (§3.6): its row is found by its key and its
+# stored name is never shown (code_conventions.md §11.2.8).
+SYSTEM_TAG_LABELS = {SystemTag.RESCUE: "Rescue", SystemTag.EXERCISE: "Exercise"}
+
+
+def tag_label(tag: TagRead) -> str:
+    return SYSTEM_TAG_LABELS[tag.system_key] if tag.system_key is not None else tag.name
+
+
+def system_tag_for_label(name: str) -> SystemTag | None:
+    """The system tag shown with that name, ignoring case: a personal tag cannot
+    take it, and typing it on a food puts the system tag."""
+    wanted = name.lower()
+    return next((key for key, label in SYSTEM_TAG_LABELS.items() if label.lower() == wanted), None)
 
 
 def tag_text_color(color: str) -> str:
@@ -59,11 +75,11 @@ def EntryTags(entry_type: str, entry_id: int, linked: list[TagRead], available: 
     block_id = entry_tags_id(entry_type, entry_id)
     pills = [
         Span(
-            tag.name,
+            tag_label(tag),
             Button(
                 "×",
                 type="button",
-                aria_label=f"Remove tag {tag.name}",
+                aria_label=f"Remove tag {tag_label(tag)}",
                 cls="leading-none text-sm opacity-70 hover:opacity-100 cursor-pointer",
                 **_action_attrs(entry_type, entry_id, tag.id, linked=False, keep_open=False),
             ),
@@ -77,9 +93,9 @@ def EntryTags(entry_type: str, entry_id: int, linked: list[TagRead], available: 
             Div(
                 *[
                     Button(
-                        f"+ {tag.name}",
+                        f"+ {tag_label(tag)}",
                         type="button",
-                        aria_label=f"Add tag {tag.name}",
+                        aria_label=f"Add tag {tag_label(tag)}",
                         cls=f"{_PILL_CLS} cursor-pointer opacity-80 hover:opacity-100",
                         style=tag_pill_style(tag),
                         **_action_attrs(entry_type, entry_id, tag.id, linked=True, keep_open=True),
@@ -106,6 +122,8 @@ def EntryTags(entry_type: str, entry_id: int, linked: list[TagRead], available: 
             hx_post=f"/food/tags/{entry_type}/{entry_id}/new",
             hx_target=f"#{block_id}",
             hx_swap="outerHTML",
+            # A second submit while the first is on its way would create the tag twice.
+            hx_disabled_elt="find button[type=submit]",
             data_skip_page_loading="true",
             cls="flex items-center gap-2",
         ),

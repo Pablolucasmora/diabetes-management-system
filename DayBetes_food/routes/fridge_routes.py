@@ -22,7 +22,7 @@ from DayBetes_food.components.modal import ModalFormError
 from DayBetes_food.components.ui import render_fragment
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.database.queries import update_fridge
-from DayBetes_food.domain.constants import StorageLocation, parse_enum
+from DayBetes_food.domain.constants import PathId, StorageLocation, parse_enum
 from DayBetes_food.domain.fridge import (
     FridgeUpdate,
     expiry_from_local_date,
@@ -68,23 +68,23 @@ def setup_fridge_routes(rt):
         return render_fragment(component(item))
 
     @rt("/food/fridge/{fridge_id}/actions")
-    def get(request: Request, fridge_id: int):
+    def get(request: Request, fridge_id: PathId):
         return _view(request, fridge_id, FridgeActionsMenu)
 
     @rt("/food/fridge/{fridge_id}/actions/edit")
-    def get(request: Request, fridge_id: int):
+    def get(request: Request, fridge_id: PathId):
         return _view(request, fridge_id, FridgeEditForm)
 
     @rt("/food/fridge/{fridge_id}/actions/take")
-    def get(request: Request, fridge_id: int):
+    def get(request: Request, fridge_id: PathId):
         return _view(request, fridge_id, FridgeTakeForm)
 
     @rt("/food/fridge/{fridge_id}/actions/discard")
-    def get(request: Request, fridge_id: int):
+    def get(request: Request, fridge_id: PathId):
         return _view(request, fridge_id, FridgeDiscardConfirm)
 
     @rt("/food/fridge/{fridge_id}/location")
-    def post(request: Request, fridge_id: int, location: str = ""):
+    def post(request: Request, fridge_id: PathId, location: str = ""):
         """Move a container to `location`. Repeating it is a no-op: it is already
         there (code_conventions.md §6.3). Answers with the whole list."""
         if not _is_htmx(request):
@@ -106,7 +106,7 @@ def setup_fridge_routes(rt):
             return _list_response(connection, int(user_id))
 
     @rt("/food/fridge/{fridge_id}/discard")
-    def post(request: Request, fridge_id: int):
+    def post(request: Request, fridge_id: PathId):
         """Throw a container away (code_conventions.md §11.2.6). Repeating it is a
         404: it is no longer open. Answers with the whole list and `fridgeChanged`."""
         if not _is_htmx(request):
@@ -122,7 +122,7 @@ def setup_fridge_routes(rt):
             return _list_response(connection, int(user_id), {"HX-Trigger": FRIDGE_CHANGED_EVENT})
 
     @rt("/food/fridge/{fridge_id}/edit")
-    def post(request: Request, fridge_id: int, name: str = "", expires_at: str = "", content_weight: str = ""):
+    def post(request: Request, fridge_id: PathId, name: str = "", expires_at: str = "", content_weight: str = ""):
         """Save name, expiry date and real weight together (full replacement, §3.4).
         A validation error is a message inside the form (200, §9.5). On success the
         message is emptied, the list is swapped out of band and `fridgeChanged`
