@@ -542,17 +542,17 @@ Contrato del servidor en `code_conventions.md` §8.12. Solo existe si el asisten
 
 **Una conversación por comida** (decisión del usuario, 2026-11-12).
 
-- `Add to` lista las comidas planificadas, con el mismo texto que en Food (§7.7), y `New meal`.
-- Al abrir la página se elige la última comida planificada, como en Food, o `New meal` si no hay ninguna. `?conversation_id=` abre esa conversación y elige su comida.
+- `Add to` lista las comidas planificadas, con el mismo texto que en Food (§7.7), y `No meal yet` (decisión del usuario, 2026-11-13: antes `New meal`).
+- Al abrir la página se elige la última comida planificada, como en Food, o `No meal yet` si no hay ninguna. `?conversation_id=` abre esa conversación y elige su comida, o `No meal yet` si no tiene.
 - Cambiar la comida carga su conversación (la última, si tuviera varias), o la vacía con la introducción.
-- Con `New meal`, el primer añadido del asistente crea la comida planificada, con el tipo automático (`code_conventions.md` §7.14). La respuesta la añade a `Add to` ya elegida, para que el siguiente mensaje siga en ella.
+- `No meal yet` sirve para contar una comida nueva y para crear alimentos y recetas sin comida (`code_conventions.md` §8.12, **Conversación sin comida**). La comida planificada solo se crea con el primer añadido del asistente, con el tipo automático (`code_conventions.md` §7.14). La respuesta la añade a `Add to` ya elegida, para que el siguiente mensaje siga en ella.
 - El id de la conversación viaja en un campo oculto. Vacío empieza una nueva.
 
 **Enviar** (decisión del usuario, 2026-11-12: síncrono).
 
 - Solo envía el botón, y Enter hace un salto de línea. El botón está activo si hay texto, una mención o una foto.
 - Mientras el servidor responde, aparece una burbuja `Thinking…` y el botón se desactiva.
-- Si sale bien, se añade al final el turno: el mensaje del usuario, a la derecha, con la píldora `Photo` si llevaba una; las respuestas del asistente, a la izquierda y como texto plano; y las tarjetas de lo que hizo. Después se vacía el compositor (texto, menciones y foto) y se desplaza la vista al turno nuevo.
+- Si sale bien, se añade al final el turno: el mensaje del usuario, a la derecha, con la píldora `Photo` si llevaba una; las respuestas del asistente, a la izquierda y como texto plano (solo las de un mensaje sin llamadas a herramientas: el texto que el modelo escribe junto a una llamada no es una respuesta); y las tarjetas de lo que hizo. Después se vacía el compositor (texto, menciones y foto) y se desplaza la vista al turno nuevo.
 - Si falla, el toast lo explica (`code_conventions.md` §8.12) y el compositor se queda como estaba.
 
 **Foto.** El botón de la cámara adjunta una sola foto, de un plato o de una etiqueta nutricional, y se muestra como una píldora con una × para quitarla.
@@ -565,12 +565,18 @@ Contrato del servidor en `code_conventions.md` §8.12. Solo existe si el asisten
 
 - `Added to the cart`: una línea por alimento, plato, receta o estimación añadidos, con sus gramos, sus hidratos y cómo se obtuvo la cantidad (U2, con las etiquetas de §9.4), y el botón `Review`, que abre el carrito.
 - `Changed in the cart`: una línea por cambio en la comida, un plato o un alimento (`code_conventions.md` §8.12, **Edición de la comida**), con lo cambiado y su valor nuevo, y el botón `Review`.
-- `New food to review`: el nombre del alimento propuesto, de dónde sale ("Read from the label", "From the food composition table" o "From Open Food Facts") y el botón `Review and save`, que abre el formulario de alta de un alimento precargado.
-  - Una etiqueta añade al formulario la nota "Read by the assistant from the label. Check every value before saving." y `Macros from` en `Package label`.
-  - Ciqual y OFF usan su precarga de siempre (§9.4).
+- `New food to review`: el nombre del alimento propuesto, de dónde sale ("Read from the label", "From the food composition table", "From Open Food Facts" o "Estimated by the assistant") y el botón `Review and save`, que abre el formulario de alta de un alimento precargado con todos los campos del borrador (`code_conventions.md` §8.12, **Alimentos nuevos**). `More details` se abre solo si el borrador rellena algo de dentro.
+  - Una etiqueta añade al formulario la nota "Read by the assistant from the label. Check every value before saving."; una estimación, "Estimated by the assistant. Check every value before saving.". `Macros from` empieza en el valor de la tabla de §8.12.
+  - Ciqual y OFF usan su precarga de siempre (§9.4), con lo que el asistente añada encima.
+  - El borrador del navegador del formulario (§7.14) es propio de cada borrador del asistente: no recupera lo escrito en otro formulario de alta.
   - Guardar vuelve a la conversación (`/assistant?conversation_id=`) en vez de a Food, y allí el usuario le pide que lo añada.
+- `New recipe to review`: el nombre de la receta, el número de ingredientes y el botón `Review and save`, que abre `New recipe` relleno (`code_conventions.md` §8.12, **Recetas**).
+  - Debajo de los campos de siempre, una sección `Ingredients` de solo lectura con la nota "Proposed by the assistant. They are added when you save; edit them afterwards in the recipe.". Lista los platos de la receta (solo si hay más de uno) y en cada uno una línea por ingrediente: nombre, gramos y su preparación (`griddle · solid · weighed cooked`). Un plato manual nuevo lleva la etiqueta `New dish` y sus hidratos estimados.
+  - Guardar crea todo y abre la receta, como el alta de siempre. Si un ingrediente ya no existe, el formulario lo dice; si la receta o un plato nuevo choca con un nombre que ya tienes, se avisa como en el alta de siempre (`409`). En los dos casos no se crea nada.
 
 Las tarjetas se leen de los resultados guardados de las herramientas, así que una conversación reabierta muestra las mismas.
+
+**Cómo escribir** (decisión del usuario, 2026-11-13). Bajo la introducción de una conversación vacía, un `<details>` plegado, `How to write`, con la guía breve en inglés: mencionar con `/` y dar la cantidad; una frase de preparación vale para todos los alimentos que nombra; las palabras de cocción y su valor; decir "weighed cooked" o "raw" en arroces, pastas y legumbres; conservación, textura y madurez; hora y platos; y cómo pedir un alimento nuevo (foto de la etiqueta o "estímalo") o una receta (pegar el texto, y "quick add" o "manual" para los ingredientes que no tienes).
 
 **Mencionar un alimento con `/`.**
 
