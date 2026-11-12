@@ -126,3 +126,18 @@ if not 1 <= OPEN_FOOD_FACTS_TIMEOUT_SECONDS <= 30:
 # routes are not registered and nothing links to it), and no data leaves it.
 ANTHROPIC_API_KEY = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
 ASSISTANT_ENABLED = bool(ANTHROPIC_API_KEY)
+# Changed without touching code (§8.12). The model id is not validated against a
+# list: a wrong one fails on the first message with the generic error.
+ASSISTANT_MODEL = (os.getenv("ASSISTANT_MODEL") or "claude-opus-5-5").strip()
+ASSISTANT_EFFORT = (os.getenv("ASSISTANT_EFFORT") or "low").strip().lower()
+if ASSISTANT_EFFORT not in {"low", "medium", "high", "xhigh", "max"}:
+    raise RuntimeError("ASSISTANT_EFFORT must be one of: low, medium, high, xhigh, max")
+# One call to the API; the SDK retries 429, 5xx and network errors twice with
+# backoff, so a message waits at most about three times this.
+ASSISTANT_TIMEOUT_SECONDS = _as_int("ASSISTANT_TIMEOUT_SECONDS", 60)
+if not 5 <= ASSISTANT_TIMEOUT_SECONDS <= 300:
+    raise RuntimeError("ASSISTANT_TIMEOUT_SECONDS must be between 5 and 300")
+# Rounds of tools per message: at the limit it stops, keeps what was done and says so.
+ASSISTANT_MAX_TOOL_ROUNDS = _as_int("ASSISTANT_MAX_TOOL_ROUNDS", 8)
+if not 1 <= ASSISTANT_MAX_TOOL_ROUNDS <= 20:
+    raise RuntimeError("ASSISTANT_MAX_TOOL_ROUNDS must be between 1 and 20")

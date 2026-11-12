@@ -1,5 +1,5 @@
 // Assistant composer (frontend_conventions.md §9.11). Presentation only: the
-// server returns the `/` suggestions and, when sending exists, re-reads every
+// server returns the `/` suggestions and the answers, and re-reads every
 // mentioned entry with its visibility rule (code_conventions.md §8.12).
 //
 // Typing `/` at the start or after a space or line break opens the
@@ -7,6 +7,9 @@
 // Tab or Enter pick, Esc closes, a tap picks. A picked entry replaces
 // `/query` with `/Name ` and becomes a pill above the text box. Mentions
 // travel as entry_type + entry_id in the hidden `mentions` field.
+// A photo is reduced here before it is sent (§8.12, cost). The composer is
+// cleared only after a successful send: on an error the toast explains it and
+// the message stays to send again.
 // Nothing is stored in localStorage and no field takes the focus on its own.
 (function () {
   if (window.__dbAssistantBootstrapped) return;
@@ -15,6 +18,8 @@
   var DEBOUNCE_MS = 150;
   var MAX_QUERY_LENGTH = 80;
   var TEXTAREA_MAX_PX = 160;
+  var PHOTO_MAX_SIDE_PX = 1568; // larger sides are scaled down by the API anyway
+  var PHOTO_JPEG_QUALITY = 0.85;
 
   var mentions = []; // [{type, id, name}]
   var activeSlash = -1; // index of the `/` whose suggestions are open
@@ -41,6 +46,94 @@
   function isOpen() {
     var p = popup();
     return !!p && !p.hidden;
+  }
+
+  // ---- Send button and photo ----
+
+  function photoInput() {
+    return byId("assistant_photo");
+  }
+
+  function hasPhoto() {
+    var el = photoInput();
+    return !!el && !!el.files && el.files.length > 0;
+  }
+
+  function updateSend() {
+    var button = byId("assistant_send");
+    var el = input();
+    if (!button || !el) return;
+    button.disabled = !(el.value.trim() || mentions.length || hasPhoto());
+  }
+
+  function showPhoto(name) {
+    var chip = byId("assistant_photo_chip");
+    var label = byId("assistant_photo_name");
+    if (label) label.textContent = name || "";
+    if (chip) chip.hidden = !name;
+  }
+
+  function clearPhoto() {
+    var el = photoInput();
+    if (el) el.value = "";
+    showPhoto("");
+    updateSend();
+  }
+
+  // Scales the photo down and re-encodes it as JPEG in the file input itself,
+  // so the form sends the small one. If the browser cannot, it sends the original
+  // and the server checks its size.
+  function shrinkPhoto(file) {
+    var el = photoInput();
+    if (!el || !file || !window.createImageBitmap || !window.DataTransfer) {
+      showPhoto(file ? file.name : "");
+      updateSend();
+      return;
+    }
+    showPhoto("Preparing photo…");
+    createImageBitmap(file)
+      .then(function (bitmap) {
+        var scale = Math.min(1, PHOTO_MAX_SIDE_PX / Math.max(bitmap.width, bitmap.height));
+        var canvas = document.createElement("canvas");
+        canvas.width = Math.round(bitmap.width * scale);
+        canvas.height = Math.round(bitmap.height * scale);
+        canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        return new Promise(function (resolve) {
+          canvas.toBlob(resolve, "image/jpeg", PHOTO_JPEG_QUALITY);
+        });
+      })
+      .then(function (blob) {
+        if (!blob) throw new Error("encode");
+        var transfer = new DataTransfer();
+        transfer.items.add(new File([blob], "photo.jpg", { type: "image/jpeg" }));
+        el.files = transfer.files;
+        showPhoto(file.name || "Photo");
+        updateSend();
+      })
+      .catch(function () {
+        showPhoto(file.name || "Photo");
+        updateSend();
+      });
+  }
+
+  function resetComposer() {
+    var el = input();
+    if (el) el.value = "";
+    mentions = [];
+    activeSlash = -1;
+    dismissedSlash = -1;
+    renderChips();
+    clearPhoto();
+    close();
+    autoGrow();
+    updateSend();
+  }
+
+  function scrollToLatest() {
+    var thread = byId("assistant_thread");
+    var last = thread && thread.lastElementChild;
+    while (last && last.tagName === "INPUT") last = last.previousElementSibling;
+    if (last) last.scrollIntoView({ block: "start", behavior: "smooth" });
   }
 
   // ---- Query under the caret ----
@@ -170,6 +263,7 @@
       box.appendChild(chip);
     });
     syncHidden();
+    updateSend();
   }
 
   function autoGrow() {
@@ -239,7 +333,43 @@
     if (dismissedSlash >= 0 && el.value.charAt(dismissedSlash) !== "/") dismissedSlash = -1;
     dropMissingMentions();
     autoGrow();
+    updateSend();
     refresh();
+  });
+
+  document.addEventListener("change", function (event) {
+    if (event.target !== photoInput()) return;
+    var file = event.target.files && event.target.files[0];
+    if (file) shrinkPhoto(file);
+    else clearPhoto();
+  });
+
+  // Sending: only the button sends (Enter is a line break, §9.11). A send while
+  // the photo is being prepared waits for it.
+  document.addEventListener("htmx:beforeRequest", function (event) {
+    var form = byId("assistant_composer");
+    if (!form || event.detail.elt !== form) return;
+    var label = byId("assistant_photo_name");
+    if (label && label.textContent === "Preparing photo…") {
+      event.preventDefault();
+      return;
+    }
+    close();
+    syncHidden();
+  });
+
+  document.addEventListener("htmx:afterRequest", function (event) {
+    var form = byId("assistant_composer");
+    if (!form || event.detail.elt !== form) return;
+    if (event.detail.successful) {
+      resetComposer();
+      scrollToLatest();
+    }
+  });
+
+  // A meal chosen in Add to opens its conversation: show its end.
+  document.addEventListener("htmx:afterSwap", function (event) {
+    if (event.detail && event.detail.target && event.detail.target.id === "assistant_thread_box") scrollToLatest();
   });
 
   document.addEventListener("keydown", function (event) {
@@ -272,6 +402,10 @@
       pick(option);
       var el = input();
       if (el) el.focus();
+      return;
+    }
+    if (event.target.closest && event.target.closest("#assistant_photo_remove")) {
+      clearPhoto();
       return;
     }
     var remove = event.target.closest && event.target.closest("[data-assistant-remove-mention]");
@@ -307,7 +441,11 @@
     }
   });
 
-  document.addEventListener("DOMContentLoaded", autoGrow);
+  document.addEventListener("DOMContentLoaded", function () {
+    autoGrow();
+    updateSend();
+    scrollToLatest();
+  });
 
   // A new page of the assistant starts with no mentions.
   document.addEventListener("htmx:load", function (event) {
@@ -317,6 +455,8 @@
       dismissedSlash = -1;
       lastQuery = null;
       autoGrow();
+      updateSend();
+      scrollToLatest();
     }
   });
 })();

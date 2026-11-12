@@ -18,6 +18,8 @@ from DayBetes_food.services.fridge import (
     store_recipe_in_fridge,
     take_from_fridge,
 )
+from DayBetes_food.config import ASSISTANT_ENABLED
+from DayBetes_food.domain.assistant import label_draft_input, label_draft_prefill, parse_tool_use_id
 from DayBetes_food.services.intake_event import (
     add_quick_add_to_meal,
     confirm_planned_event,
@@ -27,6 +29,7 @@ from DayBetes_food.services.intake_event import (
     resolve_target_event,
 )
 from DayBetes_food.database.queries import (
+    get_assistant_message,
     create_catalog_item,
     get_off_product_by_code,
     list_catalog_items,
@@ -766,6 +769,28 @@ def _detail_origin(
     return item
 
 
+def _assistant_label_prefill(user_id: int, message_id: int, tool_use_id: str):
+    """The prefill of a label the assistant read (§8.12): read from its stored tool
+    call, of one of the user's conversations, and validated again (§7.13).
+
+    Raises:
+        NotFoundError: no such draft for this user, or no longer valid.
+    """
+    try:
+        tool_id = parse_tool_use_id(tool_use_id)
+    except ValidationError as error:
+        raise NotFoundError("Draft not found.") from error
+    with get_connection() as connection:
+        message = get_assistant_message(connection, user_id, message_id) if user_id else None
+    tool_input = label_draft_input(message, tool_id) if message else None
+    if tool_input is None:
+        raise NotFoundError("Draft not found.")
+    try:
+        return label_draft_prefill(tool_input)
+    except ValidationError as error:
+        raise NotFoundError("Draft not found.") from error
+
+
 def _meal_created_event(connection, user_id: int, event_id: int) -> dict:
     """`mealCreated` (HX-Trigger, frontend §7.7): the page adds the new meal to its
     meal selector and leaves it chosen, so the next add goes to the same meal
@@ -774,8 +799,16 @@ def _meal_created_event(connection, user_id: int, event_id: int) -> dict:
     return {"mealCreated": {"id": event_id, "label": meal_option_label(event)}}
 
 
-def _prefill_view(prefill, barcode: str, source_id: str, source: PrefillSource = PrefillSource.OPEN_FOOD_FACTS) -> dict:
-    """FoodPrefill -> presentation dict of the create form."""
+def _prefill_view(
+    prefill,
+    barcode: str,
+    source_id: str,
+    source: PrefillSource | None = PrefillSource.OPEN_FOOD_FACTS,
+    macros_source: MacrosSource | None = None,
+) -> dict:
+    """FoodPrefill -> presentation dict of the create form. `source` None is a
+    prefill that is not a copy of an external record (a label read by the
+    assistant, §8.12): no prefill_source, and its U1 is given apart."""
     nutrients = prefill.nutrients
 
     def text_or_empty(value):
@@ -783,10 +816,10 @@ def _prefill_view(prefill, barcode: str, source_id: str, source: PrefillSource =
 
     return {
         "barcode": barcode,
-        "prefill_source": source.value,
-        "prefill_source_id": source_id,
+        "prefill_source": source.value if source else "",
+        "prefill_source_id": source_id if source else "",
         # U1 of the prefilled values (study §6.3); the user can change it.
-        "macros_source": PREFILL_MACROS_SOURCE[source].value,
+        "macros_source": (macros_source or PREFILL_MACROS_SOURCE[source]).value,
         "name": prefill.name or "",
         "brand": prefill.brand or "",
         "category": prefill.category.value if prefill.category else "",
@@ -1559,10 +1592,21 @@ def setup_food_routes(rt):
         ciqual: str = "",
         add_to_recipe: str = "",
         recipe_plate_id: str = "",
+        assistant_message: str = "",
+        assistant_tool: str = "",
+        return_to_assistant: str = "",
     ):
         clean = (barcode or "").strip()
         target_recipe_id = parse_optional_id(add_to_recipe, "recipe")
         target_plate_id = parse_optional_id(recipe_plate_id, "plate")
+        # A draft of the assistant (§8.12, frontend §9.11): only while it exists.
+        assistant_conversation_id = (
+            parse_optional_id(return_to_assistant, "conversation") if ASSISTANT_ENABLED else None
+        )
+        label_prefill = None
+        draft_message_id = parse_optional_id(assistant_message, "draft") if ASSISTANT_ENABLED else None
+        if draft_message_id:
+            label_prefill = _assistant_label_prefill(int(get_current_user_id() or 0), draft_message_id, assistant_tool)
         ciqual_food = None
         ciqual_code = parse_ciqual_code(ciqual)
         if ciqual_code is not None:
@@ -1617,6 +1661,10 @@ def setup_food_routes(rt):
         if ciqual_food:
             prefill = prefill_from_ciqual_food(ciqual_food)
             prefill_view = _prefill_view(prefill, "", str(ciqual_food.code), PrefillSource.CIQUAL)
+        elif label_prefill:
+            # Transcribed from a photo and reviewed here: the origin stays the label (study §6.3).
+            prefill = label_prefill
+            prefill_view = _prefill_view(prefill, "", "", None, MacrosSource.LABEL)
         subtype_prefill = (prefill_view.get("subtype") or "").strip()
         if subtype_prefill:
             prefill_view["subtype"] = _closest_option(subtype_prefill, subtypes)
@@ -1640,6 +1688,12 @@ def setup_food_routes(rt):
                 off_prefill_barcode=valid_barcode if prefill and not ciqual_food else None,
                 ciqual_note=reliability_note(ciqual_food) if ciqual_food else None,
                 add_to_recipe=(target_recipe_id, target_plate_id) if target_recipe_id else None,
+                return_to_assistant=assistant_conversation_id,
+                assistant_note=(
+                    "Read by the assistant from the label. Check every value before saving."
+                    if label_prefill
+                    else None
+                ),
             ),
             show_cart=False,
         )
@@ -3741,6 +3795,7 @@ def setup_food_routes(rt):
         prefill_source_id: str = "",
         add_to_recipe: str = "",
         add_to_recipe_plate: str = "",
+        return_to_assistant: str = "",
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -3775,6 +3830,9 @@ def setup_food_routes(rt):
             )
             target_recipe_id = parse_optional_id(add_to_recipe, "recipe")
             target_plate_id = parse_optional_id(add_to_recipe_plate, "plate")
+            assistant_conversation_id = (
+                parse_optional_id(return_to_assistant, "conversation") if ASSISTANT_ENABLED else None
+            )
         except ValidationError as error:
             return _error_msg(str(error))
 
@@ -3813,6 +3871,11 @@ def setup_food_routes(rt):
             query = f"?recipe_plate_id={target_plate_id}" if target_plate_id else ""
             return HTMLResponse(
                 "", headers={"HX-Redirect": f"/food/recipe/{target_recipe_id}/ingredients/form{query}"}
+            )
+        if assistant_conversation_id:
+            # Back to the conversation that drafted it (frontend §9.11).
+            return HTMLResponse(
+                "", headers={"HX-Redirect": f"/assistant?conversation_id={assistant_conversation_id}"}
             )
         return HTMLResponse("", headers={"HX-Redirect": "/food"})
 

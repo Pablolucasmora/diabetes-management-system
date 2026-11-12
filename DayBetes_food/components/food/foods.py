@@ -1744,9 +1744,14 @@ def CreateCatalogPage(
     off_prefill_barcode: str | None = None,
     ciqual_note: str | None = None,
     add_to_recipe: tuple[int, int | None] | None = None,
+    return_to_assistant: int | None = None,
+    assistant_note: str | None = None,
 ):
     """Name, what it is and its macros come first; the rest is folded under
-    "More details" and opens by itself when the scanner prefilled any of it."""
+    "More details" and opens by itself when the scanner prefilled any of it.
+
+    `return_to_assistant` is the conversation that opened the form with a draft
+    (frontend §9.11): saving goes back to it."""
     result_id = "create_catalog_result_page"
     data = prefill or {}
     def _pv(key: str, fallback: str = ""):
@@ -1777,8 +1782,9 @@ def CreateCatalogPage(
         *(
             [P(ciqual_note, cls="text-xs text-gray-700"), ciqual_attribution()] if ciqual_note else []
         ),
+        *([P(assistant_note, cls="text-xs text-gray-700")] if assistant_note else []),
         cls="web_container w-full px-4 py-3 flex flex-col gap-1",
-    ) if (off_notice or barcode_notice or off_prefill_barcode or ciqual_note) else None
+    ) if (off_notice or barcode_notice or off_prefill_barcode or ciqual_note or assistant_note) else None
     existing_notice = (
         Div(
             P("A food with this barcode already exists.", cls="text-sm text-gray-700"),
@@ -1812,6 +1818,12 @@ def CreateCatalogPage(
                 Input(type="hidden", name="add_to_recipe_plate", value=str(add_to_recipe[1] or "")),
             ]
             if add_to_recipe
+            else []
+        ),
+        # A draft of the assistant: saving goes back to its conversation (§9.11).
+        *(
+            [Input(type="hidden", name="return_to_assistant", value=str(return_to_assistant))]
+            if return_to_assistant
             else []
         ),
         notices,

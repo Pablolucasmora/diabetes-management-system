@@ -2999,6 +2999,24 @@ def _ensure_auth_rate_limits_schema(cursor):
     )
 
 
+def _ensure_assistant_schema(cursor):
+    """Indexes of the assistant's tables (code_conventions.md §11.2.9). The tables
+    are new in this version, so CREATE TABLE already carries their columns."""
+    # The latest conversation of a meal (§8.12: one conversation per meal).
+    _create_index_once(
+        cursor,
+        "ix_assistant_conversation_users_id_intake_event_id",
+        "ON assistant_conversation (users_id, intake_event_id, id DESC)",
+    )
+    # The FK to intake_event is SET NULL on delete: without this index, deleting
+    # a meal would scan the whole table (§11.8).
+    _create_index_once(
+        cursor,
+        "ix_assistant_conversation_intake_event_id",
+        "ON assistant_conversation (intake_event_id) WHERE intake_event_id IS NOT NULL",
+    )
+
+
 def init_db():
     conn = get_migrations_connection()
     cur = conn.cursor()
@@ -3030,6 +3048,9 @@ def init_db():
             DBSchema.intake_plate,
             DBSchema.recipe_plate,
             DBSchema.portion_detail,
+            # After intake_event, which a conversation references.
+            DBSchema.assistant_conversation,
+            DBSchema.assistant_message(),
         ]
 
         for table_sql in tables:
@@ -3064,6 +3085,7 @@ def init_db():
         _ensure_recipe_plate_schema(cur)
         # After portion_detail: it adds source_fridge_id there.
         _ensure_fridge_schema(cur)
+        _ensure_assistant_schema(cur)
         _remove_legacy_user_sessions(cur)
         _remove_legacy_user_hidden_catalog(cur)
         _remove_legacy_user_columns(cur)
@@ -3084,6 +3106,10 @@ def init_db():
         # never changes or removes one. The CASCADE from fridge still deletes them,
         # because referential actions run as the owner of the table.
         cur.execute(sql.SQL("REVOKE UPDATE, DELETE, TRUNCATE ON fridge_move FROM {}").format(role))
+        # Insert-only history (code §11.2.9): a conversation is replayed from its
+        # messages, so the runtime never changes or removes one. They go with
+        # their conversation (CASCADE), which runs as the owner of the table.
+        cur.execute(sql.SQL("REVOKE UPDATE, DELETE, TRUNCATE ON assistant_message FROM {}").format(role))
 
         conn.commit()
         logger.info("Database initialized successfully.")

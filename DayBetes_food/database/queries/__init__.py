@@ -4,7 +4,7 @@ One module per table (`users.py`, `catalog.py`, `manual_intake.py`,
 `recipe.py`, `tags.py`, `linked_tags.py`, `user_favorites.py`,
 `food_brands.py`, `intake_event.py`, `insulin_injections.py`,
 `portion_detail.py`, `fridge.py`, `meal_type_schedule.py`, `auth_sessions.py`,
-`auth_rate_limits.py`, `off_product.py`, `ciqual_food.py`), plus
+`auth_rate_limits.py`, `off_product.py`, `ciqual_food.py`, `assistant.py`), plus
 `entries.py` for cross-entity reads without an owning table and `crud.py`
 with the shared generic helpers (private, not re-exported here).
 
@@ -13,6 +13,15 @@ imports `from DayBetes_food.database.queries import <name>`, without
 knowing which file each query lives in (code_conventions.md §1.3.1).
 """
 
+from DayBetes_food.database.queries.assistant import (
+    append_assistant_messages,
+    create_assistant_conversation,
+    get_assistant_conversation,
+    get_assistant_message,
+    get_latest_assistant_conversation,
+    link_assistant_conversation_event,
+    list_assistant_messages,
+)
 from DayBetes_food.database.queries.users import (
     get_users_by_email,
     get_all_users,
@@ -207,6 +216,13 @@ from DayBetes_food.database.queries.auth_rate_limits import (
 )
 
 __all__ = [
+    "append_assistant_messages",
+    "create_assistant_conversation",
+    "get_assistant_conversation",
+    "get_assistant_message",
+    "get_latest_assistant_conversation",
+    "link_assistant_conversation_event",
+    "list_assistant_messages",
     "get_users_by_email",
     "get_all_users",
     "update_password_hash",

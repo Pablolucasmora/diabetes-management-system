@@ -284,7 +284,9 @@ def _match_tier_sql(column: str, param_prefix: str) -> str:
     )
 
 
-def get_mention_suggestions(connection, user_id: int, search: str = "") -> list[MentionSuggestion]:
+def get_mention_suggestions(
+    connection, user_id: int, search: str = "", *, limit: int = MENTION_SUGGESTIONS_MAX
+) -> list[MentionSuggestion]:
     """Entries offered after `/` in the assistant (frontend_conventions.md §9.11).
 
     Foods (`catalog`), dishes (`manual_intake`, never quick adds) and recipes the
@@ -294,7 +296,8 @@ def get_mention_suggestions(connection, user_id: int, search: str = "") -> list[
     dish. With a search the order is: how well the name matches, favorites,
     most eaten in the last MENTION_USAGE_DAYS days, name. Without a search only
     favorites and recently eaten entries are returned. Recipes have no usage:
-    a consumed portion never references its recipe.
+    a consumed portion never references its recipe. The assistant's own search
+    tool asks for fewer rows (`limit`, code_conventions.md §8.12).
     """
     raw = (search or "").strip()
     term = normalize_search_text(raw)
@@ -302,7 +305,7 @@ def get_mention_suggestions(connection, user_id: int, search: str = "") -> list[
         "visibility_user_id": user_id,
         "state": IntakeEventState.CONSUMED.value,
         "days": MENTION_USAGE_DAYS,
-        "limit": MENTION_SUGGESTIONS_MAX,
+        "limit": max(1, min(int(limit), MENTION_SUGGESTIONS_MAX)),
     }
     if term:
         catalog_name, catalog_params, _ = _build_fuzzy_search(
