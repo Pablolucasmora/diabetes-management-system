@@ -538,7 +538,38 @@ Contrato del servidor en `code_conventions.md` §8.12. Solo existe si el asisten
 - En Inicio, el botón `Tell the assistant`, a todo el ancho, debajo de "What did you eat?" en *Add to your meal* (§9.2).
 - En la cabecera de Food (§9.3), entre el rayo y el `+`: una pestaña rectangular `Tell the assistant` que cuelga del borde superior de la página. Ocupa el hueco entre los dos botones con margen a cada lado, no tiene margen ni borde arriba (sube por encima del relleno superior de la cabecera) y solo redondea las esquinas de abajo. Es sólida, como los botones de la cabecera (§8).
 
-**Página.** Cabecera como las de crear (§9.1): "‹ Back" a la izquierda y `ASSISTANT` a la derecha, seguido de un botón redondo pequeño con el icono del carrito que abre el carrito. El botón flotante del carrito no se muestra en esta página (`data-hide-cart`), porque taparía el compositor. Debajo, los mensajes de la conversación y, fijo abajo, el compositor: un `<textarea>` que crece con el texto hasta un máximo y luego hace scroll, y el botón de enviar. Ningún campo se enfoca solo al abrir la página en el móvil (mismo motivo que §9.6).
+**Página.** Cabecera como las de crear (§9.1): "‹ Back" a la izquierda y `ASSISTANT` a la derecha, seguido de un botón redondo pequeño con el icono del carrito que abre el carrito. El botón flotante del carrito no se muestra en esta página (`data-hide-cart`), porque taparía el compositor. Debajo, el selector `Add to`, los mensajes de la conversación y, fijo abajo, el compositor: el botón de foto, un `<textarea>` que crece con el texto hasta un máximo y luego hace scroll, y el botón de enviar. Ningún campo se enfoca solo al abrir la página en el móvil (mismo motivo que §9.6).
+
+**Una conversación por comida** (decisión del usuario, 2026-11-12).
+
+- `Add to` lista las comidas planificadas, con el mismo texto que en Food (§7.7), y `New meal`.
+- Al abrir la página se elige la última comida planificada, como en Food, o `New meal` si no hay ninguna. `?conversation_id=` abre esa conversación y elige su comida.
+- Cambiar la comida carga su conversación (la última, si tuviera varias), o la vacía con la introducción.
+- Con `New meal`, el primer añadido del asistente crea la comida planificada, con el tipo automático (`code_conventions.md` §7.14). La respuesta la añade a `Add to` ya elegida, para que el siguiente mensaje siga en ella.
+- El id de la conversación viaja en un campo oculto. Vacío empieza una nueva.
+
+**Enviar** (decisión del usuario, 2026-11-12: síncrono).
+
+- Solo envía el botón, y Enter hace un salto de línea. El botón está activo si hay texto, una mención o una foto.
+- Mientras el servidor responde, aparece una burbuja `Thinking…` y el botón se desactiva.
+- Si sale bien, se añade al final el turno: el mensaje del usuario, a la derecha, con la píldora `Photo` si llevaba una; las respuestas del asistente, a la izquierda y como texto plano; y las tarjetas de lo que hizo. Después se vacía el compositor (texto, menciones y foto) y se desplaza la vista al turno nuevo.
+- Si falla, el toast lo explica (`code_conventions.md` §8.12) y el compositor se queda como estaba.
+
+**Foto.** El botón de la cámara adjunta una sola foto, de un plato o de una etiqueta nutricional, y se muestra como una píldora con una × para quitarla.
+
+- Antes de enviarla, el navegador la reduce a 1568 px por el lado mayor y la convierte en JPEG (`code_conventions.md` §8.12, coste).
+- Si el navegador no puede, envía la original, y el servidor rechaza una de más de 3,75 MB o que no sea JPEG, PNG o WebP según sus bytes.
+- No se guarda: el historial muestra la píldora `Photo` sin la imagen.
+
+**Tarjetas.**
+
+- `Added to the cart`: una línea por alimento, plato, receta o estimación añadidos, con sus gramos, sus hidratos y cómo se obtuvo la cantidad (U2, con las etiquetas de §9.4), y el botón `Review`, que abre el carrito.
+- `New food to review`: el nombre del alimento propuesto, de dónde sale ("Read from the label", "From the food composition table" o "From Open Food Facts") y el botón `Review and save`, que abre el formulario de alta de un alimento precargado.
+  - Una etiqueta añade al formulario la nota "Read by the assistant from the label. Check every value before saving." y `Macros from` en `Package label`.
+  - Ciqual y OFF usan su precarga de siempre (§9.4).
+  - Guardar vuelve a la conversación (`/assistant?conversation_id=`) en vez de a Food, y allí el usuario le pide que lo añada.
+
+Las tarjetas se leen de los resultados guardados de las herramientas, así que una conversación reabierta muestra las mismas.
 
 **Mencionar un alimento con `/`.**
 
@@ -555,7 +586,10 @@ Contrato del servidor en `code_conventions.md` §8.12. Solo existe si el asisten
 |---|---|---|---|---|
 | `GET /assistant/mentions?q=` (al escribir tras `/`, con un retraso de 150 ms; una respuesta que llega tarde se descarta) | `#assistant_mentions` | `innerHTML` | las filas, o una línea `No foods match` | sin sesión: `401`, por el canal de errores |
 
-Exige el header `HX-Request` (`403` si falta).
+| `GET /assistant/thread?intake_event_id=` (al cambiar `Add to`) | `#assistant_thread_box` | `innerHTML` | la conversación de esa comida, o la vacía con la introducción | comida confirmada o borrada: `404` por el canal de errores |
+| `POST /assistant/message` (`multipart/form-data`: `message`, `mentions`, `photo`, `intake_event_id`, `conversation_id`) | `#assistant_thread` | `beforeend` | el turno, con el id de la conversación y, si creó la comida, `Add to` fuera de banda | validación `422`, comida confirmada o borrada `404`/`409`, proveedor `502`: status, cuerpo vacío y toast |
+
+Las tres exigen el header `HX-Request` (`403` si falta). Repetir un envío es un mensaje nuevo: el asistente puede volver a añadir lo mismo, y la copia se quita en el carrito.
 
 ## 10. Movimiento
 
