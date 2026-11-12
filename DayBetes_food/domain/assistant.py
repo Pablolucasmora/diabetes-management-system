@@ -43,6 +43,8 @@ ASSISTANT_PHOTO_PLACEHOLDER = "[The user attached a photo here. Photos are not k
 # the stored results, so a reopened conversation shows the same cards.
 TOOL_RESULT_ADDED = "added"
 TOOL_RESULT_DRAFT = "draft"
+# Lines of what a tool changed in the meal (§8.12, "Edición de la comida").
+TOOL_RESULT_CHANGED = "changed"
 
 # A tool_use id as the API writes it (`toolu_...`); it travels in the URL of a
 # draft (frontend §9.11), so it is checked before reaching the SQL.
@@ -213,6 +215,34 @@ def tool_number(value, field: str, *, required: bool = False) -> float | None:
     return float(value)
 
 
+def tool_int(value, field: str, *, required: bool = False) -> int | None:
+    """A whole number of a tool input, not a boolean. None passes unless required."""
+    if value is None:
+        if required:
+            raise ValidationError(f"{field} is required.")
+        return None
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValidationError(f"{field} must be a whole number.")
+    return value
+
+
+def tool_id(value, field: str) -> int:
+    """A required id of a tool input: a positive whole number."""
+    number = tool_int(value, field, required=True)
+    if number <= 0:
+        raise ValidationError(f"{field} must be a positive whole number.")
+    return number
+
+
+def tool_bool(value, field: str) -> bool | None:
+    """A true/false of a tool input. None passes."""
+    if value is None or isinstance(value, bool):
+        return value
+    raise ValidationError(f"{field} must be true or false.")
+
+
 def tool_text(value, field: str, *, max_length: int, required: bool = False) -> str | None:
     """A text of a tool input, normalized like a food name (§7.3)."""
     if value is None:
@@ -293,6 +323,7 @@ class AddedCard:
     amount_method: str | None
     servings: float | None
     kind: str | None  # None: a food or dish; "recipe" or "estimate"
+    preparation: str | None = None  # what the user said of how it was prepared
 
 
 @dataclass(frozen=True)
@@ -315,6 +346,7 @@ class TurnView:
     replies: list[str]
     added: list[AddedCard]
     drafts: list[DraftCard]
+    changed: list[str]
 
 
 def _number(value) -> float | None:
@@ -342,7 +374,7 @@ def turn_views(messages: list[AssistantMessageRead]) -> list[TurnView]:
                 block.get("type") == "image" or block.get("text") == ASSISTANT_PHOTO_PLACEHOLDER
                 for block in message.content
             )
-            turns.append(TurnView("\n".join(texts).strip(), had_photo, [], [], []))
+            turns.append(TurnView("\n".join(texts).strip(), had_photo, [], [], [], []))
             continue
         if not turns:
             continue
@@ -377,8 +409,12 @@ def _read_tool_result(turn: TurnView, block: dict, tool_message: dict[str, int])
                 amount_method=added.get("amount_method"),
                 servings=_number(added.get("servings")),
                 kind=added.get("kind"),
+                preparation=str(added["preparation"]) if added.get("preparation") else None,
             )
         )
+    changed = result.get(TOOL_RESULT_CHANGED)
+    if isinstance(changed, list):
+        turn.changed.extend(str(line) for line in changed if isinstance(line, str) and line)
     draft = result.get(TOOL_RESULT_DRAFT)
     tool_use_id = str(block.get("tool_use_id", ""))
     if isinstance(draft, dict) and draft.get("name") and tool_use_id in tool_message:

@@ -1,10 +1,12 @@
 """Tools of the assistant for logging meals (code_conventions.md §8.12).
 
 What the model can do is exactly this list: search, add to the planned meal of
-its conversation, read that meal and prepare a draft of a new food. There is
-no tool that deletes, archives or edits a food, dish or recipe, confirms a
-meal, touches a consumed meal, logs insulin or changes settings: the guarantee
-is that those tools do not exist, not an instruction of the prompt.
+its conversation, read that meal, change the fields of that meal the user edits
+in its cart card, and prepare a draft of a new food. There is no tool that
+deletes anything, archives or edits a food, dish or recipe, confirms a meal,
+touches a consumed meal, its insulin or the fridge, logs insulin or changes
+settings: the guarantee is that those tools do not exist, not an instruction
+of the prompt.
 
 Each tool calls the same queries and services as the equivalent route, with
 the same validation (§7) and the owner in the SQL (§5.3). A wrong input goes
@@ -15,8 +17,11 @@ only chooses the food, the amount and how the amount was obtained (U2).
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from DayBetes_food.database.queries import (
+    apply_plate_offset_to_portions,
+    create_intake_plate,
     create_portion_detail,
     get_catalog_item,
     get_ciqual_food,
@@ -24,17 +29,32 @@ from DayBetes_food.database.queries import (
     get_manual_intake,
     get_mention_suggestions,
     get_off_product_by_code,
+    get_portion_detail,
     get_recipe,
     link_assistant_conversation_event,
+    list_intake_plates,
     list_portions_by_event,
     search_ciqual_foods,
     search_off_products,
+    update_intake_event,
+    update_intake_event_name,
+    update_intake_event_notes,
+    update_intake_plate_name,
+    update_intake_plate_offset,
+    update_portion_amount,
+    update_portion_detail_fields,
+    update_portion_flag,
+    update_portion_offset,
 )
 from DayBetes_food.domain.assistant import (
     ASSISTANT_SEARCH_RESULTS_MAX,
     TOOL_RESULT_ADDED,
+    TOOL_RESULT_CHANGED,
     TOOL_RESULT_DRAFT,
     label_draft_prefill,
+    tool_bool,
+    tool_id,
+    tool_int,
     tool_number,
     tool_text,
 )
@@ -43,10 +63,25 @@ from DayBetes_food.domain.ciqual_food import parse_ciqual_code
 from DayBetes_food.domain.constants import (
     AmountMethod,
     AssistantDraftSource,
+    ConservationMethod,
+    CookingMethod,
     FoodEntryType,
+    FoodPhysicalState,
     MacrosSource,
+    MealType,
     PortionDestination,
     PortionOrigin,
+    Ripeness,
+)
+from DayBetes_food.domain.intake_event import (
+    INTAKE_EVENT_NAME_MAX_LENGTH,
+    INTAKE_EVENT_NOTES_MAX_LENGTH,
+    IntakeEventUpdate,
+)
+from DayBetes_food.domain.intake_plate import (
+    INTAKE_PLATE_NAME_MAX_LENGTH,
+    IntakePlateCreate,
+    check_offset_minutes,
 )
 from DayBetes_food.domain.manual_intake import (
     QuickAddRequest,
@@ -56,17 +91,28 @@ from DayBetes_food.domain.manual_intake import (
     require_carbs,
 )
 from DayBetes_food.domain.nutrition import nutrients_from_totals
-from DayBetes_food.domain.portion_detail import PortionDetailCreate, parse_amount_grams, portion_macro_amount
+from DayBetes_food.domain.portion_detail import (
+    PortionDetailCreate,
+    PortionDetailUpdate,
+    check_cooked_weight,
+    parse_amount_grams,
+    portion_macro_amount,
+    raw_amount,
+)
 from DayBetes_food.domain.recipe import RecipeAddRequest, parse_recipe_add_servings
 from DayBetes_food.errors import ConflictError, NotFoundError, ValidationError
 from DayBetes_food.services.intake_event import (
     add_quick_add_to_meal,
     default_meal_type_now,
     new_plate_offset_minutes,
+    plate_event_id,
+    portion_event_id,
     resolve_event_plate,
     resolve_target_event,
+    update_meal_time,
 )
 from DayBetes_food.services.recipe import add_recipe_to_meal
+from DayBetes_food.time_utils import to_local
 
 _ENTRY_TYPE_NAMES = {
     FoodEntryType.CATALOG: "food",
@@ -74,7 +120,38 @@ _ENTRY_TYPE_NAMES = {
     FoodEntryType.RECIPE: "recipe",
 }
 _NULLABLE_NUMBER = {"type": ["number", "null"]}
+_NULLABLE_INTEGER = {"type": ["integer", "null"]}
 _NULLABLE_TEXT = {"type": ["string", "null"]}
+_NULLABLE_BOOLEAN = {"type": ["boolean", "null"]}
+
+
+def _nullable_enum(enum_cls, description: str | None = None) -> dict:
+    schema = {"anyOf": [{"type": "string", "enum": [member.value for member in enum_cls]}, {"type": "null"}]}
+    if description:
+        schema["description"] = description
+    return schema
+
+
+_PLATE_ID = {
+    "type": ["integer", "null"],
+    "description": "Plate to add it to (an id from add_plate or the meal), or null for the meal's last plate.",
+}
+_OFFSET = {
+    "type": ["integer", "null"],
+    "description": "Minutes from the meal time to when it was eaten (-300 to 300).",
+}
+# How it was prepared: only what the user said, else null (§8.12, "Preparación").
+_PREPARATION = {
+    "cooking": _nullable_enum(CookingMethod),
+    "final_state": _nullable_enum(FoodPhysicalState, "Physical state when eaten."),
+    "conservation": _nullable_enum(ConservationMethod),
+    "ripeness": _nullable_enum(Ripeness, "Fruits only."),
+    "is_cooked_weight": {
+        "type": ["boolean", "null"],
+        "description": "True when the grams were weighed after cooking. Give the grams as weighed: "
+        "the server converts them to raw with the food's cooking factor.",
+    },
+}
 
 
 def _schema(properties: dict) -> dict:
@@ -119,13 +196,16 @@ TOOL_DEFINITIONS = [
         "Add one of the user's foods or dishes to the meal of this conversation. Give the "
         "amount either in grams or in servings (servings only if the food has a serving), "
         "and how the amount was obtained, following the rules of the system prompt. The "
-        "server computes the macros from the database.",
+        "server computes the macros from the database. Fill in how it was prepared only "
+        "with what the user said; null the rest.",
         {
             "entry_type": {"type": "string", "enum": ["catalog", "manual_intake"]},
             "entry_id": {"type": "integer"},
             "grams": _NULLABLE_NUMBER,
             "servings": _NULLABLE_NUMBER,
             "amount_method": {"type": "string", "enum": [method.value for method in AmountMethod]},
+            "plate_id": _PLATE_ID,
+            **_PREPARATION,
         },
     ),
     _tool(
@@ -152,13 +232,16 @@ TOOL_DEFINITIONS = [
             "fiber_g": _NULLABLE_NUMBER,
             "calories_kcal": _NULLABLE_NUMBER,
             "note": {"type": ["string", "null"], "description": "How you estimated it, in a few words."},
+            "plate_id": _PLATE_ID,
         },
         strict=False,
     ),
     _tool(
         "show_meal",
-        "List what is already in the meal of this conversation: name, grams and carbs of "
-        "each item. Use it only when the user refers to what is already there.",
+        "Read the meal of this conversation as it is now: its time, type, name and notes, "
+        "and its plates with their foods, with the ids that add_food, update_plate and "
+        "update_food take. The context block already has a summary: use this only when "
+        "you need more.",
         {},
     ),
     _tool(
@@ -181,6 +264,55 @@ TOOL_DEFINITIONS = [
             "saturated_100g": _NULLABLE_NUMBER,
             "proteins_100g": _NULLABLE_NUMBER,
             "fiber_100g": _NULLABLE_NUMBER,
+        },
+        strict=False,
+    ),
+    _tool(
+        "add_plate",
+        "Add an empty plate to the meal of this conversation, only when the user splits "
+        "the meal into courses eaten at different times (\"de primero\", \"de postre a los 20 "
+        "minutos\"). Then add its foods with its plate_id. The name is optional: without "
+        "one it takes the names of its foods.",
+        {"name": _NULLABLE_TEXT, "offset_minutes": _OFFSET},
+    ),
+    _tool(
+        "update_meal",
+        "Change the meal of this conversation, only when the user says so: the local date "
+        "(YYYY-MM-DD) and time (HH:MM) it was eaten, its type, its name or its notes. "
+        "Omit or null what does not change.",
+        {
+            "date": _NULLABLE_TEXT,
+            "time": _NULLABLE_TEXT,
+            "meal_type": _nullable_enum(MealType),
+            "name": _NULLABLE_TEXT,
+            "notes": _NULLABLE_TEXT,
+        },
+        strict=False,
+    ),
+    _tool(
+        "update_plate",
+        "Change a plate of the meal of this conversation: its name or its offset. With "
+        "apply_to_foods true, the offset is also written on every food already in it; "
+        "otherwise only the foods added later take it. Omit or null what does not change.",
+        {
+            "plate_id": {"type": "integer"},
+            "name": _NULLABLE_TEXT,
+            "offset_minutes": _OFFSET,
+            "apply_to_foods": _NULLABLE_BOOLEAN,
+        },
+        strict=False,
+    ),
+    _tool(
+        "update_food",
+        "Correct a food already in the meal of this conversation (food_id from the context "
+        "or show_meal): its grams, how the amount was obtained, its offset or how it was "
+        "prepared. Omit or null what does not change.",
+        {
+            "food_id": {"type": "integer"},
+            "grams": _NULLABLE_NUMBER,
+            "amount_method": _nullable_enum(AmountMethod),
+            "offset_minutes": _OFFSET,
+            **_PREPARATION,
         },
         strict=False,
     ),
@@ -305,25 +437,32 @@ def _add_food(ctx: ToolContext, tool_input: dict) -> dict:
         raise ToolInputError("The amount must be greater than 0 g and at most 100000 g.") from error
     # The rules of U2 decide it, whatever the food's default (§8.12, study §6.3).
     amount_method = AmountMethod(tool_input.get("amount_method"))
+    preparation = _preparation(tool_input)
+    origin = PortionOrigin(entry_type.value)
+    is_cooked_weight = bool(tool_bool(tool_input.get("is_cooked_weight"), "is_cooked_weight"))
+    check_cooked_weight(origin, getattr(item, "cooking_factor", None), is_cooked_weight)
 
     event_id = ctx.target_event()
-    offset_minutes = new_plate_offset_minutes(get_intake_event(ctx.connection, ctx.user_id, event_id))
-    plate_id = resolve_event_plate(ctx.connection, ctx.user_id, event_id, None, offset_minutes)
+    plate_id = _target_plate(ctx, event_id, tool_input.get("plate_id"))
     create_portion_detail(
         ctx.connection,
         ctx.user_id,
         PortionDetailCreate(
-            origin=PortionOrigin(entry_type.value),
+            origin=origin,
             origin_id=entry_id,
             destination=PortionDestination.INTAKE_EVENT,
             destination_id=event_id,
             plate_id=plate_id,
             amount=grams,
             amount_method=amount_method,
+            is_cooked_weight=is_cooked_weight,
+            **preparation,
         ),
         commit=False,
     )
-    carbs = item.carbs_100g * grams / 100 if item.carbs_100g is not None else None
+    # The same rule as the cart: weighed cooked counts the raw equivalent (§5.2).
+    macro_grams = raw_amount(grams, origin, is_cooked_weight, getattr(item, "cooking_factor", None))
+    carbs = item.carbs_100g * macro_grams / 100 if item.carbs_100g is not None else None
     return {
         TOOL_RESULT_ADDED: _compact(
             {
@@ -331,9 +470,47 @@ def _add_food(ctx: ToolContext, tool_input: dict) -> dict:
                 "grams": _round(grams),
                 "carbs_g": _round(carbs),
                 "amount_method": amount_method.value,
+                "preparation": _preparation_text(preparation, is_cooked_weight) or None,
             }
         )
     }
+
+
+_PREPARATION_ENUMS = {
+    "cooking": CookingMethod,
+    "final_state": FoodPhysicalState,
+    "conservation": ConservationMethod,
+    "ripeness": Ripeness,
+}
+
+
+def _preparation(tool_input: dict) -> dict:
+    """The preparation fields the model gave; null ones are left out."""
+    return {
+        name: enum_cls(tool_input[name])
+        for name, enum_cls in _PREPARATION_ENUMS.items()
+        if tool_input.get(name) is not None
+    }
+
+
+def _preparation_text(preparation: dict, is_cooked_weight: bool) -> str:
+    parts = [value.value for value in preparation.values()]
+    if is_cooked_weight:
+        parts.append("weighed cooked")
+    return ", ".join(parts)
+
+
+def _target_plate(ctx: ToolContext, event_id: int, raw_plate_id) -> int:
+    """The plate an add goes to: the one given, of this meal, or the meal's last one
+    (§8.12, "Platos"). New plates come only from add_plate."""
+    if raw_plate_id is None:
+        offset_minutes = new_plate_offset_minutes(get_intake_event(ctx.connection, ctx.user_id, event_id))
+        return resolve_event_plate(ctx.connection, ctx.user_id, event_id, None, offset_minutes)
+    plate_id = tool_id(raw_plate_id, "plate_id")
+    try:
+        return resolve_event_plate(ctx.connection, ctx.user_id, event_id, plate_id, None)
+    except NotFoundError as error:
+        raise ToolInputError(f"There is no plate {plate_id} in this meal.") from error
 
 
 def _add_recipe(ctx: ToolContext, tool_input: dict) -> dict:
@@ -403,7 +580,8 @@ def _add_estimate(ctx: ToolContext, tool_input: dict) -> dict:
     except ValidationError as error:
         raise ToolInputError(str(error)) from error
     event_id = ctx.target_event()
-    add_quick_add_to_meal(ctx.connection, ctx.user_id, request, event_id, None)
+    plate_id = _target_plate(ctx, event_id, tool_input.get("plate_id"))
+    add_quick_add_to_meal(ctx.connection, ctx.user_id, request, event_id, plate_id)
     return {
         TOOL_RESULT_ADDED: _compact(
             {
@@ -419,15 +597,209 @@ def _add_estimate(ctx: ToolContext, tool_input: dict) -> dict:
 
 def _show_meal(ctx: ToolContext, tool_input: dict) -> dict:
     if ctx.event_id is None:
-        return {"items": [], "note": "The meal is empty: nothing has been added yet."}
-    items = []
-    for portion in list_portions_by_event(ctx.connection, ctx.user_id, ctx.event_id):
-        carbs_100g = portion.source.carbs_100g
-        carbs = carbs_100g * portion_macro_amount(portion) / 100 if carbs_100g is not None else None
-        items.append(
-            _compact({"name": portion.source.name, "grams": _round(portion.amount), "carbs_g": _round(carbs)})
+        return {"plates": [], "note": "The meal is empty: nothing has been added yet."}
+    event = get_intake_event(ctx.connection, ctx.user_id, ctx.event_id)
+    if event is None:
+        raise NotFoundError("intake_event_not_found")
+    when = to_local(event.meal_time) if event.meal_time else None
+    portions = list_portions_by_event(ctx.connection, ctx.user_id, ctx.event_id)
+    plates = []
+    for plate in list_intake_plates(ctx.connection, ctx.event_id):
+        foods = []
+        for portion in (p for p in portions if p.plate_id == plate.id):
+            carbs_100g = portion.source.carbs_100g
+            carbs = carbs_100g * portion_macro_amount(portion) / 100 if carbs_100g is not None else None
+            foods.append(
+                _compact(
+                    {
+                        "food_id": portion.id,
+                        "name": portion.source.name,
+                        "grams": _round(portion.amount),
+                        "carbs_g": _round(carbs),
+                        "amount_method": portion.amount_method.value if portion.amount_method else None,
+                        "offset_minutes": portion.offset_minutes,
+                        "cooking": portion.cooking.value if portion.cooking else None,
+                        "final_state": portion.final_state.value if portion.final_state else None,
+                        "conservation": portion.conservation.value if portion.conservation else None,
+                        "ripeness": portion.ripeness.value if portion.ripeness else None,
+                        "is_cooked_weight": portion.is_cooked_weight or None,
+                    }
+                )
+            )
+        plates.append(
+            _compact(
+                {"plate_id": plate.id, "name": plate.name, "offset_minutes": plate.offset_minutes, "foods": foods}
+            )
         )
-    return {"items": items}
+    return {
+        "meal": _compact(
+            {
+                "date": f"{when:%Y-%m-%d}" if when else None,
+                "time": f"{when:%H:%M}" if when else None,
+                "meal_type": event.meal_type.value if event.meal_type else None,
+                "name": event.name,
+                "notes": event.notes,
+            }
+        ),
+        "plates": plates,
+    }
+
+
+def _offset_text(minutes: int) -> str:
+    return f"{minutes:+d} min"
+
+
+def _meal_event(ctx: ToolContext) -> int:
+    """The meal the edits act on: the conversation's, which must exist."""
+    if ctx.event_id is None:
+        raise ToolInputError("The meal is empty: there is nothing to change yet.")
+    return ctx.event_id
+
+
+def _add_plate(ctx: ToolContext, tool_input: dict) -> dict:
+    name = tool_text(tool_input.get("name"), "name", max_length=INTAKE_PLATE_NAME_MAX_LENGTH)
+    offset_minutes = check_offset_minutes(tool_int(tool_input.get("offset_minutes"), "offset_minutes"))
+    event_id = ctx.target_event()
+    plate_id = create_intake_plate(
+        ctx.connection,
+        IntakePlateCreate(intake_event_id=event_id, name=name, offset_minutes=offset_minutes),
+        commit=False,
+    )
+    detail = ", ".join(part for part in (name, _offset_text(offset_minutes) if offset_minutes is not None else None) if part)
+    return {"plate_id": plate_id, TOOL_RESULT_CHANGED: ["New plate" + (f": {detail}" if detail else "")]}
+
+
+def _update_meal(ctx: ToolContext, tool_input: dict) -> dict:
+    event_id = _meal_event(ctx)
+    raw_date, raw_time = tool_input.get("date"), tool_input.get("time")
+    meal_type = MealType(tool_input["meal_type"]) if tool_input.get("meal_type") is not None else None
+    name = tool_text(tool_input.get("name"), "name", max_length=INTAKE_EVENT_NAME_MAX_LENGTH)
+    notes = tool_input.get("notes")
+    if notes is not None:
+        if not isinstance(notes, str):
+            raise ToolInputError("notes must be text.")
+        # Kept as typed, like the cart (§7.3): only the ends are trimmed.
+        notes = notes.strip() or None
+        if notes and len(notes) > INTAKE_EVENT_NOTES_MAX_LENGTH:
+            raise ToolInputError(f"notes can have at most {INTAKE_EVENT_NOTES_MAX_LENGTH} characters.")
+    changed = []
+    if raw_date is not None or raw_time is not None:
+        try:
+            local_date = datetime.strptime(str(raw_date), "%Y-%m-%d").date() if raw_date is not None else None
+            local_time = datetime.strptime(str(raw_time), "%H:%M").time() if raw_time is not None else None
+        except ValueError as error:
+            raise ToolInputError("date must be YYYY-MM-DD and time HH:MM.") from error
+        if local_time is None:
+            event = get_intake_event(ctx.connection, ctx.user_id, event_id)
+            if event is None or event.meal_time is None:
+                raise NotFoundError("intake_event_not_found")
+            local_time = to_local(event.meal_time).time()
+        update_meal_time(ctx.connection, ctx.user_id, event_id, local_time, local_date, commit=False)
+        changed.append(
+            "Meal time: " + (f"{local_date:%Y-%m-%d} " if local_date else "") + f"{local_time:%H:%M}"
+        )
+    if meal_type is not None:
+        update_intake_event(
+            ctx.connection, user_id=ctx.user_id, event_id=event_id, data=IntakeEventUpdate(meal_type=meal_type), commit=False
+        )
+        changed.append(f"Meal type: {meal_type.value.replace('_', ' ')}")
+    if name is not None:
+        update_intake_event_name(ctx.connection, ctx.user_id, event_id, name, commit=False)
+        changed.append(f"Meal name: {name}")
+    if notes is not None:
+        update_intake_event_notes(ctx.connection, ctx.user_id, event_id, notes, commit=False)
+        changed.append("Meal notes")
+    if not changed:
+        raise ToolInputError("Nothing to change: give at least one field.")
+    return {TOOL_RESULT_CHANGED: changed}
+
+
+def _update_plate(ctx: ToolContext, tool_input: dict) -> dict:
+    event_id = _meal_event(ctx)
+    plate_id = tool_id(tool_input.get("plate_id"), "plate_id")
+    try:
+        if plate_event_id(ctx.connection, ctx.user_id, plate_id) != event_id:
+            raise NotFoundError("plate_not_in_meal")
+    except NotFoundError as error:
+        raise ToolInputError(f"There is no plate {plate_id} in this meal.") from error
+    name = tool_text(tool_input.get("name"), "name", max_length=INTAKE_PLATE_NAME_MAX_LENGTH)
+    offset_minutes = check_offset_minutes(tool_int(tool_input.get("offset_minutes"), "offset_minutes"))
+    apply_to_foods = bool(tool_bool(tool_input.get("apply_to_foods"), "apply_to_foods"))
+    changed = []
+    if name is not None:
+        update_intake_plate_name(ctx.connection, plate_id, name, commit=False)
+        changed.append(f"Plate name: {name}")
+    if offset_minutes is not None:
+        if apply_to_foods:
+            if not apply_plate_offset_to_portions(ctx.connection, plate_id, offset_minutes, commit=False):
+                raise NotFoundError("intake_plate_not_found")
+            changed.append(f"Plate offset: {_offset_text(offset_minutes)}, applied to its foods")
+        else:
+            update_intake_plate_offset(ctx.connection, plate_id, offset_minutes, commit=False)
+            changed.append(f"Plate offset: {_offset_text(offset_minutes)}, for the foods added next")
+    if not changed:
+        raise ToolInputError("Nothing to change: give a name or an offset.")
+    return {TOOL_RESULT_CHANGED: changed}
+
+
+def _update_food(ctx: ToolContext, tool_input: dict) -> dict:
+    event_id = _meal_event(ctx)
+    portion_id = tool_id(tool_input.get("food_id"), "food_id")
+    try:
+        portion = get_portion_detail(ctx.connection, ctx.user_id, portion_id)
+        if portion_event_id(ctx.connection, ctx.user_id, portion) != event_id:
+            raise NotFoundError("portion_not_in_meal")
+    except NotFoundError as error:
+        raise ToolInputError(f"There is no food {portion_id} in this meal: call show_meal.") from error
+    grams = tool_number(tool_input.get("grams"), "grams")
+    amount_method = (
+        AmountMethod(tool_input["amount_method"]) if tool_input.get("amount_method") is not None else None
+    )
+    offset_minutes = check_offset_minutes(tool_int(tool_input.get("offset_minutes"), "offset_minutes"))
+    is_cooked_weight = tool_bool(tool_input.get("is_cooked_weight"), "is_cooked_weight")
+    preparation = _preparation(tool_input)
+    if is_cooked_weight is not None:
+        check_cooked_weight(
+            portion.origin, portion.source.cooking_factor, is_cooked_weight, current=portion.is_cooked_weight
+        )
+
+    changed = []
+    if grams is not None:
+        update_portion_amount(ctx.connection, ctx.user_id, portion_id, grams, commit=False)
+        changed.append(f"{_round(grams):g} g")
+    if amount_method is not None:
+        update_portion_flag(ctx.connection, ctx.user_id, portion_id, "amount_method", amount_method.value, commit=False)
+        changed.append(f"amount from {amount_method.value.replace('_', ' ')}")
+    if offset_minutes is not None:
+        update_portion_offset(ctx.connection, ctx.user_id, portion_id, offset_minutes, commit=False)
+        changed.append(f"offset {_offset_text(offset_minutes)}")
+    # Last: these two are part of the row's key and can merge it into an equal row
+    # of the same plate (measurement_conventions.md §4.6.4).
+    if is_cooked_weight is not None and is_cooked_weight != portion.is_cooked_weight:
+        update_portion_flag(ctx.connection, ctx.user_id, portion_id, "is_cooked_weight", is_cooked_weight, commit=False)
+        changed.append("weighed cooked" if is_cooked_weight else "weighed raw")
+    if preparation:
+        try:
+            get_portion_detail(ctx.connection, ctx.user_id, portion_id)
+        except NotFoundError as error:
+            raise ToolInputError(
+                "The food was merged with an equal one of its plate before its preparation could change: call show_meal."
+            ) from error
+        update_portion_detail_fields(
+            ctx.connection, ctx.user_id, portion_id, PortionDetailUpdate(**preparation), commit=False
+        )
+        changed.append(_preparation_text(preparation, False))
+    if not changed:
+        raise ToolInputError("Nothing to change: give at least one field.")
+    result = {TOOL_RESULT_CHANGED: [f"{portion.source.name}: " + ", ".join(changed)]}
+    try:
+        updated = get_portion_detail(ctx.connection, ctx.user_id, portion_id)
+    except NotFoundError:
+        result["note"] = "It was merged with an equal food of its plate: call show_meal to see it."
+    else:
+        if updated.source.carbs_100g is not None:
+            result["carbs_g"] = _round(updated.source.carbs_100g * portion_macro_amount(updated) / 100)
+    return result
 
 
 def _draft_new_food(ctx: ToolContext, tool_input: dict) -> dict:
@@ -462,6 +834,10 @@ _HANDLERS = {
     "add_estimate": _add_estimate,
     "show_meal": _show_meal,
     "draft_new_food": _draft_new_food,
+    "add_plate": _add_plate,
+    "update_meal": _update_meal,
+    "update_plate": _update_plate,
+    "update_food": _update_food,
 }
 
 

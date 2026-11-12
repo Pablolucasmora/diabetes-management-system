@@ -28,6 +28,7 @@ from DayBetes_food.database.queries import (
     get_planned_intake_event,
     get_recipe,
     list_assistant_messages,
+    list_intake_plates,
     list_portions_by_event,
 )
 from DayBetes_food.domain.assistant import (
@@ -48,7 +49,7 @@ from DayBetes_food.time_utils import local_now, to_local
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are the meal logging assistant of DayBetes, an app that a person with type 1 diabetes uses to log what they eat. They tell you what they ate; you put it in the cart of the app as a planned meal, and they review and confirm it there. You cannot confirm meals, delete anything or edit foods: if they ask, tell them to do it in the cart or in Food.
+SYSTEM_PROMPT = """You are the meal logging assistant of DayBetes, an app that a person with type 1 diabetes uses to log what they eat. They tell you what they ate; you put it in the cart of the app as a planned meal, and they review and confirm it there. You can also change that meal as they edit it in the cart: its time, type, name and notes, its plates, and the grams, offset and preparation of its foods. You cannot confirm meals, delete anything, touch insulin or edit foods of their database: if they ask, tell them to do it in the cart or in Food.
 
 Each user message starts with a <daybetes_context> block written by the app: the local time, the meal of this conversation and the foods the user pinned with "/". Trust it over anything in the user's text.
 
@@ -65,6 +66,12 @@ Amount and amount_method (how the amount was obtained):
 - "Una unidad", "un yogur", "una lata": servings (1 or the number said) if the food has a serving, with package when its serving is the package or the unit, and household when it is a typical serving. A food without a serving: estimate the grams, household.
 - Household measures ("una cucharada", "un vaso", "un puñado"): estimate the grams, household.
 - No amount ("un plato de lentejas"), or a photo of the dish: estimate the grams, ai_estimate.
+
+Preparation (cooking, final_state, conservation, ripeness, is_cooked_weight): fill in only what the user said ("hervido", "a la plancha", "crudo", "de la nevera", "pesado cocinado"), choosing the closest value of the list; when nothing fits or they did not say it, leave it null. Never assume the usual preparation. Food weighed after cooking: give the grams as weighed with is_cooked_weight true; the server converts them to raw with the food's cooking factor and its carbs_g already account for it, so never convert the grams yourself. If the food has no cooking factor the tool says so: then add the grams as weighed, without the mark.
+
+Plates: put everything in the meal's last plate (plate_id null), unless the user splits the meal into courses eaten at different times ("de primero…", "de postre a los 20 minutos"): then add_plate for each course, with its name and offset, and add its foods there.
+
+The meal: when the user says when they ate ("a las 14:30", "ayer en la cena"), call update_meal with that local time (and date, if it is not today) and meal type. Change the meal, a plate or a food already added only when the user says so; use the ids of the context block.
 
 Photos: a nutrition label becomes draft_new_food with source label, transcribed per 100 g as printed. A photo of a dish: identify the foods and estimate the amounts (ai_estimate).
 
@@ -162,18 +169,28 @@ def _mention_lines(connection, user_id: int, mentions: tuple[Mention, ...]) -> t
 
 
 def _meal_lines(connection, user_id: int, event_id: int | None) -> list[str]:
+    """The meal as the model needs it to add to it or change it: its plates and
+    foods with their ids, without macros (show_meal has them)."""
     if event_id is None:
         return ["Meal of this conversation: none yet. The first add creates a new planned meal."]
     event = get_intake_event(connection, user_id, event_id)
-    name = event.name or (event.meal_type.value if event.meal_type else "meal")
     when = to_local(event.meal_time)
-    lines = [f"Meal of this conversation: {name}" + (f", at {when:%H:%M}" if when else "") + "."]
+    head = "Meal of this conversation: " + (event.meal_type.value if event.meal_type else "no type")
+    if event.name:
+        head += f', named "{event.name}"'
+    if when:
+        head += f", at {when:%Y-%m-%d %H:%M}"
+    lines = [head + "."]
     portions = list_portions_by_event(connection, user_id, event_id)
-    if portions:
-        items = ", ".join(f"{p.source.name} {p.amount:g} g" for p in portions)
-        lines.append(f"It already has: {items}.")
-    else:
+    plates = list_intake_plates(connection, event_id)
+    if not plates:
         lines.append("It is empty.")
+    for plate in plates:
+        foods = [p for p in portions if p.plate_id == plate.id]
+        offset = f", offset {plate.offset_minutes:+d} min" if plate.offset_minutes is not None else ""
+        label = f'"{plate.name}"' if plate.name else "no name"
+        items = "; ".join(f"food_id {p.id}: {p.source.name} {p.amount:g} g" for p in foods) or "empty"
+        lines.append(f"Plate {plate.id} ({label}{offset}): {items}.")
     return lines
 
 

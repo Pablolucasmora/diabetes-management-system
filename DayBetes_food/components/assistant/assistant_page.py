@@ -164,6 +164,8 @@ def _added_line(card: AddedCard):
                 meta.append(AMOUNT_METHOD_LABELS[AmountMethod(card.amount_method)])
             except ValueError:
                 pass
+        if card.preparation:
+            meta.append(card.preparation)
     return Li(
         Span(card.name, cls="text-sm text-gray-900 min-w-0 break-words"),
         Span(" · ".join(part for part in meta if part), cls="text-[11px] text-gray-500"),
@@ -171,22 +173,38 @@ def _added_line(card: AddedCard):
     )
 
 
-def _added_card(cards: list[AddedCard]):
+def _review_button():
+    return Button(
+        "Review",
+        type="button",
+        cls="web_button px-3 py-1 text-xs",
+        hx_get="/cart",
+        hx_target="#main_content",
+        hx_push_url="true",
+    )
+
+
+def _cart_card(title: str, lines: list):
+    """What the assistant did in the cart (§9.11), with `Review`, which opens it."""
     return Div(
         Div(
-            Span("Added to the cart", cls="web_section_label"),
-            Button(
-                "Review",
-                type="button",
-                cls="web_button px-3 py-1 text-xs",
-                hx_get="/cart",
-                hx_target="#main_content",
-                hx_push_url="true",
-            ),
+            Span(title, cls="web_section_label"),
+            _review_button(),
             cls="flex items-center justify-between gap-2",
         ),
-        Ul(*(_added_line(card) for card in cards), cls="flex flex-col gap-1.5"),
+        Ul(*lines, cls="flex flex-col gap-1.5"),
         cls="self-start w-full max-w-[85%] web_container rounded-2xl px-3 py-2 flex flex-col gap-2",
+    )
+
+
+def _added_card(cards: list[AddedCard]):
+    return _cart_card("Added to the cart", [_added_line(card) for card in cards])
+
+
+def _changed_card(lines: list[str]):
+    return _cart_card(
+        "Changed in the cart",
+        [Li(line, cls="text-sm text-gray-900 min-w-0 break-words") for line in lines],
     )
 
 
@@ -238,6 +256,7 @@ def TurnBlock(turn: TurnView, conversation_id: int, notices: list[str] | None = 
         _user_bubble(turn),
         *(_reply_bubble(text) for text in turn.replies),
         _added_card(turn.added) if turn.added else None,
+        _changed_card(turn.changed) if turn.changed else None,
         *(_draft_card(card, conversation_id) for card in turn.drafts),
         *(_notice(text) for text in (notices or [])),
         cls="w-full flex flex-col gap-2",
