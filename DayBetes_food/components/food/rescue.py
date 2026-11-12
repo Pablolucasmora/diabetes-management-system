@@ -19,7 +19,7 @@ from DayBetes_food.components.modal import (
 )
 from DayBetes_food.components.food.tags import SYSTEM_TAG_LABELS
 from DayBetes_food.components.stats.stats_shared import MEAL_TYPE_LABELS
-from DayBetes_food.domain.constants import AmountInputUnit, MealType, SystemTag
+from DayBetes_food.domain.constants import AmountInputUnit, MealType, Ripeness, SystemTag
 from DayBetes_food.domain.tag import SYSTEM_TAG_MEAL_TYPE
 
 RESCUE_MODAL_ID = "rescue_modal"
@@ -270,12 +270,15 @@ def _rescue_unit_options(serving_g: float | None):
     return options
 
 
-def RescueLine(entry_type: str, entry_id: int, name: str, serving_g: float | None):
-    """One food of the rescue: name, amount with − / + and unit.
+def RescueLine(entry_type: str, entry_id: int, name: str, serving_g: float | None, is_fruit: bool = False):
+    """One food of the rescue: name, amount with − / + and unit, and for a fruit
+    its ripeness (study §6.3).
 
     `data-rescue-serving-g` is presentation only: picking the same food again
     adds one serving's grams to a line in grams (§9.6). The server still
-    converts every amount from the food in the database (§7.13)."""
+    converts every amount from the food in the database (§7.13). Every line
+    sends one `ripeness`, empty when it is not a fruit, so the lists of the
+    form stay aligned."""
     return Div(
         Input(type="hidden", name="entry_type", value=entry_type),
         Input(type="hidden", name="entry_id", value=str(entry_id)),
@@ -302,6 +305,17 @@ def RescueLine(entry_type: str, entry_id: int, name: str, serving_g: float | Non
             ),
             Select(*_rescue_unit_options(serving_g), name="amount_unit", aria_label="Unit", cls=_FIELD_CLS),
             cls="grid grid-cols-[1fr_6.5rem] gap-2",
+        ),
+        (
+            Select(
+                Option("Ripeness not set", value="", selected=True),
+                *[Option(ripeness.value, value=ripeness.value) for ripeness in Ripeness],
+                name="ripeness",
+                aria_label="Ripeness",
+                cls=_FIELD_CLS,
+            )
+            if is_fruit
+            else Input(type="hidden", name="ripeness", value="")
         ),
         data_rescue_line=f"{entry_type}:{entry_id}",
         data_rescue_serving_g=(f"{serving_g:.3f}" if serving_g is not None else ""),

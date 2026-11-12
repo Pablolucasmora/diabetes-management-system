@@ -107,6 +107,7 @@ from DayBetes_food.domain.constants import (
     PrefillSource,
     FoodEntryType,
     PortionOrigin,
+    Ripeness,
     StorageLocation,
     parse_enum,
     parse_optional_id,
@@ -154,6 +155,7 @@ from DayBetes_food.domain.portion_detail import (
     PortionDetailUpdate,
     amount_to_grams,
     parse_amount_grams,
+    ripeness_applies,
 )
 from DayBetes_food.components.data_sources import ciqual_attribution, off_attribution
 from DayBetes_food.domain.ciqual_food import parse_ciqual_code
@@ -780,6 +782,13 @@ def _get_rescue_food(connection, user_id: int, origin: PortionOrigin, entry_id: 
     if origin is PortionOrigin.CATALOG:
         return get_catalog_item(connection, user_id, entry_id)
     return get_manual_intake(connection, user_id, entry_id)
+
+
+def _is_fruit(item: CatalogItemRead | ManualIntakeRead) -> bool:
+    """Whether a meal portion of this food can carry a ripeness (study §6.3).
+    A dish (`manual_intake`) has no category, so never."""
+    category = getattr(item, "category", None)
+    return ripeness_applies(PortionDestination.INTAKE_EVENT, category.value if category is not None else None)
 
 
 def _rescue_error(message: str):
@@ -1794,7 +1803,7 @@ def setup_food_routes(rt):
         if item is None:
             return app_error_response(request, NotFoundError, "Food not found.")
         return render_fragment(
-            RescueLine(origin.value, int(item.id), item.name, item.default_portion)
+            RescueLine(origin.value, int(item.id), item.name, item.default_portion, is_fruit=_is_fruit(item))
         )
 
     @rt("/food/rescue/log")
@@ -1806,9 +1815,14 @@ def setup_food_routes(rt):
         entry_ids = form.getlist("entry_id")
         amount_values = form.getlist("amount_value")
         amount_units = form.getlist("amount_unit")
+        # One per line, empty when it is not a fruit (RescueLine, study §6.3). A form
+        # without the field at all (opened before it existed) gives none: "not given".
+        ripeness_values = form.getlist("ripeness") or [""] * len(entry_types)
         if not entry_types:
             return _rescue_error("Choose at least one food.")
-        if not (len(entry_types) == len(entry_ids) == len(amount_values) == len(amount_units)):
+        if not (
+            len(entry_types) == len(entry_ids) == len(amount_values) == len(amount_units) == len(ripeness_values)
+        ):
             return _rescue_error("The rescue lines are incomplete.")
 
         meal_t = _parse_hhmm(str(form.get("meal_hour") or ""))
@@ -1830,11 +1844,14 @@ def setup_food_routes(rt):
 
         # HTTP payload validation that does not depend on the database (§7.1).
         lines = []
-        for raw_type, raw_id, raw_value, raw_unit in zip(entry_types, entry_ids, amount_values, amount_units):
+        for raw_type, raw_id, raw_value, raw_unit, raw_ripeness in zip(
+            entry_types, entry_ids, amount_values, amount_units, ripeness_values
+        ):
             try:
                 origin = PortionOrigin(str(raw_type).strip())
                 unit = AmountInputUnit(str(raw_unit).strip())
-            except ValueError:
+                ripeness = parse_enum(Ripeness, str(raw_ripeness), field="ripeness")
+            except (ValueError, ValidationError):
                 return _rescue_error("A rescue line is not valid.")
             origin_id = _to_int(str(raw_id))
             value = _to_float(str(raw_value))
@@ -1844,7 +1861,7 @@ def setup_food_routes(rt):
                 return _rescue_error("Use grams, servings, lb or oz.")
             if value is None:
                 return _rescue_error("Enter an amount for every food.")
-            lines.append((origin, int(origin_id), value, unit))
+            lines.append((origin, int(origin_id), value, unit, ripeness))
 
         user_id = get_current_user_id()
         if not user_id:
@@ -1853,17 +1870,19 @@ def setup_food_routes(rt):
             # The foods are read with the SQL visibility rule, and the serving
             # comes from the database, never from the form (§7.13).
             portions = []
-            for origin, origin_id, value, unit in lines:
+            for origin, origin_id, value, unit, ripeness in lines:
                 item = _get_rescue_food(connection, int(user_id), origin, origin_id)
                 if item is None:
                     return app_error_response(request, NotFoundError, "Rescue food not found.")
+                if ripeness is not None and not _is_fruit(item):
+                    return _rescue_error(f"{item.name} is not a fruit: it has no ripeness.")
                 try:
                     grams = parse_amount_grams(amount_to_grams(value, unit, item.default_portion))
                 except ValidationError:
                     if unit is AmountInputUnit.PORTION and item.default_portion is None:
                         return _rescue_error(f"{item.name} has no serving. Use grams, lb or oz.")
                     return _rescue_error("Each amount must be greater than 0 g and at most 100000 g.")
-                portions.append((origin, origin_id, grams, _portion_defaults(item)))
+                portions.append((origin, origin_id, grams, {**_portion_defaults(item), "ripeness": ripeness}))
 
             try:
                 with connection.transaction():
@@ -2848,6 +2867,7 @@ def setup_food_routes(rt):
         cooking: str = "",
         final_state: str = "",
         conservation: str = "",
+        ripeness: str = "",
         is_cooked_weight: str = "",
         strictly_weighed: str | None = None,
     ):
@@ -2895,6 +2915,7 @@ def setup_food_routes(rt):
             parsed_cooking = parse_enum(CookingMethod, cooking, field="cooking")
             parsed_final_state = parse_enum(FoodPhysicalState, final_state, field="final_state")
             parsed_conservation = parse_enum(ConservationMethod, conservation, field="conservation")
+            parsed_ripeness = parse_enum(Ripeness, ripeness, field="ripeness")
         except ValidationError as error:
             return render_fragment(P(str(error), cls="text-red-700"))
 
@@ -2963,6 +2984,8 @@ def setup_food_routes(rt):
                             cooking=parsed_cooking,
                             final_state=parsed_final_state,
                             conservation=parsed_conservation,
+                            # A fruit only (study §6.3); the leftovers' container gets none.
+                            ripeness=parsed_ripeness,
                             is_cooked_weight=(cooked_weight if kind is FoodEntryType.CATALOG else False),
                             **portion_defaults,
                         ),
@@ -2997,7 +3020,9 @@ def setup_food_routes(rt):
             except ConflictError:
                 # The event is no longer 'planned'.
                 return app_error_response(request, ConflictError, "That meal has already been confirmed.")
-            except ValidationError:
+            except ValidationError as error:
+                if "ripeness" in error.fields:
+                    return render_fragment(P(str(error), cls="text-red-700"))
                 return render_fragment(P("Could not log this food: check the amounts.", cls="text-red-700"))
             return HTMLResponse("", headers={"HX-Redirect": "/food"})
 

@@ -35,8 +35,10 @@ from DayBetes_food.domain.constants import (
     KeepPartMode,
     MealType,
     PortionOrigin,
+    Ripeness,
     StorageLocation,
 )
+from DayBetes_food.domain.portion_detail import ripeness_applies
 from DayBetes_food.domain.recipe import RECIPE_NAME_MAX_LENGTH
 from DayBetes_food.domain.intake_event import (
     INTAKE_EVENT_NAME_MAX_LENGTH,
@@ -757,7 +759,12 @@ def PlateBlock(event, plate, plate_portions, plates, plate_labels):
             return []
         sample = item["sample"]
         result = []
-        for field, label in (("cooking", "Cooking"), ("conservation", "Conservation"), ("final_state", "Final state")):
+        for field, label in (
+            ("cooking", "Cooking"),
+            ("conservation", "Conservation"),
+            ("final_state", "Final state"),
+            ("ripeness", "Ripeness"),
+        ):
             if len({getattr(other["sample"], field) for other in siblings}) > 1:
                 value = getattr(sample, field)
                 result.append((label, value.value if value is not None else None))
@@ -786,7 +793,7 @@ def _preparation_summary(sample) -> str:
     """One short line with how the ingredient was prepared and weighed."""
     parts = [
         value.value
-        for value in (sample.cooking, sample.final_state, sample.conservation)
+        for value in (sample.cooking, sample.final_state, sample.conservation, sample.ripeness)
         if value is not None
     ]
     if sample.is_cooked_weight:
@@ -944,6 +951,10 @@ def IngredientSettingsModal(event, plate, sample, item_key, ingredient_name, pla
                     _preparation_select("Cooking", "cooking", CookingMethod, sample.cooking, item_key),
                     _preparation_select("Final state", "final_state", FoodPhysicalState, sample.final_state, item_key),
                     _preparation_select("Conservation", "conservation", ConservationMethod, sample.conservation, item_key),
+                    # Fruits of a meal only (study §6.3); saved with the rest of the preparation.
+                    _preparation_select("Ripeness", "ripeness", Ripeness, sample.ripeness, item_key)
+                    if ripeness_applies(sample.destination, sample.source.category)
+                    else None,
                     cls="grid grid-cols-2 gap-2",
                 ),
                 modal_confirm_button(

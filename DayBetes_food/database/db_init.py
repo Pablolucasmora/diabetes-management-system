@@ -30,6 +30,7 @@ from DayBetes_food.domain.constants import (
     FoodCategory,
     FoodPhysicalState,
     FridgeCloseReason,
+    Ripeness,
     SystemTag,
     sql_in_list,
 )
@@ -2321,6 +2322,10 @@ def _ensure_portion_detail_schema(cursor):
     # the duplicates below are grouped. Its FK and CHECK are in _ensure_fridge_schema.
     if not _has_column(cursor, "portion_detail", "source_fridge_id"):
         cursor.execute("ALTER TABLE portion_detail ADD COLUMN source_fridge_id INTEGER;")
+    # Part of the key since 2026-11-12 (§4.6.4). New column: no row has a value,
+    # so no data predates its rule (§12.7). Its CHECKs are added below.
+    if not _has_column(cursor, "portion_detail", "ripeness"):
+        cursor.execute("ALTER TABLE portion_detail ADD COLUMN ripeness VARCHAR(50);")
 
     _DUPLICATE_PORTION_GROUPS = """
         WITH dup AS (
@@ -2331,7 +2336,7 @@ def _ensure_portion_detail_schema(cursor):
             FROM portion_detail
             WHERE plate_id IS NOT NULL
             GROUP BY plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state, is_cooked_weight,
-                     source_fridge_id
+                     source_fridge_id, ripeness
             HAVING count(*) > 1
         )
     """
@@ -2362,16 +2367,24 @@ def _ensure_portion_detail_schema(cursor):
     # amounts of food, so they are separate rows. source_fridge_id is part of it
     # since 2026-11-07: what was taken from a container goes back to it when the
     # planned meal is deleted, so it is never merged with the same food from
-    # elsewhere (measurement §4.8.6). Each older index is dropped, otherwise it
-    # would keep rejecting the pairs the new key allows.
-    cursor.execute("DROP INDEX IF EXISTS uq_portion_detail_plate_origin_preparation;")
-    cursor.execute("DROP INDEX IF EXISTS uq_portion_detail_plate_origin_preparation_cooked;")
+    # elsewhere (measurement §4.8.6). ripeness is part of it since 2026-11-12: the
+    # same fruit at two ripeness levels is what the field compares (study §6.3).
+    # The new index is created before the older ones are dropped, so the plate is
+    # never left without its key. Each older index is dropped, otherwise it would
+    # keep rejecting the pairs the new key allows.
     _create_unique_index_once(
         cursor,
-        "uq_portion_detail_plate_origin_preparation_source",
+        "uq_portion_detail_plate_origin_preparation_ripeness",
         "ON portion_detail (plate_id, catalog_id, manual_intake_id, cooking, conservation, final_state, "
-        "is_cooked_weight, source_fridge_id) NULLS NOT DISTINCT WHERE plate_id IS NOT NULL",
+        "is_cooked_weight, source_fridge_id, ripeness) NULLS NOT DISTINCT WHERE plate_id IS NOT NULL",
     )
+    for old_index in (
+        "uq_portion_detail_plate_origin_preparation",
+        "uq_portion_detail_plate_origin_preparation_cooked",
+        "uq_portion_detail_plate_origin_preparation_source",
+    ):
+        if _index_exists(cursor, old_index):
+            cursor.execute(sql.SQL("DROP INDEX {};").format(sql.Identifier(old_index)))
 
     # ---- T1.3: amount range CHECK, after the consolidation above ----
     # NaN and Infinity are rejected by this same CHECK: in PostgreSQL NaN is
@@ -2485,6 +2498,22 @@ def _ensure_portion_detail_schema(cursor):
                 "ALTER TABLE portion_detail ADD CONSTRAINT {} "
                 "CHECK ({column} IS NULL OR {column} IN (" + values + "));"
             ).format(sql.Identifier(name), column=sql.Identifier(column))
+        )
+
+    # ---- Ripeness of a fruit (study §6.3, 2026-11-12) ----
+    # Checked before altering (§12.2): an up-to-date database takes no lock here.
+    # The CHECK is regenerated only if Ripeness gains a value (§4.4).
+    if _check_lacks_values(cursor, "portion_detail", "ck_portion_detail_ripeness", [r.value for r in Ripeness]):
+        cursor.execute("ALTER TABLE portion_detail DROP CONSTRAINT ck_portion_detail_ripeness;")
+    if not _constraint_exists(cursor, "portion_detail", "ck_portion_detail_ripeness"):
+        cursor.execute(
+            "ALTER TABLE portion_detail ADD CONSTRAINT ck_portion_detail_ripeness "
+            "CHECK (ripeness IS NULL OR ripeness IN (" + sql_in_list(Ripeness) + "));"
+        )
+    if not _constraint_exists(cursor, "portion_detail", "ck_portion_detail_ripeness_event"):
+        cursor.execute(
+            "ALTER TABLE portion_detail ADD CONSTRAINT ck_portion_detail_ripeness_event "
+            "CHECK (ripeness IS NULL OR intake_event_id IS NOT NULL);"
         )
 
 

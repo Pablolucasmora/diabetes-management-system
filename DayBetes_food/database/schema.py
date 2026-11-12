@@ -28,6 +28,7 @@ from DayBetes_food.domain.constants import (
     PenCloseReason,
     PenFormat,
     PrefillSource,
+    Ripeness,
     StorageLocation,
     SystemTag,
     sql_in_list,
@@ -54,6 +55,7 @@ _PORTION_PREPARATION_LISTS = {
     "cooking": sql_in_list(CookingMethod),
     "conservation": sql_in_list(ConservationMethod),
     "final_state": sql_in_list(FoodPhysicalState),
+    "ripeness": sql_in_list(Ripeness),
 }
 
 
@@ -898,6 +900,9 @@ class DBSchema:
         final_state VARCHAR(50)
             CONSTRAINT ck_portion_detail_final_state
             CHECK (final_state IS NULL OR final_state IN ({_PORTION_PREPARATION_LISTS['final_state']})), -- Final state, in case the state changed from the initial one
+        ripeness VARCHAR(50)
+            CONSTRAINT ck_portion_detail_ripeness
+            CHECK (ripeness IS NULL OR ripeness IN ({_PORTION_PREPARATION_LISTS['ripeness']})), -- Ripeness of a fruit, seen by eye; meal portions of a `fruits` food only (study_conventions.md 6.3). NULL = not given
         strictly_weighed BOOLEAN, -- Whether or not the food was weighed before consumption. NULL means "no data" and is a state of its own, not FALSE (decision 2026-09-18)
         macros_quality BOOLEAN, -- UNUSED since 2026-10-09: the quality is the food's (catalog/manual_intake.macros_quality, read live, measurement §6.11). Kept with its values until versioning (portion_detail H1)
         
@@ -910,6 +915,8 @@ class DBSchema:
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
         CONSTRAINT ck_portion_detail_offset_only_for_event
-            CHECK (offset_minutes IS NULL OR intake_event_id IS NOT NULL)
+            CHECK (offset_minutes IS NULL OR intake_event_id IS NOT NULL),
+        CONSTRAINT ck_portion_detail_ripeness_event
+            CHECK (ripeness IS NULL OR intake_event_id IS NOT NULL)
     );
     """

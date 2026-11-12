@@ -70,6 +70,7 @@ from DayBetes_food.domain.constants import (
     MealType,
     PortionDestination,
     PortionOrigin,
+    Ripeness,
     StorageLocation,
     parse_enum,
     parse_optional_id,
@@ -94,7 +95,7 @@ from DayBetes_food.domain.fridge import (
     parse_keep_part,
     parse_optional_containers,
 )
-from DayBetes_food.domain.portion_detail import PortionDetailUpdate, amount_to_grams
+from DayBetes_food.domain.portion_detail import PortionDetailUpdate, amount_to_grams, ripeness_applies
 from DayBetes_food.http_errors import app_error_response
 from DayBetes_food.services.intake_event import (
     confirm_planned_event,
@@ -1144,11 +1145,19 @@ def setup_cart_routes(rt):
         return _portion_flag_route(request, portion_id, "is_cooked_weight", is_cooked_weight, "Cooked weight")
 
     @rt("/cart/portion/{portion_id}/preparation")
-    def post(request: Request, portion_id: PathId, cooking: str = "", final_state: str = "", conservation: str = ""):
+    def post(
+        request: Request,
+        portion_id: PathId,
+        cooking: str = "",
+        final_state: str = "",
+        conservation: str = "",
+        ripeness: str = "",
+    ):
         """Correct how an ingredient was prepared from the cart.
 
         The three fields are always sent together: an empty one means "no
-        data" and is written as NULL. They are part of the unique key
+        data" and is written as NULL. A fruit also sends `ripeness` (study
+        §6.3); for any other food the field is absent and nothing is written. They are part of the unique key
         (measurement_conventions.md §4.6.4), so the change can merge the row
         into a sibling of the same plate: the whole card is repainted.
         """
@@ -1161,11 +1170,14 @@ def setup_cart_routes(rt):
             parsed_cooking = parse_enum(CookingMethod, cooking, field="cooking")
             parsed_final_state = parse_enum(FoodPhysicalState, final_state, field="final_state")
             parsed_conservation = parse_enum(ConservationMethod, conservation, field="conservation")
+            parsed_ripeness = parse_enum(Ripeness, ripeness, field="ripeness")
         except ValidationError as error:
             return _error(request, ValidationError, str(error))
         with get_connection() as connection:
             try:
                 portion = get_portion_detail(connection, int(user_id), portion_id)
+                # Only a fruit of a meal shows the field; elsewhere its absence touches nothing.
+                fruit = ripeness_applies(portion.destination, portion.source.category)
                 event_id = _portion_event_id(connection, int(user_id), portion)
                 with connection.transaction():
                     update_portion_detail_fields(
@@ -1176,6 +1188,9 @@ def setup_cart_routes(rt):
                             cooking=(CLEAR if parsed_cooking is None else parsed_cooking),
                             final_state=(CLEAR if parsed_final_state is None else parsed_final_state),
                             conservation=(CLEAR if parsed_conservation is None else parsed_conservation),
+                            ripeness=(
+                                (CLEAR if parsed_ripeness is None else parsed_ripeness) if fruit else parsed_ripeness
+                            ),
                         ),
                         commit=False,
                     )
