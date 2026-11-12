@@ -58,9 +58,11 @@ from DayBetes_food.domain.constants import (
     Nutriscore,
     NutrientEntryMode,
     PortionOrigin,
+    Ripeness,
     StorageLocation,
 )
 from DayBetes_food.domain.nutrition import SMART_MACROS_MAX_LENGTH
+from DayBetes_food.domain.portion_detail import RIPENESS_CATEGORY
 from DayBetes_food.time_utils import to_local
 
 
@@ -3347,6 +3349,19 @@ def FoodDetailPage(
                             ),
                             cls="flex flex-col gap-1",
                         ),
+                        # A fruit only (study §6.3): kept when logging it to a meal, not in a container.
+                        Div(
+                            _searchable_compact_input(
+                                name="ripeness",
+                                options=[r.value for r in Ripeness],
+                                value="",
+                                placeholder="Ripeness",
+                                allow_add=False,
+                            ),
+                            cls="flex flex-col gap-1",
+                        )
+                        if entry_type == "catalog" and entry.get("category") == RIPENESS_CATEGORY.value
+                        else None,
                         id=advanced_inner_id,
                         cls="grid grid-cols-2 md:grid-cols-3 gap-2",
                     ),

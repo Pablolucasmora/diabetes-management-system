@@ -24,6 +24,7 @@ from DayBetes_food.domain.constants import (
     Nutriscore,
     PortionDestination,
     PortionOrigin,
+    Ripeness,
     StorageLocation,
     SystemTag,
 )
@@ -459,6 +460,7 @@ def portion_detail_read_from_row(row: dict) -> PortionDetailRead:
             cooking=_enum_from_row(row, "cooking", CookingMethod),
             conservation=_enum_from_row(row, "conservation", ConservationMethod),
             final_state=_enum_from_row(row, "final_state", FoodPhysicalState),
+            ripeness=_enum_from_row(row, "ripeness", Ripeness),
             strictly_weighed=row.get("strictly_weighed"),
             is_cooked_weight=bool(row.get("is_cooked_weight")),
             offset_minutes=row.get("offset_minutes"),

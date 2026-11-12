@@ -202,6 +202,16 @@ class ConservationMethod(str, Enum):
 
 
 @unique
+class Ripeness(str, Enum):
+    """Ripeness of a fruit seen by eye when eating it (study_conventions.md §6.3).
+    Only on meal portions of a `fruits` food; NULL is "not given", never `ripe`."""
+
+    UNRIPE = "unripe"
+    RIPE = "ripe"
+    OVERRIPE = "overripe"
+
+
+@unique
 class StorageLocation(str, Enum):
     """Where a container (`fridge`) is kept (measurement_conventions.md 4.8).
 

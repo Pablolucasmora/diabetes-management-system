@@ -17,11 +17,13 @@ from DayBetes_food.domain.constants import (
     AmountInputUnit,
     ConservationMethod,
     CookingMethod,
+    FoodCategory,
     FoodPhysicalState,
     MASS_SANITY_MAX_G,
     Clear,
     PortionDestination,
     PortionOrigin,
+    Ripeness,
 )
 from DayBetes_food.errors import ValidationError
 
@@ -42,7 +44,18 @@ _PREPARATION_ENUMS = {
     "cooking": CookingMethod,
     "conservation": ConservationMethod,
     "final_state": FoodPhysicalState,
+    "ripeness": Ripeness,
 }
+
+
+# Ripeness is only given to the fruits of a meal (study_conventions.md §6.3).
+RIPENESS_CATEGORY = FoodCategory.FRUITS
+
+
+def ripeness_applies(destination: PortionDestination, category: str | None) -> bool:
+    """Whether a portion can carry a ripeness: a meal portion of a `fruits` food.
+    A dish (`manual_intake`) has no category, so never."""
+    return destination is PortionDestination.INTAKE_EVENT and category == RIPENESS_CATEGORY.value
 
 
 def parse_amount_grams(value) -> float:
@@ -84,7 +97,7 @@ def amount_to_grams(value: float, unit: AmountInputUnit, serving_grams: float | 
 
 
 def validate_preparation_choice(field: str, value):
-    """Validate `cooking`/`conservation`/`final_state` against its enum (T2.2).
+    """Validate `cooking`/`conservation`/`final_state`/`ripeness` against its enum (T2.2).
 
     Defence in depth (7.10): persistence cannot accept any string just because
     the live list is used in presentation. `None` is "no value" and passes;
@@ -139,6 +152,7 @@ class PortionDetailRead:
     cooking: CookingMethod | None
     conservation: ConservationMethod | None
     final_state: FoodPhysicalState | None
+    ripeness: Ripeness | None       # fruits of a meal only; None = not given (study §6.3)
     strictly_weighed: bool | None   # None = no data (decision 2026-09-18)
     is_cooked_weight: bool
     offset_minutes: int | None
@@ -160,6 +174,7 @@ class PortionDetailCreate:
     cooking: CookingMethod | None = None
     conservation: ConservationMethod | None = None
     final_state: FoodPhysicalState | None = None
+    ripeness: Ripeness | None = None
     strictly_weighed: bool | None = None
     is_cooked_weight: bool = False
     offset_minutes: int | None = None
@@ -172,6 +187,7 @@ class PortionDetailUpdate:
     cooking: CookingMethod | None | Clear = None
     conservation: ConservationMethod | None | Clear = None
     final_state: FoodPhysicalState | None | Clear = None
+    ripeness: Ripeness | None | Clear = None
 
 
 # ============================================

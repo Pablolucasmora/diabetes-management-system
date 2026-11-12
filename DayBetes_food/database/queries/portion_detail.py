@@ -29,12 +29,13 @@ from DayBetes_food.domain.portion_detail import (
     PortionDetailRead,
     PortionDetailUpdate,
     parse_amount_grams,
+    ripeness_applies,
     validate_preparation_choice,
 )
 from DayBetes_food.errors import NotFoundError, ValidationError
 
 
-_PREPARATION_FIELDS = ("cooking", "conservation", "final_state")
+_PREPARATION_FIELDS = ("cooking", "conservation", "final_state", "ripeness")
 # macros_quality is not a portion flag since 2026-10-09: it is the food's
 # (measurement §6.11). portion_detail.macros_quality is kept unused.
 _FLAG_FIELDS = ("strictly_weighed", "is_cooked_weight")
@@ -67,6 +68,7 @@ _PORTION_COLUMNS = """
     pd.cooking,
     pd.conservation,
     pd.final_state,
+    pd.ripeness,
     pd.strictly_weighed,
     pd.is_cooked_weight,
     pd.offset_minutes,
@@ -172,6 +174,25 @@ def _amount_limit_error(exc: Exception) -> Exception:
     return exc
 
 
+_NOT_A_FRUIT = "Ripeness can only be given to a fruit of a meal."
+
+
+def _ensure_ripeness_applies(connection, destination: PortionDestination, origin: PortionOrigin, origin_id: int) -> None:
+    """A ripeness needs a meal portion of a `fruits` food (study §6.3). The CHECK
+    covers the destination; the category lives in `catalog`, so it is checked here."""
+    category = None
+    if origin is PortionOrigin.CATALOG:
+        row = _execute_query(
+            connection,
+            "SELECT c.category FROM catalog c WHERE c.id = %(id)s;",
+            {"id": origin_id},
+            commit=False,
+        )
+        category = row["category"] if row else None
+    if not ripeness_applies(destination, category):
+        raise ValidationError(_NOT_A_FRUIT, fields={"ripeness": "not_a_fruit"})
+
+
 def _portion_plate_key(portion: PortionDetailRead) -> int | None:
     """The plate that holds the uniqueness key of a portion (4.6.4, 4.7)."""
     return portion.recipe_plate_id if portion.destination is PortionDestination.RECIPE else portion.plate_id
@@ -188,6 +209,7 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
     cooking = validate_preparation_choice("cooking", payload.cooking)
     conservation = validate_preparation_choice("conservation", payload.conservation)
     final_state = validate_preparation_choice("final_state", payload.final_state)
+    ripeness = validate_preparation_choice("ripeness", payload.ripeness)
 
     origin = PortionOrigin(payload.origin)
     destination = PortionDestination(payload.destination)
@@ -208,6 +230,8 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
         raise ValidationError("source_fridge_only_for_event")
 
     _ensure_destination_owned(connection, user_id, destination, payload.destination_id)
+    if ripeness is not None:
+        _ensure_ripeness_applies(connection, destination, origin, payload.origin_id)
 
     offset_minutes = payload.offset_minutes
     if is_event:
@@ -239,6 +263,7 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
         "cooking": cooking.value if cooking is not None else None,
         "conservation": conservation.value if conservation is not None else None,
         "final_state": final_state.value if final_state is not None else None,
+        "ripeness": ripeness.value if ripeness is not None else None,
         "strictly_weighed": payload.strictly_weighed,
         "is_cooked_weight": bool(payload.is_cooked_weight),
         "offset_minutes": offset_minutes,
@@ -251,7 +276,7 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
     plate_column = "recipe_plate_id" if is_recipe else "plate_id"
     key_columns = f"{plate_column}, catalog_id, manual_intake_id, cooking, conservation, final_state, is_cooked_weight"
     if not is_recipe:
-        key_columns += ", source_fridge_id"
+        key_columns += ", source_fridge_id, ripeness"
     conflict = (
         f"ON CONFLICT ({key_columns}) "
         f"WHERE {plate_column} IS NOT NULL "
@@ -261,14 +286,14 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
         INSERT INTO portion_detail (
             amount, catalog_id, manual_intake_id,
             intake_event_id, recipe_id, fridge_id, plate_id, recipe_plate_id,
-            cooking, conservation, final_state,
+            cooking, conservation, final_state, ripeness,
             strictly_weighed,
             is_cooked_weight, offset_minutes, source_fridge_id
         )
         VALUES (
             %(amount)s, %(catalog_id)s, %(manual_intake_id)s,
             %(intake_event_id)s, %(recipe_id)s, %(fridge_id)s, %(plate_id)s, %(recipe_plate_id)s,
-            %(cooking)s, %(conservation)s, %(final_state)s,
+            %(cooking)s, %(conservation)s, %(final_state)s, %(ripeness)s,
             %(strictly_weighed)s,
             %(is_cooked_weight)s, %(offset_minutes)s, %(source_fridge_id)s
         )
@@ -433,6 +458,7 @@ def update_portion_flag(connection, user_id: int, portion_id: int, field: str, v
                 current.conservation,
                 current.final_state,
                 bool(value),
+                current.ripeness,
             )
             if sibling_id is not None:
                 _merge_into_sibling(connection, user_id, portion_id, sibling_id, commit)
@@ -468,6 +494,7 @@ def _find_preparation_sibling(
     conservation,
     final_state,
     is_cooked_weight: bool,
+    ripeness=None,
 ):
     # A constant, not input: the two plate columns of the uniqueness key (4.6.4, 4.7).
     plate_column = "recipe_plate_id" if portion.destination is PortionDestination.RECIPE else "plate_id"
@@ -483,6 +510,7 @@ def _find_preparation_sibling(
           AND pd.final_state IS NOT DISTINCT FROM %(final_state)s
           AND pd.is_cooked_weight IS NOT DISTINCT FROM %(is_cooked_weight)s
           AND pd.source_fridge_id IS NOT DISTINCT FROM %(source_fridge_id)s
+          AND pd.ripeness IS NOT DISTINCT FROM %(ripeness)s
         {_PORTION_OWNED_BY_USER}
         LIMIT 1;
     """
@@ -496,6 +524,7 @@ def _find_preparation_sibling(
         "final_state": (final_state.value if hasattr(final_state, "value") else final_state),
         "is_cooked_weight": bool(is_cooked_weight),
         "source_fridge_id": portion.source_fridge_id,
+        "ripeness": (ripeness.value if hasattr(ripeness, "value") else ripeness),
         "user_id": user_id,
     }
     row = _execute_query(connection, query, params, commit=False)
@@ -549,7 +578,8 @@ def _merge_into_sibling(connection, user_id: int, portion_id: int, sibling_id: i
 def update_portion_detail_fields(
     connection, user_id: int, portion_id: int, data: PortionDetailUpdate, commit: bool = True
 ) -> bool:
-    """Partial update of the three preparation fields (findings 15).
+    """Partial update of the preparation fields (findings 15), ripeness included
+    (study §6.3: only on a meal portion of a fruit, else ValidationError).
 
     `None` means "absent, do not touch"; `CLEAR` means "present but empty,
     write NULL" (7.4). Returns `False` only for the idempotent no-op "there was
@@ -572,6 +602,8 @@ def update_portion_detail_fields(
         return False
 
     current = get_portion_detail(connection, user_id, portion_id)
+    if resolved.get("ripeness") is not None and not ripeness_applies(current.destination, current.source.category):
+        raise ValidationError(_NOT_A_FRUIT, fields={"ripeness": "not_a_fruit"})
     if _portion_plate_key(current) is not None:
         sibling_id = _find_preparation_sibling(
             connection,
@@ -582,6 +614,7 @@ def update_portion_detail_fields(
             resolved.get("conservation", current.conservation),
             resolved.get("final_state", current.final_state),
             current.is_cooked_weight,
+            resolved.get("ripeness", current.ripeness),
         )
         if sibling_id is not None:
             _merge_into_sibling(connection, user_id, portion_id, sibling_id, commit)
@@ -637,6 +670,7 @@ def move_portion_to_plate(connection, user_id: int, portion_id: int, target_plat
         current.conservation,
         current.final_state,
         current.is_cooked_weight,
+        current.ripeness,
     )
     if sibling_id is not None:
         _merge_into_sibling(connection, user_id, portion_id, sibling_id, commit)
@@ -690,6 +724,7 @@ def move_portion_to_recipe_plate(
         current.conservation,
         current.final_state,
         current.is_cooked_weight,
+        current.ripeness,
     )
     if sibling_id is not None:
         _merge_into_sibling(connection, user_id, portion_id, sibling_id, commit)
