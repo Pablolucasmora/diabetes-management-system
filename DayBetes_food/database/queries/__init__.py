@@ -93,6 +93,7 @@ from DayBetes_food.database.queries.entries import (
     get_subtype_suggestions,
     get_subtype_label,
     get_rescue_entries_suggestions,
+    get_mention_suggestions,
     get_consumed_food_usage_rankings,
 )
 from DayBetes_food.database.queries.intake_event import (
@@ -259,6 +260,7 @@ __all__ = [
     "get_subtype_suggestions",
     "get_subtype_label",
     "get_rescue_entries_suggestions",
+    "get_mention_suggestions",
     "get_consumed_food_usage_rankings",
     "create_intake_event",
     "get_intake_event",

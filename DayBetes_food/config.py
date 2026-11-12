@@ -120,3 +120,9 @@ if not OPEN_FOOD_FACTS_BASE_URL.startswith("https://"):
 OPEN_FOOD_FACTS_TIMEOUT_SECONDS = _as_int("OPEN_FOOD_FACTS_TIMEOUT_SECONDS", 6)
 if not 1 <= OPEN_FOOD_FACTS_TIMEOUT_SECONDS <= 30:
     raise RuntimeError("OPEN_FOOD_FACTS_TIMEOUT_SECONDS must be between 1 and 30")
+
+# Assistant for logging meals (code_conventions.md §8.12). The key is an
+# optional secret: empty means the assistant does not exist in the app (its
+# routes are not registered and nothing links to it), and no data leaves it.
+ANTHROPIC_API_KEY = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+ASSISTANT_ENABLED = bool(ANTHROPIC_API_KEY)

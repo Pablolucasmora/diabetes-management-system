@@ -68,7 +68,7 @@ def RescueModal():
     )
 
 
-def _carbs_meta(carbs_100g: float | None, serving_g: float | None) -> str:
+def carbs_meta(carbs_100g: float | None, serving_g: float | None) -> str:
     """Stored carbs of the food, the figure that matters to treat a low. It
     is a fact of the food, not a calculation over the typed amount."""
     if carbs_100g is None:
@@ -229,7 +229,7 @@ def RescueOptions(rows: list[dict], searching: bool, kind: SystemTag = SystemTag
                 Div(
                     Span(row["name"] or "Unnamed", cls=f"text-sm {MODAL_NAME_CLS}"),
                     Span(
-                        " · ".join(x for x in (row["subtitle"], _carbs_meta(row["carbs_100g"], row["serving_g"])) if x),
+                        " · ".join(x for x in (row["subtitle"], carbs_meta(row["carbs_100g"], row["serving_g"])) if x),
                         cls="block max-w-full text-[11px] text-gray-500 truncate",
                     ),
                     cls="flex flex-col items-start min-w-0 flex-1",

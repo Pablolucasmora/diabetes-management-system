@@ -1,6 +1,7 @@
 from fasthtml.common import *
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.auth.service import get_user_by_id
+from DayBetes_food.config import ASSISTANT_ENABLED
 from DayBetes_food.components.menu.layout import IslandLogo
 from DayBetes_food.components.menu.sections import quick_actions
 from DayBetes_food.database.queries import (
@@ -32,7 +33,7 @@ def main_menu(conexion):
                   flex items-center justify-center
                   """), Div(
                       _greeting(user),
-                      quick_actions(latest_event, portions, pens, brands),
+                      quick_actions(latest_event, portions, pens, brands, assistant_enabled=ASSISTANT_ENABLED),
                       cls="""
                       md:mt-36 lg:mt-36 mt-28 pb-40
                       flex flex-col items-center justify-center

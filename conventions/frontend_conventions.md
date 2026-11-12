@@ -311,7 +311,7 @@ Se construyen con los bloques de `components/food/foods.py`. No se monta un form
 
 ### 9.2 Inicio
 
-Arriba, el saludo con el nombre de usuario (`Hi <usuario>`). Debajo, en este orden: la comida en curso (*Current meal*, que abre el carrito), las formas de añadir comida, la inyección y el rescate (`Log rescue`, §9.6). Entre las formas de añadir comida está `From fridge`, que abre Food en la píldora `Fridge` (§9.8), con la comida en curso elegida en *Add to* como siempre.
+Arriba, el saludo con el nombre de usuario (`Hi <usuario>`). Debajo, en este orden: la comida en curso (*Current meal*, que abre el carrito), las formas de añadir comida, la inyección y el rescate (`Log rescue`, §9.6). Si el asistente está configurado, la primera forma de añadir comida es `Tell the assistant` (§9.11). Entre las formas de añadir comida está `From fridge`, que abre Food en la píldora `Fridge` (§9.8), con la comida en curso elegida en *Add to* como siempre.
 
 ### 9.3 Food
 
@@ -528,6 +528,31 @@ Modelo en `measurement_conventions.md` §8.4.
 | `POST /settings/tags/{tag_id}/delete` | `#tag_row_{tag_id}` | `delete` | cuerpo vacío | `404` no es suya o ya se borró |
 
 Todas exigen el header `HX-Request` (`403` si falta) y los errores van por el canal común (`error_conventions.md` §7.1).
+
+### 9.11 Asistente (decisión del usuario, 2026-11-12)
+
+Contrato del servidor en `code_conventions.md` §8.12. Solo existe si el asistente está configurado.
+
+**Dónde está.** Página `/assistant`, con su acceso desde Inicio: el botón `Tell the assistant`, a todo el ancho, debajo de "What did you eat?" en *Add to your meal* (§9.2). El acceso desde la cabecera de Food queda para cuando el asistente envíe mensajes.
+
+**Página.** Cabecera como las de crear (§9.1): "‹ Back" a la izquierda y `ASSISTANT` a la derecha. Debajo, los mensajes de la conversación y, fijo abajo, el compositor: un `<textarea>` que crece con el texto hasta un máximo y luego hace scroll, y el botón de enviar. Ningún campo se enfoca solo al abrir la página en el móvil (mismo motivo que §9.6).
+
+**Mencionar un alimento con `/`.**
+
+- Escribir `/` al principio del texto o después de un espacio o de un salto de línea abre, **encima del compositor**, una lista de sugerencias, como los comandos de Claude. Lo que se escribe después de `/` filtra la lista; admite espacios, porque los nombres los tienen.
+- Busca entre lo que el usuario ve en Food: alimentos (`catalog`), platos (`manual_intake`, sin añadidos rápidos) y recetas, con la misma regla de visibilidad y la misma búsqueda sin acentos ni mayúsculas (`code_conventions.md` §11.7). La búsqueda abarca el nombre, y también la marca en los alimentos y el origen en los platos.
+- **Orden.** Con texto, primero por cómo encaja el nombre (igual, empieza por, lo contiene, solo se parece) y, dentro de cada grupo, favoritos, después los más comidos en los últimos 60 días, y por último por nombre. Sin texto después de `/`, solo salen los favoritos y los comidos en esos 60 días, en ese orden. Las recetas no tienen uso, porque lo consumido no las referencia (`code_conventions.md` §11.7). Se devuelven como mucho 20.
+- Cada fila es una fila `control` compacta (§8): el nombre (dos líneas como mucho, como en §9.6), y debajo el tipo (`Food`, `Dish` o `Recipe`), la marca u origen y, en alimentos y platos, los hidratos (por ración si la tiene, si no por 100 g). Una receta no los muestra: salen de sus ingredientes. Una estrella marca los favoritos. La lista enseña unas 6 filas y el resto con scroll propio.
+- **Teclado**: ↑ y ↓ mueven la selección, que empieza en la primera fila; Tab o Enter eligen la seleccionada; Esc cierra la lista sin elegir. Con la lista cerrada, Enter hace un salto de línea y se envía con el botón. **Toque o clic** en una fila la elige.
+- Al elegir, el texto `/consulta` se sustituye por `/Nombre del alimento ` y el alimento se añade a las menciones del mensaje, que se muestran como píldoras encima del `<textarea>` con una × para quitarlas. Quitar la píldora borra también su `/Nombre` del texto; borrar el texto quita la mención.
+- La lista se cierra sola si se borra el `/`, si el cursor sale de la consulta o si, tras un espacio, la consulta deja de dar resultados (se queda como texto normal, que el asistente interpreta).
+- Las menciones se envían como `entry_type` + `entry_id`, nunca como nombre, y el servidor las vuelve a leer (`code_conventions.md` §8.12).
+
+| Acción | `hx-target` | `hx-swap` | Éxito | Error |
+|---|---|---|---|---|
+| `GET /assistant/mentions?q=` (al escribir tras `/`, con un retraso de 150 ms; una respuesta que llega tarde se descarta) | `#assistant_mentions` | `innerHTML` | las filas, o una línea `No foods match` | sin sesión: `401`, por el canal de errores |
+
+Exige el header `HX-Request` (`403` si falta).
 
 ## 10. Movimiento
 

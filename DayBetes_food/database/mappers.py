@@ -16,6 +16,7 @@ from DayBetes_food.domain.constants import (
     ConservationMethod,
     CookingMethod,
     FoodCategory,
+    FoodEntryType,
     FoodPhysicalState,
     FridgeCloseReason,
     GlycemicIndex,
@@ -30,6 +31,7 @@ from DayBetes_food.domain.constants import (
     StorageLocation,
     SystemTag,
 )
+from DayBetes_food.domain.food_entry import MentionSuggestion
 from DayBetes_food.domain.fridge import FridgeMoveRead, FridgeRead
 from DayBetes_food.domain.insulin import InsulinInjectionRead
 from DayBetes_food.domain.insulin_pen import InsulinBrandRead, InsulinPenRead
@@ -537,3 +539,23 @@ def insulin_pen_read_from_row(row: dict) -> InsulinPenRead:
         )
     except (KeyError, ValueError) as exc:
         raise InfrastructureError(f"Invalid insulin_pen row: {exc}") from exc
+
+
+def mention_suggestion_from_row(row: dict) -> MentionSuggestion:
+    """Convert a SQL row from get_mention_suggestions (queries/entries.py).
+    Nullable columns: serving_g (no serving, or a recipe) and carbs_100g (a
+    recipe)."""
+    try:
+        serving_g = row.get("serving_g")
+        carbs_100g = row.get("carbs_100g")
+        return MentionSuggestion(
+            entry_type=FoodEntryType(row["entry_type"]),
+            entry_id=int(row["entry_id"]),
+            name=str(row["name"]).strip(),
+            subtitle=str(row.get("subtitle") or "").strip(),
+            serving_g=float(serving_g) if serving_g is not None else None,
+            carbs_100g=float(carbs_100g) if carbs_100g is not None else None,
+            is_favorite=bool(row["is_favorite"]),
+        )
+    except (KeyError, ValueError) as exc:
+        raise InfrastructureError(f"Invalid mention suggestion row: {exc}") from exc

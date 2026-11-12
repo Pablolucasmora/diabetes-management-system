@@ -11,6 +11,7 @@ from DayBetes_food.auth.context import reset_current_user_id, set_current_user_i
 from DayBetes_food.auth.security import generate_token
 from DayBetes_food.auth.service import get_session_with_user, is_csrf_valid, refresh_session
 from DayBetes_food.config import (
+    ASSISTANT_ENABLED,
     CSRF_COOKIE_NAME,
     DB_INIT_ON_STARTUP,
     SESSION_COOKIE_NAME,
@@ -33,6 +34,7 @@ from DayBetes_food.http_errors import (
     request_id as _request_id,
 )
 from DayBetes_food.routes import (
+    setup_assistant_routes,
     setup_auth_routes,
     setup_food_routes,
     setup_fridge_routes,
@@ -303,5 +305,9 @@ setup_cart_routes(rt)
 setup_stats_routes(rt)
 
 setup_settings_routes(rt)
+
+# Only when configured: without a key its URLs are 404 (code_conventions.md §8.12).
+if ASSISTANT_ENABLED:
+    setup_assistant_routes(rt)
 
 check_single_method_routes(app.routes)

@@ -3,6 +3,7 @@
 Routes package for DayBetes application.
 
 This package contains all route setup functions for different modules:
+- assistant_routes: Assistant for logging meals (only when configured)
 - auth_routes: Authentication and authorization
 - food_routes: Food catalog and management
 - fridge_routes: Fridge tab of Food (containers in the fridge and the freezer)
@@ -13,6 +14,7 @@ This package contains all route setup functions for different modules:
 - settings_routes: User settings
 """
 
+from .assistant_routes import setup_assistant_routes
 from .auth_routes import setup_auth_routes
 from .cart_routes import setup_cart_routes
 from .food_routes import setup_food_routes
@@ -23,6 +25,7 @@ from .settings_routes import setup_settings_routes
 from .stats_routes import setup_stats_routes
 
 __all__ = [
+    'setup_assistant_routes',
     'setup_auth_routes',
     'setup_cart_routes', 
     'setup_food_routes',
