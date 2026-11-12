@@ -13,7 +13,14 @@ from DayBetes_food.components.food.food_actions import (
     favorite_button_id,
     food_card_id,
 )
-from DayBetes_food.components.food.food_shared import FORM_FIELD_CLS, STORAGE_LABELS
+from DayBetes_food.components.food.food_shared import (
+    AMOUNT_METHOD_LABELS,
+    FORM_FIELD_CLS,
+    INLINE_FIELD_CLS,
+    MACROS_SOURCE_LABELS,
+    NOT_GIVEN_LABEL,
+    STORAGE_LABELS,
+)
 from DayBetes_food.components.food.rescue import RescueModal, rescue_open_attrs
 from DayBetes_food.components.modal import (
     ModalLayer,
@@ -54,7 +61,9 @@ from DayBetes_food.domain.constants import (
     FoodCategory,
     FoodEntryType,
     FoodPhysicalState,
+    AmountMethod,
     GlycemicIndex,
+    MacrosSource,
     Nutriscore,
     NutrientEntryMode,
     PortionOrigin,
@@ -94,8 +103,8 @@ def catalog_entry_view(item: CatalogItemRead) -> dict:
         "alcohol": item.alcohol,
         "barcode": item.barcode,
         "cooking_factor": item.cooking_factor,
-        "macros_quality": item.macros_quality,
-        "default_strictly_weighed": item.default_strictly_weighed,
+        "macros_source": item.macros_source.value if item.macros_source else None,
+        "default_amount_method": item.default_amount_method.value if item.default_amount_method else None,
         "macros_confidence": item.macros_confidence,
         "is_published": item.is_published,
         "created_by": item.created_by,
@@ -130,8 +139,8 @@ def manual_intake_entry_view(item: ManualIntakeRead) -> dict:
         "glycemic_index": item.glycemic_index.value if item.glycemic_index else None,
         "ig_confidence": item.ig_confidence,
         "macros_confidence": item.macros_confidence,
-        "macros_quality": item.macros_quality,
-        "default_strictly_weighed": item.default_strictly_weighed,
+        "macros_source": item.macros_source.value if item.macros_source else None,
+        "default_amount_method": item.default_amount_method.value if item.default_amount_method else None,
         "is_published": item.is_published,
         "created_by": item.created_by,
         "origin_root_id": item.origin_root_id,
@@ -170,8 +179,6 @@ GLYCEMIC_INDEX_LABELS = {
 }
 # Declared confidence, ordinal 0-2 (measurement §6.10).
 CONFIDENCE_LABELS = {0: "Not sure", 1: "More or less", 2: "Quite sure"}
-MACROS_QUALITY_LABELS = {True: "Published (label, menu, website)", False: "Estimated"}
-WEIGHED_LABELS = {True: "Weighed", False: "Not weighed"}
 
 
 FILTER_ITEM_CLS = """
@@ -1230,25 +1237,29 @@ def _confidence_select(label: str, name: str, selected: int | None, help_text: s
     )
 
 
-def _macros_quality_select(selected: bool | None):
-    """The food's macros quality (measurement §6.11): portions read it live."""
-    return _tristate_select(
-        "Macros quality",
-        "macros_quality",
-        selected,
-        MACROS_QUALITY_LABELS,
-        "Where the macros come from: published by whoever makes it (label, menu, website) or estimated.",
+def _macros_source_select(selected: str | None):
+    """U1 (study §6.3): where the food's macros come from. Portions read it live
+    (measurement §6.11)."""
+    return _labeled_select(
+        "Macros from",
+        "macros_source",
+        [member.value for member in MacrosSource],
+        help_text="Where these macros come from: the label, the menu, a table, an estimate...",
+        selected_value=selected or "",
+        labels={member.value: text for member, text in MACROS_SOURCE_LABELS.items()},
     )
 
 
-def _weighed_default_select(selected: bool | None):
-    """Copied to every new portion; each portion can change it (measurement §6.11)."""
-    return _tristate_select(
-        "Weighed by default",
-        "default_strictly_weighed",
-        selected,
-        WEIGHED_LABELS,
-        "Copied to every new portion: whether its weight is exact (e.g. a 60 g can).",
+def _amount_method_default_select(selected: str | None):
+    """U2 (study §6.3): copied to every new portion; each portion can change it
+    (measurement §6.11)."""
+    return _labeled_select(
+        "Amount usually from",
+        "default_amount_method",
+        [member.value for member in AmountMethod],
+        help_text="Copied to every new portion: how you usually get its amount (e.g. the 60 g of a can).",
+        selected_value=selected or "",
+        labels={member.value: text for member, text in AMOUNT_METHOD_LABELS.items()},
     )
 
 
@@ -1726,7 +1737,10 @@ def CreateCatalogPage(
     draft_suffix = initial_barcode if initial_barcode else "no_barcode"
     details_open = any(
         _pv(k, "").strip()
-        for k in ("initial_state", "nutriscore", "nova", "yuka", "caffeine", "alcohol", "barcode", "cooking_factor")
+        for k in (
+            "initial_state", "nutriscore", "nova", "yuka", "caffeine", "alcohol", "barcode", "cooking_factor",
+            "macros_source",
+        )
     )
     notices = Div(
         *(
@@ -1864,9 +1878,9 @@ def CreateCatalogPage(
             ),
             _form_subgroup(
                 "Data quality",
-                _macros_quality_select(None),
+                _macros_source_select(_pv("macros_source") or None),
                 _macros_confidence_select(None),
-                _weighed_default_select(None),
+                _amount_method_default_select(None),
             ),
             open_=details_open,
         ),
@@ -1995,9 +2009,9 @@ def CreateManualPage(
             ),
             _form_subgroup(
                 "Data quality",
-                _macros_quality_select(None),
+                _macros_source_select(None),
                 _macros_confidence_select(None),
-                _weighed_default_select(None),
+                _amount_method_default_select(None),
             ),
         ),
         _favorite_row(),
@@ -2038,6 +2052,15 @@ def QuickAddPage(events: list, plate_options: list, selected_plate_id: int | Non
             ),
             _smart_macros_block("quick", label="Macros of everything you ate"),
             P("Carbs are required: write 0hc if there were none.", cls="text-xs text-gray-500 md:col-span-2 -mt-1"),
+            # U1 and U2 (study §6.3): optional, empty by default; nothing is guessed.
+            _macros_source_select(None),
+            _labeled_select(
+                "Weight from",
+                "amount_method",
+                [member.value for member in AmountMethod],
+                help_text="How you got that weight: a scale, the package, by eye, an AI estimate...",
+                labels={member.value: text for member, text in AMOUNT_METHOD_LABELS.items()},
+            ),
         ),
         _optional_section(
             "Notes",
@@ -2220,9 +2243,9 @@ def EditCatalogPage(
         ),
         _form_section(
             "Data quality",
-            _macros_quality_select(entry.get("macros_quality")),
+            _macros_source_select(entry.get("macros_source")),
             _macros_confidence_select(entry.get("macros_confidence")),
-            _weighed_default_select(entry.get("default_strictly_weighed")),
+            _amount_method_default_select(entry.get("default_amount_method")),
             hint="Where the macros come from and how sure you are about them.",
         ),
         _form_section(
@@ -2311,9 +2334,9 @@ def EditManualPage(
         ),
         _form_section(
             "Data quality",
-            _macros_quality_select(entry.get("macros_quality")),
+            _macros_source_select(entry.get("macros_source")),
             _macros_confidence_select(entry.get("macros_confidence")),
-            _weighed_default_select(entry.get("default_strictly_weighed")),
+            _amount_method_default_select(entry.get("default_amount_method")),
             hint="Where the macros come from and how sure you are about them.",
         ),
         _edit_actions(back_path),
@@ -2948,45 +2971,27 @@ def RecipeNotesSection(notes: str | None):
     )
 
 
-# Look of each state of a tri-state check, the same as the cart's
-# (`_TriStateFlag` in components/cart/cart_components.py). static/js/food_detail.js
-# repaints it with the same table when the user cycles it.
-_TRISTATE_LOOK = {
-    "true": ("✓", "background-color:#111827;border-color:#111827;color:#ffffff;"),
-    "false": ("", "background-color:#ffffff;border-color:#9ca3af;color:#111827;"),
-    "": ("", "background-color:#ffffff;border-color:#d1d5db;color:#111827;"),
-}
-
-
-def _weighed_tristate_field(root_id: str, value):
-    """`Strictly weighted` of the food page, set before adding the food.
-
-    It starts on the food's `default_strictly_weighed` and is what the new
-    portion is born with (measurement_conventions.md §6.11). Three states,
-    like in the cart: NULL is "no data", marked with a small dash (§6). The
-    value travels in a hidden field included by the `Log food` button.
-    """
-    field_id = f"{root_id}_weighed"
-    encoded = {True: "true", False: "false"}.get(value, "")
-    glyph, style = _TRISTATE_LOOK[encoded]
+def _amount_method_field(root_id: str, value: str | None):
+    """`Amount from` of the food page, set before adding the food (U2, study
+    §6.3). It starts on the food's `default_amount_method` and is what the new
+    portion is born with (measurement_conventions.md §6.11). The empty option
+    is "not given" (§6). The `Log food` button includes it by its id."""
+    field_id = f"{root_id}_amount_method"
     return Div(
         Div(
-            P("Strictly weighted", cls="text-sm font-medium text-gray-800"),
-            P("Whether you weigh it exactly this time.", cls="text-xs text-gray-500"),
+            Label("Amount from", cls="text-sm font-medium text-gray-800", **{"for": field_id}),
+            P("How you get the amount this time.", cls="text-xs text-gray-500"),
             cls="flex flex-col min-w-0 flex-1",
         ),
-        Input(type="hidden", id=field_id, name="strictly_weighed", value=encoded),
-        Div(
-            Button(
-                glyph,
-                type="button",
-                aria_label="Strictly weighted",
-                cls="w-5 h-5 rounded border flex items-center justify-center text-xs leading-none p-0 cursor-pointer",
-                style=style,
-                onclick=f"dbCycleTriState(this, '{field_id}')",
-            ),
-            Span("–", data_tristate_dash="true", cls=f"text-xs text-gray-500 {'' if encoded == '' else 'hidden'}"),
-            cls="flex items-center gap-1",
+        Select(
+            Option(NOT_GIVEN_LABEL, value="", selected=not value),
+            *[
+                Option(label, value=method.value, selected=method.value == value)
+                for method, label in AMOUNT_METHOD_LABELS.items()
+            ],
+            id=field_id,
+            name="amount_method",
+            cls=f"{INLINE_FIELD_CLS} max-w-[55%]",
         ),
         cls="web_container w-full px-4 py-3 flex items-center gap-3",
     )
@@ -3113,7 +3118,7 @@ def FoodDetailPage(
             hx_target=f"#{msg_id}",
             hx_swap="innerHTML",
             hx_push_url="false",
-            hx_include=f"#meal_selector, #plate_selector, #{form_id}, #{root_id}_weighed",
+            hx_include=f"#meal_selector, #plate_selector, #{form_id}, #{root_id}_amount_method",
             data_skip_page_loading="true",
         )
     )
@@ -3130,7 +3135,7 @@ def FoodDetailPage(
                     hx_target=f"#{msg_id}",
                     hx_swap="innerHTML",
                     hx_push_url="false",
-                    hx_include=f"#{form_id}, #{root_id}_weighed",
+                    hx_include=f"#{form_id}, #{root_id}_amount_method",
                     data_skip_page_loading="true",
                     **{"hx-disabled-elt": "this"},
                 )
@@ -3375,7 +3380,7 @@ def FoodDetailPage(
             ),
             cls="w-full",
         ),
-        _weighed_tristate_field(root_id, entry.get("default_strictly_weighed")) if not recipe_mode else "",
+        _amount_method_field(root_id, entry.get("default_amount_method")) if not recipe_mode else "",
         Div(
             H2("Macros Summary", cls="font-semibold text-gray-900"),
             (

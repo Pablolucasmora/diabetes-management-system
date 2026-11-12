@@ -1100,7 +1100,7 @@ petición y el swap `outerHTML` lo destruye.
 | `name`, `notes`, `meal_type`, `eating_out`, `insulin_dose`, `injection_zone` | `#cart_card_event_{id}` | `outerHTML` | `CartCard(event, portions, plates)` |
 | `insulin_pen` (`insulin_pen_id`, un boli abierto de rápida) e `insulin_units` (vacío es sin dosis), junto a la zona (`measurement_conventions.md` §8.4) | `#cart_card_event_{id}` | `outerHTML` | `CartCard(...)`. Solo con `insulin_dose = TRUE` y la comida `planned` (`409` en otro caso). La opción `+ New pen` no envía nada: abre el pop-up de abrir boli |
 | `POST /cart/portion/{portion_id}/amount` (payload `amount_value` + `amount_unit`), `…/offset`, `…/move`, `…/delete` | `#cart_card_event_{id}` | `outerHTML` | `CartCard(event, portions, plates)` |
-| `POST /cart/portion/{portion_id}/strictly_weighed` (`…/macros_quality` se retiró el 2026-10-09: es un dato del alimento, `measurement_conventions.md` §6.11) | `#macros_summary_event_{id}` | `outerHTML` | `Div(MacrosSummary(...), id="macros_summary_event_{id}")` + swap OOB del propio control, `#portion_flag_{campo}_{portion_id}` (`PortionTriStateFlag`) |
+| `POST /cart/portion/{portion_id}/amount_method` (`value`: un código de `AmountMethod` o vacío = "no indicado"; sustituye a `…/strictly_weighed` el 2026-11-12, U2 de `study_conventions.md` §6.3. `…/macros_quality` se retiró el 2026-10-09: es un dato del alimento, `measurement_conventions.md` §6.11) | `#macros_summary_event_{id}` | `outerHTML` | `Div(MacrosSummary(...), id="macros_summary_event_{id}")`; el `<select>` nativo ya muestra su valor, así que no hay swap OOB. Un código desconocido es `422` |
 | `POST /cart/portion/{portion_id}/is_cooked_weight` | `#macros_summary_event_{id}` | `outerHTML` | `Div(MacrosSummary(...), id="macros_summary_event_{id}")` |
 | `POST /cart/portion/{portion_id}/fridge` (guardar parte en la nevera, `frontend_conventions.md` §7.15) | `#cart_card_event_{id}` | `outerHTML` | `CartCard(event, portions, plates)` y el evento `fridgeStored` |
 | `POST /cart/event/{id}/plate`, `POST /cart/plate/{plate_id}/name`, `…/offset`, `…/apply_offset`, `…/delete` | `#cart_card_event_{id}` | `outerHTML` | `CartCard(event, portions, plates)` |
@@ -1375,7 +1375,7 @@ Decisión 2026-09-24 (`conventions/decisions.md`). Cuando un contrato no cabe en
   - La lectura que incluye archivados visibles lo declara con un parámetro explícito (§11.3).
   - El texto del modal describe lo que ocurre de verdad: se retira del catálogo, y quien ya lo usa puede seguir usándolo. No se llama "borrar".
   - Al archivarlo, se quita de los favoritos de su propietario en la misma transacción (decisión 2026-09-24).
-- **Calidad, pesaje y confianza declarados** (decisión 2026-10-09, extensión a `catalog`): `macros_quality` (dato del alimento, leído en vivo por la porción), `default_strictly_weighed` (se copia a la porción al crearla) y `macros_confidence` (escala `0–2`), los tres opcionales (`NULL` = sin dato), con el mismo significado que en `manual_intake` (`measurement_conventions.md` §6.10 y §6.11). Los alimentos existentes el 2026-10-09 empiezan en `NULL`. `glycemic_index` e `ig_confidence` no existen en `catalog` (sin decidir).
+- **Origen de los macros, método de la cantidad y confianza declarados** (decisión 2026-10-09, extensión a `catalog`; listas cerradas U1/U2 desde el 2026-11-12, `study_conventions.md` §6.3): `macros_source` (dato del alimento, leído en vivo por la porción), `default_amount_method` (se copia a la porción al crearla) y `macros_confidence` (escala `0–2`), los tres opcionales (`NULL` = sin dato), con el mismo significado que en `manual_intake` (`measurement_conventions.md` §6.10 y §6.11). Los alimentos existentes el 2026-10-09 empiezan en `NULL`. `glycemic_index` e `ig_confidence` no existen en `catalog` (sin decidir).
 - **Corregir no es archivar**: si los valores de un alimento son incorrectos, se corrigen editándolos (con el versionado, creando una versión nueva). Archivar queda para "ya no lo mantengo" o "está duplicado".
 - **Copiar**:
   - Crea una **fila nueva** con su propio `id`, `created_by` = quien copia y `origin_root_id` = el alimento raíz de la familia. Una copia de una copia también apunta a la raíz.
@@ -1392,7 +1392,7 @@ Decisiones 2026-10-09 (`conventions/decisions.md`). Las unidades, la entrada de 
 
 - **Qué va a cada tabla**:
   - `catalog`: productos industriales (envasados, de supermercado, con etiqueta o código de barras) e ingredientes genéricos (plátano, tomate, arroz).
-  - `manual_intake`: lo que ha preparado alguien, sea un local (restaurante, bar, puesto, cadena) o una persona (la abuela, un amigo), **aunque sus macros se conozcan** por la carta o por internet. El criterio es quién lo ha preparado, no si se conocen los macros: un Whopper es un plato manual con origen "Burger King" y `macros_quality = TRUE`.
+  - `manual_intake`: lo que ha preparado alguien, sea un local (restaurante, bar, puesto, cadena) o una persona (la abuela, un amigo), **aunque sus macros se conozcan** por la carta o por internet. El criterio es quién lo ha preparado, no si se conocen los macros: un Whopper es un plato manual con origen "Burger King" y `macros_source = official`.
   - Si se conocen los ingredientes y sus cantidades, se registra como receta con ingredientes de `catalog`, no como plato manual.
 - **Dos tipos de fila**, distinguidos por `is_quick_add BOOLEAN NOT NULL DEFAULT FALSE`:
   - **Plato reutilizable** (`is_quick_add = FALSE`): se guarda para volver a usarlo y se puede publicar para que otros lo reutilicen.
@@ -1400,13 +1400,13 @@ Decisiones 2026-10-09 (`conventions/decisions.md`). Las unidades, la entrada de 
 - **Propietario**: `created_by`, `NOT NULL`. Creador y propietario son la misma persona y no hay transferencias (§11.1). No hay biblioteca general de platos: toda fila tiene creador. La FK a `users` conserva `ON DELETE CASCADE`; borrar un usuario sigue bloqueado por el `RESTRICT` de `portion_detail` (decisión 2026-09-22).
 - **Campos del plato reutilizable**:
   - Obligatorios: `name` y `carbs_100g` (`NOT NULL` también en la base). Un `0` de hidratos es un valor válido; lo que no se admite es "no lo sé".
-  - Opcionales (`NULL` = sin dato, nunca `0`): `description` (500 caracteres, constante `MANUAL_INTAKE_DESCRIPTION_MAX_LENGTH`, §7.3), `subtype`, `origin`, el resto de nutrientes, `caffeine`, `alcohol`, `default_portion`, `glycemic_index`, `ig_confidence`, `macros_confidence`, `macros_quality` y `default_strictly_weighed`.
+  - Opcionales (`NULL` = sin dato, nunca `0`): `description` (500 caracteres, constante `MANUAL_INTAKE_DESCRIPTION_MAX_LENGTH`, §7.3), `subtype`, `origin`, el resto de nutrientes, `caffeine`, `alcohol`, `default_portion`, `glycemic_index`, `ig_confidence`, `macros_confidence`, `macros_source` y `default_amount_method`.
   - Los macros se introducen por 100 g o como total de una porción (`measurement_conventions.md` §5.4).
 - **Añadido rápido**:
   - Se abre desde el botón "Quick add" de la página principal y desde la opción equivalente del `+` de la página de Food.
-  - El formulario lleva arriba el selector de comida y tanda (el mismo que hay bajo el buscador de Food y en la ficha de un alimento). Debajo: nombre, peso estimado, macros del total (smart macros) y notas, que se guardan en `description`. Son obligatorios el nombre, el peso y los hidratos.
-  - No pide `subtype`, `origin`, índice glucémico, confianzas ni calidad: se quedan en `NULL`.
-  - Al guardar, en una sola transacción, se crea la fila (`default_portion` = peso, nutrientes convertidos a 100 g según §5.4, `default_strictly_weighed = FALSE` porque el peso es estimado) y su porción en la tanda elegida, con `amount` = peso.
+  - El formulario lleva arriba el selector de comida y tanda (el mismo que hay bajo el buscador de Food y en la ficha de un alimento). Debajo: nombre, peso estimado, macros del total (smart macros), de dónde salen los macros (`Macros from`, U1) y cómo se obtuvo el peso (`Weight from`, U2), los dos opcionales y vacíos al abrir (decisión 2026-11-12, `study_conventions.md` §6.3), y notas, que se guardan en `description`. Son obligatorios el nombre, el peso y los hidratos.
+  - No pide `subtype`, `origin`, índice glucémico ni confianzas: se quedan en `NULL`.
+  - Al guardar, en una sola transacción, se crea la fila (`default_portion` = peso, nutrientes convertidos a 100 g según §5.4, `macros_source` y `default_amount_method` los elegidos, o `NULL`) y su porción en la tanda elegida, con `amount` = peso.
   - Solo existe a través de su porción. No aparece en búsquedas, listados, favoritos, etiquetas, sugerencias de origen ni en el selector de ingredientes de receta.
   - No se puede publicar: `CHECK (NOT (is_quick_add AND is_published))`.
   - No entra en los índices únicos: puede haber varios "Menú del día".
@@ -1428,7 +1428,7 @@ Decisiones 2026-10-09 (`conventions/decisions.md`). Las unidades, la entrada de 
   - Se muestran cocción, conservación y estado final.
   - Nunca se muestra `Cooked weight`, porque un plato manual no tiene `cooking_factor` (`measurement_conventions.md` §5.2). Esto vale para el carrito y para la ficha.
   - Cambiar la cantidad de la porción escala los macros (§5.2), como en `catalog`.
-  - `strictly_weighed` nace con el `default_strictly_weighed` del plato; `macros_quality` no se guarda en la porción, se lee en vivo del plato (`measurement_conventions.md` §6.11).
+  - `amount_method` nace con el `default_amount_method` del plato; `macros_source` no se guarda en la porción, se lee en vivo del plato (`measurement_conventions.md` §6.11).
 
 #### 11.2.4 Contrato de `recipe`
 

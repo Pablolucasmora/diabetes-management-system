@@ -6,7 +6,6 @@ from DayBetes_food.components.cart.cart_main import cart_main, cart_events_list
 from DayBetes_food.components.cart.cart_components import (
     CartCard,
     MacrosSummary,
-    PortionTriStateFlag,
     plate_display_name,
 )
 from DayBetes_food.components.cart.cart_leftovers import (
@@ -15,10 +14,7 @@ from DayBetes_food.components.cart.cart_leftovers import (
     LeftoversForm,
 )
 from DayBetes_food.components.modal import ModalFormError
-from DayBetes_food.components.cart.cart_shared import (
-    calculate_macro_summary_metrics,
-    portion_name,
-)
+from DayBetes_food.components.cart.cart_shared import calculate_macro_summary_metrics
 from DayBetes_food.components.ui import render_fragment, render_page
 from datetime import datetime
 import math
@@ -60,6 +56,7 @@ from DayBetes_food.domain.constants import (
     CLEAR,
     PathId,
     AmountInputUnit,
+    AmountMethod,
     ConservationMethod,
     CookingMethod,
     FoodPhysicalState,
@@ -304,25 +301,6 @@ def _parse_strict_bool(raw_value: str) -> bool:
     if normalized == "true":
         return True
     raise ValidationError("boolean_not_recognized")
-
-
-def _parse_tristate_bool(raw_value: str):
-    """Strict parser of the `strictly_weighed` tri-state (§7.4/§7.6).
-
-    Different from `_parse_strict_bool` on purpose: in a checkbox, absence is
-    `False`, but in a three-state control, absence is "no data" (`None`).
-    `"true"` -> `True`, `"false"` -> `False`, `""` -> `None`, anything else ->
-    `422`. The client does not decide the transition: it sends the value the
-    server computed when rendering (decision 2026-09-18).
-    """
-    normalized = (raw_value or "").strip().lower()
-    if normalized == "":
-        return None
-    if normalized == "true":
-        return True
-    if normalized == "false":
-        return False
-    raise ValidationError("tristate_not_recognized")
 
 
 def _parse_ingested_unit(raw_value: str) -> AmountInputUnit:
@@ -1029,17 +1007,17 @@ def setup_cart_routes(rt):
                 return _error(request, ValidationError, _INGREDIENT_FAILED)
             return _card_response(request, connection, int(user_id), event_id)
 
-    def _portion_flag_route(request: Request, portion_id: int, field_name: str, raw_value: str, label: str, *, tristate: bool = False):
+    def _portion_flag_route(request: Request, portion_id: int, field_name: str, raw_value: str, label: str):
         """
-        Common body of the two portion booleans (strictly_weighed,
-        is_cooked_weight; macros_quality is the food's since 2026-10-09,
-        measurement §6.11): same HTMX contract
-        (target #macros_summary_event_{id}, swap outerHTML) and same error
-        mapping, as §9.5 requires ("equivalent actions must use the same
-        pattern").
+        Common body of the two data quality fields of a portion
+        (`amount_method`, U2 since 2026-11-12, and `is_cooked_weight`; the
+        origin of the macros is the food's since 2026-10-09, measurement
+        §6.11): same HTMX contract (target #macros_summary_event_{id}, swap
+        outerHTML) and same error mapping, as §9.5 requires ("equivalent
+        actions must use the same pattern").
 
-        `tristate=True` for strictly_weighed, which accepts "no data" (`None`,
-        decision 2026-09-18); `is_cooked_weight` has two states.
+        `amount_method` is a closed list whose empty value is "not given"
+        (`None`, study §6.3); `is_cooked_weight` has two states.
 
         Unlike its sibling amount/offset routes, it also accepts a `consumed`
         event: the portions of a confirmed event are editable (decision
@@ -1054,9 +1032,13 @@ def setup_cart_routes(rt):
         if not user_id:
             return _error(request, AuthenticationError, _NO_SESSION)
         try:
-            value = _parse_tristate_bool(raw_value) if tristate else _parse_strict_bool(raw_value)
+            if field_name == "amount_method":
+                method = parse_enum(AmountMethod, raw_value, field="amount_method")
+                value = method.value if method is not None else None
+            else:
+                value = _parse_strict_bool(raw_value)
         except ValidationError:
-            return _error(request, ValidationError, f"The '{label}' checkbox could not be read.")
+            return _error(request, ValidationError, f"The '{label}' value could not be read.")
         with get_connection() as connection:
             try:
                 # require_planned=False: a consumed event stays editable in
@@ -1122,23 +1104,12 @@ def setup_cart_routes(rt):
                 event = get_intake_event(connection, int(user_id), event_id)
                 if not event:
                     return _error(request, NotFoundError, _EVENT_GONE)
-            summary = Div(MacrosSummary(event, portions), id=f"macros_summary_event_{event_id}")
-            if not tristate:
-                # A native checkbox already shows its own new state.
-                return render_fragment(summary)
-            # The tri-state control carries the next state in `hx_vals`, so it
-            # must be repainted from the saved row, out of band next to the
-            # summary (9.5 cart HTMX contract); otherwise it keeps sending the
-            # same value and shows a state the row no longer has
-            # (frontend_conventions.md 6).
-            saved = next(p for p in portions if p.id == portion_id)
-            return render_fragment(
-                (summary, PortionTriStateFlag(event_id, saved, field_name, portion_name(saved), oob=True))
-            )
+            # A native select or checkbox already shows its own new state.
+            return render_fragment(Div(MacrosSummary(event, portions), id=f"macros_summary_event_{event_id}"))
 
-    @rt("/cart/portion/{portion_id}/strictly_weighed")
+    @rt("/cart/portion/{portion_id}/amount_method")
     def post(request: Request, portion_id: PathId, value: str = ""):
-        return _portion_flag_route(request, portion_id, "strictly_weighed", value, "Strictly weighted", tristate=True)
+        return _portion_flag_route(request, portion_id, "amount_method", value, "Amount from")
 
     @rt("/cart/portion/{portion_id}/is_cooked_weight")
     def post(request: Request, portion_id: PathId, is_cooked_weight: str = ""):

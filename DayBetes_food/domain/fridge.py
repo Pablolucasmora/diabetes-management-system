@@ -11,6 +11,7 @@ from datetime import date, datetime, time, timedelta
 from DayBetes_food.domain.constants import (
     MASS_SANITY_MAX_G,
     AmountInputUnit,
+    AmountMethod,
     ConservationMethod,
     CookingMethod,
     FoodPhysicalState,
@@ -208,7 +209,7 @@ class FridgeContent:
     amount: float
     cooking: CookingMethod | None = None
     final_state: FoodPhysicalState | None = None
-    strictly_weighed: bool | None = None
+    amount_method: AmountMethod | None = None  # U2 (study §6.3)
     is_cooked_weight: bool = False
 
 

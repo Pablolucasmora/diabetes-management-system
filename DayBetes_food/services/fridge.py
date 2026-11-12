@@ -105,7 +105,7 @@ def create_fridge_container(connection, command: FridgeStoreCommand) -> int:
                 amount=content.amount,
                 cooking=content.cooking,
                 final_state=content.final_state,
-                strictly_weighed=content.strictly_weighed,
+                amount_method=content.amount_method,
                 is_cooked_weight=content.is_cooked_weight,
             ),
             commit=False,
@@ -151,7 +151,7 @@ def store_recipe_in_fridge(
                     amount=scaled_recipe_amount(portion.amount, request.servings, recipe.servings),
                     cooking=preparation.cooking if preparation else portion.cooking,
                     final_state=preparation.final_state if preparation else portion.final_state,
-                    strictly_weighed=portion.strictly_weighed,
+                    amount_method=portion.amount_method,
                     is_cooked_weight=portion.is_cooked_weight,
                 )
             )
@@ -189,7 +189,7 @@ def keep_part_in_fridge(
             amount=portion.amount * share,
             cooking=portion.cooking,
             final_state=portion.final_state,
-            strictly_weighed=portion.strictly_weighed,
+            amount_method=portion.amount_method,
             is_cooked_weight=portion.is_cooked_weight,
         ),
     )
@@ -218,7 +218,7 @@ def store_plate_leftovers(
             amount=portion.amount * share,
             cooking=portion.cooking,
             final_state=portion.final_state,
-            strictly_weighed=portion.strictly_weighed,
+            amount_method=portion.amount_method,
             is_cooked_weight=portion.is_cooked_weight,
         )
         for portion in plate_portions
@@ -305,7 +305,7 @@ def take_from_fridge(
                 cooking=portion.cooking,
                 conservation=conservation,
                 final_state=portion.final_state,
-                strictly_weighed=portion.strictly_weighed,
+                amount_method=portion.amount_method,
                 is_cooked_weight=portion.is_cooked_weight,
                 source_fridge_id=fridge_id,
             ),
@@ -385,7 +385,7 @@ def _add_to_fridge_content(
                 amount=portion.amount,
                 cooking=portion.cooking,
                 final_state=portion.final_state,
-                strictly_weighed=portion.strictly_weighed,
+                amount_method=portion.amount_method,
                 is_cooked_weight=portion.is_cooked_weight,
             ),
             commit=False,

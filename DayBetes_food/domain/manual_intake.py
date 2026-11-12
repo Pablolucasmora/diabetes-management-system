@@ -10,7 +10,7 @@ normalization, subtype limit, default serving) in domain/food.py.
 from dataclasses import dataclass
 from datetime import datetime
 
-from DayBetes_food.domain.constants import GlycemicIndex
+from DayBetes_food.domain.constants import AmountMethod, GlycemicIndex, MacrosSource
 from DayBetes_food.domain.food import FOOD_DEFAULT_PORTION_RANGE, normalize_food_text
 from DayBetes_food.domain.nutrition import NutrientValues, parse_number
 from DayBetes_food.errors import ValidationError
@@ -123,8 +123,8 @@ class ManualIntakeRead:
     glycemic_index: GlycemicIndex | None
     ig_confidence: int | None
     macros_confidence: int | None
-    macros_quality: bool | None  # the dish's data, read live by portions (measurement §6.11)
-    default_strictly_weighed: bool | None
+    macros_source: MacrosSource | None  # U1: the dish's data, read live by portions (measurement §6.11)
+    default_amount_method: AmountMethod | None  # U2: copied to each new portion
     is_quick_add: bool
     is_published: bool
     created_at: datetime
@@ -154,8 +154,8 @@ class ManualIntakeCreate:
     glycemic_index: GlycemicIndex | None
     ig_confidence: int | None
     macros_confidence: int | None
-    macros_quality: bool | None
-    default_strictly_weighed: bool | None
+    macros_source: MacrosSource | None
+    default_amount_method: AmountMethod | None  # U2: copied to each new portion
     is_quick_add: bool = False
 
 
@@ -176,8 +176,8 @@ class ManualIntakeUpdate:
     glycemic_index: GlycemicIndex | None
     ig_confidence: int | None
     macros_confidence: int | None
-    macros_quality: bool | None
-    default_strictly_weighed: bool | None
+    macros_source: MacrosSource | None
+    default_amount_method: AmountMethod | None  # U2: copied to each new portion
 
 
 @dataclass(frozen=True)
@@ -195,8 +195,8 @@ class ManualIntakeRequest:
     glycemic_index: GlycemicIndex | None
     ig_confidence: int | None
     macros_confidence: int | None
-    macros_quality: bool | None
-    default_strictly_weighed: bool | None
+    macros_source: MacrosSource | None
+    default_amount_method: AmountMethod | None  # U2: copied to each new portion
     favorite: bool | None  # None = field absent (edit form)
 
 
@@ -209,3 +209,5 @@ class QuickAddRequest:
     weight_g: float  # becomes default_portion AND the portion amount
     nutrients: NutrientValues  # already per 100 g (measurement §5.4)
     description: str | None  # the notes
+    macros_source: MacrosSource | None = None  # U1, optional (study §6.3)
+    amount_method: AmountMethod | None = None  # U2 of the weight, optional

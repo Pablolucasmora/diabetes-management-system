@@ -29,6 +29,8 @@ from DayBetes_food.domain.constants import (
     PenFormat,
     PrefillSource,
     Ripeness,
+    AmountMethod,
+    MacrosSource,
     StorageLocation,
     SystemTag,
     sql_in_list,
@@ -98,6 +100,10 @@ def catalog_check_constraints() -> dict[str, str]:
         "ck_catalog_library_published": "created_by IS NOT NULL OR is_published",
         "ck_catalog_prefill_source": f"prefill_source IS NULL OR prefill_source IN ({sql_in_list(PrefillSource)})",
         "ck_catalog_prefill_reference": "(prefill_source IS NULL) = (prefill_source_id IS NULL)",
+        "ck_catalog_macros_source": f"macros_source IS NULL OR macros_source IN ({sql_in_list(MacrosSource)})",
+        "ck_catalog_default_amount_method": (
+            f"default_amount_method IS NULL OR default_amount_method IN ({sql_in_list(AmountMethod)})"
+        ),
         "ck_catalog_macros_confidence_range": (
             f"macros_confidence IS NULL OR macros_confidence BETWEEN {FOOD_CONFIDENCE_MIN} AND {FOOD_CONFIDENCE_MAX}"
         ),
@@ -132,6 +138,10 @@ def manual_intake_check_constraints() -> dict[str, str]:
             r"origin IS NULL OR (origin <> '' AND origin = regexp_replace(btrim(origin), '\s+', ' ', 'g'))"
         ),
         "ck_manual_intake_quick_add_not_published": "NOT (is_quick_add AND is_published)",
+        "ck_manual_intake_macros_source": f"macros_source IS NULL OR macros_source IN ({sql_in_list(MacrosSource)})",
+        "ck_manual_intake_default_amount_method": (
+            f"default_amount_method IS NULL OR default_amount_method IN ({sql_in_list(AmountMethod)})"
+        ),
     }
     for field, limits in NUTRIENT_LIMITS.items():
         checks[f"ck_manual_intake_{field}_range"] = _range_check(field, limits)
@@ -421,8 +431,8 @@ class DBSchema:
         alcohol REAL,
         barcode VARCHAR(48),
         cooking_factor REAL,
-        macros_quality BOOLEAN, -- the food's data, read live by portions (measurement §6.11)
-        default_strictly_weighed BOOLEAN, -- copied to each new portion (measurement §6.11)
+        macros_source VARCHAR(50), -- U1: where the macros come from; the food's data, read live by portions (measurement §6.11)
+        default_amount_method VARCHAR(50), -- U2: copied to each new portion (measurement §6.11)
         macros_confidence INTEGER, -- declared 0-2 (measurement §6.10)
         prefill_source VARCHAR(20), -- where the form's first values came from; the saved values are the user's (measurement §12.1)
         prefill_source_id VARCHAR(64),
@@ -481,8 +491,8 @@ class DBSchema:
         glycemic_index VARCHAR(20), -- declared absorption speed (measurement §5.5)
         ig_confidence INTEGER, -- declared 0-2 (measurement §6.10)
         macros_confidence INTEGER, -- declared 0-2 (measurement §6.10)
-        macros_quality BOOLEAN, -- the dish's data, read live by portions (measurement §6.11)
-        default_strictly_weighed BOOLEAN, -- copied to each new portion (measurement §6.11)
+        macros_source VARCHAR(50), -- U1: the dish's data, read live by portions (measurement §6.11)
+        default_amount_method VARCHAR(50), -- U2: copied to each new portion (measurement §6.11)
         is_quick_add BOOLEAN NOT NULL DEFAULT FALSE,
         is_published BOOLEAN NOT NULL DEFAULT FALSE,
         deleted_at TIMESTAMPTZ,
@@ -793,10 +803,10 @@ class DBSchema:
 
         amount_confidence REAL
             CONSTRAINT ck_intake_event_amount_confidence
-            CHECK (amount_confidence >= 0 AND amount_confidence <= 1), -- Weighted average based on each food's amount and whether it was strictly weighed: (amount1 * strictly_weighed1 + amount2 * strictly_weighed2) divided by the live sum of portion_detail.amount for the event (total_amount is not a column; see cart_shared.calculate_macro_summary_metrics, decision 2026-09-10)
+            CHECK (amount_confidence >= 0 AND amount_confidence <= 1), -- Snapshot at confirm: share of the served weight whose amount_method is a scale or the package weight (measurement_conventions.md 6.4)
 
         -- quality_confidence and the six *_coverage are not stored: they depend on
-        -- the food's macros and macros_quality, so they are computed live from the
+        -- the food's macros and macros_source, so they are computed live from the
         -- portions (measurement_conventions.md §6.9.4).
 
         notes TEXT, -- Free-text note about the meal, edited from the cart card (input above "Confirm meal"). No physical limit: the 500-character cap is a domain rule (INTAKE_EVENT_NOTES_MAX_LENGTH in domain/intake_event.py), enforced at the boundary with 422 and never truncated (decision 2026-09-10, §7.3)
@@ -903,8 +913,10 @@ class DBSchema:
         ripeness VARCHAR(50)
             CONSTRAINT ck_portion_detail_ripeness
             CHECK (ripeness IS NULL OR ripeness IN ({_PORTION_PREPARATION_LISTS['ripeness']})), -- Ripeness of a fruit, seen by eye; meal portions of a `fruits` food only (study_conventions.md 6.3). NULL = not given
-        strictly_weighed BOOLEAN, -- Whether or not the food was weighed before consumption. NULL means "no data" and is a state of its own, not FALSE (decision 2026-09-18)
-        macros_quality BOOLEAN, -- UNUSED since 2026-10-09: the quality is the food's (catalog/manual_intake.macros_quality, read live, measurement §6.11). Kept with its values until versioning (portion_detail H1)
+        amount_method VARCHAR(50)
+            CONSTRAINT ck_portion_detail_amount_method
+            CHECK (amount_method IS NULL OR amount_method IN ({sql_in_list(AmountMethod)})), -- U2: how the amount was obtained (study_conventions.md 6.3). NULL = not given
+        macros_quality BOOLEAN, -- UNUSED since 2026-10-09: the origin of the macros is the food's (catalog/manual_intake.macros_source, read live, measurement §6.11). Kept with its values until versioning (portion_detail H1)
         
         is_cooked_weight BOOLEAN DEFAULT FALSE, -- If the food was weighed already cooked, catalog.cooking_factor back-calculates the raw weight ONLY inside the macro calculation; `amount` always keeps what the user weighed and is never overwritten (measurement_conventions.md 5.2, decision 2026-09-18). Only for catalog origins.
         offset_minutes INTEGER

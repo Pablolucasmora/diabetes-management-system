@@ -14,11 +14,15 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from DayBetes_food.domain.constants import (
+    PUBLISHED_MACROS_SOURCES,
+    WEIGHED_AMOUNT_METHODS,
     AmountInputUnit,
+    AmountMethod,
     ConservationMethod,
     CookingMethod,
     FoodCategory,
     FoodPhysicalState,
+    MacrosSource,
     MASS_SANITY_MAX_G,
     Clear,
     PortionDestination,
@@ -127,9 +131,9 @@ class PortionSourceRead:
     # cannot be reused, so it cannot go into a recipe.
     is_quick_add: bool
     cooking_factor: float | None  # catalog only; None for manual_intake
-    # The food's, read live (measurement §6.11, decision 2026-10-09): the
-    # portion does not store a copy. None = no data.
-    macros_quality: bool | None
+    # The food's U1, read live (measurement §6.11, study §6.3): the portion
+    # does not store a copy. None = not given.
+    macros_source: MacrosSource | None
     calories_100g: float | None
     carbs_100g: float | None
     sugars_100g: float | None
@@ -153,7 +157,7 @@ class PortionDetailRead:
     conservation: ConservationMethod | None
     final_state: FoodPhysicalState | None
     ripeness: Ripeness | None       # fruits of a meal only; None = not given (study §6.3)
-    strictly_weighed: bool | None   # None = no data (decision 2026-09-18)
+    amount_method: AmountMethod | None  # U2; None = not given (study §6.3)
     is_cooked_weight: bool
     offset_minutes: int | None
     source_fridge_id: int | None   # the container it was taken from (measurement §4.8.4)
@@ -175,7 +179,7 @@ class PortionDetailCreate:
     conservation: ConservationMethod | None = None
     final_state: FoodPhysicalState | None = None
     ripeness: Ripeness | None = None
-    strictly_weighed: bool | None = None
+    amount_method: AmountMethod | None = None
     is_cooked_weight: bool = False
     offset_minutes: int | None = None
     source_fridge_id: int | None = None
@@ -242,12 +246,13 @@ def calculate_macro_summary_metrics(portions) -> dict:
     quality_confidence_num = 0.0
     for portion in portions:
         amount = portion_intake_amount(portion)
-        # NULL means "no data" (decision 2026-09-18): it does not add to the
-        # numerator, same as False, but said explicitly instead of `bool()`
-        # (code_conventions.md 3.2: decide whether NULL is zero or absence).
-        amount_confidence_num += amount * (1.0 if portion.strictly_weighed is True else 0.0)
-        # The food's quality, read live (measurement §6.5, §6.11).
-        quality_confidence_num += amount * (1.0 if portion.source.macros_quality is True else 0.0)
+        # Only a scale or the package weight count as measured (measurement
+        # §6.4); NULL ("not given") counts as not measured, said explicitly.
+        amount_confidence_num += amount * (1.0 if portion.amount_method in WEIGHED_AMOUNT_METHODS else 0.0)
+        # The food's U1, read live: published macros count (measurement §6.5, §6.11).
+        quality_confidence_num += amount * (
+            1.0 if portion.source.macros_source in PUBLISHED_MACROS_SOURCES else 0.0
+        )
 
     metrics = {
         "amount_confidence": (amount_confidence_num / total_amount) if total_amount > 0 else 0.0,
