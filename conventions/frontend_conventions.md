@@ -380,7 +380,7 @@ Contrato de datos en `code_conventions.md` §11.2.8.
 
 | Acción | `hx-target` | `hx-swap` | Éxito | Error |
 |---|---|---|---|---|
-| `POST /food/tags/{entry_type}/{entry_id}` (`tag_id`, `linked=true\|false`, `open`) | `#entry_tags_{entry_type}_{entry_id}` | `outerHTML` | el bloque | `linked` ausente, id mal formado o tipo desconocido: `422`; al añadir, entrada o etiqueta no disponibles: `404`. Quitar es un no-op con éxito aunque la entrada ya no exista o no sea visible. Por el canal de errores |
+| `POST /food/tags/{entry_type}/{entry_id}` (`tag_id`, `linked=true\|false`, `open`) | `#entry_tags_{entry_type}_{entry_id}` | `outerHTML` | el bloque | id de la URL mal formado: `400`; `linked` ausente, `tag_id` mal formado o tipo desconocido: `422`; al añadir, entrada o etiqueta no disponibles: `404`. Quitar es un no-op con éxito aunque la entrada ya no exista o no sea visible. Por el canal de errores |
 | `POST /food/tags/{entry_type}/{entry_id}/new` (`name`) | `#entry_tags_{entry_type}_{entry_id}` | `outerHTML` | el bloque, con el panel abierto | nombre vacío o largo: `422`; entrada no disponible: `404`. Por el canal de errores |
 
 Las dos exigen el header `HX-Request` (`403` si falta).

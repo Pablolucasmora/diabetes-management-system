@@ -747,8 +747,10 @@ Esto incluye los valores cerrados que llegan en la URL. El tipo de alimento de l
 
 ### 7.8 Identificadores, fechas y horas
 
-- Los identificadores de URL, formularios y HTMX se validan antes de ejecutar SQL. El parser común es `parse_optional_id` (`domain/constants.py`).
-- Un ID mal formado produce `400` o `422`; un ID válido sin recurso visible produce `404`.
+- Los identificadores de URL, formularios y HTMX se validan antes de ejecutar SQL, y solo se admiten dígitos ASCII: nunca `int()` sobre el texto, que acepta otros dígitos Unicode (`٨`, `８`) y guiones bajos (`1_7`).
+- Un id de la ruta (`/food/item/{entry_type}/{entry_id}`) se declara con el tipo común `PathId` (`domain/constants.py`) en la firma de la ruta (`entry_id: PathId`), nunca `int`. Mal formado, lanza `MalformedRequestError` y el handler global responde `400` (`error_conventions.md` §3.1), con `X-Request-ID` y el formato de error común; con `int`, FastHTML respondía un `404` genérico. Es la regla de todas las rutas (2026-11-12, hallazgo 30 de `audit/audits/audit_tags.md`).
+- Un id de un formulario, de `hx-vals` o de la query string se lee con `parse_optional_id` (`domain/constants.py`): vacío es `None` y mal formado, `422`.
+- Un ID válido sin recurso visible produce `404`.
 - No convertir IDs inválidos en `0` o `None`.
 - Las fechas y horas usan un formato único y se convierten en el boundary HTTP.
 - La entrada local se convierte a UTC mediante helpers comunes.

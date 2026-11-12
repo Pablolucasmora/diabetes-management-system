@@ -58,6 +58,7 @@ from DayBetes_food.database.queries import (
 )
 from DayBetes_food.domain.constants import (
     CLEAR,
+    PathId,
     AmountInputUnit,
     ConservationMethod,
     CookingMethod,
@@ -502,7 +503,7 @@ def setup_cart_routes(rt):
         return render_page(req, _load_cart_main, show_cart=False)
 
     @rt("/cart/event/{event_id}/meal_hour")
-    def post(request: Request, event_id: int, meal_hour: str = "", meal_date: str = ""):
+    def post(request: Request, event_id: PathId, meal_hour: str = "", meal_date: str = ""):
         """
         Update meal_hour from a specific event, returning the response to the request
         """
@@ -548,7 +549,7 @@ def setup_cart_routes(rt):
             return _events_list_response(connection, int(user_id))
 
     @rt("/cart/event/{event_id}/meal_type")
-    def post(request: Request, event_id: int, meal_type: str = ""):
+    def post(request: Request, event_id: PathId, meal_type: str = ""):
         """
         Update meal_type from a specific event, returning the response to the request
         """
@@ -581,7 +582,7 @@ def setup_cart_routes(rt):
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/name")
-    def post(request: Request, event_id: int, event_name: str = ""):
+    def post(request: Request, event_id: PathId, event_name: str = ""):
         """
         Update event meal name, returning the response to the request
         """
@@ -615,7 +616,7 @@ def setup_cart_routes(rt):
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/notes")
-    def post(request: Request, event_id: int, notes: str = ""):
+    def post(request: Request, event_id: PathId, notes: str = ""):
         """
         Update the meal note, returning the refreshed card.
 
@@ -652,7 +653,7 @@ def setup_cart_routes(rt):
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/delete")
-    def post(request: Request, event_id: int):
+    def post(request: Request, event_id: PathId):
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
@@ -674,7 +675,7 @@ def setup_cart_routes(rt):
             return _removal_response(connection, int(user_id))
 
     @rt("/cart/event/{event_id}/archive")
-    def post(request: Request, event_id: int):
+    def post(request: Request, event_id: PathId):
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
@@ -695,7 +696,7 @@ def setup_cart_routes(rt):
             return _cart_response(connection)
 
     @rt("/cart/event/{event_id}/restore")
-    def post(request: Request, event_id: int):
+    def post(request: Request, event_id: PathId):
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
@@ -713,7 +714,7 @@ def setup_cart_routes(rt):
             return _cart_response(connection)
 
     @rt("/cart/event/{event_id}/eating_out")
-    def post(request: Request, event_id: int, eating_out: str = ""):
+    def post(request: Request, event_id: PathId, eating_out: str = ""):
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
@@ -740,7 +741,7 @@ def setup_cart_routes(rt):
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/insulin_dose")
-    def post(request: Request, event_id: int, insulin_dose: str = ""):
+    def post(request: Request, event_id: PathId, insulin_dose: str = ""):
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
@@ -773,7 +774,7 @@ def setup_cart_routes(rt):
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/insulin_pen")
-    def post(request: Request, event_id: int, insulin_pen_id: str = ""):
+    def post(request: Request, event_id: PathId, insulin_pen_id: str = ""):
         """Pen of the bolus: an open rapid pen of the user (measurement §8.4)."""
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
@@ -798,7 +799,7 @@ def setup_cart_routes(rt):
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/insulin_units")
-    def post(request: Request, event_id: int, insulin_units: str = ""):
+    def post(request: Request, event_id: PathId, insulin_units: str = ""):
         """Dose of the bolus in U; empty is "not recorded" (measurement §8.1)."""
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
@@ -821,7 +822,7 @@ def setup_cart_routes(rt):
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/injection_zone")
-    def post(request: Request, event_id: int, zone: str = ""):
+    def post(request: Request, event_id: PathId, zone: str = ""):
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
@@ -854,7 +855,7 @@ def setup_cart_routes(rt):
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/portion/{portion_id}/amount")
-    def post(request: Request, portion_id: int, amount_value: str = "", amount_unit: str = AmountInputUnit.GRAMS.value):
+    def post(request: Request, portion_id: PathId, amount_value: str = "", amount_unit: str = AmountInputUnit.GRAMS.value):
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
@@ -889,7 +890,7 @@ def setup_cart_routes(rt):
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/portion/{portion_id}/offset")
-    def post(request: Request, portion_id: int, offset_minutes: str = ""):
+    def post(request: Request, portion_id: PathId, offset_minutes: str = ""):
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
@@ -914,7 +915,7 @@ def setup_cart_routes(rt):
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/portion/{portion_id}/delete")
-    def post(request: Request, portion_id: int):
+    def post(request: Request, portion_id: PathId):
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
@@ -935,7 +936,7 @@ def setup_cart_routes(rt):
     @rt("/cart/portion/{portion_id}/fridge")
     def post(
         request: Request,
-        portion_id: int,
+        portion_id: PathId,
         keep_mode: str = "",
         plate_percent: str = "",
         cooked_total: str = "",
@@ -983,7 +984,7 @@ def setup_cart_routes(rt):
         return response
 
     @rt("/cart/portion/{portion_id}/move")
-    def post(request: Request, portion_id: int, target_plate_id: str = ""):
+    def post(request: Request, portion_id: PathId, target_plate_id: str = ""):
         """Move a portion to another plate of the same event, or to a new one.
 
         An empty or "0" `target_plate_id` is the selector's `+ New plate` option
@@ -1135,15 +1136,15 @@ def setup_cart_routes(rt):
             )
 
     @rt("/cart/portion/{portion_id}/strictly_weighed")
-    def post(request: Request, portion_id: int, value: str = ""):
+    def post(request: Request, portion_id: PathId, value: str = ""):
         return _portion_flag_route(request, portion_id, "strictly_weighed", value, "Strictly weighted", tristate=True)
 
     @rt("/cart/portion/{portion_id}/is_cooked_weight")
-    def post(request: Request, portion_id: int, is_cooked_weight: str = ""):
+    def post(request: Request, portion_id: PathId, is_cooked_weight: str = ""):
         return _portion_flag_route(request, portion_id, "is_cooked_weight", is_cooked_weight, "Cooked weight")
 
     @rt("/cart/portion/{portion_id}/preparation")
-    def post(request: Request, portion_id: int, cooking: str = "", final_state: str = "", conservation: str = ""):
+    def post(request: Request, portion_id: PathId, cooking: str = "", final_state: str = "", conservation: str = ""):
         """Correct how an ingredient was prepared from the cart.
 
         The three fields are always sent together: an empty one means "no
@@ -1188,7 +1189,7 @@ def setup_cart_routes(rt):
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/plate")
-    def post(request: Request, event_id: int):
+    def post(request: Request, event_id: PathId):
         """`+ Add plate`: create an empty plate at the end of the event.
 
         It is born without a name —it will derive it from its ingredients
@@ -1212,7 +1213,7 @@ def setup_cart_routes(rt):
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/plate/{plate_id}/name")
-    def post(request: Request, plate_id: int, name: str = ""):
+    def post(request: Request, plate_id: PathId, name: str = ""):
         """Own name of the plate. Empty clears it and goes back to the derived one (§4.6.3)."""
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
@@ -1236,7 +1237,7 @@ def setup_cart_routes(rt):
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/plate/{plate_id}/offset")
-    def post(request: Request, plate_id: int, offset_minutes: str = ""):
+    def post(request: Request, plate_id: PathId, offset_minutes: str = ""):
         """Template offset of the plate.
 
         It does not rewrite its portions: that is `Apply all` (§4.6.2). It only
@@ -1260,7 +1261,7 @@ def setup_cart_routes(rt):
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/plate/{plate_id}/apply_offset")
-    def post(request: Request, plate_id: int, offset_minutes: str = ""):
+    def post(request: Request, plate_id: PathId, offset_minutes: str = ""):
         """`Apply all`: set the plate's offset and propagate it to its portions.
 
         Same endpoint for the header button and for a row's button
@@ -1286,7 +1287,7 @@ def setup_cart_routes(rt):
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/plate/{plate_id}/delete")
-    def post(request: Request, plate_id: int):
+    def post(request: Request, plate_id: PathId):
         """Delete an empty plate. With ingredients inside it answers 409 (§4.6.5)."""
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
@@ -1337,7 +1338,7 @@ def setup_cart_routes(rt):
         return HTMLResponse("", headers={"HX-Trigger": "recipeSaved"})
 
     @rt("/cart/plate/{plate_id}/recipe")
-    def post(request: Request, plate_id: int, name: str = ""):
+    def post(request: Request, plate_id: PathId, name: str = ""):
         """Save the plate as a new personal recipe, in favorites."""
         return _save_as_recipe(
             request,
@@ -1347,7 +1348,7 @@ def setup_cart_routes(rt):
         )
 
     @rt("/cart/event/{event_id}/recipe")
-    def post(request: Request, event_id: int, name: str = ""):
+    def post(request: Request, event_id: PathId, name: str = ""):
         """Save the whole meal as a new personal recipe, in favorites."""
         return _save_as_recipe(
             request,
@@ -1358,7 +1359,7 @@ def setup_cart_routes(rt):
 
 
     @rt("/cart/event/{event_id}/confirm")
-    async def post(request: Request, event_id: int):
+    async def post(request: Request, event_id: PathId):
         """
         Confirm the event (planned -> consumed), measurement_conventions.md §4.4/§6.9.1.
 

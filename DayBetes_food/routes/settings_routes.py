@@ -32,7 +32,7 @@ from DayBetes_food.database.queries import (
     upsert_meal_type_window,
     delete_meal_type_window,
 )
-from DayBetes_food.domain.constants import InsulinType, InjectionZone, MealType, parse_enum, parse_optional_id
+from DayBetes_food.domain.constants import InjectionZone, InsulinType, MealType, PathId, parse_enum, parse_optional_id
 from DayBetes_food.domain.insulin import InsulinInjectionUpdate, parse_insulin_units, parse_shot_local
 from DayBetes_food.domain.meal_type_schedule import (
     AUTO_ASSIGNABLE_MEAL_TYPES,
@@ -131,7 +131,7 @@ def setup_settings_routes(rt):
         return render_fragment(tags_settings_list(tags))
 
     @rt("/settings/tags/{tag_id}/update")
-    def post(req: Request, tag_id: int, name: str = "", color: str = ""):
+    def post(req: Request, tag_id: PathId, name: str = "", color: str = ""):
         """Renames or recolors one of the user's tags; the row is read again by id."""
         if req.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -157,7 +157,7 @@ def setup_settings_routes(rt):
         return render_fragment(tag_settings_row(tag))
 
     @rt("/settings/tags/{tag_id}/delete")
-    def post(req: Request, tag_id: int):
+    def post(req: Request, tag_id: PathId):
         """Deletes one of the user's tags and its links (§11.2.8); the row goes away."""
         if req.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -306,7 +306,7 @@ def setup_settings_routes(rt):
         )
 
     @rt("/settings/injections/{injection_id}/delete")
-    def post(req: Request, injection_id: int):
+    def post(req: Request, injection_id: PathId):
         """Delete an injection. Errors go through the visible error channel
         (error_conventions.md §7.1); success is `injectionUpdated`, which closes the
         pop-up and repaints the log."""
@@ -325,7 +325,7 @@ def setup_settings_routes(rt):
     @rt("/settings/injections/{injection_id}/update")
     def post(
         req: Request,
-        injection_id: int,
+        injection_id: PathId,
         insulin_pen_id: str = "",
         units: str = "",
         zone: str = "",
