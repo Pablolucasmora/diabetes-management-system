@@ -7,7 +7,7 @@ and accents. Every action answers with what is stored, read by id (§6).
 
 from fasthtml.common import *
 
-from DayBetes_food.components.food.tags import tag_pill_style
+from DayBetes_food.components.food.tags import tag_label, tag_pill_style
 from DayBetes_food.components.modal import ConfirmActionModal, close_modal_js, modal_confirm_button, open_modal_js
 from DayBetes_food.components.navigation import back_js
 from DayBetes_food.domain.tag import TAG_NAME_MAX_LENGTH, TagRead
@@ -20,7 +20,7 @@ _ROW_CLS = "web_container food_entry flex items-center justify-between gap-3"
 def tag_settings_row(tag: TagRead):
     if tag.is_system:
         return Div(
-            Span(tag.name, cls="inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold",
+            Span(tag_label(tag), cls="inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold",
                  style=tag_pill_style(tag)),
             Span("System", cls="text-xs text-gray-500"),
             id=f"tag_row_{tag.id}",
@@ -113,6 +113,8 @@ def tags_settings_page(tags: list[TagRead]):
             hx_post="/settings/tags",
             hx_target=f"#{TAGS_LIST_ID}",
             hx_swap="innerHTML",
+            # A second submit while the first is on its way would answer 409.
+            hx_disabled_elt="find button[type=submit]",
             # The list comes back whole; the field is emptied for the next one.
             **{"hx-on::after-request": "if(event.detail.successful){this.reset();}"},
             cls="flex items-center gap-2 w-full",

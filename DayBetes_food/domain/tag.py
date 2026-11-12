@@ -18,6 +18,9 @@ from DayBetes_food.errors import ValidationError
 # Short on purpose: a tag is a pill on a phone screen. The column is VARCHAR(100).
 TAG_NAME_MAX_LENGTH = 40
 
+# A personal tag named like another of the user's or like a system tag (409, §11.2.8).
+TAG_NAME_TAKEN = "You already have a tag with that name."
+
 # What the color picker gives (#RRGGBB) or what tag_color_from_name builds.
 # Validated because the value ends inside a `style` attribute (§7.3).
 TAG_COLOR_PATTERN = r"^(#[0-9A-Fa-f]{6}|hsl\([0-9]{1,3} [0-9]{1,3}% [0-9]{1,3}%\))$"
@@ -30,11 +33,11 @@ SYSTEM_TAG_MEAL_TYPE = {
     SystemTag.EXERCISE: MealType.EXERCISE,
 }
 
-# Name and color of each system tag. The name is what the interface shows; the
-# tag is identified by its key, so the name is never compared.
-SYSTEM_TAG_DEFAULTS = {
-    SystemTag.RESCUE: ("Rescue", "#FF0000"),
-    SystemTag.EXERCISE: ("Exercise", "#2563EB"),
+# Color each system tag is created with. Its row stores the key as its name:
+# the name shown comes from SYSTEM_TAG_LABELS (components/food/tags.py, §3.6).
+SYSTEM_TAG_COLORS = {
+    SystemTag.RESCUE: "#FF0000",
+    SystemTag.EXERCISE: "#2563EB",
 }
 
 

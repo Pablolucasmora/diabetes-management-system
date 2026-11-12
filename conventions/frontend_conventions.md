@@ -373,12 +373,14 @@ En un alimento o un plato, debajo de `Edit` y `Log food`, dos botones visibles, 
 Contrato de datos en `code_conventions.md` §11.2.8.
 
 - En la ficha de cualquier alimento, plato o receta que el usuario ve, sea suyo o no, debajo del nombre: sus etiquetas en esa entrada, como píldoras de su color con una × para quitarlas, las de sistema primero.
-- Debajo, `+ Tag` abre un `<details>` con el resto de etiquetas que puede usar (las de sistema y las suyas), cada una como píldora `+ Nombre`, y un campo `New tag` con `Add`. Escribir el nombre de una que ya existe, sin distinguir mayúsculas, la reutiliza; si no, crea una personal con un color sacado del nombre.
+- Debajo, `+ Tag` abre un `<details>` con el resto de etiquetas que puede usar (las de sistema y las suyas), cada una como píldora `+ Nombre`, y un campo `New tag` con `Add`. Escribir el nombre de una que ya existe, sin distinguir mayúsculas, la reutiliza (una de sistema, por su nombre visible), también si otra petición la acaba de crear; si no, crea una personal con un color sacado del nombre. `Add` se deshabilita mientras se envía.
+- El nombre visible de una de sistema sale de `SYSTEM_TAG_LABELS` (`components/food/tags.py`), nunca de la fila (`code_conventions.md` §11.2.8).
+- En una receta se ofrecen también las de sistema, pero solo como marca: el pop-up de rescate no ofrece recetas (§9.6), así que una receta `Rescue` o `Exercise` no aparece en sus pestañas (decisión del usuario, 2026-11-12).
 - Cada acción repinta el bloque entero desde lo guardado (§6). Al añadir, el panel sigue abierto para poder añadir otra.
 
 | Acción | `hx-target` | `hx-swap` | Éxito | Error |
 |---|---|---|---|---|
-| `POST /food/tags/{entry_type}/{entry_id}` (`tag_id`, `linked=true\|false`, `open`) | `#entry_tags_{entry_type}_{entry_id}` | `outerHTML` | el bloque | `linked` ausente, id mal formado o tipo desconocido: `422`; entrada o etiqueta no disponibles: `404`. Por el canal de errores |
+| `POST /food/tags/{entry_type}/{entry_id}` (`tag_id`, `linked=true\|false`, `open`) | `#entry_tags_{entry_type}_{entry_id}` | `outerHTML` | el bloque | `linked` ausente, id mal formado o tipo desconocido: `422`; al añadir, entrada o etiqueta no disponibles: `404`. Quitar es un no-op con éxito aunque la entrada ya no exista o no sea visible. Por el canal de errores |
 | `POST /food/tags/{entry_type}/{entry_id}/new` (`name`) | `#entry_tags_{entry_type}_{entry_id}` | `outerHTML` | el bloque, con el panel abierto | nombre vacío o largo: `422`; entrada no disponible: `404`. Por el canal de errores |
 
 Las dos exigen el header `HX-Request` (`403` si falta).
@@ -400,9 +402,9 @@ Decisión 2026-10-11. Un rescate es lo que se toma para tratar una hipoglucemia.
 
 - Con el buscador vacío salen los alimentos de la pestaña: los que este usuario ha etiquetado con su etiqueta de sistema (`rescue` o `exercise`) y los que ya ha usado en comidas de ese tipo, primero los usados más recientemente. Cambiar de pestaña vuelve a pedir la lista con lo que haya escrito en el buscador.
 - Al escribir, los resultados **sustituyen** a los alimentos de la pestaña en el mismo sitio, y al vaciar el buscador vuelven los de la pestaña. La lista declara su propio `hx-target`: sin él heredaría el del formulario (`#rescue_form_error`) y los resultados aparecerían debajo. Enter en el buscador (la tecla Buscar del teclado del móvil) no envía el rescate: solo cierra el teclado.
-- La búsqueda abarca todos los alimentos (`catalog`) y platos (`manual_intake`) que el usuario puede ver, con la misma regla de visibilidad que el resto de búsquedas, incluidos los archivados que conserva (`code_conventions.md` §11.2). Ignora mayúsculas y acentos. Los de la pestaña van primero.
-- Cada opción es una fila `control` compacta (§8) con el nombre y, debajo, la marca u origen y los hidratos del alimento (por ración si la tiene, si no por 100 g). La lista tiene una altura máxima con scroll propio. Sin alimentos en la pestaña, una línea explica que basta con buscar cualquiera o etiquetarlo, y que los registrados aparecerán ahí.
-- La etiqueta de cada pestaña se identifica por su `system_key` (`SystemTag`), nunca por el nombre (`code_conventions.md` §11.2.8). El tipo de comida de cada una sale de `SYSTEM_TAG_MEAL_TYPE` (`domain/tag.py`).
+- La búsqueda abarca todos los alimentos (`catalog`) y platos (`manual_intake`) que el usuario puede ver, con la misma regla de visibilidad que el resto de búsquedas, incluidos los archivados que conserva (`code_conventions.md` §11.2). Ignora mayúsculas y acentos, y `%` y `_` cuentan como caracteres. Los de la pestaña van primero. No ofrece recetas, aunque tengan la etiqueta de la pestaña: en una receta es solo una marca (§9.4.1, decisión del usuario, 2026-11-12).
+- Cada opción es una fila `control` compacta (§8) con el nombre y, debajo, la marca u origen y los hidratos del alimento (por ración si la tiene, si no por 100 g). La lista tiene una altura máxima con scroll propio. Sin alimentos en la pestaña, una línea explica que basta con buscar cualquiera o etiquetar un alimento o un plato, y que los registrados aparecerán ahí.
+- La etiqueta de cada pestaña se identifica por su `system_key` (`SystemTag`), nunca por el nombre (`code_conventions.md` §11.2.8), y el texto de la pestaña sale de `SYSTEM_TAG_LABELS`, el mismo que el de las píldoras. El tipo de comida de cada una sale de `SYSTEM_TAG_MEAL_TYPE` (`domain/tag.py`).
 
 **Líneas**
 
@@ -442,7 +444,7 @@ Todas exigen el header `HX-Request` (`403` si falta).
 
 **Marcar un alimento como rescate o ejercicio**
 
-- Con las etiquetas de sistema `Rescue` y `Exercise` desde la ficha (§9.4.1), en cualquier alimento que el usuario vea. El botón provisional `Rescue` y `/food/rescue/mark/...` ya no existen (2026-11-08).
+- Con las etiquetas de sistema `Rescue` y `Exercise` desde la ficha (§9.4.1), en cualquier alimento o plato que el usuario vea. En una receta son solo una marca. El botón provisional `Rescue` y `/food/rescue/mark/...` ya no existen (2026-11-08).
 
 ### 9.7 Recetas: paso previo, tandas e ingredientes
 
@@ -513,16 +515,16 @@ Modelo en `measurement_conventions.md` §8.4.
 
 `/settings/tags`, desde el botón `Tags` de ajustes. Contrato de datos en `code_conventions.md` §11.2.8.
 
-- Arriba, `New tag` con `Add`, que crea una etiqueta personal y repinta la lista. Debajo, el buscador, que ignora mayúsculas y acentos.
+- Arriba, `New tag` con `Add`, que crea una etiqueta personal y repinta la lista; `Add` se deshabilita mientras se envía. Debajo, el buscador, que ignora mayúsculas y acentos y trata `%` y `_` como caracteres.
 - La lista: primero las de sistema, como píldora con la marca `System` y sin acciones; después las del usuario, con el nombre editable en la propia fila (se guarda al cambiar, no en cada salida del campo), el color (el selector Pickr, con versión fija) y `Delete`, que pide confirmación y avisa de que se quita de todos los alimentos.
 - Cada cambio responde con la fila leída de nuevo por su id (§6).
 
 | Acción | `hx-target` | `hx-swap` | Éxito | Error |
 |---|---|---|---|---|
 | `GET /settings/tags/list?q=` | `#settings-tags-list` | `innerHTML` | la lista | — |
-| `POST /settings/tags` (`name`) | `#settings-tags-list` | `innerHTML` | la lista; el campo se vacía | `422` nombre; `409` ya existe o es de sistema |
-| `POST /settings/tags/{tag_id}/update` (`name`, `color`) | `#tag_row_{tag_id}` | `outerHTML` | la fila | `422` nombre o color; `404` no es suya (también una de sistema); `409` nombre ocupado |
-| `POST /settings/tags/{tag_id}/delete` | `#tag_row_{tag_id}` | `delete` | cuerpo vacío | `404` no es suya |
+| `POST /settings/tags` (`name`) | `#settings-tags-list` | `innerHTML` | la lista; el campo se vacía | `422` nombre; `409` ya existe o es el nombre visible de una de sistema |
+| `POST /settings/tags/{tag_id}/update` (`name`, `color`) | `#tag_row_{tag_id}` | `outerHTML` | la fila | `422` nombre o color; `404` no es suya (también una de sistema); `409` nombre ocupado o de sistema |
+| `POST /settings/tags/{tag_id}/delete` | `#tag_row_{tag_id}` | `delete` | cuerpo vacío | `404` no es suya o ya se borró |
 
 Todas exigen el header `HX-Request` (`403` si falta) y los errores van por el canal común (`error_conventions.md` §7.1).
 

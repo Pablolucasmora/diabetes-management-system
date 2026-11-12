@@ -10,6 +10,7 @@ from DayBetes_food.components.settings.settings_main import (
     meal_type_schedule_settings_page,
     meal_type_schedule_row,
 )
+from DayBetes_food.components.food.tags import system_tag_for_label
 from DayBetes_food.components.settings.tags_settings import tag_settings_row, tags_settings_list, tags_settings_page
 from DayBetes_food.components.ui import render_page, render_fragment
 from DayBetes_food.database.connection import get_connection
@@ -37,7 +38,14 @@ from DayBetes_food.domain.meal_type_schedule import (
     AUTO_ASSIGNABLE_MEAL_TYPES,
     resolve_meal_type_window,
 )
-from DayBetes_food.domain.tag import TagCreate, TagUpdate, parse_tag_color, parse_tag_name, tag_color_from_name
+from DayBetes_food.domain.tag import (
+    TAG_NAME_TAKEN,
+    TagCreate,
+    TagUpdate,
+    parse_tag_color,
+    parse_tag_name,
+    tag_color_from_name,
+)
 from DayBetes_food.errors import AuthenticationError, AuthorizationError, ConflictError, NotFoundError, ValidationError
 from DayBetes_food.http_errors import app_error_response
 from DayBetes_food.auth.context import get_current_user_id
@@ -109,6 +117,8 @@ def setup_settings_routes(rt):
             clean_name = parse_tag_name(name)
         except ValidationError as error:
             return app_error_response(req, error, str(error))
+        if system_tag_for_label(clean_name) is not None:
+            return app_error_response(req, ConflictError, TAG_NAME_TAKEN)
         with get_connection() as connection:
             try:
                 create_tag(
@@ -132,6 +142,8 @@ def setup_settings_routes(rt):
             payload = TagUpdate(name=parse_tag_name(name), color=parse_tag_color(color))
         except ValidationError as error:
             return app_error_response(req, error, str(error))
+        if system_tag_for_label(payload.name) is not None:
+            return app_error_response(req, ConflictError, TAG_NAME_TAKEN)
         with get_connection() as connection:
             try:
                 update_tag(connection, int(user_id), tag_id, payload)
@@ -153,7 +165,9 @@ def setup_settings_routes(rt):
         if not user_id:
             return app_error_response(req, AuthenticationError, "Your session has expired.")
         with get_connection() as connection:
-            if not delete_tag(connection, int(user_id), tag_id):
+            try:
+                delete_tag(connection, int(user_id), tag_id)
+            except NotFoundError:
                 return app_error_response(req, NotFoundError, "Tag not found.")
         return HTMLResponse("")
 

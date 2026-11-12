@@ -34,7 +34,7 @@ from DayBetes_food.domain.constants import (
     sql_in_list,
 )
 from DayBetes_food.domain.recipe import RECIPE_MEAL_TYPES
-from DayBetes_food.domain.tag import SYSTEM_TAG_DEFAULTS
+from DayBetes_food.domain.tag import SYSTEM_TAG_COLORS
 
 logger = logging.getLogger(__name__)
 
@@ -1610,7 +1610,8 @@ def _migrate_tags_to_owners(cursor):
       A link whose food has no owner cannot be attributed and is dropped.
     - Every other tag goes to the owners of its links: the first one keeps the
       row, any other gets a copy with its links. A tag no food carries is dropped.
-    - Tags of one owner that only differ in case are merged into the oldest.
+    - Tags of one owner whose names only differ in case or spacing are merged
+      into the oldest, and then the names are normalized (ck_tags_name_normalized).
     """
     cursor.execute(
         "SELECT id FROM tags WHERE system_key IS NULL AND lower(btrim(name)) IN ('rescate', 'rescue') ORDER BY id;"
@@ -1624,10 +1625,10 @@ def _migrate_tags_to_owners(cursor):
                 {"keep": keep, "others": others},
             )
             cursor.execute("DELETE FROM tags WHERE id = ANY(%(others)s);", {"others": others})
-        name, _color = SYSTEM_TAG_DEFAULTS[SystemTag.RESCUE]
+        # A system tag stores its key as its name; the interface shows its label (§11.2.8).
         cursor.execute(
-            "UPDATE tags SET system_key = %(key)s, name = %(name)s WHERE id = %(id)s;",
-            {"key": SystemTag.RESCUE.value, "name": name, "id": keep},
+            "UPDATE tags SET system_key = %(key)s, name = %(key)s WHERE id = %(id)s;",
+            {"key": SystemTag.RESCUE.value, "id": keep},
         )
 
     cursor.execute(
@@ -1672,12 +1673,16 @@ def _migrate_tags_to_owners(cursor):
         )
     cursor.execute("DELETE FROM tags WHERE users_id IS NULL AND system_key IS NULL;")
 
-    # Same owner, same name ignoring case: the oldest row stays.
+    # Same owner, same name once normalized and ignoring case (uq_tags_users_id_name):
+    # the oldest row stays. Compared normalized, so `Alto  en fibra` and `alto en
+    # fibra` meet, and merged before the names are rewritten, so the rewrite cannot
+    # hit the old global unique name (tags_name_key) with two tags of one owner.
+    same_name = "lower(regexp_replace(btrim({}), '\\s+', ' ', 'g'))"
     cursor.execute(
-        """
+        f"""
         WITH ranked AS (
-            SELECT id, min(id) OVER (PARTITION BY users_id, lower(btrim(name))) AS keep_id
-            FROM tags WHERE users_id IS NOT NULL
+            SELECT t.id, min(t.id) OVER (PARTITION BY t.users_id, {same_name.format('t.name')}) AS keep_id
+            FROM tags t WHERE t.users_id IS NOT NULL
         )
         UPDATE linked_tags lt SET tag_id = ranked.keep_id
         FROM ranked WHERE lt.tag_id = ranked.id AND ranked.id <> ranked.keep_id;
@@ -1685,7 +1690,7 @@ def _migrate_tags_to_owners(cursor):
         DELETE FROM tags t
         USING tags older
         WHERE t.users_id IS NOT NULL AND older.users_id = t.users_id
-          AND lower(btrim(older.name)) = lower(btrim(t.name)) AND older.id < t.id;
+          AND {same_name.format('older.name')} = {same_name.format('t.name')} AND older.id < t.id;
         """
     )
     # Normalized names (ck_tags_name_normalized), as Python always wrote them.
@@ -1767,12 +1772,13 @@ def _ensure_tags_schema(cursor):
     # One row per system tag, and one personal tag per name and owner ignoring case.
     _create_unique_index_once(cursor, "uq_tags_system_key", "ON tags (system_key) WHERE system_key IS NOT NULL")
     _create_unique_index_once(cursor, "uq_tags_users_id_name", "ON tags (users_id, lower(name)) WHERE users_id IS NOT NULL")
-    for key, (name, color) in SYSTEM_TAG_DEFAULTS.items():
+    # A system tag stores its key as its name: the name shown is SYSTEM_TAG_LABELS (§11.2.8).
+    for key, color in SYSTEM_TAG_COLORS.items():
         cursor.execute("SELECT 1 AS ok FROM tags WHERE system_key = %(key)s;", {"key": key.value})
         if cursor.fetchone() is None:
             cursor.execute(
-                "INSERT INTO tags (system_key, name, color) VALUES (%(key)s, %(name)s, %(color)s);",
-                {"key": key.value, "name": name, "color": color},
+                "INSERT INTO tags (system_key, name, color) VALUES (%(key)s, %(key)s, %(color)s);",
+                {"key": key.value, "color": color},
             )
 
     # One link per user, tag and food; the food's own index serves its CASCADE and

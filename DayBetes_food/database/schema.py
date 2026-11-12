@@ -670,7 +670,7 @@ class DBSchema:
         users_id INTEGER -- owner of a personal tag; NULL on a system tag
             CONSTRAINT fk_tags_users_id_users
             REFERENCES users(id) ON DELETE CASCADE,
-        system_key VARCHAR(32), -- SystemTag; identifies a system tag, its name is only shown
+        system_key VARCHAR(32), -- SystemTag; identifies a system tag, whose name is never shown (§11.2.8)
         name VARCHAR(100) NOT NULL, -- stored normalized; unique per owner ignoring case (uq_tags_users_id_name)
         color VARCHAR(64) NOT NULL DEFAULT 'hsl(0 80% 90%)', -- #RRGGBB or hsl(); ends in a style attribute
         description TEXT, -- unused for now (phase 2)

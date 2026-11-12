@@ -69,6 +69,7 @@ from DayBetes_food.database.queries import (
     get_consumed_food_usage_rankings,
     get_rescue_entries_suggestions,
     list_tags,
+    get_system_tag,
     get_tag_by_name,
     create_tag,
     list_entry_tags,
@@ -177,7 +178,7 @@ from DayBetes_food.components.food.food_actions import (
 )
 from DayBetes_food.components.food.fridge import FridgeListContent, FridgeListOob
 from DayBetes_food.components.modal import ModalFormError
-from DayBetes_food.components.food.tags import EntryTags
+from DayBetes_food.components.food.tags import EntryTags, system_tag_for_label
 from DayBetes_food.components.food.rescue import (
     RescueForm,
     RescueLine,
@@ -744,6 +745,32 @@ def _entry_tags_block(connection, user_id: int, kind: FoodEntryType, entry_id: i
         available=list_tags(connection, user_id),
         open_panel=open_panel,
     )
+
+
+def _tag_id_for_name(connection, user_id: int, name: str) -> int:
+    """The tag the user means by a typed name, inside the caller's transaction: a
+    system tag by its label, one of their own by its name (ignoring case), or a new
+    personal tag (§9.4.1). A tag of that name created meanwhile by another request
+    is reused, not a 409: the insert runs in a savepoint (§6.2)."""
+    system_key = system_tag_for_label(name)
+    if system_key is not None:
+        tag = get_system_tag(connection, system_key)
+        if tag is None:
+            raise NotFoundError("Tag not found.")
+        return tag.id
+    tag = get_tag_by_name(connection, user_id, name)
+    if tag is not None:
+        return tag.id
+    try:
+        with connection.transaction():
+            return create_tag(
+                connection, TagCreate(user_id=user_id, name=name, color=tag_color_from_name(name)), commit=False
+            )
+    except ConflictError:
+        tag = get_tag_by_name(connection, user_id, name)
+        if tag is None:
+            raise
+        return tag.id
 
 
 def _get_rescue_food(connection, user_id: int, origin: PortionOrigin, entry_id: int):
@@ -1924,8 +1951,8 @@ def setup_food_routes(rt):
 
     @rt("/food/tags/{entry_type}/{entry_id}/new")
     def post(request: Request, entry_type: str, entry_id: int, name: str = ""):
-        """Puts a tag on the entry by its name: an existing tag of the user (or a
-        system one) is reused, otherwise a personal tag is created."""
+        """Puts a tag on the entry by its name: a system tag or one of the user's is
+        reused, otherwise a personal tag is created. Repeating it is a no-op (§6.3)."""
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()
@@ -1941,18 +1968,10 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             try:
                 with connection.transaction():
-                    tag = get_tag_by_name(connection, int(user_id), clean_name)
-                    tag_id = tag.id if tag else create_tag(
-                        connection,
-                        TagCreate(user_id=int(user_id), name=clean_name, color=tag_color_from_name(clean_name)),
-                        commit=False,
-                    )
+                    tag_id = _tag_id_for_name(connection, int(user_id), clean_name)
                     set_entry_tag(connection, int(user_id), kind, entry_id, tag_id, True, commit=False)
             except NotFoundError:
                 return app_error_response(request, NotFoundError, "That food is not available.")
-            except ConflictError as error:
-                # Created by another request at the same time: repeating it reuses the tag.
-                return app_error_response(request, error, str(error))
             return render_fragment(_entry_tags_block(connection, int(user_id), kind, entry_id, True))
 
     @rt("/food/actions/{entry_type}/{entry_id}")

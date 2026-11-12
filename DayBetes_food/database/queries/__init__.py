@@ -75,6 +75,7 @@ from DayBetes_food.database.queries.recipe_plate import (
 from DayBetes_food.database.queries.tags import (
     list_tags,
     get_tag,
+    get_system_tag,
     get_tag_by_name,
     create_tag,
     update_tag,
@@ -246,6 +247,7 @@ __all__ = [
     "update_recipe_plate_name",
     "list_tags",
     "get_tag",
+    "get_system_tag",
     "get_tag_by_name",
     "create_tag",
     "update_tag",
