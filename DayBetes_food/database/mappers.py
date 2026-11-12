@@ -10,12 +10,14 @@ from DayBetes_food.domain.catalog import CatalogItemRead
 from DayBetes_food.domain.ciqual_food import CiqualFoodRead
 from DayBetes_food.domain.constants import (
     AmountMethod,
+    AssistantRole,
     MacrosSource,
     PenCloseReason,
     PenFormat,
     ConservationMethod,
     CookingMethod,
     FoodCategory,
+    FoodEntryType,
     FoodPhysicalState,
     FridgeCloseReason,
     GlycemicIndex,
@@ -30,11 +32,13 @@ from DayBetes_food.domain.constants import (
     StorageLocation,
     SystemTag,
 )
+from DayBetes_food.domain.food_entry import MentionSuggestion
 from DayBetes_food.domain.fridge import FridgeMoveRead, FridgeRead
 from DayBetes_food.domain.insulin import InsulinInjectionRead
 from DayBetes_food.domain.insulin_pen import InsulinBrandRead, InsulinPenRead
 from DayBetes_food.domain.intake_event import IntakeEventRead
 from DayBetes_food.domain.intake_plate import IntakePlateRead
+from DayBetes_food.domain.assistant import AssistantConversationRead, AssistantMessageRead
 from DayBetes_food.domain.manual_intake import ManualIntakeRead
 from DayBetes_food.domain.off_product import OffProductRead
 from DayBetes_food.domain.recipe import RecipeRead
@@ -537,3 +541,57 @@ def insulin_pen_read_from_row(row: dict) -> InsulinPenRead:
         )
     except (KeyError, ValueError) as exc:
         raise InfrastructureError(f"Invalid insulin_pen row: {exc}") from exc
+
+
+def mention_suggestion_from_row(row: dict) -> MentionSuggestion:
+    """Convert a SQL row from get_mention_suggestions (queries/entries.py).
+    Nullable columns: serving_g (no serving, or a recipe) and carbs_100g (a
+    recipe)."""
+    try:
+        serving_g = row.get("serving_g")
+        carbs_100g = row.get("carbs_100g")
+        return MentionSuggestion(
+            entry_type=FoodEntryType(row["entry_type"]),
+            entry_id=int(row["entry_id"]),
+            name=str(row["name"]).strip(),
+            subtitle=str(row.get("subtitle") or "").strip(),
+            serving_g=float(serving_g) if serving_g is not None else None,
+            carbs_100g=float(carbs_100g) if carbs_100g is not None else None,
+            is_favorite=bool(row["is_favorite"]),
+        )
+    except (KeyError, ValueError) as exc:
+        raise InfrastructureError(f"Invalid mention suggestion row: {exc}") from exc
+
+
+def assistant_conversation_read_from_row(row: dict) -> AssistantConversationRead:
+    """Convert a SQL row of `assistant_conversation` (queries/assistant.py)."""
+    try:
+        event_id = row.get("intake_event_id")
+        return AssistantConversationRead(
+            id=int(row["id"]),
+            user_id=int(row["users_id"]),
+            intake_event_id=int(event_id) if event_id is not None else None,
+            model=str(row["model"]),
+            created_at=row["created_at"],
+        )
+    except (KeyError, ValueError) as exc:
+        raise InfrastructureError(f"Invalid assistant conversation row: {exc}") from exc
+
+
+def assistant_message_read_from_row(row: dict) -> AssistantMessageRead:
+    """Convert a SQL row of `assistant_message` (queries/assistant.py). `content`
+    is JSONB, which psycopg returns already decoded."""
+    content = row.get("content")
+    if not isinstance(content, list):
+        raise InfrastructureError("Invalid assistant message content in database row")
+    try:
+        return AssistantMessageRead(
+            id=int(row["id"]),
+            conversation_id=int(row["conversation_id"]),
+            position=int(row["position"]),
+            role=_enum_from_row(row, "role", AssistantRole),
+            content=content,
+            created_at=row["created_at"],
+        )
+    except (KeyError, ValueError) as exc:
+        raise InfrastructureError(f"Invalid assistant message row: {exc}") from exc

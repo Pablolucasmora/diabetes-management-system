@@ -311,11 +311,11 @@ Se construyen con los bloques de `components/food/foods.py`. No se monta un form
 
 ### 9.2 Inicio
 
-Arriba, el saludo con el nombre de usuario (`Hi <usuario>`). Debajo, en este orden: la comida en curso (*Current meal*, que abre el carrito), las formas de añadir comida, la inyección y el rescate (`Log rescue`, §9.6). Entre las formas de añadir comida está `From fridge`, que abre Food en la píldora `Fridge` (§9.8), con la comida en curso elegida en *Add to* como siempre.
+Arriba, el saludo con el nombre de usuario (`Hi <usuario>`). Debajo, en este orden: la comida en curso (*Current meal*, que abre el carrito), las formas de añadir comida, la inyección y el rescate (`Log rescue`, §9.6). Si el asistente está configurado, la primera forma de añadir comida es `Tell the assistant` (§9.11). Entre las formas de añadir comida está `From fridge`, que abre Food en la píldora `Fridge` (§9.8), con la comida en curso elegida en *Add to* como siempre.
 
 ### 9.3 Food
 
-- La cabecera es fija arriba (`sticky`) y usa `web_glass_strong` (§8). Lleva el botón del rayo, que abre el pop-up de rescate (§9.6), el menú "+", el buscador, los filtros y el selector de comida (*Add to*). Mientras el menú "+" está abierto, la capa `#food_menu_scrim` desenfoca el resto de la página (§8).
+- La cabecera es fija arriba (`sticky`) y usa `web_glass_strong` (§8). Lleva el botón del rayo, que abre el pop-up de rescate (§9.6), la pestaña del asistente si está configurado (§9.11), el menú "+", el buscador, los filtros y el selector de comida (*Add to*). Mientras el menú "+" está abierto, la capa `#food_menu_scrim` desenfoca el resto de la página (§8).
 - **Filtros** (decisión 2026-11-06). Se ajustan con un botón negro dentro del buscador, a la derecha, que abre un pop-up (`ModalLayer`, §8, id `food_filters_modal`) con `Cancel` y `Confirm`, y `Reset` arriba a la derecha, que quita todos los filtros. Lo elegido es un borrador, también el `Reset`: solo `Confirm` lo aplica y refresca la lista; `Cancel` o pulsar fuera lo descartan. El botón solo aparece en las listas que tienen algo que filtrar y lleva una marca mientras hay un filtro activo, porque desde fuera del pop-up no se vería. Por ahora, solo `Recipes`, con el tipo de comida: una selección múltiple de píldoras, que busca entre todos los elegidos (`code_conventions.md` §11.7). Un filtro nuevo es un control en el pop-up y un campo oculto que incluyen las peticiones de la lista.
 - El `+` de una receta abre el paso previo (§9.7).
 - **Cinco píldoras**: `Search`, `Food`, `Recipes`, `Favs` y `Fridge` (decisión 2026-11-07: la nevera tiene píldora propia para que se llegue a ella de un toque, §9.8). En móvil van más juntas (`gap-1.5`) para que quepan las cinco. `/food?filter=fridge` abre la página en `Fridge`; otro valor es un `422`.
@@ -528,6 +528,69 @@ Modelo en `measurement_conventions.md` §8.4.
 | `POST /settings/tags/{tag_id}/delete` | `#tag_row_{tag_id}` | `delete` | cuerpo vacío | `404` no es suya o ya se borró |
 
 Todas exigen el header `HX-Request` (`403` si falta) y los errores van por el canal común (`error_conventions.md` §7.1).
+
+### 9.11 Asistente (decisión del usuario, 2026-11-12)
+
+Contrato del servidor en `code_conventions.md` §8.12. Solo existe si el asistente está configurado.
+
+**Dónde está.** Página `/assistant`, con dos accesos (decisión del usuario, 2026-11-12):
+
+- En Inicio, el botón `Tell the assistant`, a todo el ancho, debajo de "What did you eat?" en *Add to your meal* (§9.2).
+- En la cabecera de Food (§9.3), entre el rayo y el `+`: una pestaña rectangular `Tell the assistant` que cuelga del borde superior de la página. Ocupa el hueco entre los dos botones con margen a cada lado, no tiene margen ni borde arriba (sube por encima del relleno superior de la cabecera) y solo redondea las esquinas de abajo. Es sólida, como los botones de la cabecera (§8).
+
+**Página.** Cabecera como las de crear (§9.1): "‹ Back" a la izquierda y `ASSISTANT` a la derecha, seguido de un botón redondo pequeño con el icono del carrito que abre el carrito. El botón flotante del carrito no se muestra en esta página (`data-hide-cart`), porque taparía el compositor. Debajo, el selector `Add to`, los mensajes de la conversación y, fijo abajo, el compositor: el botón de foto, un `<textarea>` que crece con el texto hasta un máximo y luego hace scroll, y el botón de enviar. Ningún campo se enfoca solo al abrir la página en el móvil (mismo motivo que §9.6).
+
+**Una conversación por comida** (decisión del usuario, 2026-11-12).
+
+- `Add to` lista las comidas planificadas, con el mismo texto que en Food (§7.7), y `New meal`.
+- Al abrir la página se elige la última comida planificada, como en Food, o `New meal` si no hay ninguna. `?conversation_id=` abre esa conversación y elige su comida.
+- Cambiar la comida carga su conversación (la última, si tuviera varias), o la vacía con la introducción.
+- Con `New meal`, el primer añadido del asistente crea la comida planificada, con el tipo automático (`code_conventions.md` §7.14). La respuesta la añade a `Add to` ya elegida, para que el siguiente mensaje siga en ella.
+- El id de la conversación viaja en un campo oculto. Vacío empieza una nueva.
+
+**Enviar** (decisión del usuario, 2026-11-12: síncrono).
+
+- Solo envía el botón, y Enter hace un salto de línea. El botón está activo si hay texto, una mención o una foto.
+- Mientras el servidor responde, aparece una burbuja `Thinking…` y el botón se desactiva.
+- Si sale bien, se añade al final el turno: el mensaje del usuario, a la derecha, con la píldora `Photo` si llevaba una; las respuestas del asistente, a la izquierda y como texto plano; y las tarjetas de lo que hizo. Después se vacía el compositor (texto, menciones y foto) y se desplaza la vista al turno nuevo.
+- Si falla, el toast lo explica (`code_conventions.md` §8.12) y el compositor se queda como estaba.
+
+**Foto.** El botón de la cámara adjunta una sola foto, de un plato o de una etiqueta nutricional, y se muestra como una píldora con una × para quitarla.
+
+- Antes de enviarla, el navegador la reduce a 1568 px por el lado mayor y la convierte en JPEG (`code_conventions.md` §8.12, coste).
+- Si el navegador no puede, envía la original, y el servidor rechaza una de más de 3,75 MB o que no sea JPEG, PNG o WebP según sus bytes.
+- No se guarda: el historial muestra la píldora `Photo` sin la imagen.
+
+**Tarjetas.**
+
+- `Added to the cart`: una línea por alimento, plato, receta o estimación añadidos, con sus gramos, sus hidratos y cómo se obtuvo la cantidad (U2, con las etiquetas de §9.4), y el botón `Review`, que abre el carrito.
+- `Changed in the cart`: una línea por cambio en la comida, un plato o un alimento (`code_conventions.md` §8.12, **Edición de la comida**), con lo cambiado y su valor nuevo, y el botón `Review`.
+- `New food to review`: el nombre del alimento propuesto, de dónde sale ("Read from the label", "From the food composition table" o "From Open Food Facts") y el botón `Review and save`, que abre el formulario de alta de un alimento precargado.
+  - Una etiqueta añade al formulario la nota "Read by the assistant from the label. Check every value before saving." y `Macros from` en `Package label`.
+  - Ciqual y OFF usan su precarga de siempre (§9.4).
+  - Guardar vuelve a la conversación (`/assistant?conversation_id=`) en vez de a Food, y allí el usuario le pide que lo añada.
+
+Las tarjetas se leen de los resultados guardados de las herramientas, así que una conversación reabierta muestra las mismas.
+
+**Mencionar un alimento con `/`.**
+
+- Escribir `/` al principio del texto o después de un espacio o de un salto de línea abre, **encima del compositor**, una lista de sugerencias, como los comandos de Claude. Lo que se escribe después de `/` filtra la lista; admite espacios, porque los nombres los tienen.
+- Busca entre lo que el usuario ve en Food: alimentos (`catalog`), platos (`manual_intake`, sin añadidos rápidos) y recetas, con la misma regla de visibilidad y la misma búsqueda sin acentos ni mayúsculas (`code_conventions.md` §11.7). La búsqueda abarca el nombre, y también la marca en los alimentos y el origen en los platos.
+- **Orden.** Con texto, primero por cómo encaja el nombre (igual, empieza por, lo contiene, solo se parece) y, dentro de cada grupo, favoritos, después los más comidos en los últimos 60 días, y por último por nombre. Sin texto después de `/`, solo salen los favoritos y los comidos en esos 60 días, en ese orden. Las recetas no tienen uso, porque lo consumido no las referencia (`code_conventions.md` §11.7). Se devuelven como mucho 20.
+- Cada fila es una fila `control` compacta (§8): el nombre (dos líneas como mucho, como en §9.6), y debajo el tipo (`Food`, `Dish` o `Recipe`), la marca u origen y, en alimentos y platos, los hidratos (por ración si la tiene, si no por 100 g). Una receta no los muestra: salen de sus ingredientes. Una estrella marca los favoritos. La lista enseña unas 6 filas y el resto con scroll propio.
+- **Teclado**: ↑ y ↓ mueven la selección, que empieza en la primera fila; Tab o Enter eligen la seleccionada; Esc cierra la lista sin elegir. Con la lista cerrada, Enter hace un salto de línea y se envía con el botón. **Toque o clic** en una fila la elige.
+- Al elegir, el texto `/consulta` se sustituye por `/Nombre del alimento ` y el alimento se añade a las menciones del mensaje, que se muestran como píldoras encima del `<textarea>` con una × para quitarlas. Quitar la píldora borra también su `/Nombre` del texto; borrar el texto quita la mención.
+- La lista se cierra sola si se borra el `/`, si el cursor sale de la consulta o si, tras un espacio, la consulta deja de dar resultados (se queda como texto normal, que el asistente interpreta).
+- Las menciones se envían como `entry_type` + `entry_id`, nunca como nombre, y el servidor las vuelve a leer (`code_conventions.md` §8.12).
+
+| Acción | `hx-target` | `hx-swap` | Éxito | Error |
+|---|---|---|---|---|
+| `GET /assistant/mentions?q=` (al escribir tras `/`, con un retraso de 150 ms; una respuesta que llega tarde se descarta) | `#assistant_mentions` | `innerHTML` | las filas, o una línea `No foods match` | sin sesión: `401`, por el canal de errores |
+
+| `GET /assistant/thread?intake_event_id=` (al cambiar `Add to`) | `#assistant_thread_box` | `innerHTML` | la conversación de esa comida, o la vacía con la introducción | comida confirmada o borrada: `404` por el canal de errores |
+| `POST /assistant/message` (`multipart/form-data`: `message`, `mentions`, `photo`, `intake_event_id`, `conversation_id`) | `#assistant_thread` | `beforeend` | el turno, con el id de la conversación y, si creó la comida, `Add to` fuera de banda | validación `422`, comida confirmada o borrada `404`/`409`, proveedor `502`: status, cuerpo vacío y toast |
+
+Las tres exigen el header `HX-Request` (`403` si falta). Repetir un envío es un mensaje nuevo: el asistente puede volver a añadir lo mismo, y la copia se quita en el carrito.
 
 ## 10. Movimiento
 

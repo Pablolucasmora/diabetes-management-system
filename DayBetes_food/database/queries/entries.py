@@ -9,7 +9,9 @@ that is why they do not live in any individual table's file
 (code_conventions.md §1.3.1).
 """
 
+from DayBetes_food.database.mappers import mention_suggestion_from_row
 from DayBetes_food.database.queries.crud import (
+    _RECIPE_VISIBLE,
     _build_fuzzy_search,
     _escape_like,
     _food_visibility_sql,
@@ -17,6 +19,7 @@ from DayBetes_food.database.queries.crud import (
     _execute_query_many,
 )
 from DayBetes_food.domain.constants import IntakeEventState, PortionOrigin, SystemTag
+from DayBetes_food.domain.food_entry import MENTION_SUGGESTIONS_MAX, MENTION_USAGE_DAYS, MentionSuggestion
 from DayBetes_food.domain.search_text import normalize_search_text, search_text_sql
 from DayBetes_food.domain.tag import SYSTEM_TAG_MEAL_TYPE
 from DayBetes_food.time_utils import APP_TIMEZONE
@@ -267,3 +270,160 @@ def get_consumed_food_usage_rankings(connection, users_id: int, days: int = 60) 
         },
         commit=False,
     )
+
+
+def _match_tier_sql(column: str, param_prefix: str) -> str:
+    """How well `column` matches the term of a `_build_fuzzy_search` call with
+    the same `param_prefix`: 0 equal, 1 starts with it, 2 contains it, 3 only
+    similar (or matched through another column). Reuses that call's params."""
+    return (
+        f"CASE WHEN lower({column}) = %({param_prefix}_norm)s THEN 0 "
+        f"WHEN lower({column}) LIKE %({param_prefix}_prefix)s THEN 1 "
+        f"WHEN lower({column}) ILIKE %({param_prefix}_like)s THEN 2 "
+        f"ELSE 3 END"
+    )
+
+
+def get_mention_suggestions(
+    connection, user_id: int, search: str = "", *, limit: int = MENTION_SUGGESTIONS_MAX
+) -> list[MentionSuggestion]:
+    """Entries offered after `/` in the assistant (frontend_conventions.md §9.11).
+
+    Foods (`catalog`), dishes (`manual_intake`, never quick adds) and recipes the
+    viewer can see, with the same visibility rules as the Food list, retained
+    rows included. The search matches the name (without case or accents in
+    `catalog` and `recipe`, §11.7), the brand of a food and the origin of a
+    dish. With a search the order is: how well the name matches, favorites,
+    most eaten in the last MENTION_USAGE_DAYS days, name. Without a search only
+    favorites and recently eaten entries are returned. Recipes have no usage:
+    a consumed portion never references its recipe. The assistant's own search
+    tool asks for fewer rows (`limit`, code_conventions.md §8.12).
+    """
+    raw = (search or "").strip()
+    term = normalize_search_text(raw)
+    params = {
+        "visibility_user_id": user_id,
+        "state": IntakeEventState.CONSUMED.value,
+        "days": MENTION_USAGE_DAYS,
+        "limit": max(1, min(int(limit), MENTION_SUGGESTIONS_MAX)),
+    }
+    if term:
+        catalog_name, catalog_params, _ = _build_fuzzy_search(
+            connection, "c.search_name", term, param_prefix="mention_catalog"
+        )
+        brand, brand_params, _ = _build_fuzzy_search(
+            connection, "brand_search.label", raw, param_prefix="mention_brand"
+        )
+        manual_name, manual_params, _ = _build_fuzzy_search(
+            connection, "m.name", raw, param_prefix="mention_manual"
+        )
+        origin, origin_params, _ = _build_fuzzy_search(
+            connection, "m.origin", raw, param_prefix="mention_origin"
+        )
+        recipe_name, recipe_params, _ = _build_fuzzy_search(
+            connection, "entity.search_name", term, param_prefix="mention_recipe"
+        )
+        for extra in (catalog_params, brand_params, manual_params, origin_params, recipe_params):
+            params.update(extra)
+        # Brands resolved apart with `= ANY(ARRAY(...))`, as in list_catalog_items (§11.7).
+        catalog_filter = (
+            f"AND ({catalog_name} OR c.brand_id = ANY(ARRAY("
+            f"SELECT brand_search.id FROM food_brands brand_search WHERE {brand})))"
+        )
+        manual_filter = f"AND ({manual_name} OR {origin})"
+        recipe_filter = f"AND {recipe_name}"
+        catalog_tier = _match_tier_sql("c.search_name", "mention_catalog")
+        manual_tier = _match_tier_sql("m.name", "mention_manual")
+        recipe_tier = _match_tier_sql("entity.search_name", "mention_recipe")
+        outer_filter = "TRUE"
+    else:
+        catalog_filter = manual_filter = recipe_filter = ""
+        catalog_tier = manual_tier = recipe_tier = "0"
+        outer_filter = "(src.is_favorite OR src.usage_count > 0)"
+
+    query = f"""
+        WITH usage AS (
+            SELECT pd.catalog_id, pd.manual_intake_id, COUNT(*)::int AS usage_count
+            FROM portion_detail pd
+            INNER JOIN intake_event ie ON ie.id = pd.intake_event_id
+            WHERE ie.users_id = %(visibility_user_id)s
+              AND ie.state = %(state)s
+              AND ie.deleted_at IS NULL
+              AND ie.meal_time >= CURRENT_TIMESTAMP - (%(days)s * INTERVAL '1 day')
+            GROUP BY pd.catalog_id, pd.manual_intake_id
+        ),
+        catalog_rows AS (
+            SELECT
+                'catalog'::text AS entry_type,
+                c.id AS entry_id,
+                c.name AS name,
+                COALESCE(fb.label, '') AS subtitle,
+                c.default_portion AS serving_g,
+                c.carbs_100g AS carbs_100g,
+                EXISTS (
+                    SELECT 1 FROM user_favorites uf
+                    WHERE uf.user_id = %(visibility_user_id)s AND uf.catalog_id = c.id
+                ) AS is_favorite,
+                COALESCE(u.usage_count, 0) AS usage_count,
+                {catalog_tier} AS match_tier
+            FROM catalog c
+            LEFT JOIN food_brands fb ON fb.id = c.brand_id
+            LEFT JOIN usage u ON u.catalog_id = c.id
+            WHERE {_food_visibility_sql(PortionOrigin.CATALOG, "c", include_retained=True)}
+            {catalog_filter}
+        ),
+        manual_rows AS (
+            SELECT
+                'manual_intake'::text AS entry_type,
+                m.id AS entry_id,
+                m.name AS name,
+                COALESCE(m.origin, '') AS subtitle,
+                m.default_portion AS serving_g,
+                m.carbs_100g AS carbs_100g,
+                EXISTS (
+                    SELECT 1 FROM user_favorites uf
+                    WHERE uf.user_id = %(visibility_user_id)s AND uf.manual_intake_id = m.id
+                ) AS is_favorite,
+                COALESCE(u.usage_count, 0) AS usage_count,
+                {manual_tier} AS match_tier
+            FROM manual_intake m
+            LEFT JOIN usage u ON u.manual_intake_id = m.id
+            WHERE {_food_visibility_sql(PortionOrigin.MANUAL_INTAKE, "m", include_retained=True)}
+            {manual_filter}
+        ),
+        recipe_rows AS (
+            SELECT
+                'recipe'::text AS entry_type,
+                entity.id AS entry_id,
+                entity.name AS name,
+                ''::text AS subtitle,
+                NULL::real AS serving_g,
+                NULL::real AS carbs_100g,
+                EXISTS (
+                    SELECT 1 FROM user_favorites uf
+                    WHERE uf.user_id = %(visibility_user_id)s AND uf.recipe_id = entity.id
+                ) AS is_favorite,
+                0 AS usage_count,
+                {recipe_tier} AS match_tier
+            FROM recipe entity
+            WHERE {_RECIPE_VISIBLE}
+            {recipe_filter}
+        )
+        SELECT src.entry_type, src.entry_id, src.name, src.subtitle, src.serving_g,
+               src.carbs_100g, src.is_favorite
+        FROM (
+            SELECT * FROM catalog_rows
+            UNION ALL
+            SELECT * FROM manual_rows
+            UNION ALL
+            SELECT * FROM recipe_rows
+        ) src
+        WHERE {outer_filter}
+        ORDER BY src.match_tier ASC,
+                 src.is_favorite DESC,
+                 src.usage_count DESC,
+                 lower(src.name) ASC, src.entry_type ASC, src.entry_id ASC
+        LIMIT %(limit)s;
+    """
+    rows = _execute_query_many(connection, query, params, commit=False)
+    return [mention_suggestion_from_row(row) for row in rows if row]

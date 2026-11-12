@@ -1427,7 +1427,7 @@ def _smart_macros_block(
     )
 
 
-def QuickCreateButtons():
+def QuickCreateButtons(assistant_enabled: bool = False):
     # Solid, not glass: they sit inside the glass header, and Safari paints
     # coloured seams with a backdrop-filter nested in another one
     # (frontend_conventions.md §8).
@@ -1475,6 +1475,28 @@ def QuickCreateButtons():
                 RescueModal(),
                 cls="relative flex justify-start",
             ),
+            # The assistant, as a tab hanging from the top edge of the page:
+            # it is pulled up over the header's top padding and has no top
+            # border, only rounded bottom corners (frontend_conventions.md §9.3).
+            Button(
+                Span("Tell the assistant", cls="truncate"),
+                type="button",
+                data_food_assistant_tab="true",
+                cls="""
+                    self-start flex-1 min-w-0 mx-3 md:mx-5
+                    -mt-2 md:-mt-7 h-14 md:h-[5.25rem] pt-2 md:pt-7 px-3
+                    bg-surface border border-t-0 border-line-soft
+                    shadow-[0_4px_14px_rgba(80,60,40,0.14)]
+                    rounded-b-2xl md:rounded-b-3xl
+                    text-sm font-semibold text-gray-900 cursor-pointer
+                    flex items-center justify-center
+                    transition-transform duration-150 active:scale-[0.98]
+                """,
+                hx_get="/assistant",
+                hx_target="#main_content",
+                hx_push_url="true",
+                **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
+            ) if assistant_enabled else "",
             Div(
                 Button(
                     Img(src="/images/ui/plus_icon.svg", alt="", cls="h-6 w-6"),
@@ -1722,9 +1744,14 @@ def CreateCatalogPage(
     off_prefill_barcode: str | None = None,
     ciqual_note: str | None = None,
     add_to_recipe: tuple[int, int | None] | None = None,
+    return_to_assistant: int | None = None,
+    assistant_note: str | None = None,
 ):
     """Name, what it is and its macros come first; the rest is folded under
-    "More details" and opens by itself when the scanner prefilled any of it."""
+    "More details" and opens by itself when the scanner prefilled any of it.
+
+    `return_to_assistant` is the conversation that opened the form with a draft
+    (frontend §9.11): saving goes back to it."""
     result_id = "create_catalog_result_page"
     data = prefill or {}
     def _pv(key: str, fallback: str = ""):
@@ -1755,8 +1782,9 @@ def CreateCatalogPage(
         *(
             [P(ciqual_note, cls="text-xs text-gray-700"), ciqual_attribution()] if ciqual_note else []
         ),
+        *([P(assistant_note, cls="text-xs text-gray-700")] if assistant_note else []),
         cls="web_container w-full px-4 py-3 flex flex-col gap-1",
-    ) if (off_notice or barcode_notice or off_prefill_barcode or ciqual_note) else None
+    ) if (off_notice or barcode_notice or off_prefill_barcode or ciqual_note or assistant_note) else None
     existing_notice = (
         Div(
             P("A food with this barcode already exists.", cls="text-sm text-gray-700"),
@@ -1790,6 +1818,12 @@ def CreateCatalogPage(
                 Input(type="hidden", name="add_to_recipe_plate", value=str(add_to_recipe[1] or "")),
             ]
             if add_to_recipe
+            else []
+        ),
+        # A draft of the assistant: saving goes back to its conversation (§9.11).
+        *(
+            [Input(type="hidden", name="return_to_assistant", value=str(return_to_assistant))]
+            if return_to_assistant
             else []
         ),
         notices,

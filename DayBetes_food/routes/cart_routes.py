@@ -1,5 +1,4 @@
 import json
-import re
 
 from fasthtml.common import *
 from DayBetes_food.components.cart.cart_main import cart_main, cart_events_list
@@ -19,7 +18,6 @@ from DayBetes_food.components.ui import render_fragment, render_page
 from datetime import datetime
 import math
 from DayBetes_food.database.connection import get_connection
-from DayBetes_food.time_utils import local_naive_to_utc_aware, local_today, to_local, APP_TIMEZONE
 from DayBetes_food.database.queries import (
     list_insulin_brands,
     list_open_insulin_pens,
@@ -38,7 +36,6 @@ from DayBetes_food.database.queries import (
     apply_plate_offset_to_portions,
     create_intake_plate,
     delete_intake_plate,
-    get_intake_plate,
     list_intake_plates,
     list_intake_plates_by_events,
     update_intake_plate_name,
@@ -65,8 +62,6 @@ from DayBetes_food.domain.constants import (
     IntakeEventState,
     KeepPartMode,
     MealType,
-    PortionDestination,
-    PortionOrigin,
     Ripeness,
     StorageLocation,
     parse_enum,
@@ -81,10 +76,9 @@ from DayBetes_food.domain.intake_event import (
 )
 from DayBetes_food.domain.intake_plate import (
     INTAKE_PLATE_NAME_MAX_LENGTH,
-    INTAKE_PLATE_OFFSET_MAX_MINUTES,
-    INTAKE_PLATE_OFFSET_MIN_MINUTES,
     IntakePlateCreate,
     PlateEaten,
+    parse_offset_minutes,
 )
 from DayBetes_food.domain.fridge import (
     LeftoverPlan,
@@ -92,13 +86,21 @@ from DayBetes_food.domain.fridge import (
     parse_keep_part,
     parse_optional_containers,
 )
-from DayBetes_food.domain.portion_detail import PortionDetailUpdate, amount_to_grams, ripeness_applies
+from DayBetes_food.domain.portion_detail import (
+    PortionDetailUpdate,
+    amount_to_grams,
+    check_cooked_weight,
+    ripeness_applies,
+)
 from DayBetes_food.http_errors import app_error_response
 from DayBetes_food.services.intake_event import (
     confirm_planned_event,
     plates_with_leftovers,
     delete_planned_event,
     delete_planned_portion,
+    plate_event_id,
+    portion_event_id,
+    update_meal_time,
 )
 from DayBetes_food.domain.recipe import parse_recipe_name
 from DayBetes_food.services.fridge import keep_part_in_fridge
@@ -194,49 +196,6 @@ def _card_response(request: Request, connection, user_id: int, event_id: int):
     return render_fragment(CartCard(event, portions, plates, rapid_pens))
 
 
-def _portion_event_id(connection, user_id: int, portion, *, require_planned: bool = True) -> int:
-    """Resolve a portion to its event, checking ownership and state (§5.3, §6.9.3).
-
-    Portion routes travel by `portion_id`, so the event never comes from the
-    URL: it is derived from the portion, whose ownership `get_portion_detail`
-    already validated inside the SQL.
-
-    `require_planned=False` for the actions valid on a consumed event
-    (measurement_conventions.md §6.9.3).
-
-    Raises:
-        NotFoundError: the portion does not belong to an event (recipe/fridge).
-        NotFoundError/ConflictError: from the event, as `get_planned_intake_event` decides.
-    """
-    if portion.destination is not PortionDestination.INTAKE_EVENT:
-        raise NotFoundError("portion_not_in_event")
-    if require_planned:
-        get_planned_intake_event(connection, user_id, portion.destination_id)
-    elif not get_intake_event(connection, user_id, portion.destination_id):
-        raise NotFoundError("intake_event_not_found")
-    return portion.destination_id
-
-
-def _plate_event_id(connection, user_id: int, plate_id: int, *, require_planned: bool = True) -> int:
-    """Resolve a plate to its event, checking ownership in the SQL (§5.3).
-
-    Ingredient routes travel by `plate_id`, so the event never comes from the
-    URL: it is derived from the plate, which `get_intake_plate` validates
-    against the user who owns the event.
-
-    `require_planned=False` for the actions that are also valid on an already
-    consumed event (measurement_conventions.md §6.9.3).
-
-    Raises:
-        NotFoundError: the plate does not exist or is not the user's.
-        ConflictError: 'planned' was required and the event is already confirmed.
-    """
-    plate = get_intake_plate(connection, user_id, plate_id)
-    if require_planned:
-        get_planned_intake_event(connection, user_id, plate.intake_event_id)
-    return plate.intake_event_id
-
-
 def _removal_response(connection, user_id: int):
     """
     The event has left 'planned' (deleted or confirmed): its card is removed
@@ -258,32 +217,6 @@ def _to_float(value: str):
 
     normalized = (value or "").strip().replace(",", ".")
     return float(normalized)
-
-
-def _parse_offset_minutes(raw_value: str) -> int | None:
-    """Validate an offset in minutes at the boundary (§7.4, §7.5).
-
-    Empty is None: the offset is unknown, and it clears the stored value. Anything
-    else is an integer within the sanity bound of measurement_conventions.md §4.5
-    (`-300..300`), the same one the `intake_plate` CHECK declares: writing out of
-    range would give a database error instead of a 422.
-
-    Raises:
-        ValidationError: it is not an integer or is out of range.
-    """
-    text = (raw_value or "").strip()
-    if not text:
-        return None
-    # Only ASCII digits: int() would also take "1_0" or other scripts' digits (§7.5).
-    if not re.fullmatch(r"-?[0-9]{1,4}", text):
-        raise ValidationError("The offset must be a whole number of minutes.")
-    value = int(text)
-    if not (INTAKE_PLATE_OFFSET_MIN_MINUTES <= value <= INTAKE_PLATE_OFFSET_MAX_MINUTES):
-        raise ValidationError(
-            f"The offset must be between {INTAKE_PLATE_OFFSET_MIN_MINUTES} and "
-            f"{INTAKE_PLATE_OFFSET_MAX_MINUTES} minutes."
-        )
-    return value
 
 
 def _parse_strict_bool(raw_value: str) -> bool:
@@ -497,28 +430,17 @@ def setup_cart_routes(rt):
             # Value present and well formed as a request, invalid content:
             # validation_error → 422 (error_conventions.md §3.2).
             return _error(request, ValidationError, "The meal time is not valid.")
+        chosen_date = None
+        if meal_date:
+            try:
+                chosen_date = datetime.strptime(meal_date, "%Y-%m-%d").date()
+            except ValueError:
+                # "invalid date" is validation_error → 422, not 400.
+                return _error(request, ValidationError, "The meal date is not valid.")
 
         with get_connection() as connection:
-            event = get_intake_event(connection, int(user_id), event_id)
-            if not event or not event.meal_time:
-                return _error(request, NotFoundError, _EVENT_GONE)
-            current_local = to_local(event.meal_time)
-            if meal_date:
-                try:
-                    chosen_date = datetime.strptime(meal_date, "%Y-%m-%d").date()
-                except ValueError:
-                    # "invalid date" is validation_error → 422, not 400.
-                    return _error(request, ValidationError, "The meal date is not valid.")
-            else:
-                chosen_date = current_local.date() if current_local else local_today()
-            updated = local_naive_to_utc_aware(datetime.combine(chosen_date, parsed_time))
             try:
-                update_intake_event(
-                    connection,
-                    user_id=int(user_id),
-                    event_id=event_id,
-                    data=IntakeEventUpdate(meal_time=updated, timezone_at_event=APP_TIMEZONE.key),
-                )
+                update_meal_time(connection, int(user_id), event_id, parsed_time, chosen_date)
             except NotFoundError:
                 return _error(request, NotFoundError, _EVENT_GONE)
             except ConflictError:
@@ -853,7 +775,7 @@ def setup_cart_routes(rt):
         with get_connection() as connection:
             try:
                 portion = get_portion_detail(connection, int(user_id), portion_id)
-                event_id = _portion_event_id(connection, int(user_id), portion)
+                event_id = portion_event_id(connection, int(user_id), portion)
                 grams = amount_to_grams(value, unit, portion.source.unit_g)
                 with connection.transaction():
                     # update_portion_amount validates finiteness, > 0 and the upper
@@ -876,13 +798,13 @@ def setup_cart_routes(rt):
         if not user_id:
             return _error(request, AuthenticationError, _NO_SESSION)
         try:
-            value = _parse_offset_minutes(offset_minutes)
+            value = parse_offset_minutes(offset_minutes)
         except ValidationError as error:
             return _error(request, ValidationError, str(error))
         with get_connection() as connection:
             try:
                 portion = get_portion_detail(connection, int(user_id), portion_id)
-                event_id = _portion_event_id(connection, int(user_id), portion)
+                event_id = portion_event_id(connection, int(user_id), portion)
                 with connection.transaction():
                     update_portion_offset(connection, int(user_id), portion_id, value, commit=False)
             except NotFoundError:
@@ -903,7 +825,7 @@ def setup_cart_routes(rt):
         with get_connection() as connection:
             try:
                 portion = get_portion_detail(connection, int(user_id), portion_id)
-                event_id = _portion_event_id(connection, int(user_id), portion)
+                event_id = portion_event_id(connection, int(user_id), portion)
                 with connection.transaction():
                     delete_planned_portion(connection, int(user_id), portion)
             except NotFoundError:
@@ -949,7 +871,7 @@ def setup_cart_routes(rt):
         with get_connection() as connection:
             try:
                 portion = get_portion_detail(connection, int(user_id), portion_id)
-                event_id = _portion_event_id(connection, int(user_id), portion)
+                event_id = portion_event_id(connection, int(user_id), portion)
                 with connection.transaction():
                     keep_part_in_fridge(connection, int(user_id), portion, keep, storage, count)
             except NotFoundError:
@@ -979,7 +901,7 @@ def setup_cart_routes(rt):
         with get_connection() as connection:
             try:
                 portion = get_portion_detail(connection, int(user_id), portion_id)
-                event_id = _portion_event_id(connection, int(user_id), portion)
+                event_id = portion_event_id(connection, int(user_id), portion)
             except NotFoundError:
                 return _error(request, NotFoundError, _INGREDIENT_GONE)
             except ConflictError:
@@ -1044,7 +966,7 @@ def setup_cart_routes(rt):
                 # require_planned=False: a consumed event stays editable in
                 # these three fields (decision 2026-09-10).
                 portion = get_portion_detail(connection, int(user_id), portion_id)
-                event_id = _portion_event_id(connection, int(user_id), portion, require_planned=False)
+                event_id = portion_event_id(connection, int(user_id), portion, require_planned=False)
             except NotFoundError:
                 return _error(request, NotFoundError, _INGREDIENT_GONE)
             except ConflictError:
@@ -1052,30 +974,13 @@ def setup_cart_routes(rt):
             event = get_intake_event(connection, int(user_id), event_id)
             if not event:
                 return _error(request, NotFoundError, _EVENT_GONE)
-            # measurement_conventions.md §5.2: a manual dish has no cooking
-            # factor, so its portions are never cooked-weighed. Unchecking is
-            # still allowed.
-            if (
-                field_name == "is_cooked_weight"
-                and value is True
-                and portion.origin is PortionOrigin.MANUAL_INTAKE
-            ):
-                return _error(request, ValidationError, "Cooked weight only applies to catalog foods.")
-            # Decision 2026-09-24 / R4: ticking the box on a catalog food with no
-            # factor is rejected; unchecking is always allowed, and a portion that
-            # already had it TRUE keeps the control to be unmarked.
-            if (
-                field_name == "is_cooked_weight"
-                and value is True
-                and portion.origin is PortionOrigin.CATALOG
-                and portion.source.cooking_factor is None
-                and not portion.is_cooked_weight
-            ):
-                return _error(
-                    request,
-                    ValidationError,
-                    "This food has no cooking factor, so it cannot be weighed cooked.",
-                )
+            if field_name == "is_cooked_weight":
+                try:
+                    check_cooked_weight(
+                        portion.origin, portion.source.cooking_factor, value, current=portion.is_cooked_weight
+                    )
+                except ValidationError as error:
+                    return _error(request, ValidationError, str(error))
             is_consumed = event.state == IntakeEventState.CONSUMED
             try:
                 # Writing the flag and rewriting the snapshot are a single
@@ -1149,7 +1054,7 @@ def setup_cart_routes(rt):
                 portion = get_portion_detail(connection, int(user_id), portion_id)
                 # Only a fruit of a meal shows the field; elsewhere its absence touches nothing.
                 fruit = ripeness_applies(portion.destination, portion.source.category)
-                event_id = _portion_event_id(connection, int(user_id), portion)
+                event_id = portion_event_id(connection, int(user_id), portion)
                 with connection.transaction():
                     update_portion_detail_fields(
                         connection,
@@ -1216,7 +1121,7 @@ def setup_cart_routes(rt):
             )
         with get_connection() as connection:
             try:
-                event_id = _plate_event_id(connection, int(user_id), plate_id, require_planned=False)
+                event_id = plate_event_id(connection, int(user_id), plate_id, require_planned=False)
                 update_intake_plate_name(connection, plate_id, clean_name or None)
             except NotFoundError:
                 return _error(request, NotFoundError, _PLATE_GONE)
@@ -1235,12 +1140,12 @@ def setup_cart_routes(rt):
         if not user_id:
             return _error(request, AuthenticationError, _NO_SESSION)
         try:
-            value = _parse_offset_minutes(offset_minutes)
+            value = parse_offset_minutes(offset_minutes)
         except ValidationError as error:
             return _error(request, ValidationError, str(error))
         with get_connection() as connection:
             try:
-                event_id = _plate_event_id(connection, int(user_id), plate_id, require_planned=False)
+                event_id = plate_event_id(connection, int(user_id), plate_id, require_planned=False)
                 update_intake_plate_offset(connection, plate_id, value)
             except NotFoundError:
                 return _error(request, NotFoundError, _PLATE_GONE)
@@ -1260,12 +1165,12 @@ def setup_cart_routes(rt):
         if not user_id:
             return _error(request, AuthenticationError, _NO_SESSION)
         try:
-            value = _parse_offset_minutes(offset_minutes)
+            value = parse_offset_minutes(offset_minutes)
         except ValidationError as error:
             return _error(request, ValidationError, str(error))
         with get_connection() as connection:
             try:
-                event_id = _plate_event_id(connection, int(user_id), plate_id, require_planned=False)
+                event_id = plate_event_id(connection, int(user_id), plate_id, require_planned=False)
             except NotFoundError:
                 return _error(request, NotFoundError, _PLATE_GONE)
             if not apply_plate_offset_to_portions(connection, plate_id, value):
@@ -1285,7 +1190,7 @@ def setup_cart_routes(rt):
                 # require_planned=False so that the only possible ConflictError
                 # is the RESTRICT of a plate with ingredients, and it is not
                 # confused with "the event is no longer in the cart".
-                event_id = _plate_event_id(connection, int(user_id), plate_id, require_planned=False)
+                event_id = plate_event_id(connection, int(user_id), plate_id, require_planned=False)
                 delete_intake_plate(connection, plate_id)
             except NotFoundError:
                 return _error(request, NotFoundError, _PLATE_GONE)

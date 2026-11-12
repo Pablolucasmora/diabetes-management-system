@@ -18,8 +18,18 @@ from DayBetes_food.services.fridge import (
     store_recipe_in_fridge,
     take_from_fridge,
 )
-from DayBetes_food.services.intake_event import confirm_planned_event
+from DayBetes_food.config import ASSISTANT_ENABLED
+from DayBetes_food.domain.assistant import label_draft_input, label_draft_prefill, parse_tool_use_id
+from DayBetes_food.services.intake_event import (
+    add_quick_add_to_meal,
+    confirm_planned_event,
+    default_meal_type_now,
+    new_plate_offset_minutes,
+    resolve_event_plate,
+    resolve_target_event,
+)
 from DayBetes_food.database.queries import (
+    get_assistant_message,
     create_catalog_item,
     get_off_product_by_code,
     list_catalog_items,
@@ -82,10 +92,7 @@ from DayBetes_food.database.queries import (
     get_intake_event,
     get_planned_intake_event,
     list_planned_intake_events,
-    get_meal_type_schedule,
     create_intake_plate,
-    ensure_default_plate,
-    get_intake_plate,
     get_fridge,
 )
 from DayBetes_food.domain.constants import (
@@ -218,7 +225,7 @@ from DayBetes_food.database.connection import get_connection
 from DayBetes_food.domain.constants import IntakeEventState, MealType, SystemTag
 from DayBetes_food.domain.tag import TagCreate, parse_tag_name, tag_color_from_name
 from DayBetes_food.domain.intake_event import INTAKE_EVENT_NAME_MAX_LENGTH, IntakeEventCreate, IntakeEventUpdate
-from DayBetes_food.domain.intake_plate import IntakePlateCreate, auto_offset_minutes, derive_plate_name
+from DayBetes_food.domain.intake_plate import IntakePlateCreate, derive_plate_name
 from DayBetes_food.domain.recipe import (
     PortionPreparation,
     RecipeAddRequest,
@@ -240,7 +247,6 @@ from DayBetes_food.domain.fridge import FridgeContent, FridgeStoreCommand
 from DayBetes_food.domain.portion_detail import portion_macro_amount
 from DayBetes_food.components.food.recipe_add import RecipeAddForm
 from DayBetes_food.components.stats.stats_shared import MEAL_TYPE_LABELS
-from DayBetes_food.domain.meal_type_schedule import resolve_meal_type_for_time
 from DayBetes_food.time_utils import local_naive_to_utc_aware, local_now, utc_now
 from DayBetes_food.errors import (
     AuthenticationError,
@@ -252,58 +258,6 @@ from DayBetes_food.errors import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _default_meal_type_now(connection, user_id: int) -> MealType | None:
-    """
-    Automatic `meal_type` for an `intake_event` created without going through
-    the cart (adding a food directly), from the current local time and the
-    user's time slots (or the defaults if they have not customized them in
-    /settings/meal_type_schedule).
-
-    It is computed here, when the row is created, and not in the component
-    that shows it: the `<select>` in `EventHeader` (cart_components.py) must
-    be able to trust that `event.meal_type` already is the real value, never
-    one it has to infer at render time (code_conventions.md §7.14, decision
-    2026-09-11).
-    """
-    overrides = get_meal_type_schedule(connection, user_id)
-    return resolve_meal_type_for_time(local_now().time(), overrides)
-
-
-def _event_auto_offset_minutes(event_data) -> int | None:
-    """Offset of a new plate (measurement_conventions.md §4.5, §4.6.2). From then
-    on its portions inherit it, which avoids correcting them one by one."""
-    return auto_offset_minutes(event_data.meal_time if event_data else None, utc_now())
-
-
-def _resolve_event_plate(connection, user_id: int, event_id: int, plate_id: str, offset_minutes: int | None) -> int:
-    """Plate a food added to an event goes to (§4.6.1, §7.7).
-
-    - A specific id: that plate, checking inside the SQL that it belongs to
-      the user and to the event (§5.3); the request's `event_id` is not proof.
-    - `"0"`: the selector's `+ New plate` option, which creates the plate on the spot.
-    - Empty or missing: the event's last plate and, if there is none, a first
-      one created implicitly.
-
-    Raises:
-        NotFoundError: the plate does not exist, is not the user's or belongs to another event.
-    """
-    chosen = parse_optional_id(plate_id, "plate")
-    if chosen:
-        plate = get_intake_plate(connection, user_id, chosen)
-        if plate.intake_event_id != int(event_id):
-            raise NotFoundError(f"Intake plate {chosen} does not belong to event {event_id}")
-        return plate.id
-    if chosen == 0:
-        return create_intake_plate(
-            connection,
-            IntakePlateCreate(intake_event_id=int(event_id), offset_minutes=offset_minutes),
-            commit=False,
-        )
-    return ensure_default_plate(
-        connection, int(event_id), offset_minutes=offset_minutes, commit=False
-    )
 
 
 # Half of the last decimal the food page shows for the plated grams
@@ -715,28 +669,6 @@ def _parse_quick_add_request(*, name, weight_g, smart_raw, notes, macros_source=
     )
 
 
-def _quick_add_create(req: QuickAddRequest, user_id: int) -> ManualIntakeCreate:
-    """A quick add stores only what its form asks (§11.2.3): the weight becomes
-    default_portion, its U1 and U2 (study §6.3) are the ones chosen, or NULL,
-    and everything else stays NULL."""
-    return ManualIntakeCreate(
-        created_by=user_id,
-        origin_root_id=None,
-        name=req.name,
-        description=req.description,
-        subtype=None,
-        origin=None,
-        default_portion=req.weight_g,
-        nutrients=req.nutrients,
-        glycemic_index=None,
-        ig_confidence=None,
-        macros_confidence=None,
-        macros_source=req.macros_source,
-        default_amount_method=req.amount_method,
-        is_quick_add=True,
-    )
-
-
 def _entry_tags_block(connection, user_id: int, kind: FoodEntryType, entry_id: int, open_panel: bool = False):
     """The tags block of a detail page, painted from what is stored (§9.4.1)."""
     return EntryTags(
@@ -837,23 +769,26 @@ def _detail_origin(
     return item
 
 
-def _resolve_target_event(connection, user_id: int, intake_event_id: str) -> tuple[int, bool]:
-    """Planned event a food goes to, and whether it was created now: the chosen one
-    (checked in SQL, NotFoundError or ConflictError otherwise) or a new one with the
-    automatic meal_type (§7.14). Same logic as /food/log and /add_food."""
-    chosen = parse_optional_id(intake_event_id, "meal")
-    if chosen:
-        return get_planned_intake_event(connection, user_id, chosen), False
-    event_id = create_intake_event(
-        connection,
-        IntakeEventCreate(
-            user_id=user_id,
-            state=IntakeEventState.PLANNED,
-            meal_type=_default_meal_type_now(connection, user_id),
-        ),
-        commit=False,
-    )
-    return event_id, True
+def _assistant_label_prefill(user_id: int, message_id: int, tool_use_id: str):
+    """The prefill of a label the assistant read (§8.12): read from its stored tool
+    call, of one of the user's conversations, and validated again (§7.13).
+
+    Raises:
+        NotFoundError: no such draft for this user, or no longer valid.
+    """
+    try:
+        tool_id = parse_tool_use_id(tool_use_id)
+    except ValidationError as error:
+        raise NotFoundError("Draft not found.") from error
+    with get_connection() as connection:
+        message = get_assistant_message(connection, user_id, message_id) if user_id else None
+    tool_input = label_draft_input(message, tool_id) if message else None
+    if tool_input is None:
+        raise NotFoundError("Draft not found.")
+    try:
+        return label_draft_prefill(tool_input)
+    except ValidationError as error:
+        raise NotFoundError("Draft not found.") from error
 
 
 def _meal_created_event(connection, user_id: int, event_id: int) -> dict:
@@ -864,8 +799,16 @@ def _meal_created_event(connection, user_id: int, event_id: int) -> dict:
     return {"mealCreated": {"id": event_id, "label": meal_option_label(event)}}
 
 
-def _prefill_view(prefill, barcode: str, source_id: str, source: PrefillSource = PrefillSource.OPEN_FOOD_FACTS) -> dict:
-    """FoodPrefill -> presentation dict of the create form."""
+def _prefill_view(
+    prefill,
+    barcode: str,
+    source_id: str,
+    source: PrefillSource | None = PrefillSource.OPEN_FOOD_FACTS,
+    macros_source: MacrosSource | None = None,
+) -> dict:
+    """FoodPrefill -> presentation dict of the create form. `source` None is a
+    prefill that is not a copy of an external record (a label read by the
+    assistant, §8.12): no prefill_source, and its U1 is given apart."""
     nutrients = prefill.nutrients
 
     def text_or_empty(value):
@@ -873,10 +816,10 @@ def _prefill_view(prefill, barcode: str, source_id: str, source: PrefillSource =
 
     return {
         "barcode": barcode,
-        "prefill_source": source.value,
-        "prefill_source_id": source_id,
+        "prefill_source": source.value if source else "",
+        "prefill_source_id": source_id if source else "",
         # U1 of the prefilled values (study §6.3); the user can change it.
-        "macros_source": PREFILL_MACROS_SOURCE[source].value,
+        "macros_source": (macros_source or PREFILL_MACROS_SOURCE[source]).value,
         "name": prefill.name or "",
         "brand": prefill.brand or "",
         "category": prefill.category.value if prefill.category else "",
@@ -1649,10 +1592,21 @@ def setup_food_routes(rt):
         ciqual: str = "",
         add_to_recipe: str = "",
         recipe_plate_id: str = "",
+        assistant_message: str = "",
+        assistant_tool: str = "",
+        return_to_assistant: str = "",
     ):
         clean = (barcode or "").strip()
         target_recipe_id = parse_optional_id(add_to_recipe, "recipe")
         target_plate_id = parse_optional_id(recipe_plate_id, "plate")
+        # A draft of the assistant (§8.12, frontend §9.11): only while it exists.
+        assistant_conversation_id = (
+            parse_optional_id(return_to_assistant, "conversation") if ASSISTANT_ENABLED else None
+        )
+        label_prefill = None
+        draft_message_id = parse_optional_id(assistant_message, "draft") if ASSISTANT_ENABLED else None
+        if draft_message_id:
+            label_prefill = _assistant_label_prefill(int(get_current_user_id() or 0), draft_message_id, assistant_tool)
         ciqual_food = None
         ciqual_code = parse_ciqual_code(ciqual)
         if ciqual_code is not None:
@@ -1707,6 +1661,10 @@ def setup_food_routes(rt):
         if ciqual_food:
             prefill = prefill_from_ciqual_food(ciqual_food)
             prefill_view = _prefill_view(prefill, "", str(ciqual_food.code), PrefillSource.CIQUAL)
+        elif label_prefill:
+            # Transcribed from a photo and reviewed here: the origin stays the label (study §6.3).
+            prefill = label_prefill
+            prefill_view = _prefill_view(prefill, "", "", None, MacrosSource.LABEL)
         subtype_prefill = (prefill_view.get("subtype") or "").strip()
         if subtype_prefill:
             prefill_view["subtype"] = _closest_option(subtype_prefill, subtypes)
@@ -1730,6 +1688,12 @@ def setup_food_routes(rt):
                 off_prefill_barcode=valid_barcode if prefill and not ciqual_food else None,
                 ciqual_note=reliability_note(ciqual_food) if ciqual_food else None,
                 add_to_recipe=(target_recipe_id, target_plate_id) if target_recipe_id else None,
+                return_to_assistant=assistant_conversation_id,
+                assistant_note=(
+                    "Read by the assistant from the label. Check every value before saving."
+                    if label_prefill
+                    else None
+                ),
             ),
             show_cart=False,
         )
@@ -2963,14 +2927,14 @@ def setup_food_routes(rt):
 
             try:
                 with connection.transaction():
-                    event_id, _ = _resolve_target_event(connection, int(user_id), intake_event_id)
+                    event_id, _ = resolve_target_event(connection, int(user_id), parse_optional_id(intake_event_id, "meal"))
                     event_data = get_intake_event(connection, int(user_id), event_id)
-                    offset_minutes = _event_auto_offset_minutes(event_data)
+                    offset_minutes = new_plate_offset_minutes(event_data)
 
                     if amount_method is not None:
                         portion_defaults["amount_method"] = chosen_amount_method
-                    target_plate_id = _resolve_event_plate(
-                        connection, int(user_id), event_id, plate_id, offset_minutes
+                    target_plate_id = resolve_event_plate(
+                        connection, int(user_id), event_id, parse_optional_id(plate_id, "plate"), offset_minutes
                     )
                     create_portion_detail(
                         connection,
@@ -3328,11 +3292,11 @@ def setup_food_routes(rt):
             )
             try:
                 with connection.transaction():
-                    event_id, meal_created = _resolve_target_event(connection, int(user_id), intake_event_id)
+                    event_id, meal_created = resolve_target_event(connection, int(user_id), parse_optional_id(intake_event_id, "meal"))
                     event_data = get_intake_event(connection, int(user_id), event_id)
-                    offset_minutes = _event_auto_offset_minutes(event_data)
-                    target_plate_id = _resolve_event_plate(
-                        connection, int(user_id), event_id, plate_id, offset_minutes
+                    offset_minutes = new_plate_offset_minutes(event_data)
+                    target_plate_id = resolve_event_plate(
+                        connection, int(user_id), event_id, parse_optional_id(plate_id, "plate"), offset_minutes
                     )
                     create_portion_detail(
                         connection,
@@ -3379,11 +3343,11 @@ def setup_food_routes(rt):
             )
             try:
                 with connection.transaction():
-                    event_id, meal_created = _resolve_target_event(connection, int(user_id), intake_event_id)
+                    event_id, meal_created = resolve_target_event(connection, int(user_id), parse_optional_id(intake_event_id, "meal"))
                     event_data = get_intake_event(connection, int(user_id), event_id)
-                    offset_minutes = _event_auto_offset_minutes(event_data)
-                    target_plate_id = _resolve_event_plate(
-                        connection, int(user_id), event_id, plate_id, offset_minutes
+                    offset_minutes = new_plate_offset_minutes(event_data)
+                    target_plate_id = resolve_event_plate(
+                        connection, int(user_id), event_id, parse_optional_id(plate_id, "plate"), offset_minutes
                     )
                     create_portion_detail(
                         connection,
@@ -3442,10 +3406,10 @@ def setup_food_routes(rt):
                 return app_error_response(request, NotFoundError, "That container is no longer in your fridge.")
             try:
                 with connection.transaction():
-                    event_id, meal_created = _resolve_target_event(connection, int(user_id), intake_event_id)
-                    offset_minutes = _event_auto_offset_minutes(get_intake_event(connection, int(user_id), event_id))
-                    target_plate_id = _resolve_event_plate(
-                        connection, int(user_id), event_id, plate_id, offset_minutes
+                    event_id, meal_created = resolve_target_event(connection, int(user_id), parse_optional_id(intake_event_id, "meal"))
+                    offset_minutes = new_plate_offset_minutes(get_intake_event(connection, int(user_id), event_id))
+                    target_plate_id = resolve_event_plate(
+                        connection, int(user_id), event_id, parse_optional_id(plate_id, "plate"), offset_minutes
                     )
                     take_from_fridge(
                         connection, int(user_id), fridge_id, amount_value, unit, event_id, target_plate_id
@@ -3485,7 +3449,7 @@ def setup_food_routes(rt):
                     int(user_id),
                     recipe_id,
                     add_request,
-                    default_meal_type=_default_meal_type_now(connection, int(user_id)),
+                    default_meal_type=default_meal_type_now(connection, int(user_id)),
                 )
             except ValidationError as error:
                 return _error_msg(str(error))
@@ -3831,6 +3795,7 @@ def setup_food_routes(rt):
         prefill_source_id: str = "",
         add_to_recipe: str = "",
         add_to_recipe_plate: str = "",
+        return_to_assistant: str = "",
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -3865,6 +3830,9 @@ def setup_food_routes(rt):
             )
             target_recipe_id = parse_optional_id(add_to_recipe, "recipe")
             target_plate_id = parse_optional_id(add_to_recipe_plate, "plate")
+            assistant_conversation_id = (
+                parse_optional_id(return_to_assistant, "conversation") if ASSISTANT_ENABLED else None
+            )
         except ValidationError as error:
             return _error_msg(str(error))
 
@@ -3903,6 +3871,11 @@ def setup_food_routes(rt):
             query = f"?recipe_plate_id={target_plate_id}" if target_plate_id else ""
             return HTMLResponse(
                 "", headers={"HX-Redirect": f"/food/recipe/{target_recipe_id}/ingredients/form{query}"}
+            )
+        if assistant_conversation_id:
+            # Back to the conversation that drafted it (frontend §9.11).
+            return HTMLResponse(
+                "", headers={"HX-Redirect": f"/assistant?conversation_id={assistant_conversation_id}"}
             )
         return HTMLResponse("", headers={"HX-Redirect": "/food"})
 
@@ -4028,29 +4001,9 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             try:
                 with connection.transaction():  # row + portion, all or nothing (§2.3)
-                    event_id, _ = _resolve_target_event(connection, int(user_id), intake_event_id)
-                    offset_minutes = _event_auto_offset_minutes(
-                        get_intake_event(connection, int(user_id), event_id)
-                    )
-                    target_plate_id = _resolve_event_plate(
-                        connection, int(user_id), event_id, plate_id, offset_minutes
-                    )
-                    payload = _quick_add_create(req, int(user_id))
-                    manual_intake_id = create_manual_intake(connection, payload, commit=False)
-                    create_portion_detail(
-                        connection,
-                        int(user_id),
-                        PortionDetailCreate(
-                            origin=PortionOrigin.MANUAL_INTAKE,
-                            origin_id=manual_intake_id,
-                            destination=PortionDestination.INTAKE_EVENT,
-                            destination_id=event_id,
-                            plate_id=target_plate_id,
-                            amount=req.weight_g,
-                            # The quick add's own U2 (measurement §6.11, study §6.3).
-                            amount_method=payload.default_amount_method,
-                        ),
-                        commit=False,
+                    event_id, _ = resolve_target_event(connection, int(user_id), parse_optional_id(intake_event_id, "meal"))
+                    add_quick_add_to_meal(
+                        connection, int(user_id), req, event_id, parse_optional_id(plate_id, "plate")
                     )
             except NotFoundError:
                 return app_error_response(request, NotFoundError, "That meal no longer exists.")
@@ -4211,7 +4164,7 @@ def setup_food_routes(rt):
                     user_id=int(user_id),
                     state=IntakeEventState.PLANNED,
                     name=clean_name or None,
-                    meal_type=_default_meal_type_now(connection, int(user_id)),
+                    meal_type=default_meal_type_now(connection, int(user_id)),
                 ),
             )
 

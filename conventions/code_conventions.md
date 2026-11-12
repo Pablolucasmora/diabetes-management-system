@@ -984,6 +984,85 @@ Para cada configuración o integración se comprueba:
 - ¿La operación es idempotente?
 - ¿Existe degradación controlada?
 
+### 8.12 Asistente de registro con IA
+
+Acordado con el usuario el 2026-11-12. Un chat en el que el usuario cuenta lo que ha comido y el asistente lo deja en el carrito para que lo revise y lo confirme. La privacidad está en `study_conventions.md` §7.1, y U1 y U2 en su §6.3.
+
+**Principio: propone y el usuario confirma.** Es la excepción acordada a "no se adivina" (decisión 2026-09-25 y §7.15): el asistente interpreta texto libre, pero nada de lo que hace queda como dato confirmado sin un paso del usuario.
+
+- Solo escribe en la comida `planned` de su conversación: porciones en el carrito, añadidos rápidos estimados con su porción, platos nuevos y los campos de esa comida que el usuario edita en el carrito (ampliación del 2026-11-12, ver **Edición de la comida**). El usuario lo revisa, lo cambia o lo borra, y confirma la comida como siempre.
+- Un alimento nuevo nunca se crea desde el asistente. Este prepara un borrador y abre el formulario de alta relleno; el usuario lo guarda, y el formulario vuelve al chat.
+- No existe ninguna herramienta que borre (comidas, platos o porciones), archive, edite un alimento, plato o receta del catálogo, confirme una comida, toque una comida consumida, toque la insulina o la nevera de una comida, registre una inyección o cambie ajustes. La garantía es que esas herramientas no existen, no una instrucción del prompt.
+
+**Capas**
+
+- Adaptador: `integrations/anthropic_client.py`, con el SDK oficial `anthropic` (versión fija, §10 de `infra_conventions.md`). Cumple §8.5–§8.9: timeout de configuración, errores del proveedor convertidos en `ExternalServiceError` y mensaje genérico al usuario.
+- Servicio: `services/assistant.py` lleva el bucle de herramientas y `services/assistant_tools.py` las define. Cada herramienta llama a las mismas queries y servicios que las rutas equivalentes, con la misma validación (§7) y la propiedad en SQL (§5.3). Una entrada no válida se devuelve al modelo como `tool_result` con `is_error`, nunca como `500`.
+- Rutas: `routes/assistant_routes.py`. Componentes: `components/assistant/`. JS: `static/js/assistant.js`.
+
+**Configuración** (§8.1)
+
+- `ANTHROPIC_API_KEY`: secreto opcional. Vacío = asistente desactivado: sus rutas no se registran (`404`) y no aparece ningún acceso en la interfaz.
+- `ASSISTANT_MODEL`: por defecto `claude-opus-5-5`. Se cambia sin tocar código.
+- `ASSISTANT_EFFORT`: por defecto `low`.
+- `ASSISTANT_TIMEOUT_SECONDS` y `ASSISTANT_MAX_TOOL_ROUNDS` (rondas de herramientas por mensaje). Al llegar al límite se corta, se guarda lo hecho y se avisa al usuario.
+
+**Datos**
+
+- Los macros de un alimento de la base nunca los calcula ni los copia el modelo: el servidor los lee del alimento, como en cualquier porción. El modelo solo elige el alimento, la cantidad y su `amount_method`.
+- Cuando no encuentra el alimento, por este orden de preferencia: lo fijado con `/`, los alimentos y platos del usuario (favoritos y usados primero), sus recetas, Ciqual y OFF. Solo al final estima un añadido rápido.
+- Un añadido rápido estimado lleva `macros_source = ai_estimate` y la porción `amount_method = ai_estimate`. Los hidratos y el peso son obligatorios; un macro que no estima queda vacío, nunca a cero (§8.9).
+- Las porciones de alimentos de la base llevan el `amount_method` de las reglas de U2, aunque el alimento tenga otro por defecto.
+- **Preparación** (decisión del usuario del 2026-11-12: solo lo que dice). Al añadir un alimento o al corregirlo, el asistente rellena `cooking`, `final_state`, `conservation`, `ripeness` (solo fruta) y `is_cooked_weight` únicamente cuando el texto lo dice ("hervido", "a la plancha", "crudo", "pesado cocinado", "de la nevera"). Lo que no se dice queda vacío, como en "no se adivina" (§7.15), y si lo dicho no encaja con ningún valor de la lista, también. `is_cooked_weight` sigue las reglas del carrito (measurement_conventions.md §5.2 y decisión 2026-09-24): solo en alimentos con factor de cocción.
+- Las menciones (`/`) viajan como pares `entry_type` + `entry_id`. El servidor las vuelve a leer con la regla de visibilidad (§11.4); una que el usuario ya no ve se descarta y se avisa.
+
+**Edición de la comida** (decisión del usuario del 2026-11-12). El asistente puede cambiar, de la comida de su conversación, lo mismo que el usuario edita en su tarjeta del carrito, con la misma validación:
+
+- de la comida: la fecha y la hora (`meal_time`), el tipo (`meal_type`), el nombre y las notas;
+- de cada plato: el nombre y el offset, solo como plantilla o aplicado a todos sus alimentos (`Apply all`, measurement_conventions.md §4.6.2);
+- de cada alimento ya añadido: los gramos, `amount_method`, el offset y la preparación.
+
+Lo hace solo cuando el usuario lo pide o lo dice al contar la comida ("a las 16:40", "de postre, a los 20 minutos"). Un valor omitido o `null` no cambia nada; vaciar un campo se hace en el carrito. Cada cambio aparece en el chat en la tarjeta `Changed in the cart` (frontend_conventions.md §9.11).
+
+**Platos** (decisión del usuario del 2026-11-12). Todo va al último plato de la comida salvo que el usuario hable de platos ("de primero…", "de postre a los 20 min"): entonces el asistente crea un plato con su nombre y su offset y añade allí lo que corresponde. Las recetas van, como siempre, en su propio plato.
+
+**Coste**
+
+- Al modelo nunca se le envía el catálogo. Busca con herramientas que devuelven como mucho 5 resultados compactos: id, tipo, nombre, marca u origen, hidratos por 100 g y ración.
+- El `system` y las herramientas son fijos y van cacheados. La fecha, la hora y las comidas planificadas van en el mensaje del usuario, nunca en el `system`, para no romper la caché.
+- Una conversación por comida. No se arrastra el historial de otras.
+- Las imágenes se reducen en el navegador antes de enviarlas.
+- Se registra el uso (tokens de entrada, de caché y de salida, rondas y duración) por mensaje, sin su contenido (§8.3).
+
+**Conversaciones guardadas.** Cada conversación se guarda con sus mensajes, las llamadas a herramientas y lo que acabó en el carrito (`study_conventions.md` §7.1). Contrato de las tablas en §11.2.9.
+
+**Implementación** (decisiones del usuario del 2026-11-12: dos tablas, envío síncrono, selector de comida y alimentos de Ciqual u OFF mediante el formulario precargado).
+
+- **Llamada al modelo** (`integrations/anthropic_client.py`). Usa `client.beta.messages.create` sin streaming, porque las respuestas son cortas, con `max_tokens` 4096. Lleva tres opciones:
+  - pensamiento adaptativo (el valor por defecto del modelo) con `block_binding.prefix_mismatch_behavior = "drop_block"`;
+  - caché de toda la petición (`cache_control` de nivel superior);
+  - respaldo del servidor ante una negativa (`fallbacks: "default"`).
+
+  `drop_block` hace falta porque la foto guardada es un marcador de texto. Eso cambia el historial al que estaban ligados los bloques de pensamiento anteriores, y sin esta opción la API rechazaría la llamada con un `400`. Los reintentos son los del SDK: dos, con backoff, `Retry-After`, y solo ante 408, 409, 429, 5xx y errores de red. Enviar un mensaje no escribe nada en el proveedor, así que repetirlo es seguro (§8.7).
+- **Herramientas** (`services/assistant_tools.py`), en una lista fija y en un orden fijo, porque forman parte del prefijo cacheado:
+  - `search_my_foods`: lo que ve en Food, con la consulta de las menciones `/` y como mucho 5 filas;
+  - `search_reference_foods`: Ciqual u OFF;
+  - `add_food`: un alimento o plato, en gramos o en raciones, con su `amount_method`;
+  - `add_recipe`;
+  - `add_estimate`: un añadido rápido con `ai_estimate` en U1 y U2;
+  - `show_meal`: la comida con sus platos y alimentos, con sus ids y los campos que se pueden cambiar;
+  - `draft_new_food`: `ciqual`, `open_food_facts` o `label`;
+  - `add_plate`: un plato vacío, con nombre y offset opcionales;
+  - `update_meal`, `update_plate` y `update_food`: los cambios de **Edición de la comida**.
+
+  `add_food` y `add_estimate` aceptan el plato de destino (`null` = el último), y `add_food` la preparación.
+
+  Un resultado de Ciqual o de OFF no se añade directamente: se ofrece su formulario de alta precargado, como el de una etiqueta. Las herramientas son `strict`, salvo `add_estimate`, `draft_new_food` y las tres `update_*`. La API admite como mucho 16 parámetros anulables entre todas las herramientas `strict`, y esas tienen muchos campos opcionales. Sus handlers validan todos los valores igualmente (§7).
+- **Turno** (`services/assistant.py`). Cada ronda de herramientas es una transacción: guarda a la vez lo que hacen las herramientas y los mensajes que lo explican, así que la conversación siempre se puede reenviar. Cada herramienta corre en su propio savepoint, y si falla no deja nada. Si una llamada posterior a la primera falla, se conserva lo hecho y se avisa. Al llegar a `ASSISTANT_MAX_TOOL_ROUNDS`, las llamadas pendientes se contestan como no ejecutadas, para que el historial siga siendo válido.
+- **Contexto.** Cada mensaje del usuario empieza con un bloque `<daybetes_context>` que escribe el servidor y que la página no muestra. Lleva la hora local, la comida (nombre, hora y lo que ya tiene) y las entradas fijadas con `/`, ya releídas. El `system` está en inglés, es fijo y pide responder en el idioma en que escribe el usuario.
+- **Registro** (§8.3). Una línea `INFO` por mensaje del usuario, con la conversación, el modelo, las rondas, los tokens de cada clase, la duración y el resultado. Un fallo del proveedor se registra una vez en la ruta, con el motivo interno del adaptador (`assistant_timeout`, `assistant_status_400`...).
+- **Errores.** Las acciones del asistente usan el canal de errores de las acciones en línea: status semántico, cuerpo vacío y toast (`error_conventions.md` §7.1). HTMX no reemplaza nada, y el texto y la foto se quedan en el compositor para volver a enviarlos. Si la comida de la conversación se confirmó o se borró, la respuesta es `404` o `409`, con "That meal was confirmed or deleted. Choose another meal.". Un fallo del proveedor es `502`, con "The assistant is not available right now. Try again in a moment.".
+
 ## 9. Endpoints, HTTP y HTMX
 
 ### 9.1 Contrato del endpoint
@@ -1357,6 +1436,8 @@ La clasificación de cada tabla se declara en este registro, que es el sitio ún
 | `insulin_pen` | **Híbrida por uso**, como `fridge`: un boli sin inyecciones es no archivable; uno con alguna es histórico y se cierra (`closed_at`). Contrato completo en §11.2.7. | Físico si ninguna inyección lo referencia; si no, `closed_at`. `CASCADE` desde `users`. | Decisión del usuario (2026-11-08). |
 | `tags` | **Mixta**: las de sistema (`SystemTag`, sin propietario) son de todos y fijas; las personales son de un usuario. Non-archivable. Contrato completo en §11.2.8. | Físico, solo las personales y solo su propietario; sus enlaces se van con ellas (`CASCADE`). `CASCADE` desde `users`. | Decisión del usuario (2026-11-08), `audit/audits/audit_tags.md`. |
 | `linked_tags` | **Dependent** de su usuario, su etiqueta y su alimento, plato o receta. Privada. Contrato completo en §11.2.8. | Físico: al quitar la etiqueta, y `CASCADE` desde `users`, `tags`, `catalog`, `manual_intake` y `recipe`. | Decisión del usuario (2026-11-08), `audit/audits/audit_tags.md`. |
+| `assistant_conversation` | **Histórica** y privada: una conversación del asistente con un usuario, ligada a una comida. Non-archivable. Contrato completo en §11.2.9. | Solo `CASCADE` desde `users`; ninguna ruta la borra. Si se borra su comida, `intake_event_id` pasa a `NULL` y la conversación se conserva. | Decisión del usuario (2026-11-12), §8.12. |
+| `assistant_message` | **Dependent** de `assistant_conversation`: sus mensajes, de solo inserción (el rol de ejecución no puede modificar ni borrar filas). Contrato completo en §11.2.9. | `CASCADE` desde su conversación. | Decisión del usuario (2026-11-12), §8.12. |
 
 #### 11.2.2 Contrato de ciclo de vida de `catalog`
 
@@ -1506,6 +1587,21 @@ Decisión del usuario del 2026-11-08 (`audit/audits/audit_tags.md`). Sustituye a
 - **Auditoría de cambios** (§11.10): no se requiere.
 - **Datos anteriores** (migración única, `_migrate_tags_to_owners`, backfill técnico de §12.7). `Rescate` pasó a ser la de sistema `rescue`. Cada enlace tomó el propietario de su alimento, porque hasta entonces solo él podía etiquetarlo, y cada etiqueta, el de sus enlaces (con una copia por propietario si había más de uno). Se borró una etiqueta sin enlaces y se fusionaron las del mismo propietario que solo se distinguían en mayúsculas o espacios (`Alto en fibra` / `alto en fibra`), comparando el nombre ya normalizado. La copia por propietario no funciona si dos propietarios compartían una etiqueta, porque el `UNIQUE (name)` global antiguo se quita después de migrar: la migración aborta. Se deja así porque hay un único usuario (decisión del usuario, 2026-11-12). Los datos que la migración no admite (un color fuera de `TAG_COLOR_PATTERN`, por ejemplo) se corrigen a mano antes de desplegar, si aparecen; la migración sigue abortando si quedan (§12.2).
 
+
+#### 11.2.9 Contrato de `assistant_conversation` y `assistant_message`
+
+Decisión del usuario del 2026-11-12. Guardan cada conversación del asistente (§8.12) para medir sus errores (P1) y auditarlo (`study_conventions.md` §7.1).
+
+- **Propietario.** `assistant_conversation.users_id`, `NOT NULL`, propietario y actor a la vez; en Python, `user_id` (§3.5). Es privada: solo su propietario la lee y la escribe, con la condición en el SQL. Los mensajes heredan el propietario de su conversación, y toda lectura de un mensaje hace `JOIN` con ella.
+- **Una conversación por comida.** `intake_event_id` es la comida en la que escribe. Es `NULL` hasta que su primer añadido crea la comida, y vuelve a `NULL` si la comida se borra (`ON DELETE SET NULL`). Solo se enlaza a una comida `planned` del mismo usuario, y lo comprueba la sentencia que escribe (§5.3). La base no lo impone con una FK compuesta porque `intake_event` no tiene un único `(users_id, id)`. Si una comida tuviera varias conversaciones, se abre la última.
+- **Se crea con su primera respuesta guardada.** Un mensaje cuya primera llamada al modelo falla no deja ninguna fila.
+- **Mensajes.** Cada fila es un mensaje de la API de Claude, tal como se envió o se recibió: `role` (`AssistantRole`), `position` desde 1 (única por conversación) y `content`, la lista de bloques en `JSONB`, nunca vacía. La conversación se reenvía al modelo a partir de estas filas, en orden. Por eso son de **solo inserción**: `init_db` retira al rol de ejecución `UPDATE`, `DELETE` y `TRUNCATE` sobre `assistant_message`, como en `fridge_move` (§11.2.6). Añadir bloquea antes la fila de la conversación, para que dos envíos simultáneos no choquen en la posición (§6.8).
+- **Fotos.** Nunca se guardan. Se envían una vez y en la fila se sustituyen por un marcador de texto (`study_conventions.md` §7.1).
+- **Uso.** Las filas `assistant` llevan el uso de esa respuesta: tokens de entrada, de escritura y lectura de caché, de salida, duración y `stop_reason`. Las filas `user` no llevan ninguno (`ck_assistant_message_usage_role`). `stop_reason` es un conjunto abierto de la API, así que no tiene CHECK.
+- **Qué acabó en el carrito.** Los resultados de las herramientas (`tool_result`) lo dicen: el alimento, los gramos, los hidratos y el `amount_method` de cada añadido, o el borrador de un alimento nuevo. La página los vuelve a leer de ahí al reabrir una conversación.
+- **Borrado.** Solo `CASCADE` desde `users`; los mensajes, desde su conversación. Ninguna ruta borra una conversación.
+- **Timestamps.** La conversación lleva `created_at` y `updated_at`, que cambia con cada mensaje y al enlazarla a su comida. Los mensajes solo llevan `created_at`, porque no cambian.
+- **Auditoría de cambios** (§11.10): no se requiere. Los mensajes son en sí el historial.
 
 Una entidad archivable utiliza un campo nullable `deleted_at`.
 

@@ -126,7 +126,7 @@ def _section_title(text: str):
     return P(text, cls="web_section_label px-1")
 
 
-def quick_actions(latest_event, portions, pens=(), brands=()):
+def quick_actions(latest_event, portions, pens=(), brands=(), assistant_enabled: bool = False):
     now = local_now()
     modal_id = "menu_injection_modal"
     open_js = open_modal_js(modal_id)
@@ -192,6 +192,17 @@ def quick_actions(latest_event, portions, pens=(), brands=()):
                 ),
                 cls="flex gap-3",
             ),
+            # The assistant, only when configured (frontend_conventions.md §9.11).
+            Button(
+                Span("Tell the assistant"),
+                Span("describe it, it fills the cart", cls="text-[11px] text-gray-500 font-normal"),
+                type="button",
+                cls=create_button_cls,
+                hx_get="/assistant",
+                hx_target="#main_content",
+                hx_push_url="true",
+                **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
+            ) if assistant_enabled else "",
             Div(
                 Button(
                     Span("Quick add"),

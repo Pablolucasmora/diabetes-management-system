@@ -30,6 +30,7 @@ from DayBetes_food.domain.constants import (
     PrefillSource,
     Ripeness,
     AmountMethod,
+    AssistantRole,
     MacrosSource,
     StorageLocation,
     SystemTag,
@@ -190,6 +191,33 @@ def tags_check_constraints() -> dict[str, str]:
         "ck_tags_owner": "(users_id IS NULL) = (system_key IS NOT NULL)",
         "ck_tags_name_normalized": r"name <> '' AND name = regexp_replace(btrim(name), '\s+', ' ', 'g')",
         "ck_tags_color": f"color ~ '{TAG_COLOR_PATTERN}'",
+    }
+
+
+def assistant_message_check_constraints() -> dict[str, str]:
+    """CHECK name -> expression of `assistant_message` (code_conventions.md §11.2.9)."""
+    usage_columns = (
+        "input_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+        "output_tokens",
+        "duration_ms",
+    )
+    usage_present = " AND ".join(f"{column} IS NOT NULL" for column in usage_columns)
+    usage_absent = " AND ".join(f"{column} IS NULL" for column in usage_columns)
+    return {
+        "ck_assistant_message_role": f"role IN ({sql_in_list(AssistantRole)})",
+        "ck_assistant_message_position": "position >= 1",
+        # The API rejects an empty content: a row that could not be replayed is never stored.
+        "ck_assistant_message_content": "jsonb_typeof(content) = 'array' AND jsonb_array_length(content) > 0",
+        # Usage is of one answer of the model: on `assistant` rows, always; on `user` rows, never.
+        "ck_assistant_message_usage_role": (
+            f"(role = '{AssistantRole.ASSISTANT.value}' AND {usage_present}) "
+            f"OR (role = '{AssistantRole.USER.value}' AND {usage_absent} AND stop_reason IS NULL)"
+        ),
+        "ck_assistant_message_usage_non_negative": " AND ".join(
+            f"({column} IS NULL OR {column} >= 0)" for column in usage_columns
+        ),
     }
 
 
@@ -666,6 +694,52 @@ class DBSchema:
             CHECK (to_location IN ({sql_in_list(StorageLocation)})),
         moved_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT ck_fridge_move_locations_differ CHECK (from_location <> to_location)
+    );
+    """
+
+    # Conversations of the assistant (code_conventions.md §8.12, §11.2.9): private,
+    # one per meal, kept to measure and audit what the assistant proposed.
+    assistant_conversation = """
+    CREATE TABLE IF NOT EXISTS assistant_conversation (
+        id SERIAL CONSTRAINT pk_assistant_conversation PRIMARY KEY,
+        users_id INTEGER NOT NULL
+            CONSTRAINT fk_assistant_conversation_users_id_users
+            REFERENCES users(id) ON DELETE CASCADE,
+        intake_event_id INTEGER -- the meal it writes to; NULL until its first add, or after the meal is deleted. Same owner, checked by the query that links it (§5.3)
+            CONSTRAINT fk_assistant_conversation_intake_event_id_intake_event
+            REFERENCES intake_event(id) ON DELETE SET NULL,
+        model VARCHAR(100) NOT NULL, -- ASSISTANT_MODEL when it started; it is audit data, not a setting
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP -- last message or link to its meal
+    );
+    """
+
+    @classmethod
+    def assistant_message(cls):
+        """One message of the Claude API, as sent or received, in order (§11.2.9).
+        Insert-only: the conversation is replayed from these rows."""
+        check_lines = ",\n".join(
+            f"        CONSTRAINT {name} CHECK ({expression})"
+            for name, expression in assistant_message_check_constraints().items()
+        )
+        return f"""
+    CREATE TABLE IF NOT EXISTS assistant_message (
+        id SERIAL CONSTRAINT pk_assistant_message PRIMARY KEY,
+        conversation_id INTEGER NOT NULL
+            CONSTRAINT fk_assistant_message_conversation_id_assistant_conversation
+            REFERENCES assistant_conversation(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL, -- order inside its conversation, from 1
+        role VARCHAR(20) NOT NULL, -- AssistantRole
+        content JSONB NOT NULL, -- content blocks of the API; a photo is replaced by a text marker, never stored
+        input_tokens INTEGER, -- usage of an `assistant` row (one answer of the model); NULL on `user` rows
+        cache_creation_input_tokens INTEGER,
+        cache_read_input_tokens INTEGER,
+        output_tokens INTEGER,
+        duration_ms INTEGER, -- time the API call took
+        stop_reason VARCHAR(50), -- as the API returned it; open set, not a CHECK
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT uq_assistant_message_conversation_id_position UNIQUE (conversation_id, position),
+{check_lines}
     );
     """
 
