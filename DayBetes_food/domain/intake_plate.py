@@ -11,6 +11,7 @@ without splitting the meal into several events: every offset is still
 measured against the same `meal_time` (§4.6).
 """
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -44,6 +45,40 @@ INTAKE_PLATE_EMPTY_NAME = "Empty plate"
 
 # How many ingredients take part in the derived name.
 INTAKE_PLATE_NAME_INGREDIENTS = 2
+
+
+def check_offset_minutes(value: int | None) -> int | None:
+    """An offset within the sanity bound of measurement_conventions.md §4.5
+    (`-300..300`), the one the `intake_plate` and `portion_detail` CHECKs declare:
+    writing out of range would give a database error instead of a 422.
+
+    Raises:
+        ValidationError: out of range.
+    """
+    if value is not None and not (INTAKE_PLATE_OFFSET_MIN_MINUTES <= value <= INTAKE_PLATE_OFFSET_MAX_MINUTES):
+        raise ValidationError(
+            f"The offset must be between {INTAKE_PLATE_OFFSET_MIN_MINUTES} and "
+            f"{INTAKE_PLATE_OFFSET_MAX_MINUTES} minutes."
+        )
+    return value
+
+
+def parse_offset_minutes(raw_value: str) -> int | None:
+    """Validate an offset in minutes typed in a form (code_conventions.md §7.4, §7.5).
+
+    Empty is None: the offset is unknown, and it clears the stored value. Anything
+    else is a whole number within `check_offset_minutes`.
+
+    Raises:
+        ValidationError: it is not an integer or is out of range.
+    """
+    text = (raw_value or "").strip()
+    if not text:
+        return None
+    # Only ASCII digits: int() would also take "1_0" or other scripts' digits (§7.5).
+    if not re.fullmatch(r"-?[0-9]{1,4}", text):
+        raise ValidationError("The offset must be a whole number of minutes.")
+    return check_offset_minutes(int(text))
 
 
 @dataclass(frozen=True)

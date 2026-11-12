@@ -4,6 +4,7 @@ import math
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import replace
+from datetime import date, datetime, time
 
 from DayBetes_food.database.queries import (
     confirm_intake_event,
@@ -42,7 +43,7 @@ from DayBetes_food.domain.portion_detail import (
 )
 from DayBetes_food.errors import ConflictError, NotFoundError, ValidationError
 from DayBetes_food.services.fridge import return_to_fridge, store_plate_leftovers
-from DayBetes_food.time_utils import local_now, utc_now
+from DayBetes_food.time_utils import APP_TIMEZONE, local_naive_to_utc_aware, local_now, to_local, utc_now
 
 
 def _portions_by_plate(portions: list[PortionDetailRead]) -> dict[int, list[PortionDetailRead]]:
@@ -182,6 +183,79 @@ def delete_planned_portion(connection, user_id: int, portion: PortionDetailRead)
     the caller's transaction."""
     return_to_fridge(connection, user_id, [portion])
     delete_portion_detail(connection, user_id, portion.id, commit=False)
+
+
+# Edits of a planned meal shared by the cart and the assistant (code_conventions.md §8.12).
+
+
+def portion_event_id(connection, user_id: int, portion: PortionDetailRead, *, require_planned: bool = True) -> int:
+    """Resolve a portion to its event, checking ownership and state (§5.3, §6.9.3).
+
+    Portion actions travel by `portion_id`, so the event never comes from the
+    request: it is derived from the portion, whose ownership `get_portion_detail`
+    already validated inside the SQL.
+
+    `require_planned=False` for the actions valid on a consumed event
+    (measurement_conventions.md §6.9.3).
+
+    Raises:
+        NotFoundError: the portion does not belong to an event (recipe/fridge).
+        NotFoundError/ConflictError: from the event, as `get_planned_intake_event` decides.
+    """
+    if portion.destination is not PortionDestination.INTAKE_EVENT:
+        raise NotFoundError("portion_not_in_event")
+    if require_planned:
+        get_planned_intake_event(connection, user_id, portion.destination_id)
+    elif not get_intake_event(connection, user_id, portion.destination_id):
+        raise NotFoundError("intake_event_not_found")
+    return portion.destination_id
+
+
+def plate_event_id(connection, user_id: int, plate_id: int, *, require_planned: bool = True) -> int:
+    """Resolve a plate to its event, checking ownership in the SQL (§5.3).
+
+    Plate actions travel by `plate_id`, so the event never comes from the
+    request: it is derived from the plate, which `get_intake_plate` validates
+    against the user who owns the event.
+
+    `require_planned=False` for the actions that are also valid on an already
+    consumed event (measurement_conventions.md §6.9.3).
+
+    Raises:
+        NotFoundError: the plate does not exist or is not the user's.
+        ConflictError: 'planned' was required and the event is already confirmed.
+    """
+    plate = get_intake_plate(connection, user_id, plate_id)
+    if require_planned:
+        get_planned_intake_event(connection, user_id, plate.intake_event_id)
+    return plate.intake_event_id
+
+
+def update_meal_time(
+    connection, user_id: int, event_id: int, local_time: time, local_date: date | None, *, commit: bool = True
+) -> None:
+    """Move a planned meal to a local time and, optionally, date; without a date it
+    keeps its own day (code_conventions.md §10.4).
+
+    Raises:
+        NotFoundError: the meal does not exist or is not the user's.
+        ConflictError: it is no longer planned.
+        ValidationError: the resulting time is not valid.
+    """
+    event = get_intake_event(connection, user_id, event_id)
+    if not event or not event.meal_time:
+        raise NotFoundError("intake_event_not_found")
+    chosen_date = local_date or to_local(event.meal_time).date()
+    update_intake_event(
+        connection,
+        user_id=user_id,
+        event_id=event_id,
+        data=IntakeEventUpdate(
+            meal_time=local_naive_to_utc_aware(datetime.combine(chosen_date, local_time)),
+            timezone_at_event=APP_TIMEZONE.key,
+        ),
+        commit=commit,
+    )
 
 
 # Where a food added to the cart goes (measurement_conventions.md §4.6.1, §7.7).

@@ -166,6 +166,27 @@ class PortionDetailRead:
     source: PortionSourceRead
 
 
+def check_cooked_weight(origin: PortionOrigin, cooking_factor: float | None, value: bool, *, current: bool = False) -> None:
+    """Whether a portion of this food can be marked as weighed cooked
+    (`is_cooked_weight`). Unmarking is always allowed.
+
+    - A dish (`manual_intake`) has no cooking factor, so its portions are never
+      cooked-weighed (measurement_conventions.md §5.2).
+    - A catalog food without a factor cannot be marked either (decision
+      2026-09-24 / R4), but a portion that already had it (`current`) keeps it
+      to be unmarked.
+
+    Raises:
+        ValidationError: the portion cannot be weighed cooked.
+    """
+    if not value or current:
+        return
+    if origin is PortionOrigin.MANUAL_INTAKE:
+        raise ValidationError("Cooked weight only applies to catalog foods.")
+    if origin is PortionOrigin.CATALOG and cooking_factor is None:
+        raise ValidationError("This food has no cooking factor, so it cannot be weighed cooked.")
+
+
 @dataclass(frozen=True)
 class PortionDetailCreate:
     origin: PortionOrigin
@@ -221,7 +242,7 @@ def portion_intake_amount(portion) -> float:
     return float(portion.amount)
 
 
-def portion_macro_amount(portion) -> float:
+def raw_amount(amount: float, origin: PortionOrigin, is_cooked_weight: bool, cooking_factor: float | None) -> float:
     """Amount used to compute macros (measurement_conventions.md 5.2).
 
     catalog macros are expressed per 100 g of RAW food, so a weight taken
@@ -229,15 +250,19 @@ def portion_macro_amount(portion) -> float:
     conversion is never persisted: `amount` keeps what the user weighed
     (decision 2026-09-18). Only catalog origins; manual_intake has no factor.
     """
-    amount = float(portion.amount)
-    if not portion.is_cooked_weight or portion.origin is not PortionOrigin.CATALOG:
+    amount = float(amount)
+    if not is_cooked_weight or origin is not PortionOrigin.CATALOG:
         return amount
-    factor = portion.source.cooking_factor
-    if factor is None:
+    if cooking_factor is None:
         # Defence of the calculation for inherited portions (decisions
         # 2026-09-24 / 2026-09-25), not a default value.
         return amount
-    return amount / factor if factor > 0 else amount
+    return amount / cooking_factor if cooking_factor > 0 else amount
+
+
+def portion_macro_amount(portion) -> float:
+    """`raw_amount` of a stored portion."""
+    return raw_amount(portion.amount, portion.origin, portion.is_cooked_weight, portion.source.cooking_factor)
 
 
 def calculate_macro_summary_metrics(portions) -> dict:
