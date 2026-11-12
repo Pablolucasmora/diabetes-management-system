@@ -564,6 +564,7 @@ Contrato del servidor en `code_conventions.md` §8.12. Solo existe si el asisten
 **Tarjetas.**
 
 - `Added to the cart`: una línea por alimento, plato, receta o estimación añadidos, con sus gramos, sus hidratos y cómo se obtuvo la cantidad (U2, con las etiquetas de §9.4), y el botón `Review`, que abre el carrito.
+- `Changed in the cart`: una línea por cambio en la comida, un plato o un alimento (`code_conventions.md` §8.12, **Edición de la comida**), con lo cambiado y su valor nuevo, y el botón `Review`.
 - `New food to review`: el nombre del alimento propuesto, de dónde sale ("Read from the label", "From the food composition table" o "From Open Food Facts") y el botón `Review and save`, que abre el formulario de alta de un alimento precargado.
   - Una etiqueta añade al formulario la nota "Read by the assistant from the label. Check every value before saving." y `Macros from` en `Package label`.
   - Ciqual y OFF usan su precarga de siempre (§9.4).

@@ -990,9 +990,9 @@ Acordado con el usuario el 2026-11-12. Un chat en el que el usuario cuenta lo qu
 
 **Principio: propone y el usuario confirma.** Es la excepción acordada a "no se adivina" (decisión 2026-09-25 y §7.15): el asistente interpreta texto libre, pero nada de lo que hace queda como dato confirmado sin un paso del usuario.
 
-- Solo escribe en comidas `planned`: porciones en el carrito y añadidos rápidos estimados con su porción. El usuario las revisa, las cambia o las borra, y confirma la comida como siempre.
+- Solo escribe en la comida `planned` de su conversación: porciones en el carrito, añadidos rápidos estimados con su porción, platos nuevos y los campos de esa comida que el usuario edita en el carrito (ampliación del 2026-11-12, ver **Edición de la comida**). El usuario lo revisa, lo cambia o lo borra, y confirma la comida como siempre.
 - Un alimento nuevo nunca se crea desde el asistente. Este prepara un borrador y abre el formulario de alta relleno; el usuario lo guarda, y el formulario vuelve al chat.
-- No existe ninguna herramienta que borre, archive, edite un alimento, plato o receta existente, confirme una comida, toque una comida consumida, registre una inyección o cambie ajustes. La garantía es que esas herramientas no existen, no una instrucción del prompt.
+- No existe ninguna herramienta que borre (comidas, platos o porciones), archive, edite un alimento, plato o receta del catálogo, confirme una comida, toque una comida consumida, toque la insulina o la nevera de una comida, registre una inyección o cambie ajustes. La garantía es que esas herramientas no existen, no una instrucción del prompt.
 
 **Capas**
 
@@ -1013,7 +1013,18 @@ Acordado con el usuario el 2026-11-12. Un chat en el que el usuario cuenta lo qu
 - Cuando no encuentra el alimento, por este orden de preferencia: lo fijado con `/`, los alimentos y platos del usuario (favoritos y usados primero), sus recetas, Ciqual y OFF. Solo al final estima un añadido rápido.
 - Un añadido rápido estimado lleva `macros_source = ai_estimate` y la porción `amount_method = ai_estimate`. Los hidratos y el peso son obligatorios; un macro que no estima queda vacío, nunca a cero (§8.9).
 - Las porciones de alimentos de la base llevan el `amount_method` de las reglas de U2, aunque el alimento tenga otro por defecto.
+- **Preparación** (decisión del usuario del 2026-11-12: solo lo que dice). Al añadir un alimento o al corregirlo, el asistente rellena `cooking`, `final_state`, `conservation`, `ripeness` (solo fruta) y `is_cooked_weight` únicamente cuando el texto lo dice ("hervido", "a la plancha", "crudo", "pesado cocinado", "de la nevera"). Lo que no se dice queda vacío, como en "no se adivina" (§7.15), y si lo dicho no encaja con ningún valor de la lista, también. `is_cooked_weight` sigue las reglas del carrito (measurement_conventions.md §5.2 y decisión 2026-09-24): solo en alimentos con factor de cocción.
 - Las menciones (`/`) viajan como pares `entry_type` + `entry_id`. El servidor las vuelve a leer con la regla de visibilidad (§11.4); una que el usuario ya no ve se descarta y se avisa.
+
+**Edición de la comida** (decisión del usuario del 2026-11-12). El asistente puede cambiar, de la comida de su conversación, lo mismo que el usuario edita en su tarjeta del carrito, con la misma validación:
+
+- de la comida: la fecha y la hora (`meal_time`), el tipo (`meal_type`), el nombre y las notas;
+- de cada plato: el nombre y el offset, solo como plantilla o aplicado a todos sus alimentos (`Apply all`, measurement_conventions.md §4.6.2);
+- de cada alimento ya añadido: los gramos, `amount_method`, el offset y la preparación.
+
+Lo hace solo cuando el usuario lo pide o lo dice al contar la comida ("a las 16:40", "de postre, a los 20 minutos"). Un valor omitido o `null` no cambia nada; vaciar un campo se hace en el carrito. Cada cambio aparece en el chat en la tarjeta `Changed in the cart` (frontend_conventions.md §9.11).
+
+**Platos** (decisión del usuario del 2026-11-12). Todo va al último plato de la comida salvo que el usuario hable de platos ("de primero…", "de postre a los 20 min"): entonces el asistente crea un plato con su nombre y su offset y añade allí lo que corresponde. Las recetas van, como siempre, en su propio plato.
 
 **Coste**
 
@@ -1039,10 +1050,14 @@ Acordado con el usuario el 2026-11-12. Un chat en el que el usuario cuenta lo qu
   - `add_food`: un alimento o plato, en gramos o en raciones, con su `amount_method`;
   - `add_recipe`;
   - `add_estimate`: un añadido rápido con `ai_estimate` en U1 y U2;
-  - `show_meal`;
-  - `draft_new_food`: `ciqual`, `open_food_facts` o `label`.
+  - `show_meal`: la comida con sus platos y alimentos, con sus ids y los campos que se pueden cambiar;
+  - `draft_new_food`: `ciqual`, `open_food_facts` o `label`;
+  - `add_plate`: un plato vacío, con nombre y offset opcionales;
+  - `update_meal`, `update_plate` y `update_food`: los cambios de **Edición de la comida**.
 
-  Un resultado de Ciqual o de OFF no se añade directamente: se ofrece su formulario de alta precargado, como el de una etiqueta. Las herramientas son `strict`, salvo `add_estimate` y `draft_new_food`. La API admite como mucho 16 parámetros anulables entre todas las herramientas `strict`, y esas dos tienen muchos números opcionales. Sus handlers validan todos los valores igualmente (§7).
+  `add_food` y `add_estimate` aceptan el plato de destino (`null` = el último), y `add_food` la preparación.
+
+  Un resultado de Ciqual o de OFF no se añade directamente: se ofrece su formulario de alta precargado, como el de una etiqueta. Las herramientas son `strict`, salvo `add_estimate`, `draft_new_food` y las tres `update_*`. La API admite como mucho 16 parámetros anulables entre todas las herramientas `strict`, y esas tienen muchos campos opcionales. Sus handlers validan todos los valores igualmente (§7).
 - **Turno** (`services/assistant.py`). Cada ronda de herramientas es una transacción: guarda a la vez lo que hacen las herramientas y los mensajes que lo explican, así que la conversación siempre se puede reenviar. Cada herramienta corre en su propio savepoint, y si falla no deja nada. Si una llamada posterior a la primera falla, se conserva lo hecho y se avisa. Al llegar a `ASSISTANT_MAX_TOOL_ROUNDS`, las llamadas pendientes se contestan como no ejecutadas, para que el historial siga siendo válido.
 - **Contexto.** Cada mensaje del usuario empieza con un bloque `<daybetes_context>` que escribe el servidor y que la página no muestra. Lleva la hora local, la comida (nombre, hora y lo que ya tiene) y las entradas fijadas con `/`, ya releídas. El `system` está en inglés, es fijo y pide responder en el idioma en que escribe el usuario.
 - **Registro** (§8.3). Una línea `INFO` por mensaje del usuario, con la conversación, el modelo, las rondas, los tokens de cada clase, la duración y el resultado. Un fallo del proveedor se registra una vez en la ruta, con el motivo interno del adaptador (`assistant_timeout`, `assistant_status_400`...).
