@@ -1,4 +1,6 @@
 import json
+from dataclasses import dataclass
+
 from fasthtml.common import *
 
 from DayBetes_food.components.cart.cart_shared import CHECKBOX_CLS
@@ -1746,12 +1748,14 @@ def CreateCatalogPage(
     add_to_recipe: tuple[int, int | None] | None = None,
     return_to_assistant: int | None = None,
     assistant_note: str | None = None,
+    draft_key: str | None = None,
 ):
     """Name, what it is and its macros come first; the rest is folded under
     "More details" and opens by itself when the scanner prefilled any of it.
 
     `return_to_assistant` is the conversation that opened the form with a draft
-    (frontend §9.11): saving goes back to it."""
+    (frontend §9.11): saving goes back to it, and `draft_key` gives that draft
+    its own browser draft (§7.14)."""
     result_id = "create_catalog_result_page"
     data = prefill or {}
     def _pv(key: str, fallback: str = ""):
@@ -1761,7 +1765,7 @@ def CreateCatalogPage(
         return str(value)
 
     initial_barcode = _pv("barcode", "").strip()
-    draft_suffix = initial_barcode if initial_barcode else "no_barcode"
+    draft_suffix = draft_key or (initial_barcode if initial_barcode else "no_barcode")
     details_open = any(
         _pv(k, "").strip()
         for k in (
@@ -2161,19 +2165,105 @@ def _recipe_extra_meal_types_field(selected):
     )
 
 
-def CreateRecipePage():
+@dataclass(frozen=True)
+class RecipeDraftLine:
+    """One ingredient of a recipe draft of the assistant, as the form shows it."""
+
+    name: str
+    grams: float
+    preparation: str  # "griddle · solid · weighed cooked", or ""
+    new_dish_carbs_g: float | None  # a new dish: its estimated carbs; None for a food
+
+
+@dataclass(frozen=True)
+class RecipeDraftForm:
+    """A recipe draft of the assistant for the create form (frontend §9.11)."""
+
+    message_id: int
+    tool_use_id: str
+    name: str
+    meal_type: str
+    extra_meal_types: tuple
+    servings: str
+    notes: str
+    plates: tuple  # (plate name or None, tuple[RecipeDraftLine, ...])
+
+
+def _recipe_draft_line(line: RecipeDraftLine):
+    meta = [f"{line.grams:g} g"]
+    if line.preparation:
+        meta.append(line.preparation)
+    if line.new_dish_carbs_g is not None:
+        meta.append(f"{line.new_dish_carbs_g:g} g carbs")
+    return Li(
+        Div(
+            Span(line.name, cls="text-sm text-gray-900 break-words"),
+            Span("New dish", cls="text-[10px] font-semibold uppercase text-amber-800")
+            if line.new_dish_carbs_g is not None
+            else None,
+            cls="flex items-center gap-2 min-w-0",
+        ),
+        P(" · ".join(meta), cls="text-xs text-gray-500"),
+        cls="flex flex-col",
+    )
+
+
+def _recipe_draft_section(draft: RecipeDraftForm):
+    """The ingredients the assistant proposes: read only, saved with the recipe."""
+    several = len(draft.plates) > 1
+    blocks = []
+    for index, (plate_name, lines) in enumerate(draft.plates, start=1):
+        blocks.append(
+            Div(
+                P(plate_name or f"Plate {index}", cls="web_section_label") if several else None,
+                Ul(*(_recipe_draft_line(line) for line in lines), cls="flex flex-col gap-1.5"),
+                cls="flex flex-col gap-1.5",
+            )
+        )
+    return _form_section(
+        "Ingredients",
+        P(
+            "Proposed by the assistant. They are added when you save; edit them afterwards in the recipe.",
+            cls="text-xs text-gray-600 md:col-span-2",
+        ),
+        Div(*blocks, cls="flex flex-col gap-3 md:col-span-2"),
+    )
+
+
+def CreateRecipePage(draft: RecipeDraftForm | None = None, return_to_assistant: int | None = None):
+    """With `draft`, the form of a recipe draft of the assistant (frontend §9.11):
+    the fields prefilled and its ingredients below, all saved together."""
     result_id = "create_recipe_result_page"
     form = Form(
-        _form_header("New recipe", _name_title_input("", "Name of the recipe", RECIPE_NAME_MAX_LENGTH)),
+        _form_header(
+            "New recipe",
+            _name_title_input(draft.name if draft else "", "Name of the recipe", RECIPE_NAME_MAX_LENGTH),
+        ),
+        *(
+            [
+                Input(type="hidden", name="assistant_message", value=str(draft.message_id)),
+                Input(type="hidden", name="assistant_tool", value=draft.tool_use_id),
+                Input(type="hidden", name="return_to_assistant", value=str(return_to_assistant or "")),
+            ]
+            if draft
+            else []
+        ),
         _form_section(
             "About the recipe",
-            _labeled_select("Meal type", "meal_type", [meal_type.value for meal_type in RECIPE_MEAL_TYPES], help_text="When this recipe is usually eaten.", labels=MEAL_TYPE_LABELS),
-            _recipe_extra_meal_types_field(()),
-            _recipe_servings_field(""),
+            _labeled_select(
+                "Meal type",
+                "meal_type",
+                [meal_type.value for meal_type in RECIPE_MEAL_TYPES],
+                help_text="When this recipe is usually eaten.",
+                selected_value=draft.meal_type if draft else "",
+                labels=MEAL_TYPE_LABELS,
+            ),
+            _recipe_extra_meal_types_field(draft.extra_meal_types if draft else ()),
+            _recipe_servings_field(draft.servings if draft else ""),
             Div(
                 _label_with_help("Notes", "Optional instructions, comments, or context about this recipe.", for_id="create_recipe_notes"),
                 Textarea(
-                    "",
+                    draft.notes if draft else "",
                     id="create_recipe_notes",
                     name="notes",
                     rows="8",
@@ -2182,15 +2272,21 @@ def CreateRecipePage():
                 ),
                 cls="flex flex-col gap-1 md:col-span-2",
             ),
-            hint="You add the ingredients on the next screen.",
+            hint="" if draft else "You add the ingredients on the next screen.",
         ),
+        _recipe_draft_section(draft) if draft else None,
         _favorite_row(),
         _form_submit("Create recipe"),
         hx_post="/food/create/recipe",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
         hx_push_url="false",
-        data_draft_key="food_form_create_recipe_page",
+        # A draft of the assistant has its own browser draft (frontend §9.11).
+        data_draft_key=(
+            f"food_form_create_recipe_page::assistant_{draft.message_id}_{draft.tool_use_id}"
+            if draft
+            else "food_form_create_recipe_page"
+        ),
         cls="flex flex-col gap-4 w-full",
     )
     return _form_page_shell(form, result_id)
@@ -3369,10 +3465,11 @@ def FoodDetailPage(
                             cls="flex flex-col gap-1",
                         ),
                         Div(
+                            # Starts at the food's initial state (measurement §6.11).
                             _searchable_compact_input(
                                 name="final_state",
                                 options=[s.value for s in FoodPhysicalState],
-                                value="",
+                                value=(entry.get("initial_state") or "") if entry_type == "catalog" else "",
                                 placeholder="Final state",
                                 allow_add=False,
                             ),

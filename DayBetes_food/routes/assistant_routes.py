@@ -97,7 +97,7 @@ def setup_assistant_routes(rt):
 
     @rt("/assistant/thread")
     def get(request: Request, intake_event_id: str = ""):
-        """The conversation of the meal chosen in `Add to` (§9.11); `New meal` is empty."""
+        """The conversation of the meal chosen in `Add to` (§9.11); `No meal yet` is empty."""
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()

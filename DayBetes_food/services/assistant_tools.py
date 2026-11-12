@@ -2,7 +2,8 @@
 
 What the model can do is exactly this list: search, add to the planned meal of
 its conversation, read that meal, change the fields of that meal the user edits
-in its cart card, and prepare a draft of a new food. There is no tool that
+in its cart card, and prepare a draft of a new food or recipe, which the user
+reviews and saves in its create form. There is no tool that
 deletes anything, archives or edits a food, dish or recipe, confirms a meal,
 touches a consumed meal, its insulin or the fridge, logs insulin or changes
 settings: the guarantee is that those tools do not exist, not an instruction
@@ -18,6 +19,7 @@ only chooses the food, the amount and how the amount was obtained (U2).
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 
 from DayBetes_food.database.queries import (
     apply_plate_offset_to_portions,
@@ -51,7 +53,9 @@ from DayBetes_food.domain.assistant import (
     TOOL_RESULT_ADDED,
     TOOL_RESULT_CHANGED,
     TOOL_RESULT_DRAFT,
-    label_draft_prefill,
+    food_draft_extras,
+    food_draft_prefill,
+    recipe_draft,
     tool_bool,
     tool_id,
     tool_int,
@@ -65,6 +69,7 @@ from DayBetes_food.domain.constants import (
     AssistantDraftSource,
     ConservationMethod,
     CookingMethod,
+    FoodCategory,
     FoodEntryType,
     FoodPhysicalState,
     MacrosSource,
@@ -95,6 +100,7 @@ from DayBetes_food.domain.portion_detail import (
     PortionDetailCreate,
     PortionDetailUpdate,
     check_cooked_weight,
+    default_final_state,
     parse_amount_grams,
     portion_macro_amount,
     raw_amount,
@@ -111,7 +117,7 @@ from DayBetes_food.services.intake_event import (
     resolve_target_event,
     update_meal_time,
 )
-from DayBetes_food.services.recipe import add_recipe_to_meal
+from DayBetes_food.services.recipe import add_recipe_to_meal, recipe_draft_foods
 from DayBetes_food.time_utils import to_local
 
 _ENTRY_TYPE_NAMES = {
@@ -123,6 +129,13 @@ _NULLABLE_NUMBER = {"type": ["number", "null"]}
 _NULLABLE_INTEGER = {"type": ["integer", "null"]}
 _NULLABLE_TEXT = {"type": ["string", "null"]}
 _NULLABLE_BOOLEAN = {"type": ["boolean", "null"]}
+
+
+class _IngredientEntryType(str, Enum):
+    """What a recipe draft ingredient can be: a recipe is not an ingredient."""
+
+    CATALOG = FoodEntryType.CATALOG.value
+    MANUAL_INTAKE = FoodEntryType.MANUAL_INTAKE.value
 
 
 def _nullable_enum(enum_cls, description: str | None = None) -> dict:
@@ -246,17 +259,27 @@ TOOL_DEFINITIONS = [
     ),
     _tool(
         "draft_new_food",
-        "Prepare a new food for the user to review and save; you never create foods. "
-        "source ciqual or open_food_facts: give the code from search_reference_foods and "
-        "leave the rest null. source label: transcribe a nutrition label from a photo, per "
-        "100 g as printed; name and carbs_100g are required, null what the label does not "
-        "show. The user sees a button that opens the prefilled form.",
+        "Prepare a new catalog food for the user to review and save; you never create foods. "
+        "source ciqual or open_food_facts: give the code from search_reference_foods; the "
+        "form takes the macros from there, so null them. source label: transcribe a "
+        "nutrition label from a photo, per 100 g as printed. source estimate: your own "
+        "estimate, only when the user asks for it. With label and estimate, name and "
+        "carbs_100g are required and an unknown nutrient is null, never 0. With any "
+        "source, also fill category, subtype, initial_state and, for foods weighed raw "
+        "that change weight when cooked (rice, pasta, legumes, grains), cooking_factor "
+        "(cooked/raw weight); serving_g only if the label prints it or the user says it, "
+        "and barcode if you can read it. The user sees a button that opens the form.",
         {
             "source": {"type": "string", "enum": [source.value for source in AssistantDraftSource]},
             "code": _NULLABLE_TEXT,
             "name": _NULLABLE_TEXT,
             "brand": _NULLABLE_TEXT,
+            "category": _nullable_enum(FoodCategory),
+            "subtype": {"type": ["string", "null"], "description": "Specific kind, e.g. oats, yogurt, pasta."},
+            "initial_state": _nullable_enum(FoodPhysicalState, "Physical state before preparation."),
+            "cooking_factor": _NULLABLE_NUMBER,
             "serving_g": _NULLABLE_NUMBER,
+            "barcode": _NULLABLE_TEXT,
             "calories_100g": _NULLABLE_NUMBER,
             "carbs_100g": _NULLABLE_NUMBER,
             "sugars_100g": _NULLABLE_NUMBER,
@@ -264,6 +287,8 @@ TOOL_DEFINITIONS = [
             "saturated_100g": _NULLABLE_NUMBER,
             "proteins_100g": _NULLABLE_NUMBER,
             "fiber_100g": _NULLABLE_NUMBER,
+            "caffeine_mg_100g": _NULLABLE_NUMBER,
+            "alcohol_g_100g": _NULLABLE_NUMBER,
         },
         strict=False,
     ),
@@ -313,6 +338,78 @@ TOOL_DEFINITIONS = [
             "amount_method": _nullable_enum(AmountMethod),
             "offset_minutes": _OFFSET,
             **_PREPARATION,
+        },
+        strict=False,
+    ),
+    _tool(
+        "draft_recipe",
+        "Prepare a new recipe the user described, for them to review and save; you never "
+        "create recipes. notes: the procedure, in the user's words, tidied into steps. "
+        "One plate unless the user splits it into courses. Each ingredient is either one "
+        "of the user's foods or dishes (entry_type and entry_id from search_my_foods or a "
+        "\"/\" mention) or, only when the user calls it \"manual\" or \"quick add\", a "
+        "new_dish with your estimated totals for its grams. Before this, a missing "
+        "generic or packaged food must be saved with draft_new_food. Preparation as in "
+        "add_food: only what the user said, null the rest.",
+        {
+            "name": {"type": "string"},
+            "meal_type": _nullable_enum(MealType, "Main meal type it is usually eaten at."),
+            "extra_meal_types": {
+                "type": ["array", "null"],
+                "items": {"type": "string", "enum": [meal_type.value for meal_type in MealType]},
+            },
+            "servings": _NULLABLE_INTEGER,
+            "notes": _NULLABLE_TEXT,
+            "plates": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": _NULLABLE_TEXT,
+                        "ingredients": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "entry_type": _nullable_enum(_IngredientEntryType),
+                                    "entry_id": _NULLABLE_INTEGER,
+                                    "new_dish": {
+                                        "anyOf": [
+                                            {
+                                                "type": "object",
+                                                "properties": {
+                                                    "name": {"type": "string"},
+                                                    "carbs_g": {"type": "number"},
+                                                    "sugars_g": _NULLABLE_NUMBER,
+                                                    "fats_g": _NULLABLE_NUMBER,
+                                                    "saturated_g": _NULLABLE_NUMBER,
+                                                    "proteins_g": _NULLABLE_NUMBER,
+                                                    "fiber_g": _NULLABLE_NUMBER,
+                                                    "calories_kcal": _NULLABLE_NUMBER,
+                                                    "macros_source": {
+                                                        "type": "string",
+                                                        "enum": ["ai_estimate", "own_estimate"],
+                                                        "description": "own_estimate when the user gave the values.",
+                                                    },
+                                                },
+                                                "required": ["name", "carbs_g"],
+                                            },
+                                            {"type": "null"},
+                                        ]
+                                    },
+                                    "grams": {"type": "number"},
+                                    "cooking": _PREPARATION["cooking"],
+                                    "final_state": _PREPARATION["final_state"],
+                                    "conservation": _PREPARATION["conservation"],
+                                    "is_cooked_weight": _PREPARATION["is_cooked_weight"],
+                                },
+                                "required": ["grams"],
+                            },
+                        },
+                    },
+                    "required": ["ingredients"],
+                },
+            },
         },
         strict=False,
     ),
@@ -438,6 +535,9 @@ def _add_food(ctx: ToolContext, tool_input: dict) -> dict:
     # The rules of U2 decide it, whatever the food's default (§8.12, study §6.3).
     amount_method = AmountMethod(tool_input.get("amount_method"))
     preparation = _preparation(tool_input)
+    if "final_state" not in preparation and default_final_state(item) is not None:
+        # Not said: the food's initial state, like every new portion (measurement §6.11).
+        preparation["final_state"] = default_final_state(item)
     origin = PortionOrigin(entry_type.value)
     is_cooked_weight = bool(tool_bool(tool_input.get("is_cooked_weight"), "is_cooked_weight"))
     check_cooked_weight(origin, getattr(item, "cooking_factor", None), is_cooked_weight)
@@ -805,6 +905,8 @@ def _update_food(ctx: ToolContext, tool_input: dict) -> dict:
 def _draft_new_food(ctx: ToolContext, tool_input: dict) -> dict:
     source = AssistantDraftSource(tool_input.get("source"))
     try:
+        # Checked now so the model can fix it; the form reads it again (§7.13).
+        food_draft_extras(tool_input)
         if source is AssistantDraftSource.CIQUAL:
             code = parse_ciqual_code(tool_input.get("code"))
             food = get_ciqual_food(ctx.connection, code) if code is not None else None
@@ -818,12 +920,26 @@ def _draft_new_food(ctx: ToolContext, tool_input: dict) -> dict:
                 raise ToolInputError("Give the code of an Open Food Facts product from search_reference_foods.")
             draft = {"source": source.value, "code": product.code, "name": product.name}
         else:
-            # Checked now so the model can fix it; the form reads it again (§7.13).
-            prefill = label_draft_prefill(tool_input)
+            prefill = food_draft_prefill(tool_input)
             draft = {"source": source.value, "name": prefill.name}
     except ValidationError as error:
         raise ToolInputError(str(error)) from error
     return {TOOL_RESULT_DRAFT: draft, "note": "The user will review and save it, then come back."}
+
+
+def _draft_recipe(ctx: ToolContext, tool_input: dict) -> dict:
+    try:
+        # Checked now so the model can fix it; the form reads it again (§7.13).
+        draft = recipe_draft(tool_input)
+        recipe_draft_foods(ctx.connection, ctx.user_id, draft)
+    except NotFoundError as error:
+        raise ToolInputError("An ingredient is not one of the user's foods or dishes: check its id.") from error
+    except ValidationError as error:
+        raise ToolInputError(str(error)) from error
+    return {
+        TOOL_RESULT_DRAFT: {"source": "recipe", "name": draft.name, "ingredients": draft.ingredient_count},
+        "note": "The user will review and save it in the recipe form.",
+    }
 
 
 _HANDLERS = {
@@ -838,6 +954,7 @@ _HANDLERS = {
     "update_meal": _update_meal,
     "update_plate": _update_plate,
     "update_food": _update_food,
+    "draft_recipe": _draft_recipe,
 }
 
 

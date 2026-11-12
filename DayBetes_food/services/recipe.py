@@ -7,11 +7,14 @@ transaction, so everything is written together or not at all (§2.3).
 from DayBetes_food.database.queries import (
     create_intake_event,
     create_intake_plate,
+    create_manual_intake,
     create_portion_detail,
     create_recipe,
     create_recipe_plate,
+    get_catalog_item,
     get_intake_event,
     get_intake_plate,
+    get_manual_intake,
     get_planned_intake_event,
     get_recipe,
     list_intake_plates,
@@ -21,10 +24,24 @@ from DayBetes_food.database.queries import (
     next_recipe_copy_name,
     set_user_favorite,
 )
-from DayBetes_food.domain.constants import FoodEntryType, IntakeEventState, MealType, PortionDestination
+from DayBetes_food.domain.assistant import NewDishDraft, RecipeDraft
+from DayBetes_food.domain.constants import (
+    AmountMethod,
+    FoodEntryType,
+    IntakeEventState,
+    MealType,
+    PortionDestination,
+    PortionOrigin,
+)
 from DayBetes_food.domain.intake_event import IntakeEventCreate
 from DayBetes_food.domain.intake_plate import IntakePlateCreate, auto_offset_minutes
-from DayBetes_food.domain.portion_detail import PortionDetailCreate, PortionDetailRead
+from DayBetes_food.domain.manual_intake import ManualIntakeCreate
+from DayBetes_food.domain.portion_detail import (
+    PortionDetailCreate,
+    PortionDetailRead,
+    check_cooked_weight,
+    portion_defaults,
+)
 from DayBetes_food.domain.recipe import (
     RecipeAddRequest,
     RecipeCreate,
@@ -282,3 +299,99 @@ def add_recipe_to_meal(
                     commit=False,
                 )
     return event_id
+
+
+def recipe_draft_foods(connection, user_id: int, draft: RecipeDraft) -> dict:
+    """The user's foods and dishes a recipe draft uses, read again with their
+    visibility rule (§8.12, "Recetas"), by `(entry_type, entry_id)`.
+
+    Raises:
+        NotFoundError: one of them no longer exists or is not visible to the user.
+        ValidationError: a cooked weight on a food without a cooking factor.
+    """
+    foods = {}
+    for plate in draft.plates:
+        for ingredient in plate.ingredients:
+            if ingredient.entry_type is None:
+                continue
+            key = (ingredient.entry_type, ingredient.entry_id)
+            if key not in foods:
+                if ingredient.entry_type is FoodEntryType.CATALOG:
+                    item = get_catalog_item(connection, user_id, ingredient.entry_id)
+                else:
+                    item = get_manual_intake(connection, user_id, ingredient.entry_id)
+                if item is None or getattr(item, "is_quick_add", False):
+                    raise NotFoundError("recipe_draft_food_not_found")
+                foods[key] = item
+            origin = PortionOrigin(ingredient.entry_type.value)
+            check_cooked_weight(origin, getattr(foods[key], "cooking_factor", None), ingredient.is_cooked_weight)
+    return foods
+
+
+def create_recipe_from_draft(
+    connection, user_id: int, draft: RecipeDraft, header: RecipeCreate, favorite: bool
+) -> int:
+    """Save a recipe draft of the assistant (§8.12, "Recetas"): the recipe with the
+    header the user reviewed in the form, its plates, the new dishes and the
+    ingredients, all or nothing. An ingredient without a final state takes its
+    food's initial state (measurement §6.11).
+
+    Raises:
+        NotFoundError: an ingredient no longer exists or is not visible to the user.
+        ValidationError: a cooked weight on a food without a cooking factor.
+        ConflictError: the recipe name, or a new dish's name, is already taken.
+    """
+    with connection.transaction():
+        foods = recipe_draft_foods(connection, user_id, draft)
+        recipe_id = create_recipe(connection, header, commit=False)
+        set_user_favorite(connection, user_id, FoodEntryType.RECIPE, recipe_id, favorite, commit=False)
+        for plate in draft.plates:
+            recipe_plate_id = create_recipe_plate(connection, user_id, recipe_id, name=plate.name, commit=False)
+            for ingredient in plate.ingredients:
+                if ingredient.new_dish is not None:
+                    origin = PortionOrigin.MANUAL_INTAKE
+                    origin_id = create_manual_intake(connection, _new_dish(user_id, ingredient.new_dish), commit=False)
+                    defaults = {"amount_method": AmountMethod.AI_ESTIMATE, "final_state": None}
+                else:
+                    item = foods[(ingredient.entry_type, ingredient.entry_id)]
+                    origin, origin_id = PortionOrigin(ingredient.entry_type.value), item.id
+                    defaults = portion_defaults(item)
+                create_portion_detail(
+                    connection,
+                    user_id,
+                    PortionDetailCreate(
+                        origin=origin,
+                        origin_id=origin_id,
+                        destination=PortionDestination.RECIPE,
+                        destination_id=recipe_id,
+                        recipe_plate_id=recipe_plate_id,
+                        amount=ingredient.grams,
+                        cooking=ingredient.cooking,
+                        conservation=ingredient.conservation,
+                        final_state=ingredient.final_state or defaults["final_state"],
+                        amount_method=defaults["amount_method"],
+                        is_cooked_weight=ingredient.is_cooked_weight,
+                    ),
+                    commit=False,
+                )
+        return recipe_id
+
+
+def _new_dish(user_id: int, dish: NewDishDraft) -> ManualIntakeCreate:
+    """A reusable dish with the assistant's estimate (§8.12): never a quick add,
+    which cannot be an ingredient (§11.2.3)."""
+    return ManualIntakeCreate(
+        created_by=user_id,
+        origin_root_id=None,
+        name=dish.name,
+        description=None,
+        subtype=None,
+        origin=None,
+        default_portion=None,
+        nutrients=dish.nutrients,
+        glycemic_index=None,
+        ig_confidence=None,
+        macros_confidence=None,
+        macros_source=dish.macros_source,
+        default_amount_method=None,
+    )
