@@ -8,23 +8,41 @@ from dataclasses import replace
 from DayBetes_food.database.queries import (
     confirm_intake_event,
     create_injection_for_event,
+    create_intake_event,
+    create_intake_plate,
+    create_manual_intake,
+    create_portion_detail,
     delete_intake_event,
     delete_portion_detail,
+    ensure_default_plate,
+    get_intake_event,
+    get_intake_plate,
+    get_meal_type_schedule,
     get_planned_intake_event,
     list_portions_by_event,
     scale_plate_portion_amounts,
     update_intake_event,
 )
+from DayBetes_food.domain.constants import IntakeEventState, MealType, PortionDestination, PortionOrigin
 from DayBetes_food.domain.fridge import LeftoverPlan
-from DayBetes_food.domain.intake_event import INTAKE_EVENT_INGESTED_AMOUNT_MAX_G, IntakeEventUpdate
-from DayBetes_food.domain.intake_plate import PlateEaten, eaten_fraction
+from DayBetes_food.domain.intake_event import (
+    INTAKE_EVENT_INGESTED_AMOUNT_MAX_G,
+    IntakeEventCreate,
+    IntakeEventRead,
+    IntakeEventUpdate,
+)
+from DayBetes_food.domain.intake_plate import IntakePlateCreate, PlateEaten, auto_offset_minutes, eaten_fraction
+from DayBetes_food.domain.manual_intake import ManualIntakeCreate, QuickAddRequest
+from DayBetes_food.domain.meal_type_schedule import resolve_meal_type_for_time
 from DayBetes_food.domain.portion_detail import (
+    PortionDetailCreate,
     PortionDetailRead,
     calculate_macro_summary_metrics,
     portion_intake_amount,
 )
-from DayBetes_food.errors import ConflictError, ValidationError
+from DayBetes_food.errors import ConflictError, NotFoundError, ValidationError
 from DayBetes_food.services.fridge import return_to_fridge, store_plate_leftovers
+from DayBetes_food.time_utils import local_now, utc_now
 
 
 def _portions_by_plate(portions: list[PortionDetailRead]) -> dict[int, list[PortionDetailRead]]:
@@ -164,3 +182,127 @@ def delete_planned_portion(connection, user_id: int, portion: PortionDetailRead)
     the caller's transaction."""
     return_to_fridge(connection, user_id, [portion])
     delete_portion_detail(connection, user_id, portion.id, commit=False)
+
+
+# Where a food added to the cart goes (measurement_conventions.md §4.6.1, §7.7).
+# Shared by the adds of Food and by the assistant (code_conventions.md §8.12).
+
+
+def default_meal_type_now(connection, user_id: int) -> MealType | None:
+    """Automatic `meal_type` for an `intake_event` created without going through
+    the cart (adding a food directly), from the current local time and the
+    user's time slots (or the defaults if they have not customized them in
+    /settings/meal_type_schedule).
+
+    It is computed when the row is created, and not in the component that
+    shows it: the `<select>` in `EventHeader` (cart_components.py) must be able
+    to trust that `event.meal_type` already is the real value, never one it has
+    to infer at render time (code_conventions.md §7.14, decision 2026-09-11).
+    """
+    overrides = get_meal_type_schedule(connection, user_id)
+    return resolve_meal_type_for_time(local_now().time(), overrides)
+
+
+def new_plate_offset_minutes(event: IntakeEventRead | None) -> int | None:
+    """Offset of a new plate (measurement_conventions.md §4.5, §4.6.2). From then
+    on its portions inherit it, which avoids correcting them one by one."""
+    return auto_offset_minutes(event.meal_time if event else None, utc_now())
+
+
+def resolve_target_event(connection, user_id: int, chosen_event_id: int | None) -> tuple[int, bool]:
+    """Planned event a food goes to, and whether it was created now: the chosen one
+    (checked in SQL, NotFoundError or ConflictError otherwise) or, with no id, a new
+    one with the automatic meal_type (§7.14). Runs inside the caller's transaction."""
+    if chosen_event_id:
+        return get_planned_intake_event(connection, user_id, chosen_event_id), False
+    event_id = create_intake_event(
+        connection,
+        IntakeEventCreate(
+            user_id=user_id,
+            state=IntakeEventState.PLANNED,
+            meal_type=default_meal_type_now(connection, user_id),
+        ),
+        commit=False,
+    )
+    return event_id, True
+
+
+def resolve_event_plate(
+    connection, user_id: int, event_id: int, plate_choice: int | None, offset_minutes: int | None
+) -> int:
+    """Plate a food added to an event goes to (§4.6.1, §7.7).
+
+    - A specific id: that plate, checking inside the SQL that it belongs to
+      the user and to the event (§5.3); the request's `event_id` is not proof.
+    - `0`: the selector's `+ New plate` option, which creates the plate on the spot.
+    - `None`: the event's last plate and, if there is none, a first one
+      created implicitly.
+
+    Raises:
+        NotFoundError: the plate does not exist, is not the user's or belongs to another event.
+    """
+    if plate_choice:
+        plate = get_intake_plate(connection, user_id, plate_choice)
+        if plate.intake_event_id != int(event_id):
+            raise NotFoundError(f"Intake plate {plate_choice} does not belong to event {event_id}")
+        return plate.id
+    if plate_choice == 0:
+        return create_intake_plate(
+            connection,
+            IntakePlateCreate(intake_event_id=int(event_id), offset_minutes=offset_minutes),
+            commit=False,
+        )
+    return ensure_default_plate(connection, int(event_id), offset_minutes=offset_minutes, commit=False)
+
+
+def add_quick_add_to_meal(
+    connection, user_id: int, request: QuickAddRequest, event_id: int, plate_choice: int | None
+) -> int:
+    """Create a quick add and its portion in a planned meal (code_conventions.md
+    §11.2.3), inside the caller's transaction: row + portion, all or nothing (§2.3).
+
+    A quick add stores only what its form asks: the weight becomes
+    default_portion, its U1 and U2 (study §6.3) are the ones given, or NULL, and
+    everything else stays NULL. The portion is born with the quick add's own U2
+    (measurement §6.11). Repeating it creates another quick add (§9.6).
+
+    Returns:
+        The id of the new `manual_intake` row.
+    """
+    offset_minutes = new_plate_offset_minutes(get_intake_event(connection, user_id, event_id))
+    plate_id = resolve_event_plate(connection, user_id, event_id, plate_choice, offset_minutes)
+    manual_intake_id = create_manual_intake(
+        connection,
+        ManualIntakeCreate(
+            created_by=user_id,
+            origin_root_id=None,
+            name=request.name,
+            description=request.description,
+            subtype=None,
+            origin=None,
+            default_portion=request.weight_g,
+            nutrients=request.nutrients,
+            glycemic_index=None,
+            ig_confidence=None,
+            macros_confidence=None,
+            macros_source=request.macros_source,
+            default_amount_method=request.amount_method,
+            is_quick_add=True,
+        ),
+        commit=False,
+    )
+    create_portion_detail(
+        connection,
+        user_id,
+        PortionDetailCreate(
+            origin=PortionOrigin.MANUAL_INTAKE,
+            origin_id=manual_intake_id,
+            destination=PortionDestination.INTAKE_EVENT,
+            destination_id=event_id,
+            plate_id=plate_id,
+            amount=request.weight_g,
+            amount_method=request.amount_method,
+        ),
+        commit=False,
+    )
+    return manual_intake_id
