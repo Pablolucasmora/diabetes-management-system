@@ -1014,3 +1014,14 @@ En los datos reales, `manual_intake` tiene 4 de 5 filas privadas. Los motivos re
 - Añadir `created_at` y `updated_at`, por uniformidad: `updated_at` nunca cambiaría.
 **Decisión**: solo `moved_at`. Completa, para `fridge` y `fridge_move`, lo que la decisión del 2026-11-06 dejó pendiente; `tags` y `linked_tags` siguen pendientes de su auditoría.
 **Convención actualizada**: `code_conventions.md` sección 11.2.6
+
+## 2026-11-08 — Etiquetas de sistema y personales, con enlaces privados
+
+**Origen**: `tags` y `linked_tags`, `audit/audits/audit_tags.md` (primera pasada, hallazgos 1-3 y 8; segunda pasada, hallazgo 29)
+**Contexto**: las etiquetas eran globales: cualquiera veía, editaba y ponía las de todos, y una etiqueta puesta en un alimento publicado la veían todos sus usuarios. El rescate se reconocía por el nombre `rescate` de una etiqueta, con un botón provisional `Rescue` en la ficha (decisión del 2026-10-11, recogida en `frontend_conventions.md` §9.6, que esta sustituye), y no había forma de marcar lo que se toma para el deporte.
+**Alternativas consideradas**:
+- Mantener las etiquetas globales.
+- Solo etiquetas personales, con el rescate reconocido por el nombre.
+- Etiquetas de sistema, sin propietario e identificadas por una clave, y etiquetas personales de cada usuario, con enlaces privados.
+**Decisión**: dos clases de etiqueta. Las de sistema (`rescue` y `exercise`, `SystemTag`) son iguales para todos, se identifican por `system_key` y nadie las cambia; cada una abre una pestaña del pop-up de rescate con su tipo de comida (`exercise` es un tipo nuevo). Las personales las crea, renombra, recolorea y borra su dueño, con nombre único por propietario sin distinguir mayúsculas. Un enlace dice que un usuario puso una etiqueta en algo que ve, y nadie más lo lee. Se editan desde la ficha y desde la página `Tags` de ajustes. La migración de los datos anteriores se desvía del criterio por defecto de §12.7: borra la etiqueta sin enlaces y los enlaces que no se pueden atribuir a un propietario, fusiona las etiquetas de un mismo dueño que solo se distinguen en mayúsculas o espacios y convierte `Rescate` en la etiqueta de sistema `rescue`.
+**Convención actualizada**: `code_conventions.md` secciones 11.2.1 y 11.2.8; `frontend_conventions.md` secciones 9.4.1, 9.6 y 9.10
