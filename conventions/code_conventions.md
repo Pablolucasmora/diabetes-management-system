@@ -984,6 +984,47 @@ Para cada configuración o integración se comprueba:
 - ¿La operación es idempotente?
 - ¿Existe degradación controlada?
 
+### 8.12 Asistente de registro con IA
+
+Acordado con el usuario el 2026-11-12. Un chat en el que el usuario cuenta lo que ha comido y el asistente lo deja en el carrito para que lo revise y lo confirme. La privacidad está en `study_conventions.md` §7.1, y U1 y U2 en su §6.3.
+
+**Principio: propone y el usuario confirma.** Es la excepción acordada a "no se adivina" (decisión 2026-09-25 y §7.15): el asistente interpreta texto libre, pero nada de lo que hace queda como dato confirmado sin un paso del usuario.
+
+- Solo escribe en comidas `planned`: porciones en el carrito y añadidos rápidos estimados con su porción. El usuario las revisa, las cambia o las borra, y confirma la comida como siempre.
+- Un alimento nuevo nunca se crea desde el asistente. Este prepara un borrador y abre el formulario de alta relleno; el usuario lo guarda, y el formulario vuelve al chat.
+- No existe ninguna herramienta que borre, archive, edite un alimento, plato o receta existente, confirme una comida, toque una comida consumida, registre una inyección o cambie ajustes. La garantía es que esas herramientas no existen, no una instrucción del prompt.
+
+**Capas**
+
+- Adaptador: `integrations/anthropic_client.py`, con el SDK oficial `anthropic` (versión fija, §10 de `infra_conventions.md`). Cumple §8.5–§8.9: timeout de configuración, errores del proveedor convertidos en `ExternalServiceError` y mensaje genérico al usuario.
+- Servicio: `services/assistant.py` lleva el bucle de herramientas y `services/assistant_tools.py` las define. Cada herramienta llama a las mismas queries y servicios que las rutas equivalentes, con la misma validación (§7) y la propiedad en SQL (§5.3). Una entrada no válida se devuelve al modelo como `tool_result` con `is_error`, nunca como `500`.
+- Rutas: `routes/assistant_routes.py`. Componentes: `components/assistant/`. JS: `static/js/assistant.js`.
+
+**Configuración** (§8.1)
+
+- `ANTHROPIC_API_KEY`: secreto opcional. Vacío = asistente desactivado: sus rutas no se registran (`404`) y no aparece ningún acceso en la interfaz.
+- `ASSISTANT_MODEL`: por defecto `claude-opus-5-5`. Se cambia sin tocar código.
+- `ASSISTANT_EFFORT`: por defecto `low`.
+- `ASSISTANT_TIMEOUT_SECONDS` y `ASSISTANT_MAX_TOOL_ROUNDS` (rondas de herramientas por mensaje). Al llegar al límite se corta, se guarda lo hecho y se avisa al usuario.
+
+**Datos**
+
+- Los macros de un alimento de la base nunca los calcula ni los copia el modelo: el servidor los lee del alimento, como en cualquier porción. El modelo solo elige el alimento, la cantidad y su `amount_method`.
+- Cuando no encuentra el alimento, por este orden de preferencia: lo fijado con `/`, los alimentos y platos del usuario (favoritos y usados primero), sus recetas, Ciqual y OFF. Solo al final estima un añadido rápido.
+- Un añadido rápido estimado lleva `macros_source = ai_estimate` y la porción `amount_method = ai_estimate`. Los hidratos y el peso son obligatorios; un macro que no estima queda vacío, nunca a cero (§8.9).
+- Las porciones de alimentos de la base llevan el `amount_method` de las reglas de U2, aunque el alimento tenga otro por defecto.
+- Las menciones (`/`) viajan como pares `entry_type` + `entry_id`. El servidor las vuelve a leer con la regla de visibilidad (§11.4); una que el usuario ya no ve se descarta y se avisa.
+
+**Coste**
+
+- Al modelo nunca se le envía el catálogo. Busca con herramientas que devuelven como mucho 5 resultados compactos: id, tipo, nombre, marca u origen, hidratos por 100 g y ración.
+- El `system` y las herramientas son fijos y van cacheados. La fecha, la hora y las comidas planificadas van en el mensaje del usuario, nunca en el `system`, para no romper la caché.
+- Una conversación por comida. No se arrastra el historial de otras.
+- Las imágenes se reducen en el navegador antes de enviarlas.
+- Se registra el uso (tokens de entrada, de caché y de salida, rondas y duración) por mensaje, sin su contenido (§8.3).
+
+**Conversaciones guardadas.** Cada conversación se guarda con sus mensajes, las llamadas a herramientas y lo que acabó en el carrito (`study_conventions.md` §7.1). Las tablas se definen y se clasifican (§11.1) en el cambio que las crea, antes de implementarlas.
+
 ## 9. Endpoints, HTTP y HTMX
 
 ### 9.1 Contrato del endpoint
