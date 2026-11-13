@@ -10,7 +10,7 @@ tool loop, the tools and what is stored live in services/assistant.py.
   message writes nothing on the provider's side, so repeating it is safe.
 - Errors: any failure becomes ExternalServiceError with an internal reason
   (`assistant_timeout`, `assistant_rate_limited`...), never the provider's
-  message. It never logs: the route logs once (§8.3).
+  message. It never logs: its caller logs once (§8.3).
 - Thinking is adaptive (the model's default) with `drop_block`: a stored photo
   is replaced by a text marker, which changes the history the earlier thinking
   blocks were bound to, and the API drops them instead of rejecting the call.
