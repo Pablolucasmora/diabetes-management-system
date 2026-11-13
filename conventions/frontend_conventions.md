@@ -537,14 +537,16 @@ Contrato del servidor en `code_conventions.md` §8.12. Solo existe si el asisten
 
 - En Inicio, el botón `Tell the assistant`, a todo el ancho, debajo de "What did you eat?" en *Add to your meal* (§9.2).
 - En la cabecera de Food (§9.3), entre el rayo y el `+`: una pestaña rectangular `Tell the assistant` que cuelga del borde superior de la página. Ocupa el hueco entre los dos botones con margen a cada lado, no tiene margen ni borde arriba (sube por encima del relleno superior de la cabecera) y solo redondea las esquinas de abajo. Es sólida, como los botones de la cabecera (§8).
+- Los dos accesos muestran el logo de DiaBot (`static/images/ui/Logo_DiaBot.svg`, la gota con "iaBot") en lugar del texto `Tell the assistant`, que pasa a ser su `aria-label`. En Inicio se mantiene debajo el subtítulo "describe it, it fills the cart" (decisión del usuario, 2026-11-13).
 
 **Página.** Cabecera como las de crear (§9.1): "‹ Back" a la izquierda y `ASSISTANT` a la derecha, seguido de un botón redondo pequeño con el icono del carrito que abre el carrito. El botón flotante del carrito no se muestra en esta página (`data-hide-cart`), porque taparía el compositor. Debajo, el selector `Add to`, los mensajes de la conversación y, fijo abajo, el compositor: el botón de foto, un `<textarea>` que crece con el texto hasta un máximo y luego hace scroll, y el botón de enviar. Ningún campo se enfoca solo al abrir la página en el móvil (mismo motivo que §9.6).
 
 **Una conversación por comida** (decisión del usuario, 2026-11-12).
 
 - `Add to` lista las comidas planificadas, con el mismo texto que en Food (§7.7), `New meal` y `No meal` (decisión del usuario, 2026-11-13).
-- Al abrir la página se elige la última comida planificada, como en Food, o `New meal` si no hay ninguna. `?conversation_id=` abre esa conversación y elige su comida, `No meal` si es una conversación sin comida, o `New meal` si aún no tiene.
-- Cambiar la comida carga su conversación (la última, si tuviera varias), o la vacía con la introducción. `New meal` y `No meal` empiezan siempre vacías.
+- Al abrir la página se elige lo último que el usuario eligió en `Add to` en esta pestaña (`sessionStorage`, decisión del usuario del 2026-11-13), si sigue en la lista; si no, la última comida planificada, como en Food, o `New meal` si no hay ninguna. `?conversation_id=` abre esa conversación y elige su comida, `No meal` si es una conversación sin comida, o `New meal` si aún no tiene.
+- Cambiar la comida carga su conversación (la última, si tuviera varias), o la vacía con la introducción. `New meal` empieza siempre vacía.
+- `No meal` reabre la última conversación sin comida, con todo lo hablado, para volver a ella después de mirar algo en la app (decisión del usuario del 2026-11-13). Mientras está elegida, junto a `Add to` aparece el botón `New chat`, que empieza una vacía; la anterior se conserva.
 - Con `New meal`, el primer añadido del asistente crea la comida planificada, con el tipo automático (`code_conventions.md` §7.14). La respuesta la añade a `Add to` ya elegida, para que el siguiente mensaje siga en ella.
 - `No meal` es un chat solo para crear alimentos y recetas (`code_conventions.md` §8.12, **Conversación sin comida**): nada va al carrito. Viaja como `intake_event_id=none`.
 - El id de la conversación viaja en un campo oculto. Vacío empieza una nueva.

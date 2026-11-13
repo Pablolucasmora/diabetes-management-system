@@ -10,7 +10,9 @@
 // A photo is reduced here before it is sent (§8.12, cost). The composer is
 // cleared only after a successful send: on an error the toast explains it and
 // the message stays to send again.
-// Nothing is stored in localStorage and no field takes the focus on its own.
+// Add to: what was chosen last is kept in sessionStorage for this tab's session
+// and chosen again when the page opens without a meal or conversation in its
+// URL (§9.11). Nothing goes to localStorage and no field takes the focus on its own.
 (function () {
   if (window.__dbAssistantBootstrapped) return;
   window.__dbAssistantBootstrapped = true;
@@ -367,6 +369,63 @@
     }
   });
 
+  // Add to (§9.11): remember the choice, and show `New chat` only for `No meal`.
+  var CHOICE_KEY = "assistant_add_to";
+
+  function mealSelect() {
+    return byId("assistant_meal");
+  }
+
+  function rememberChoice() {
+    var select = mealSelect();
+    if (!select) return;
+    try {
+      window.sessionStorage.setItem(CHOICE_KEY, select.value);
+    } catch (_) {}
+  }
+
+  function syncNewChat() {
+    var select = mealSelect();
+    var button = byId("assistant_new_chat");
+    if (select && button) button.classList.toggle("hidden", select.value !== "none");
+  }
+
+  function restoreChoice() {
+    var select = mealSelect();
+    if (!select) return;
+    var params = new URLSearchParams(window.location.search);
+    if (params.get("intake_event_id") !== null || params.get("conversation_id") !== null) {
+      rememberChoice();
+      return;
+    }
+    var stored = null;
+    try {
+      stored = window.sessionStorage.getItem(CHOICE_KEY);
+    } catch (_) {}
+    var exists = Array.prototype.some.call(select.options, function (option) {
+      return option.value === stored;
+    });
+    if (stored === null || !exists || stored === select.value) return;
+    select.value = stored;
+    syncNewChat();
+    // htmx loads that conversation, as a change by hand does.
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  document.addEventListener("change", function (event) {
+    if (event.target !== mealSelect()) return;
+    rememberChoice();
+    syncNewChat();
+  });
+
+  // A meal created by the first add comes back chosen, out of band.
+  document.addEventListener("htmx:oobAfterSwap", function (event) {
+    if (event.detail && event.detail.target && event.detail.target.id === "assistant_meal_box") {
+      rememberChoice();
+      syncNewChat();
+    }
+  });
+
   // A meal chosen in Add to opens its conversation: show its end.
   document.addEventListener("htmx:afterSwap", function (event) {
     if (event.detail && event.detail.target && event.detail.target.id === "assistant_thread_box") scrollToLatest();
@@ -445,6 +504,7 @@
     autoGrow();
     updateSend();
     scrollToLatest();
+    restoreChoice();
   });
 
   // A new page of the assistant starts with no mentions.
@@ -457,6 +517,7 @@
       autoGrow();
       updateSend();
       scrollToLatest();
+      restoreChoice();
     }
   });
 })();

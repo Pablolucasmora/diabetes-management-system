@@ -3016,6 +3016,12 @@ def _ensure_assistant_schema(cursor):
         "ix_assistant_conversation_users_id_intake_event_id",
         "ON assistant_conversation (users_id, intake_event_id, id DESC)",
     )
+    # The latest `No meal` conversation of a user (§8.12).
+    _create_index_once(
+        cursor,
+        "ix_assistant_conversation_users_id_without_meal",
+        "ON assistant_conversation (users_id, id DESC) WHERE without_meal",
+    )
     # The FK to intake_event is SET NULL on delete: without this index, deleting
     # a meal would scan the whole table (§11.8).
     _create_index_once(

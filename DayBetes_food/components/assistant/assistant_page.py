@@ -153,6 +153,18 @@ def AssistantMealSelect(events: list, selected_id: int | None, *, without_meal: 
     options.append(Option("No meal", value=NO_MEAL_CHOICE, selected=without_meal))
     return Div(
         Label("Add to", cls="web_section_label shrink-0", **{"for": MEAL_SELECT_ID}),
+        # `No meal` only (§9.11): its last chat reopens, this starts an empty one.
+        # static/js/assistant.js shows it while `No meal` is chosen.
+        Button(
+            "New chat",
+            type="button",
+            id="assistant_new_chat",
+            data_skip_page_loading="true",
+            hx_get=f"/assistant/thread?intake_event_id={NO_MEAL_CHOICE}&new_chat=1",
+            hx_target=f"#{THREAD_BOX_ID}",
+            hx_swap="innerHTML",
+            cls="web_button px-2.5 py-1 text-xs ml-auto" + ("" if without_meal else " hidden"),
+        ),
         Select(
             *options,
             id=MEAL_SELECT_ID,

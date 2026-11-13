@@ -24,6 +24,7 @@ from DayBetes_food.database.queries import (
     get_catalog_item,
     get_intake_event,
     get_latest_assistant_conversation,
+    get_latest_meal_free_conversation,
     get_manual_intake,
     get_planned_intake_event,
     get_recipe,
@@ -114,9 +115,17 @@ class _Turn:
     stored: list[AssistantMessageCreate] = field(default_factory=list)
 
 
-def resolve_conversation(connection, user_id: int, conversation_id: int | None, event_id: int | None):
+def resolve_conversation(
+    connection,
+    user_id: int,
+    conversation_id: int | None,
+    event_id: int | None,
+    *,
+    latest_without_meal: bool = False,
+):
     """The conversation a message goes to (§8.12, one per meal): the given one, else
-    the latest of the chosen meal, else a new one. The meal must still be planned.
+    the latest of the chosen meal, else (with `latest_without_meal`, when `No meal`
+    is opened) the latest `No meal` one, else a new one. The meal must still be planned.
 
     Returns:
         `(conversation, created)`: the conversation, or None when it does not exist
@@ -136,6 +145,8 @@ def resolve_conversation(connection, user_id: int, conversation_id: int | None, 
     if event_id:
         get_planned_intake_event(connection, user_id, event_id)
         return get_latest_assistant_conversation(connection, user_id, event_id)
+    if latest_without_meal:
+        return get_latest_meal_free_conversation(connection, user_id)
     return None
 
 

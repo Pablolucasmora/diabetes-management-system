@@ -19,6 +19,7 @@ from DayBetes_food.database.queries.assistant import (
     get_assistant_conversation,
     get_assistant_message,
     get_latest_assistant_conversation,
+    get_latest_meal_free_conversation,
     link_assistant_conversation_event,
     list_assistant_messages,
 )
@@ -221,6 +222,7 @@ __all__ = [
     "get_assistant_conversation",
     "get_assistant_message",
     "get_latest_assistant_conversation",
+    "get_latest_meal_free_conversation",
     "link_assistant_conversation_event",
     "list_assistant_messages",
     "get_users_by_email",

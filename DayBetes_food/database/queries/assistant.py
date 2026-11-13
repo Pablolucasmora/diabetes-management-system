@@ -98,6 +98,24 @@ def get_latest_assistant_conversation(connection, user_id: int, event_id: int) -
     return assistant_conversation_read_from_row(row) if row else None
 
 
+def get_latest_meal_free_conversation(connection, user_id: int) -> AssistantConversationRead | None:
+    """The user's latest `No meal` conversation (§8.12): it reopens until they start
+    a new chat."""
+    row = _execute_query(
+        connection,
+        f"""
+        SELECT {_CONVERSATION_COLUMNS}
+        FROM assistant_conversation c
+        WHERE c.users_id = %(user_id)s AND c.without_meal
+        ORDER BY c.id DESC
+        LIMIT 1;
+        """,
+        {"user_id": user_id},
+        commit=False,
+    )
+    return assistant_conversation_read_from_row(row) if row else None
+
+
 def link_assistant_conversation_event(
     connection, user_id: int, conversation_id: int, event_id: int, *, commit: bool = True
 ) -> None:

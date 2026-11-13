@@ -84,7 +84,9 @@ def setup_assistant_routes(rt):
             if not intake_event_id and not chosen_conversation and events:
                 selected = events[0].id
             try:
-                conversation = resolve_conversation(connection, int(user_id), chosen_conversation, selected)
+                conversation = resolve_conversation(
+                    connection, int(user_id), chosen_conversation, selected, latest_without_meal=without_meal
+                )
             except (NotFoundError, ConflictError):
                 # Its meal was confirmed or deleted meanwhile: start on a new meal.
                 conversation, selected = None, None
@@ -101,20 +103,23 @@ def setup_assistant_routes(rt):
         return render_page(request, content, show_cart=False)
 
     @rt("/assistant/thread")
-    def get(request: Request, intake_event_id: str = ""):
-        """The conversation of the meal chosen in `Add to` (§9.11); `New meal` and `No meal` are empty."""
+    def get(request: Request, intake_event_id: str = "", new_chat: str = ""):
+        """The conversation of the meal chosen in `Add to` (§9.11): `New meal` is empty,
+        and `No meal` reopens the latest one unless `New chat` asks for an empty one."""
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()
         if not user_id:
             return app_error_response(request, AuthenticationError, "Your session has expired.")
         try:
-            event_id, _ = parse_meal_choice(intake_event_id)
+            event_id, without_meal = parse_meal_choice(intake_event_id)
         except ValidationError as error:
             return app_error_response(request, ValidationError, str(error))
         with get_connection() as connection:
             try:
-                conversation = resolve_conversation(connection, int(user_id), None, event_id)
+                conversation = resolve_conversation(
+                    connection, int(user_id), None, event_id, latest_without_meal=without_meal and not new_chat
+                )
             except (NotFoundError, ConflictError):
                 return app_error_response(request, NotFoundError, _MEAL_GONE)
             turns = conversation_turns(connection, int(user_id), conversation.id) if conversation else []
