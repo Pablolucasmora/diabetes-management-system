@@ -194,7 +194,7 @@ def quick_actions(latest_event, portions, pens=(), brands=(), assistant_enabled:
             ),
             # The assistant, only when configured (frontend_conventions.md §9.11).
             Button(
-                Img(src="/images/ui/Logo_DiaBot.svg", alt="", cls="h-8 w-auto"),
+                Img(src="/images/ui/Logo_DiaBot.png", alt="", cls="h-8 w-auto"),
                 Span("describe it, it fills the cart", cls="text-[11px] text-gray-500 font-normal"),
                 type="button",
                 aria_label="Tell the assistant",
