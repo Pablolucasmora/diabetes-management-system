@@ -554,7 +554,7 @@ Contrato del servidor en `code_conventions.md` §8.12. Solo existe si el asisten
 **Enviar** (decisión del usuario, 2026-11-12: síncrono).
 
 - Solo envía el botón, y Enter hace un salto de línea. El botón está activo si hay texto, una mención o una foto.
-- Mientras el servidor responde, aparece una burbuja `Thinking…` y el botón se desactiva.
+- Mientras el servidor responde, aparece una burbuja `Thinking` con tres puntos que suben uno tras otro (quietos si el sistema pide reducir el movimiento, §10) y el botón se desactiva.
 - Si sale bien, se añade al final el turno: el mensaje del usuario, a la derecha, con la píldora `Photo` si llevaba una; las respuestas del asistente, a la izquierda y como texto plano (solo las de un mensaje sin llamadas a herramientas: el texto que el modelo escribe junto a una llamada no es una respuesta); y las tarjetas de lo que hizo. Después se vacía el compositor (texto, menciones y foto) y se desplaza la vista al turno nuevo.
 - Si falla, el toast lo explica (`code_conventions.md` §8.12) y el compositor se queda como estaba.
 

@@ -356,9 +356,18 @@ def AssistantThread(turns: list[TurnView], conversation_id: int | None):
 
 def _thinking():
     return Div(
-        Span("Thinking…", cls="text-sm text-gray-500"),
+        Span("Thinking", cls="text-sm text-gray-500"),
+        # Three dots that rise in turn while the answer comes (§9.11, static/css/input.css).
+        Span(
+            Span(cls="db_typing_dot"),
+            Span(cls="db_typing_dot"),
+            Span(cls="db_typing_dot"),
+            aria_hidden="true",
+            cls="flex items-end gap-1 pb-1 text-gray-500",
+        ),
         id="assistant_thinking",
-        cls="hidden [&.htmx-request]:block self-start web_container rounded-2xl rounded-bl-md px-3 py-2",
+        role="status",
+        cls="hidden [&.htmx-request]:flex items-end gap-1.5 self-start web_container rounded-2xl rounded-bl-md px-3 py-2",
     )
 
 
@@ -466,7 +475,7 @@ def AssistantPage(
         Div(
             _header(),
             AssistantMealSelect(events, selected_event_id, without_meal=without_meal),
-            cls="sticky top-0 z-[600] w-full flex flex-col gap-3 px-3 pt-6 pb-3 web_glass_strong rounded-b-3xl",
+            cls="sticky top-0 z-[600] w-full flex flex-col gap-3 px-5 pt-6 pb-4 web_glass_strong rounded-b-3xl",
         ),
         Div(AssistantThread(turns, conversation_id), id=THREAD_BOX_ID, cls="w-full"),
         _thinking(),
