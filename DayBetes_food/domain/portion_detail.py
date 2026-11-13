@@ -293,3 +293,20 @@ def calculate_macro_summary_metrics(portions) -> dict:
         metrics[coverage_key] = (known_amount / total_amount) if total_amount > 0 else 0.0
 
     return metrics
+
+
+def default_final_state(item) -> FoodPhysicalState | None:
+    """The final state a new portion of a food is born with when nobody chose one:
+    the food's initial state (measurement_conventions.md §6.11, decision of the user
+    of 2026-11-13). A dish (`manual_intake`) has none."""
+    return getattr(item, "initial_state", None)
+
+
+def portion_defaults(item) -> dict:
+    """measurement_conventions.md §6.11: a new portion of a catalog food or a dish
+    is born with the food's default_amount_method and, unless the user chose one,
+    its initial state as final state, written when the portion is created (§7.14).
+    macros_source is not copied: the portion reads the food's live. Every path
+    that creates a portion from a food without a `Final state` control uses it;
+    a copy of another portion keeps that portion's values instead."""
+    return {"amount_method": item.default_amount_method, "final_state": default_final_state(item)}

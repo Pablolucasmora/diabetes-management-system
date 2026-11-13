@@ -991,7 +991,7 @@ Acordado con el usuario el 2026-11-12. Un chat en el que el usuario cuenta lo qu
 **Principio: propone y el usuario confirma.** Es la excepción acordada a "no se adivina" (decisión 2026-09-25 y §7.15): el asistente interpreta texto libre, pero nada de lo que hace queda como dato confirmado sin un paso del usuario.
 
 - Solo escribe en la comida `planned` de su conversación: porciones en el carrito, añadidos rápidos estimados con su porción, platos nuevos y los campos de esa comida que el usuario edita en el carrito (ampliación del 2026-11-12, ver **Edición de la comida**). El usuario lo revisa, lo cambia o lo borra, y confirma la comida como siempre.
-- Un alimento nuevo nunca se crea desde el asistente. Este prepara un borrador y abre el formulario de alta relleno; el usuario lo guarda, y el formulario vuelve al chat.
+- Un alimento, un plato manual o una receta nuevos nunca se crean desde el asistente. Este prepara un borrador y abre el formulario de alta relleno; el usuario lo revisa y lo guarda, y el formulario vuelve al chat (ampliación del 2026-11-13, ver **Alimentos nuevos** y **Recetas**).
 - No existe ninguna herramienta que borre (comidas, platos o porciones), archive, edite un alimento, plato o receta del catálogo, confirme una comida, toque una comida consumida, toque la insulina o la nevera de una comida, registre una inyección o cambie ajustes. La garantía es que esas herramientas no existen, no una instrucción del prompt.
 
 **Capas**
@@ -1013,7 +1013,13 @@ Acordado con el usuario el 2026-11-12. Un chat en el que el usuario cuenta lo qu
 - Cuando no encuentra el alimento, por este orden de preferencia: lo fijado con `/`, los alimentos y platos del usuario (favoritos y usados primero), sus recetas, Ciqual y OFF. Solo al final estima un añadido rápido.
 - Un añadido rápido estimado lleva `macros_source = ai_estimate` y la porción `amount_method = ai_estimate`. Los hidratos y el peso son obligatorios; un macro que no estima queda vacío, nunca a cero (§8.9).
 - Las porciones de alimentos de la base llevan el `amount_method` de las reglas de U2, aunque el alimento tenga otro por defecto.
-- **Preparación** (decisión del usuario del 2026-11-12: solo lo que dice). Al añadir un alimento o al corregirlo, el asistente rellena `cooking`, `final_state`, `conservation`, `ripeness` (solo fruta) y `is_cooked_weight` únicamente cuando el texto lo dice ("hervido", "a la plancha", "crudo", "pesado cocinado", "de la nevera"). Lo que no se dice queda vacío, como en "no se adivina" (§7.15), y si lo dicho no encaja con ningún valor de la lista, también. `is_cooked_weight` sigue las reglas del carrito (measurement_conventions.md §5.2 y decisión 2026-09-24): solo en alimentos con factor de cocción.
+- **Preparación** (decisiones del usuario del 2026-11-12, solo lo que dice, y del 2026-11-13). Al añadir un alimento a una comida o a un borrador de receta, o al corregirlo, el asistente rellena `cooking`, `final_state`, `conservation`, `ripeness` (solo fruta, solo en comidas) y `is_cooked_weight` únicamente cuando el texto lo dice ("hervido", "a la plancha", "crudo", "pesado cocinado", "de la nevera"). Lo que no se dice queda vacío, como en "no se adivina" (§7.15), y si lo dicho no encaja con ningún valor de la lista, también. Tres reglas lo concretan:
+  - Una preparación dicha para varios alimentos a la vez ("en una sartén con aceite: zanahoria, tomate y pechuga") se aplica a todos ellos.
+  - "Sartén" o "plancha" es `griddle`; solo "frito" (o mucho aceite) es `fried`.
+  - `final_state` no dicho toma el `initial_state` del alimento, como en cualquier porción nueva (measurement_conventions.md §6.11); el servidor lo pone, no el modelo.
+
+  `is_cooked_weight` sigue las reglas del carrito (measurement_conventions.md §5.2 y decisión 2026-09-24): solo en alimentos con factor de cocción.
+- **Aceite sin cantidad** (decisión del usuario del 2026-11-13). Si el usuario dice que cocinó "con aceite" sin dar los gramos, el asistente añade una cantidad típica (unos 5 g por persona en una sartén) con `amount_method = ai_estimate` y lo dice en su respuesta, en vez de preguntar.
 - Las menciones (`/`) viajan como pares `entry_type` + `entry_id`. El servidor las vuelve a leer con la regla de visibilidad (§11.4); una que el usuario ya no ve se descarta y se avisa.
 
 **Edición de la comida** (decisión del usuario del 2026-11-12). El asistente puede cambiar, de la comida de su conversación, lo mismo que el usuario edita en su tarjeta del carrito, con la misma validación:
@@ -1023,6 +1029,34 @@ Acordado con el usuario el 2026-11-12. Un chat en el que el usuario cuenta lo qu
 - de cada alimento ya añadido: los gramos, `amount_method`, el offset y la preparación.
 
 Lo hace solo cuando el usuario lo pide o lo dice al contar la comida ("a las 16:40", "de postre, a los 20 minutos"). Un valor omitido o `null` no cambia nada; vaciar un campo se hace en el carrito. Cada cambio aparece en el chat en la tarjeta `Changed in the cart` (frontend_conventions.md §9.11).
+
+**Alimentos nuevos** (decisión del usuario del 2026-11-13). `draft_new_food` abre el formulario de alta de un alimento del catálogo relleno con todo lo que el asistente sabe, y el usuario lo revisa antes de guardar:
+
+- el nombre, la marca, la categoría y el subtipo;
+- los macros por 100 g, la cafeína y el alcohol;
+- la ración, solo si la etiqueta la imprime o el usuario la dice;
+- el código de barras, si se ve en la foto;
+- el estado inicial;
+- el factor de cocción estimado, en los alimentos que se pesan en crudo y cambian de peso al cocinarse (arroz, pasta, legumbres, cereales); en el resto, vacío (measurement_conventions.md §7);
+- `macros_source` (U1, `study_conventions.md` §6.3), según el origen del borrador:
+
+| `source` | De dónde salen los macros | `macros_source` |
+|---|---|---|
+| `label` | foto de la etiqueta, transcrita | `label` |
+| `ciqual` | Ciqual, con el código de `search_reference_foods` | `reference_db` |
+| `open_food_facts` | OFF, con el código de `search_reference_foods` | `open_food_facts` |
+| `estimate` | lo estima el asistente porque el usuario se lo pide | `ai_estimate` |
+
+Con Ciqual y OFF, los macros y lo que traiga la fuente salen de su precarga de siempre (measurement_conventions.md §12.1), y el asistente solo completa lo que la fuente no trae: categoría, subtipo, estado inicial y factor de cocción. Lo que el borrador guarda se vuelve a leer y a validar al abrir el formulario (§7.13), nunca se pasa por la URL.
+
+**Recetas** (decisión del usuario del 2026-11-13). Cuando el usuario describe una receta, `draft_recipe` prepara un borrador y abre el formulario `New recipe` relleno: nombre, tipo de comida, tipos extra, raciones y, en las notas, el procedimiento. Debajo, el formulario muestra los ingredientes propuestos, por platos de la receta, con sus gramos y su preparación (`cooking`, `final_state`, `conservation` e `is_cooked_weight`, con la regla de **Preparación**). Al guardar se crean en una sola transacción la receta, sus platos, los platos manuales nuevos y los ingredientes. Después se editan en el editor de siempre.
+
+- Cada ingrediente es un alimento o plato del usuario (`catalog` o `manual_intake`, por su id) o un **plato manual nuevo**.
+- Un plato manual nuevo es lo que el usuario llama "manual" o "quick add": un añadido rápido no puede ser ingrediente (§11.2.3), así que se crea como plato reutilizable, con sus macros por 100 g a partir de los totales que estima el asistente para esa cantidad (measurement_conventions.md §5.4) y `macros_source = ai_estimate`, salvo que el usuario dé los valores (`own_estimate`).
+- Un ingrediente que el usuario no tiene y no dice cómo añadir lo busca en Ciqual y OFF y propone antes su `draft_new_food` (o una estimación con `source = estimate` si no lo encuentra). El borrador de la receta llega cuando el usuario ha guardado esos alimentos.
+- Los platos de la receta solo se separan cuando el usuario habla de platos, como en una comida (**Platos**).
+
+**Conversación sin comida** (decisión del usuario del 2026-11-13). Con `No meal` en `Add to` (frontend_conventions.md §9.11), la conversación es solo para borradores de alimentos y recetas: nunca tiene comida (`without_meal`, §11.2.9). Las herramientas que añaden al carrito lo rechazan con un error que el modelo explica al usuario, y el bloque de contexto ya lo avisa para que no lo intente. Con `New meal`, como siempre, el primer añadido crea la comida. Elegir `No meal` reabre la última conversación sin comida del usuario hasta que pide `New chat`.
 
 **Platos** (decisión del usuario del 2026-11-12). Todo va al último plato de la comida salvo que el usuario hable de platos ("de primero…", "de postre a los 20 min"): entonces el asistente crea un plato con su nombre y su offset y añade allí lo que corresponde. Las recetas van, como siempre, en su propio plato.
 
@@ -1051,13 +1085,14 @@ Lo hace solo cuando el usuario lo pide o lo dice al contar la comida ("a las 16:
   - `add_recipe`;
   - `add_estimate`: un añadido rápido con `ai_estimate` en U1 y U2;
   - `show_meal`: la comida con sus platos y alimentos, con sus ids y los campos que se pueden cambiar;
-  - `draft_new_food`: `ciqual`, `open_food_facts` o `label`;
+  - `draft_new_food`: `ciqual`, `open_food_facts`, `label` o `estimate`, con los campos de **Alimentos nuevos**;
   - `add_plate`: un plato vacío, con nombre y offset opcionales;
-  - `update_meal`, `update_plate` y `update_food`: los cambios de **Edición de la comida**.
+  - `update_meal`, `update_plate` y `update_food`: los cambios de **Edición de la comida**;
+  - `draft_recipe`: el borrador de **Recetas**.
 
   `add_food` y `add_estimate` aceptan el plato de destino (`null` = el último), y `add_food` la preparación.
 
-  Un resultado de Ciqual o de OFF no se añade directamente: se ofrece su formulario de alta precargado, como el de una etiqueta. Las herramientas son `strict`, salvo `add_estimate`, `draft_new_food` y las tres `update_*`. La API admite como mucho 16 parámetros anulables entre todas las herramientas `strict`, y esas tienen muchos campos opcionales. Sus handlers validan todos los valores igualmente (§7).
+  Un resultado de Ciqual o de OFF no se añade directamente: se ofrece su formulario de alta precargado, como el de una etiqueta. Las herramientas son `strict`, salvo `add_estimate`, `draft_new_food`, las tres `update_*` y `draft_recipe`. La API admite como mucho 16 parámetros anulables entre todas las herramientas `strict`, y esas tienen muchos campos opcionales. Sus handlers validan todos los valores igualmente (§7).
 - **Turno** (`services/assistant.py`). Cada ronda de herramientas es una transacción: guarda a la vez lo que hacen las herramientas y los mensajes que lo explican, así que la conversación siempre se puede reenviar. Cada herramienta corre en su propio savepoint, y si falla no deja nada. Si una llamada posterior a la primera falla, se conserva lo hecho y se avisa. Al llegar a `ASSISTANT_MAX_TOOL_ROUNDS`, las llamadas pendientes se contestan como no ejecutadas, para que el historial siga siendo válido.
 - **Contexto.** Cada mensaje del usuario empieza con un bloque `<daybetes_context>` que escribe el servidor y que la página no muestra. Lleva la hora local, la comida (nombre, hora y lo que ya tiene) y las entradas fijadas con `/`, ya releídas. El `system` está en inglés, es fijo y pide responder en el idioma en que escribe el usuario.
 - **Registro** (§8.3). Una línea `INFO` por mensaje del usuario, con la conversación, el modelo, las rondas, los tokens de cada clase, la duración y el resultado. Un fallo del proveedor se registra una vez en la ruta, con el motivo interno del adaptador (`assistant_timeout`, `assistant_status_400`...).
@@ -1594,6 +1629,7 @@ Decisión del usuario del 2026-11-12. Guardan cada conversación del asistente (
 
 - **Propietario.** `assistant_conversation.users_id`, `NOT NULL`, propietario y actor a la vez; en Python, `user_id` (§3.5). Es privada: solo su propietario la lee y la escribe, con la condición en el SQL. Los mensajes heredan el propietario de su conversación, y toda lectura de un mensaje hace `JOIN` con ella.
 - **Una conversación por comida.** `intake_event_id` es la comida en la que escribe. Es `NULL` hasta que su primer añadido crea la comida, y vuelve a `NULL` si la comida se borra (`ON DELETE SET NULL`). Solo se enlaza a una comida `planned` del mismo usuario, y lo comprueba la sentencia que escribe (§5.3). La base no lo impone con una FK compuesta porque `intake_event` no tiene un único `(users_id, id)`. Si una comida tuviera varias conversaciones, se abre la última.
+- **Conversación sin comida** (2026-11-13, §8.12). `without_meal BOOLEAN NOT NULL DEFAULT FALSE` marca la de `No meal`, que nunca se enlaza a una comida: `ck_assistant_conversation_without_meal` impide `without_meal` con `intake_event_id`. Se fija al crearla y no cambia.
 - **Se crea con su primera respuesta guardada.** Un mensaje cuya primera llamada al modelo falla no deja ninguna fila.
 - **Mensajes.** Cada fila es un mensaje de la API de Claude, tal como se envió o se recibió: `role` (`AssistantRole`), `position` desde 1 (única por conversación) y `content`, la lista de bloques en `JSONB`, nunca vacía. La conversación se reenvía al modelo a partir de estas filas, en orden. Por eso son de **solo inserción**: `init_db` retira al rol de ejecución `UPDATE`, `DELETE` y `TRUNCATE` sobre `assistant_message`, como en `fridge_move` (§11.2.6). Añadir bloquea antes la fila de la conversación, para que dos envíos simultáneos no choquen en la posición (§6.8).
 - **Fotos.** Nunca se guardan. Se envían una vez y en la fila se sustituyen por un marcador de texto (`study_conventions.md` §7.1).

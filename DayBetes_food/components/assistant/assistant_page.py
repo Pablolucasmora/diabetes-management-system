@@ -13,7 +13,13 @@ from DayBetes_food.components.food.foods import meal_option_label
 from DayBetes_food.components.food.rescue import carbs_meta
 from DayBetes_food.components.modal import MODAL_NAME_CLS
 from DayBetes_food.components.navigation import back_js
-from DayBetes_food.domain.assistant import ASSISTANT_TEXT_MAX_LENGTH, AddedCard, DraftCard, TurnView
+from DayBetes_food.domain.assistant import (
+    ASSISTANT_TEXT_MAX_LENGTH,
+    NO_MEAL_CHOICE,
+    AddedCard,
+    DraftCard,
+    TurnView,
+)
 from DayBetes_food.domain.constants import AmountMethod, AssistantDraftSource, FoodEntryType
 from DayBetes_food.domain.food_entry import MentionSuggestion
 
@@ -80,28 +86,85 @@ def _header():
     )
 
 
+# The short guide of §9.11 ("How to write"): what the assistant understands best.
+_HOW_TO_WRITE = (
+    ("Foods", "Type / to pin each food and give its amount: \"/Chicken breast 150 g\", \"1 /Tomato\"."),
+    (
+        "One sentence, one preparation",
+        "It applies to every food in it: \"In a pan with a little oil: /Carrot 80 g, /Tomato 100 g "
+        "and /Chicken breast 150 g\". Oil without grams is estimated.",
+    ),
+    (
+        "Cooking",
+        "pan or grill = griddle, fried = fried, boiled = boiled-soft, al dente, steamed, oven, "
+        "air fryer, toaster, raw.",
+    ),
+    ("Weight", "For rice, pasta and legumes say \"weighed cooked\" or \"raw\"; otherwise you will be asked."),
+    (
+        "Also",
+        "freshly made, from the fridge, frozen or pre-cooked; mashed or liquid; for fruit, unripe, "
+        "ripe or overripe.",
+    ),
+    ("Time and plates", "\"at 14:30\", \"dinner\", \"dessert 30 min later\"."),
+    (
+        "New foods and recipes",
+        "Send a photo of the label, or ask to estimate a food. Paste a recipe and say which "
+        "ingredients you do not have are \"manual\" or \"quick add\".",
+    ),
+)
+
+
+def _how_to_write():
+    return Details(
+        Summary("How to write", cls="text-xs font-semibold text-gray-700 cursor-pointer"),
+        Ul(
+            *(
+                Li(Span(f"{title}: ", cls="font-semibold"), text, cls="text-xs text-gray-600")
+                for title, text in _HOW_TO_WRITE
+            ),
+            cls="flex flex-col gap-1 pt-2",
+        ),
+    )
+
+
 def _intro():
     return Div(
         P("Tell me what you ate, with amounts if you know them.", cls="text-sm text-gray-800"),
         P(
             "Type / to pin one of your foods, dishes or recipes, so I use exactly that one. "
-            "You can also attach a photo of the dish or of a nutrition label.",
+            "You can also attach a photo of the dish or of a nutrition label, or describe a "
+            "recipe to save it.",
             cls="text-xs text-gray-500",
         ),
+        _how_to_write(),
         cls="web_container w-full px-4 py-3 flex flex-col gap-1",
     )
 
 
-def AssistantMealSelect(events: list, selected_id: int | None, *, oob: bool = False):
+def AssistantMealSelect(events: list, selected_id: int | None, *, without_meal: bool = False, oob: bool = False):
     """Which meal the conversation writes to (§9.11): the planned meals, and
-    `New meal`, whose first add creates it. Changing it opens that meal's conversation."""
+    `New meal`, whose first add creates it, and `No meal`, a chat for new foods and
+    recipes only. Changing it opens that meal's conversation."""
     options = [
         Option(meal_option_label(event), value=str(event.id), selected=(event.id == selected_id))
         for event in events
     ]
-    options.append(Option("New meal", value="", selected=(selected_id is None)))
+    options.append(Option("New meal", value="", selected=(selected_id is None and not without_meal)))
+    options.append(Option("No meal", value=NO_MEAL_CHOICE, selected=without_meal))
     return Div(
         Label("Add to", cls="web_section_label shrink-0", **{"for": MEAL_SELECT_ID}),
+        # `No meal` only (§9.11): its last chat reopens, this starts an empty one.
+        # static/js/assistant.js shows it while `No meal` is chosen.
+        Button(
+            "New chat",
+            type="button",
+            id="assistant_new_chat",
+            data_skip_page_loading="true",
+            hx_get=f"/assistant/thread?intake_event_id={NO_MEAL_CHOICE}&new_chat=1",
+            hx_target=f"#{THREAD_BOX_ID}",
+            hx_swap="innerHTML",
+            cls="web_button px-2.5 py-1 text-xs ml-auto" + ("" if without_meal else " hidden"),
+        ),
         Select(
             *options,
             id=MEAL_SELECT_ID,
@@ -208,30 +271,46 @@ def _changed_card(lines: list[str]):
     )
 
 
+# A recipe draft's card (frontend §9.11): its tool result says `source` "recipe".
+RECIPE_DRAFT_SOURCE = "recipe"
+
+
 def draft_form_url(card: DraftCard, conversation_id: int) -> str:
-    """The create form prefilled with a draft (§9.11); saving comes back here."""
-    back = f"return_to_assistant={conversation_id}"
-    if card.source == AssistantDraftSource.CIQUAL.value and card.code:
-        return f"/food/create/catalog/form?{urlencode({'ciqual': card.code})}&{back}"
-    if card.source == AssistantDraftSource.OPEN_FOOD_FACTS.value and card.code:
-        return f"/food/create/catalog/form?{urlencode({'barcode': card.code})}&{back}"
-    query = urlencode({"assistant_message": card.message_id, "assistant_tool": card.tool_use_id})
-    return f"/food/create/catalog/form?{query}&{back}"
+    """The create form prefilled with a draft (§9.11). The form reads the draft from
+    its stored tool call; saving a food comes back here."""
+    path = "/food/create/recipe/form" if card.source == RECIPE_DRAFT_SOURCE else "/food/create/catalog/form"
+    query = urlencode(
+        {
+            "assistant_message": card.message_id,
+            "assistant_tool": card.tool_use_id,
+            "return_to_assistant": conversation_id,
+        }
+    )
+    return f"{path}?{query}"
 
 
 _DRAFT_SOURCE_LABELS = {
     AssistantDraftSource.CIQUAL.value: "From the food composition table",
     AssistantDraftSource.OPEN_FOOD_FACTS.value: "From Open Food Facts",
     AssistantDraftSource.LABEL.value: "Read from the label",
+    AssistantDraftSource.ESTIMATE.value: "Estimated by the assistant",
 }
 
 
+def _draft_subtitle(card: DraftCard) -> str:
+    if card.source == RECIPE_DRAFT_SOURCE:
+        count = card.ingredients or 0
+        return f"{count} ingredient{'s' if count != 1 else ''}"
+    return _DRAFT_SOURCE_LABELS.get(card.source, "")
+
+
 def _draft_card(card: DraftCard, conversation_id: int):
+    title = "New recipe to review" if card.source == RECIPE_DRAFT_SOURCE else "New food to review"
     return Div(
         Div(
-            Span("New food to review", cls="web_section_label"),
+            Span(title, cls="web_section_label"),
             P(card.name, cls="text-sm text-gray-900 break-words"),
-            P(_DRAFT_SOURCE_LABELS.get(card.source, ""), cls="text-[11px] text-gray-500"),
+            P(_draft_subtitle(card), cls="text-[11px] text-gray-500"),
             cls="flex flex-col min-w-0",
         ),
         Button(
@@ -259,7 +338,8 @@ def TurnBlock(turn: TurnView, conversation_id: int, notices: list[str] | None = 
         _changed_card(turn.changed) if turn.changed else None,
         *(_draft_card(card, conversation_id) for card in turn.drafts),
         *(_notice(text) for text in (notices or [])),
-        cls="w-full flex flex-col gap-2",
+        # Scrolled to below the fixed top bar, not under it.
+        cls="w-full flex flex-col gap-2 scroll-mt-48",
     )
 
 
@@ -276,9 +356,18 @@ def AssistantThread(turns: list[TurnView], conversation_id: int | None):
 
 def _thinking():
     return Div(
-        Span("Thinking…", cls="text-sm text-gray-500"),
+        Span("Thinking", cls="text-sm text-gray-500"),
+        # Three dots that rise in turn while the answer comes (§9.11, static/css/input.css).
+        Span(
+            Span(cls="db_typing_dot"),
+            Span(cls="db_typing_dot"),
+            Span(cls="db_typing_dot"),
+            aria_hidden="true",
+            cls="flex items-end gap-1 pb-1 text-gray-500",
+        ),
         id="assistant_thinking",
-        cls="hidden [&.htmx-request]:block self-start web_container rounded-2xl rounded-bl-md px-3 py-2",
+        role="status",
+        cls="hidden [&.htmx-request]:flex items-end gap-1.5 self-start web_container rounded-2xl rounded-bl-md px-3 py-2",
     )
 
 
@@ -372,17 +461,29 @@ def _composer():
     )
 
 
-def AssistantPage(events: list, selected_event_id: int | None, conversation_id: int | None, turns: list[TurnView]):
+def AssistantPage(
+    events: list,
+    selected_event_id: int | None,
+    conversation_id: int | None,
+    turns: list[TurnView],
+    *,
+    without_meal: bool = False,
+):
     return Div(
-        _header(),
-        AssistantMealSelect(events, selected_event_id),
+        # Fixed at the top, like Food's bar (§9.11): Back, the cart and Add to stay
+        # at hand however long the conversation is.
+        Div(
+            _header(),
+            AssistantMealSelect(events, selected_event_id, without_meal=without_meal),
+            cls="sticky top-0 z-[600] w-full flex flex-col gap-3 px-5 pt-6 pb-4 web_glass_strong rounded-b-3xl",
+        ),
         Div(AssistantThread(turns, conversation_id), id=THREAD_BOX_ID, cls="w-full"),
         _thinking(),
         # At the bottom of the screen, above the island; in the flow (sticky,
         # not fixed) so a phone keyboard scrolls it into view.
         Div(_composer(), cls="sticky bottom-28 w-full mt-auto"),
         data_hide_cart="true",
-        cls="w-full max-w-2xl mx-auto px-4 pt-6 pb-28 min-h-dvh flex flex-col gap-4",
+        cls="w-full max-w-2xl mx-auto px-4 pb-28 min-h-dvh flex flex-col gap-4",
     )
 
 

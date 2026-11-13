@@ -23,7 +23,7 @@ from DayBetes_food.domain.assistant import (
 from DayBetes_food.domain.constants import IntakeEventState
 from DayBetes_food.errors import NotFoundError
 
-_CONVERSATION_COLUMNS = "c.id, c.users_id, c.intake_event_id, c.model, c.created_at"
+_CONVERSATION_COLUMNS = "c.id, c.users_id, c.intake_event_id, c.model, c.without_meal, c.created_at"
 # A meal the conversation may write to: planned and of the same user.
 _OWN_PLANNED_EVENT = """
     EXISTS (
@@ -36,9 +36,10 @@ _OWN_PLANNED_EVENT = """
 
 
 def create_assistant_conversation(
-    connection, user_id: int, model: str, event_id: int | None, *, commit: bool = True
+    connection, user_id: int, model: str, event_id: int | None, *, without_meal: bool = False, commit: bool = True
 ) -> int:
-    """A new conversation, linked to `event_id` when given.
+    """A new conversation, linked to `event_id` when given, or one that never has a
+    meal (`without_meal`, §8.12).
 
     Raises:
         NotFoundError: the meal is not a planned meal of the user.
@@ -46,8 +47,8 @@ def create_assistant_conversation(
     row = _execute_query(
         connection,
         f"""
-        INSERT INTO assistant_conversation (users_id, intake_event_id, model)
-        SELECT %(user_id)s, %(event_id)s, %(model)s
+        INSERT INTO assistant_conversation (users_id, intake_event_id, model, without_meal)
+        SELECT %(user_id)s, %(event_id)s, %(model)s, %(without_meal)s
         WHERE %(event_id)s::int IS NULL OR {_OWN_PLANNED_EVENT}
         RETURNING id;
         """,
@@ -55,6 +56,7 @@ def create_assistant_conversation(
             "user_id": user_id,
             "event_id": event_id,
             "model": model,
+            "without_meal": without_meal,
             "planned": IntakeEventState.PLANNED.value,
         },
         commit=commit,
@@ -91,6 +93,24 @@ def get_latest_assistant_conversation(connection, user_id: int, event_id: int) -
         LIMIT 1;
         """,
         {"user_id": user_id, "event_id": event_id},
+        commit=False,
+    )
+    return assistant_conversation_read_from_row(row) if row else None
+
+
+def get_latest_meal_free_conversation(connection, user_id: int) -> AssistantConversationRead | None:
+    """The user's latest `No meal` conversation (§8.12): it reopens until they start
+    a new chat."""
+    row = _execute_query(
+        connection,
+        f"""
+        SELECT {_CONVERSATION_COLUMNS}
+        FROM assistant_conversation c
+        WHERE c.users_id = %(user_id)s AND c.without_meal
+        ORDER BY c.id DESC
+        LIMIT 1;
+        """,
+        {"user_id": user_id},
         commit=False,
     )
     return assistant_conversation_read_from_row(row) if row else None

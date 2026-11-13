@@ -15,14 +15,45 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 
-from DayBetes_food.domain.constants import AssistantRole, FoodEntryType
-from DayBetes_food.domain.food import FOOD_DEFAULT_PORTION_RANGE, FoodPrefill, normalize_food_text
-from DayBetes_food.domain.catalog import CATALOG_NAME_MAX_LENGTH
-from DayBetes_food.domain.nutrition import NUTRIENT_LIMITS, NutrientValues, check_number, validate_nutrient_relations
+from DayBetes_food.domain.catalog import CATALOG_NAME_MAX_LENGTH, parse_barcode, parse_cooking_factor
+from DayBetes_food.domain.constants import (
+    AssistantDraftSource,
+    AssistantRole,
+    ConservationMethod,
+    CookingMethod,
+    FoodCategory,
+    FoodEntryType,
+    FoodPhysicalState,
+    MacrosSource,
+    MealType,
+)
+from DayBetes_food.domain.food import (
+    FOOD_DEFAULT_PORTION_RANGE,
+    FOOD_SUBTYPE_MAX_LENGTH,
+    FoodPrefill,
+    normalize_food_text,
+)
+from DayBetes_food.domain.manual_intake import parse_manual_intake_name, require_carbs
+from DayBetes_food.domain.nutrition import (
+    NUTRIENT_LIMITS,
+    NutrientValues,
+    check_number,
+    nutrients_from_totals,
+    validate_nutrient_relations,
+)
+from DayBetes_food.domain.portion_detail import parse_amount_grams
+from DayBetes_food.domain.recipe import (
+    parse_recipe_extra_meal_types,
+    parse_recipe_meal_type,
+    parse_recipe_name,
+    parse_recipe_notes,
+    parse_recipe_servings,
+)
+from DayBetes_food.domain.recipe_plate import parse_recipe_plate_name
 from DayBetes_food.errors import ValidationError
 
 # What one message of the user can carry (frontend_conventions.md §9.11).
-ASSISTANT_TEXT_MAX_LENGTH = 2000
+ASSISTANT_TEXT_MAX_LENGTH = 8000  # room for a pasted recipe (§8.12, "Recetas")
 ASSISTANT_MENTIONS_MAX = 10
 # One photo per message, already reduced in the browser (§8.12, cost). The API
 # takes up to 5 MB per image in base64, which is about 3.75 MB of bytes.
@@ -88,6 +119,7 @@ class AssistantConversationRead:
     intake_event_id: int | None  # None: no meal yet, or its meal was deleted
     model: str
     created_at: datetime
+    without_meal: bool = False  # `No meal`: only drafts, never a meal (§8.12)
 
 
 @dataclass(frozen=True)
@@ -193,6 +225,27 @@ def require_turn_content(request: AssistantTurnRequest) -> None:
         raise ValidationError("Write what you ate.", fields={"message": "required"})
 
 
+# `Add to` (frontend §9.11): a meal id, "" for `New meal` (its first add creates
+# it) or this value for `No meal` (a chat for new foods and recipes only).
+NO_MEAL_CHOICE = "none"
+
+
+def parse_meal_choice(raw) -> tuple[int | None, bool]:
+    """`Add to` as `(event_id, without_meal)`.
+
+    Raises:
+        ValidationError: neither a meal id, nor empty, nor `none`.
+    """
+    text = str(raw or "").strip()
+    if text == NO_MEAL_CHOICE:
+        return None, True
+    if not text:
+        return None, False
+    if not text.isdigit() or int(text) <= 0:
+        raise ValidationError("Invalid meal.", fields={"meal": "invalid"})
+    return int(text), False
+
+
 def parse_tool_use_id(raw) -> str:
     text = str(raw or "").strip()
     if not _TOOL_USE_ID.fullmatch(text):
@@ -270,14 +323,64 @@ _LABEL_NUTRIENTS = (
     "proteins_100g",
     "fiber_100g",
 )
+# Other nutrients of a draft: tool input name -> NutrientValues field.
+_DRAFT_OTHER_NUTRIENTS = {"caffeine_mg_100g": "caffeine", "alcohol_g_100g": "alcohol"}
+
+# The drafts whose values the model writes itself (§8.12, "Alimentos nuevos"):
+# their U1 comes from the source; Ciqual and OFF take PREFILL_MACROS_SOURCE.
+DRAFT_MACROS_SOURCE = {
+    AssistantDraftSource.LABEL: MacrosSource.LABEL,
+    AssistantDraftSource.ESTIMATE: MacrosSource.AI_ESTIMATE,
+}
 
 
-def label_draft_prefill(tool_input: dict) -> FoodPrefill:
-    """The create-form prefill of a food read from a nutrition label (§8.12).
+@dataclass(frozen=True)
+class FoodDraftExtras:
+    """What the model adds to any food draft, also on top of a Ciqual or OFF
+    prefill, which only takes the ones its source does not bring (§8.12)."""
 
-    The model transcribes; the user reviews before saving, so the origin of the
-    macros stays `label` (study §6.3). Name and carbs per 100 g are required; a
-    nutrient the label does not show stays empty, never 0 (§8.9).
+    category: FoodCategory | None
+    subtype: str | None
+    initial_state: FoodPhysicalState | None
+    cooking_factor: float | None
+    barcode: str | None
+
+
+def _tool_enum(enum_cls, value, field: str):
+    if value is None:
+        return None
+    try:
+        return enum_cls(value)
+    except ValueError as error:
+        raise ValidationError(f"{field} must be one of: {', '.join(m.value for m in enum_cls)}.") from error
+
+
+def food_draft_extras(tool_input: dict) -> FoodDraftExtras:
+    """The extra fields of a food draft, checked like the create form's (§7.13).
+
+    Raises:
+        ValidationError: a value out of the limits of the form, with its message.
+    """
+    cooking_factor = tool_number(tool_input.get("cooking_factor"), "cooking_factor")
+    barcode = tool_input.get("barcode")
+    if barcode is not None and not isinstance(barcode, str):
+        raise ValidationError("barcode must be text.")
+    return FoodDraftExtras(
+        category=_tool_enum(FoodCategory, tool_input.get("category"), "category"),
+        subtype=tool_text(tool_input.get("subtype"), "subtype", max_length=FOOD_SUBTYPE_MAX_LENGTH),
+        initial_state=_tool_enum(FoodPhysicalState, tool_input.get("initial_state"), "initial_state"),
+        cooking_factor=parse_cooking_factor(cooking_factor) if cooking_factor is not None else None,
+        barcode=parse_barcode(barcode) if barcode and barcode.strip() else None,
+    )
+
+
+def food_draft_prefill(tool_input: dict) -> FoodPrefill:
+    """The create-form prefill of a food the model wrote itself (§8.12): read from a
+    nutrition label (`label`) or estimated (`estimate`).
+
+    The user reviews it before saving, and its U1 comes from DRAFT_MACROS_SOURCE
+    (study §6.3). Name and carbs per 100 g are required; a nutrient the label does
+    not show or the model cannot estimate stays empty, never 0 (§8.9).
 
     Raises:
         ValidationError: a value out of the limits of the form, with its message.
@@ -291,20 +394,173 @@ def label_draft_prefill(tool_input: dict) -> FoodPrefill:
     for field in _LABEL_NUTRIENTS:
         number = tool_number(tool_input.get(field), field, required=(field == "carbs_100g"))
         values[field] = check_number(number, field, NUTRIENT_LIMITS[field])
+    for input_name, field in _DRAFT_OTHER_NUTRIENTS.items():
+        values[field] = check_number(tool_number(tool_input.get(input_name), input_name), field, NUTRIENT_LIMITS[field])
     nutrients = NutrientValues(**values)
     validate_nutrient_relations(nutrients)
+    extras = food_draft_extras(tool_input)
     return FoodPrefill(
-        barcode=None,
+        barcode=extras.barcode,
         name=name,
         brand=brand,
-        category=None,
-        subtype=None,
-        initial_state=None,
+        category=extras.category,
+        subtype=extras.subtype,
+        initial_state=extras.initial_state,
         default_portion_g=serving,
         nutriscore=None,
         nova=None,
         nutrients=nutrients,
         alcohol_source_note=None,
+    )
+
+
+# A recipe draft (§8.12, "Recetas"): what the model proposes and the recipe
+# create form shows and saves. Its ingredients are the user's foods and dishes,
+# by id, or new dishes estimated by the model.
+RECIPE_DRAFT_PLATES_MAX = 10
+RECIPE_DRAFT_INGREDIENTS_MAX = 40
+# A new dish's macros: the model gives the totals of the amount, like a quick add.
+_NEW_DISH_TOTALS = {
+    "calories_100g": "calories_kcal",
+    "carbs_100g": "carbs_g",
+    "sugars_100g": "sugars_g",
+    "fats_100g": "fats_g",
+    "saturated_100g": "saturated_g",
+    "proteins_100g": "proteins_g",
+    "fiber_100g": "fiber_g",
+}
+NEW_DISH_MACROS_SOURCES = (MacrosSource.AI_ESTIMATE, MacrosSource.OWN_ESTIMATE)
+
+
+@dataclass(frozen=True)
+class NewDishDraft:
+    """A dish the user does not have, created when the recipe is saved: a reusable
+    `manual_intake`, never a quick add (§11.2.3)."""
+
+    name: str
+    nutrients: NutrientValues  # per 100 g, converted from the totals (measurement §5.4)
+    macros_source: MacrosSource
+
+
+@dataclass(frozen=True)
+class RecipeIngredientDraft:
+    entry_type: FoodEntryType | None  # catalog or manual_intake; None for a new dish
+    entry_id: int | None
+    new_dish: NewDishDraft | None
+    grams: float
+    cooking: CookingMethod | None
+    final_state: FoodPhysicalState | None
+    conservation: ConservationMethod | None
+    is_cooked_weight: bool
+
+
+@dataclass(frozen=True)
+class RecipePlateDraft:
+    name: str | None
+    ingredients: tuple[RecipeIngredientDraft, ...]
+
+
+@dataclass(frozen=True)
+class RecipeDraft:
+    name: str
+    meal_type: MealType | None
+    extra_meal_types: tuple[MealType, ...]
+    servings: int | None
+    notes: str | None
+    plates: tuple[RecipePlateDraft, ...]
+
+    @property
+    def ingredient_count(self) -> int:
+        return sum(len(plate.ingredients) for plate in self.plates)
+
+
+def _new_dish_draft(raw, grams: float) -> NewDishDraft:
+    if not isinstance(raw, dict):
+        raise ValidationError("new_dish must be an object.")
+    totals = {}
+    for field, input_name in _NEW_DISH_TOTALS.items():
+        value = tool_number(raw.get(input_name), input_name, required=(input_name == "carbs_g"))
+        if value is not None and value < 0:
+            raise ValidationError(f"{input_name} cannot be negative.")
+        totals[field] = value
+    nutrients = nutrients_from_totals(totals, grams)
+    require_carbs(nutrients)
+    macros_source = _tool_enum(MacrosSource, raw.get("macros_source"), "macros_source") or MacrosSource.AI_ESTIMATE
+    if macros_source not in NEW_DISH_MACROS_SOURCES:
+        raise ValidationError("macros_source of a new dish must be ai_estimate or own_estimate.")
+    return NewDishDraft(parse_manual_intake_name(raw.get("name")), nutrients, macros_source)
+
+
+def _ingredient_draft(raw) -> RecipeIngredientDraft:
+    if not isinstance(raw, dict):
+        raise ValidationError("Each ingredient must be an object.")
+    grams = parse_amount_grams(tool_number(raw.get("grams"), "grams", required=True))
+    has_entry = raw.get("entry_id") is not None
+    has_new = raw.get("new_dish") is not None
+    if has_entry == has_new:
+        raise ValidationError("Give each ingredient either entry_type and entry_id, or new_dish.")
+    entry_type = entry_id = new_dish = None
+    if has_entry:
+        entry_type = _tool_enum(FoodEntryType, raw.get("entry_type"), "entry_type")
+        if entry_type not in (FoodEntryType.CATALOG, FoodEntryType.MANUAL_INTAKE):
+            raise ValidationError("entry_type must be catalog or manual_intake.")
+        entry_id = tool_id(raw.get("entry_id"), "entry_id")
+    else:
+        new_dish = _new_dish_draft(raw["new_dish"], grams)
+    is_cooked_weight = bool(tool_bool(raw.get("is_cooked_weight"), "is_cooked_weight"))
+    if is_cooked_weight and entry_type is not FoodEntryType.CATALOG:
+        raise ValidationError("Cooked weight only applies to catalog foods.")
+    return RecipeIngredientDraft(
+        entry_type=entry_type,
+        entry_id=entry_id,
+        new_dish=new_dish,
+        grams=grams,
+        cooking=_tool_enum(CookingMethod, raw.get("cooking"), "cooking"),
+        final_state=_tool_enum(FoodPhysicalState, raw.get("final_state"), "final_state"),
+        conservation=_tool_enum(ConservationMethod, raw.get("conservation"), "conservation"),
+        is_cooked_weight=is_cooked_weight,
+    )
+
+
+def recipe_draft(tool_input: dict) -> RecipeDraft:
+    """A recipe draft written by the model, checked like the recipe form (§7.13).
+    It is read again from the stored tool call when the form opens and when it is
+    saved, never from the browser.
+
+    Raises:
+        ValidationError: a value out of the limits of the form, with its message.
+    """
+    raw_plates = tool_input.get("plates")
+    if not isinstance(raw_plates, list) or not raw_plates:
+        raise ValidationError("plates must be a list with at least one plate.")
+    if len(raw_plates) > RECIPE_DRAFT_PLATES_MAX:
+        raise ValidationError(f"A recipe draft can have at most {RECIPE_DRAFT_PLATES_MAX} plates.")
+    plates = []
+    for raw_plate in raw_plates:
+        if not isinstance(raw_plate, dict) or not isinstance(raw_plate.get("ingredients"), list):
+            raise ValidationError("Each plate needs a list of ingredients.")
+        if not raw_plate["ingredients"]:
+            raise ValidationError("A plate cannot be empty.")
+        plates.append(
+            RecipePlateDraft(
+                name=parse_recipe_plate_name(raw_plate.get("name")),
+                ingredients=tuple(_ingredient_draft(raw) for raw in raw_plate["ingredients"]),
+            )
+        )
+    if sum(len(plate.ingredients) for plate in plates) > RECIPE_DRAFT_INGREDIENTS_MAX:
+        raise ValidationError(f"A recipe draft can have at most {RECIPE_DRAFT_INGREDIENTS_MAX} ingredients.")
+    meal_type = parse_recipe_meal_type(tool_input.get("meal_type") or "")
+    extra = tool_input.get("extra_meal_types") or []
+    if not isinstance(extra, list):
+        raise ValidationError("extra_meal_types must be a list.")
+    servings = tool_int(tool_input.get("servings"), "servings")
+    return RecipeDraft(
+        name=parse_recipe_name(tool_input.get("name")),
+        meal_type=meal_type,
+        extra_meal_types=parse_recipe_extra_meal_types(extra, meal_type),
+        servings=parse_recipe_servings(servings if servings is not None else ""),
+        notes=parse_recipe_notes(tool_input.get("notes") if isinstance(tool_input.get("notes"), str) else None),
+        plates=tuple(plates),
     )
 
 
@@ -328,13 +584,14 @@ class AddedCard:
 
 @dataclass(frozen=True)
 class DraftCard:
-    """A new food prepared for the user to review: opens the create form."""
+    """A new food or recipe prepared for the user to review: opens its create form."""
 
-    source: str
+    source: str  # AssistantDraftSource of a food; "recipe" for a recipe
     name: str
     code: str | None
-    message_id: int  # the assistant message whose tool call holds a label draft
+    message_id: int  # the assistant message whose tool call holds the draft
     tool_use_id: str
+    ingredients: int | None = None  # of a recipe draft
 
 
 @dataclass(frozen=True)
@@ -379,9 +636,12 @@ def turn_views(messages: list[AssistantMessageRead]) -> list[TurnView]:
         if not turns:
             continue
         turn = turns[-1]
+        # Only the final answer is shown: text written next to a tool call is the
+        # model thinking aloud ("Need to search foods first"), not a reply (§9.11).
+        calls_tools = any(block.get("type") == "tool_use" for block in message.content)
         for block in message.content:
             kind = block.get("type")
-            if kind == "text" and message.role is AssistantRole.ASSISTANT:
+            if kind == "text" and message.role is AssistantRole.ASSISTANT and not calls_tools:
                 text = str(block.get("text", "")).strip()
                 if text:
                     turn.replies.append(text)
@@ -418,6 +678,7 @@ def _read_tool_result(turn: TurnView, block: dict, tool_message: dict[str, int])
     draft = result.get(TOOL_RESULT_DRAFT)
     tool_use_id = str(block.get("tool_use_id", ""))
     if isinstance(draft, dict) and draft.get("name") and tool_use_id in tool_message:
+        ingredients = draft.get("ingredients")
         turn.drafts.append(
             DraftCard(
                 source=str(draft.get("source")),
@@ -425,21 +686,22 @@ def _read_tool_result(turn: TurnView, block: dict, tool_message: dict[str, int])
                 code=draft.get("code"),
                 message_id=tool_message[tool_use_id],
                 tool_use_id=tool_use_id,
+                ingredients=ingredients if isinstance(ingredients, int) and not isinstance(ingredients, bool) else None,
             )
         )
 
 
-def label_draft_input(message: AssistantMessageRead, tool_use_id: str) -> dict | None:
-    """The input of the label draft `tool_use_id` in an assistant message, or None."""
+def draft_tool_input(message: AssistantMessageRead, tool_use_id: str, tool_name: str) -> dict | None:
+    """The input of the call `tool_use_id` of `tool_name` in an assistant message, or None.
+    A draft is read from here, never from the browser (§7.13)."""
     if message.role is not AssistantRole.ASSISTANT:
         return None
     for block in message.content:
         if (
             block.get("type") == "tool_use"
             and block.get("id") == tool_use_id
-            and block.get("name") == "draft_new_food"
+            and block.get("name") == tool_name
             and isinstance(block.get("input"), dict)
-            and block["input"].get("source") == "label"
         ):
             return block["input"]
     return None

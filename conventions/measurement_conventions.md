@@ -803,6 +803,13 @@ Decisiones 2026-10-09: el origen de los macros es un dato del alimento y el pesa
 - Una vez creada, la porción es independiente: cómo se obtuvo la cantidad es un dato de cada vez que se come, y el usuario lo cambia en el carrito. Cambiar el valor por defecto del alimento no reescribe las porciones existentes.
 - Una porción que se crea copiando otra (importar o copiar una receta, sacar de un tupper) conserva el `amount_method` de la porción de origen.
 
+**Estado final por defecto (`final_state`): el estado inicial del alimento** (decisión del usuario del 2026-11-13).
+
+- Una porción nueva de un alimento del catálogo, por cualquier camino (ficha, carrito, ingrediente de receta, rescate, nevera, escáner o asistente), nace con `final_state` = `catalog.initial_state` si el usuario no elige otro. Un plato manual no tiene estado inicial, así que su porción nace en `NULL`.
+- Donde hay un control de `Final state` al crear la porción (la ficha del alimento), el control aparece ya con ese valor y lo que envía es lo que se guarda: vaciarlo es "no indicado". Donde no lo hay, lo pone el servidor al crear la porción, como `amount_method` (`code_conventions.md` §7.14).
+- Una porción que se crea copiando otra (importar o copiar una receta, sacar de un tupper, añadir una receta a una comida) conserva el `final_state` de la porción de origen, aunque esté vacío.
+- No reescribe las porciones que ya existen.
+
 ## 7. Factor de cocinado
 
 `cooking_factor` es una magnitud sin unidad. Representa una relación entre masa cruda y masa cocinada según la fórmula definida por el dominio.

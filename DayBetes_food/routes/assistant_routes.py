@@ -27,6 +27,7 @@ from DayBetes_food.components.ui import render_fragment, render_page
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.database.queries import get_mention_suggestions, list_planned_intake_events
 from DayBetes_food.domain.assistant import (
+    parse_meal_choice,
     ASSISTANT_PHOTO_MAX_BYTES,
     AssistantTurnRequest,
     parse_assistant_photo,
@@ -60,9 +61,8 @@ def _read_photo(photo) -> tuple[str, bytes] | None:
     return photo.content_type or "", data
 
 
-def _selected_meal(events: list, raw_event_id) -> int | None:
+def _selected_meal(events: list, chosen: int | None) -> int | None:
     """The meal chosen in the selector, if it is still a planned meal of the user."""
-    chosen = parse_optional_id(raw_event_id, "meal")
     return chosen if chosen and any(event.id == chosen for event in events) else None
 
 
@@ -76,40 +76,50 @@ def setup_assistant_routes(rt):
             raise AuthenticationError("Your session has expired.")
         chosen_conversation = parse_optional_id(conversation_id, "conversation")
 
+        chosen_event, without_meal = parse_meal_choice(intake_event_id)
+
         def content(connection):
             events = list_planned_intake_events(connection, int(user_id))
-            selected = _selected_meal(events, intake_event_id)
+            selected = _selected_meal(events, chosen_event)
             if not intake_event_id and not chosen_conversation and events:
                 selected = events[0].id
             try:
-                conversation = resolve_conversation(connection, int(user_id), chosen_conversation, selected)
+                conversation = resolve_conversation(
+                    connection, int(user_id), chosen_conversation, selected, latest_without_meal=without_meal
+                )
             except (NotFoundError, ConflictError):
                 # Its meal was confirmed or deleted meanwhile: start on a new meal.
                 conversation, selected = None, None
-            if conversation is not None and conversation.intake_event_id is not None:
+            if conversation is not None:
                 selected = conversation.intake_event_id
-            elif conversation is not None:
-                selected = None
+                without = conversation.without_meal
+            else:
+                without = without_meal
             turns = conversation_turns(connection, int(user_id), conversation.id) if conversation else []
-            return AssistantPage(events, selected, conversation.id if conversation else None, turns)
+            return AssistantPage(
+                events, selected, conversation.id if conversation else None, turns, without_meal=without
+            )
 
         return render_page(request, content, show_cart=False)
 
     @rt("/assistant/thread")
-    def get(request: Request, intake_event_id: str = ""):
-        """The conversation of the meal chosen in `Add to` (§9.11); `New meal` is empty."""
+    def get(request: Request, intake_event_id: str = "", new_chat: str = ""):
+        """The conversation of the meal chosen in `Add to` (§9.11): `New meal` is empty,
+        and `No meal` reopens the latest one unless `New chat` asks for an empty one."""
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()
         if not user_id:
             return app_error_response(request, AuthenticationError, "Your session has expired.")
         try:
-            event_id = parse_optional_id(intake_event_id, "meal")
+            event_id, without_meal = parse_meal_choice(intake_event_id)
         except ValidationError as error:
             return app_error_response(request, ValidationError, str(error))
         with get_connection() as connection:
             try:
-                conversation = resolve_conversation(connection, int(user_id), None, event_id)
+                conversation = resolve_conversation(
+                    connection, int(user_id), None, event_id, latest_without_meal=without_meal and not new_chat
+                )
             except (NotFoundError, ConflictError):
                 return app_error_response(request, NotFoundError, _MEAL_GONE)
             turns = conversation_turns(connection, int(user_id), conversation.id) if conversation else []
@@ -144,7 +154,7 @@ def setup_assistant_routes(rt):
                 photo=parse_assistant_photo(*uploaded) if uploaded else None,
             )
             require_turn_content(turn_request)
-            chosen_event_id = parse_optional_id(intake_event_id, "meal")
+            chosen_event_id, without_meal = parse_meal_choice(intake_event_id)
             chosen_conversation_id = parse_optional_id(conversation_id, "conversation")
         except ValidationError as error:
             return app_error_response(request, ValidationError, str(error))
@@ -157,6 +167,7 @@ def setup_assistant_routes(rt):
                     conversation_id=chosen_conversation_id,
                     event_id=chosen_event_id,
                     request=turn_request,
+                    without_meal=without_meal,
                 )
             except (NotFoundError, ConflictError) as error:
                 return app_error_response(request, type(error), _MEAL_GONE)

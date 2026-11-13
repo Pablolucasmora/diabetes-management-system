@@ -537,22 +537,25 @@ Contrato del servidor en `code_conventions.md` §8.12. Solo existe si el asisten
 
 - En Inicio, el botón `Tell the assistant`, a todo el ancho, debajo de "What did you eat?" en *Add to your meal* (§9.2).
 - En la cabecera de Food (§9.3), entre el rayo y el `+`: una pestaña rectangular `Tell the assistant` que cuelga del borde superior de la página. Ocupa el hueco entre los dos botones con margen a cada lado, no tiene margen ni borde arriba (sube por encima del relleno superior de la cabecera) y solo redondea las esquinas de abajo. Es sólida, como los botones de la cabecera (§8).
+- Los dos accesos muestran el logo de DiaBot (`static/images/ui/Logo_DiaBot.svg`, la gota con "iaBot") en lugar del texto `Tell the assistant`, que pasa a ser su `aria-label`. En Inicio se mantiene debajo el subtítulo "describe it, it fills the cart" (decisión del usuario, 2026-11-13).
 
-**Página.** Cabecera como las de crear (§9.1): "‹ Back" a la izquierda y `ASSISTANT` a la derecha, seguido de un botón redondo pequeño con el icono del carrito que abre el carrito. El botón flotante del carrito no se muestra en esta página (`data-hide-cart`), porque taparía el compositor. Debajo, el selector `Add to`, los mensajes de la conversación y, fijo abajo, el compositor: el botón de foto, un `<textarea>` que crece con el texto hasta un máximo y luego hace scroll, y el botón de enviar. Ningún campo se enfoca solo al abrir la página en el móvil (mismo motivo que §9.6).
+**Página.** Cabecera como las de crear (§9.1): "‹ Back" a la izquierda y `ASSISTANT` a la derecha, seguido de un botón redondo pequeño con el icono del carrito que abre el carrito. El botón flotante del carrito no se muestra en esta página (`data-hide-cart`), porque taparía el compositor. Debajo, el selector `Add to`. La cabecera y `Add to` forman una barra fija arriba (`sticky`, con el vidrio y las esquinas inferiores redondeadas de la barra de Food), para tenerlos a mano aunque la conversación sea larga (decisión del usuario, 2026-11-13). Después, los mensajes de la conversación y, fijo abajo, el compositor: el botón de foto, un `<textarea>` que crece con el texto hasta un máximo y luego hace scroll, y el botón de enviar. Ningún campo se enfoca solo al abrir la página en el móvil (mismo motivo que §9.6).
 
 **Una conversación por comida** (decisión del usuario, 2026-11-12).
 
-- `Add to` lista las comidas planificadas, con el mismo texto que en Food (§7.7), y `New meal`.
-- Al abrir la página se elige la última comida planificada, como en Food, o `New meal` si no hay ninguna. `?conversation_id=` abre esa conversación y elige su comida.
-- Cambiar la comida carga su conversación (la última, si tuviera varias), o la vacía con la introducción.
+- `Add to` lista las comidas planificadas, con el mismo texto que en Food (§7.7), `New meal` y `No meal` (decisión del usuario, 2026-11-13).
+- Al abrir la página se elige lo último que el usuario eligió en `Add to` en esta pestaña (`sessionStorage`, decisión del usuario del 2026-11-13), si sigue en la lista; si no, la última comida planificada, como en Food, o `New meal` si no hay ninguna. `?conversation_id=` abre esa conversación y elige su comida, `No meal` si es una conversación sin comida, o `New meal` si aún no tiene.
+- Cambiar la comida carga su conversación (la última, si tuviera varias), o la vacía con la introducción. `New meal` empieza siempre vacía.
+- `No meal` reabre la última conversación sin comida, con todo lo hablado, para volver a ella después de mirar algo en la app (decisión del usuario del 2026-11-13). Mientras está elegida, junto a `Add to` aparece el botón `New chat`, que empieza una vacía; la anterior se conserva.
 - Con `New meal`, el primer añadido del asistente crea la comida planificada, con el tipo automático (`code_conventions.md` §7.14). La respuesta la añade a `Add to` ya elegida, para que el siguiente mensaje siga en ella.
+- `No meal` es un chat solo para crear alimentos y recetas (`code_conventions.md` §8.12, **Conversación sin comida**): nada va al carrito. Viaja como `intake_event_id=none`.
 - El id de la conversación viaja en un campo oculto. Vacío empieza una nueva.
 
 **Enviar** (decisión del usuario, 2026-11-12: síncrono).
 
 - Solo envía el botón, y Enter hace un salto de línea. El botón está activo si hay texto, una mención o una foto.
-- Mientras el servidor responde, aparece una burbuja `Thinking…` y el botón se desactiva.
-- Si sale bien, se añade al final el turno: el mensaje del usuario, a la derecha, con la píldora `Photo` si llevaba una; las respuestas del asistente, a la izquierda y como texto plano; y las tarjetas de lo que hizo. Después se vacía el compositor (texto, menciones y foto) y se desplaza la vista al turno nuevo.
+- Mientras el servidor responde, aparece una burbuja `Thinking` con tres puntos que suben uno tras otro (quietos si el sistema pide reducir el movimiento, §10) y el botón se desactiva.
+- Si sale bien, se añade al final el turno: el mensaje del usuario, a la derecha, con la píldora `Photo` si llevaba una; las respuestas del asistente, a la izquierda y como texto plano (solo las de un mensaje sin llamadas a herramientas: el texto que el modelo escribe junto a una llamada no es una respuesta); y las tarjetas de lo que hizo. Después se vacía el compositor (texto, menciones y foto) y se desplaza la vista al turno nuevo.
 - Si falla, el toast lo explica (`code_conventions.md` §8.12) y el compositor se queda como estaba.
 
 **Foto.** El botón de la cámara adjunta una sola foto, de un plato o de una etiqueta nutricional, y se muestra como una píldora con una × para quitarla.
@@ -565,12 +568,18 @@ Contrato del servidor en `code_conventions.md` §8.12. Solo existe si el asisten
 
 - `Added to the cart`: una línea por alimento, plato, receta o estimación añadidos, con sus gramos, sus hidratos y cómo se obtuvo la cantidad (U2, con las etiquetas de §9.4), y el botón `Review`, que abre el carrito.
 - `Changed in the cart`: una línea por cambio en la comida, un plato o un alimento (`code_conventions.md` §8.12, **Edición de la comida**), con lo cambiado y su valor nuevo, y el botón `Review`.
-- `New food to review`: el nombre del alimento propuesto, de dónde sale ("Read from the label", "From the food composition table" o "From Open Food Facts") y el botón `Review and save`, que abre el formulario de alta de un alimento precargado.
-  - Una etiqueta añade al formulario la nota "Read by the assistant from the label. Check every value before saving." y `Macros from` en `Package label`.
-  - Ciqual y OFF usan su precarga de siempre (§9.4).
+- `New food to review`: el nombre del alimento propuesto, de dónde sale ("Read from the label", "From the food composition table", "From Open Food Facts" o "Estimated by the assistant") y el botón `Review and save`, que abre el formulario de alta de un alimento precargado con todos los campos del borrador (`code_conventions.md` §8.12, **Alimentos nuevos**). `More details` se abre solo si el borrador rellena algo de dentro.
+  - Una etiqueta añade al formulario la nota "Read by the assistant from the label. Check every value before saving."; una estimación, "Estimated by the assistant. Check every value before saving.". `Macros from` empieza en el valor de la tabla de §8.12.
+  - Ciqual y OFF usan su precarga de siempre (§9.4), con lo que el asistente añada encima.
+  - El borrador del navegador del formulario (§7.14) es propio de cada borrador del asistente: no recupera lo escrito en otro formulario de alta.
   - Guardar vuelve a la conversación (`/assistant?conversation_id=`) en vez de a Food, y allí el usuario le pide que lo añada.
+- `New recipe to review`: el nombre de la receta, el número de ingredientes y el botón `Review and save`, que abre `New recipe` relleno (`code_conventions.md` §8.12, **Recetas**).
+  - Debajo de los campos de siempre, una sección `Ingredients` de solo lectura con la nota "Proposed by the assistant. They are added when you save; edit them afterwards in the recipe.". Lista los platos de la receta (solo si hay más de uno) y en cada uno una línea por ingrediente: nombre, gramos y su preparación (`griddle · solid · weighed cooked`). Un plato manual nuevo lleva la etiqueta `New dish` y sus hidratos estimados.
+  - Guardar crea todo y abre la receta, como el alta de siempre. Si un ingrediente ya no existe, el formulario lo dice; si la receta o un plato nuevo choca con un nombre que ya tienes, se avisa como en el alta de siempre (`409`). En los dos casos no se crea nada.
 
 Las tarjetas se leen de los resultados guardados de las herramientas, así que una conversación reabierta muestra las mismas.
+
+**Cómo escribir** (decisión del usuario, 2026-11-13). Bajo la introducción de una conversación vacía, un `<details>` plegado, `How to write`, con la guía breve en inglés: mencionar con `/` y dar la cantidad; una frase de preparación vale para todos los alimentos que nombra; las palabras de cocción y su valor; decir "weighed cooked" o "raw" en arroces, pastas y legumbres; conservación, textura y madurez; hora y platos; y cómo pedir un alimento nuevo (foto de la etiqueta o "estímalo") o una receta (pegar el texto, y "quick add" o "manual" para los ingredientes que no tienes).
 
 **Mencionar un alimento con `/`.**
 

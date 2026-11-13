@@ -183,10 +183,11 @@ class AssistantRole(str, Enum):
 @unique
 class AssistantDraftSource(str, Enum):
     """Where the assistant takes a new food from: it never creates it, it opens
-    the create form prefilled (code_conventions.md §8.12)."""
+    the create form prefilled (code_conventions.md §8.12, "Alimentos nuevos")."""
     CIQUAL = "ciqual"
     OPEN_FOOD_FACTS = "open_food_facts"
     LABEL = "label"
+    ESTIMATE = "estimate"  # the assistant's estimate, when the user asks for it
 
 
 @unique

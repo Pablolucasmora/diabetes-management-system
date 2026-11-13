@@ -1,4 +1,5 @@
 from fasthtml.common import *
+from dataclasses import dataclass
 from datetime import datetime
 from datetime import date
 import json
@@ -19,7 +20,16 @@ from DayBetes_food.services.fridge import (
     take_from_fridge,
 )
 from DayBetes_food.config import ASSISTANT_ENABLED
-from DayBetes_food.domain.assistant import label_draft_input, label_draft_prefill, parse_tool_use_id
+from DayBetes_food.domain.assistant import (
+    DRAFT_MACROS_SOURCE,
+    FoodDraftExtras,
+    RecipeDraft,
+    draft_tool_input,
+    food_draft_extras,
+    food_draft_prefill,
+    parse_tool_use_id,
+    recipe_draft,
+)
 from DayBetes_food.services.intake_event import (
     add_quick_add_to_meal,
     confirm_planned_event,
@@ -143,6 +153,7 @@ from DayBetes_food.domain.catalog import (
 from DayBetes_food.domain.food_entry import FoodEntrySummary
 from DayBetes_food.domain.food import (
     INITIAL_AMOUNT_WITHOUT_SERVING_G,
+    FoodPrefill,
     parse_declared_confidence,
     parse_default_portion,
     parse_food_subtype,
@@ -165,6 +176,8 @@ from DayBetes_food.domain.portion_detail import (
     PortionDetailUpdate,
     amount_to_grams,
     parse_amount_grams,
+    default_final_state,
+    portion_defaults,
     ripeness_applies,
 )
 from DayBetes_food.components.data_sources import ciqual_attribution, off_attribution
@@ -210,6 +223,8 @@ from DayBetes_food.components.food.foods import (
     off_product_cards,
     CreateManualPage,
     CreateRecipePage,
+    RecipeDraftForm,
+    RecipeDraftLine,
     EditCatalogPage,
     EditManualPage,
     EditRecipePage,
@@ -222,7 +237,7 @@ from DayBetes_food.components.food.foods import (
     PlateSelector,
 )
 from DayBetes_food.database.connection import get_connection
-from DayBetes_food.domain.constants import IntakeEventState, MealType, SystemTag
+from DayBetes_food.domain.constants import AssistantDraftSource, IntakeEventState, MealType, SystemTag
 from DayBetes_food.domain.tag import TagCreate, parse_tag_name, tag_color_from_name
 from DayBetes_food.domain.intake_event import INTAKE_EVENT_NAME_MAX_LENGTH, IntakeEventCreate, IntakeEventUpdate
 from DayBetes_food.domain.intake_plate import IntakePlateCreate, derive_plate_name
@@ -241,7 +256,13 @@ from DayBetes_food.domain.recipe import (
     parse_recipe_notes,
     parse_recipe_servings,
 )
-from DayBetes_food.services.recipe import add_recipe_to_meal, copy_recipe, recipe_plates_with_portions
+from DayBetes_food.services.recipe import (
+    add_recipe_to_meal,
+    copy_recipe,
+    create_recipe_from_draft,
+    recipe_draft_foods,
+    recipe_plates_with_portions,
+)
 from DayBetes_food.domain.recipe_plate import parse_recipe_plate_name
 from DayBetes_food.domain.fridge import FridgeContent, FridgeStoreCommand
 from DayBetes_food.domain.portion_detail import portion_macro_amount
@@ -726,15 +747,6 @@ def _rescue_error(message: str):
     return render_fragment(ModalFormError(message))
 
 
-def _portion_defaults(item: CatalogItemRead | ManualIntakeRead) -> dict:
-    """measurement_conventions.md §6.11: a new portion of a food is born with
-    the food's default_amount_method, written when the portion is created
-    (§7.14). macros_source is not copied: the portion reads the food's live.
-    Every route that creates a portion from a catalog food or a manual dish
-    must use it."""
-    return {"amount_method": item.default_amount_method}
-
-
 def _detail_origin(
     connection, user_id: int, kind: FoodEntryType, entry_id: int, cooked_weight: bool, unit: AmountInputUnit
 ) -> CatalogItemRead | ManualIntakeRead:
@@ -769,26 +781,119 @@ def _detail_origin(
     return item
 
 
-def _assistant_label_prefill(user_id: int, message_id: int, tool_use_id: str):
-    """The prefill of a label the assistant read (§8.12): read from its stored tool
-    call, of one of the user's conversations, and validated again (§7.13).
+def _assistant_draft_input(connection, user_id: int, message_id: int, tool_use_id: str, tool_name: str) -> dict:
+    """The input of a draft the assistant wrote (§8.12): read from its stored tool
+    call, of one of the user's conversations, never from the browser (§7.13).
 
     Raises:
-        NotFoundError: no such draft for this user, or no longer valid.
+        NotFoundError: no such draft for this user.
     """
     try:
         tool_id = parse_tool_use_id(tool_use_id)
     except ValidationError as error:
         raise NotFoundError("Draft not found.") from error
-    with get_connection() as connection:
-        message = get_assistant_message(connection, user_id, message_id) if user_id else None
-    tool_input = label_draft_input(message, tool_id) if message else None
+    message = get_assistant_message(connection, user_id, message_id) if user_id else None
+    tool_input = draft_tool_input(message, tool_id, tool_name) if message else None
     if tool_input is None:
         raise NotFoundError("Draft not found.")
+    return tool_input
+
+
+@dataclass(frozen=True)
+class _FoodDraft:
+    """A food draft of the assistant, validated again for the create form."""
+
+    source: AssistantDraftSource
+    code: str
+    prefill: FoodPrefill | None  # label and estimate; Ciqual and OFF use their own
+    extras: FoodDraftExtras
+
+
+def _assistant_food_draft(user_id: int, message_id: int, tool_use_id: str) -> _FoodDraft:
+    """Raises NotFoundError: no such draft, or no longer valid."""
+    with get_connection() as connection:
+        tool_input = _assistant_draft_input(connection, user_id, message_id, tool_use_id, "draft_new_food")
     try:
-        return label_draft_prefill(tool_input)
+        source = AssistantDraftSource(tool_input.get("source"))
+        extras = food_draft_extras(tool_input)
+        prefill = food_draft_prefill(tool_input) if source in DRAFT_MACROS_SOURCE else None
+    except (ValueError, ValidationError) as error:
+        raise NotFoundError("Draft not found.") from error
+    return _FoodDraft(source, str(tool_input.get("code") or ""), prefill, extras)
+
+
+def _apply_draft_extras(prefill_view: dict, extras: FoodDraftExtras) -> None:
+    """What the assistant adds to a prefill: only what it does not bring (§8.12)."""
+    values = {
+        "category": extras.category.value if extras.category else None,
+        "subtype": extras.subtype,
+        "initial_state": extras.initial_state.value if extras.initial_state else None,
+        "cooking_factor": extras.cooking_factor,
+        "barcode": extras.barcode,
+    }
+    for key, value in values.items():
+        if value is not None and not str(prefill_view.get(key) or "").strip():
+            prefill_view[key] = value
+
+
+def _assistant_recipe_draft(connection, user_id: int, message_id: int, tool_use_id: str) -> RecipeDraft:
+    """A recipe draft of the assistant, validated again (§8.12, "Recetas").
+
+    Raises:
+        NotFoundError: no such draft, or no longer valid.
+    """
+    tool_input = _assistant_draft_input(connection, user_id, message_id, tool_use_id, "draft_recipe")
+    try:
+        return recipe_draft(tool_input)
     except ValidationError as error:
         raise NotFoundError("Draft not found.") from error
+
+
+def _recipe_draft_form(connection, user_id: int, message_id: int, tool_use_id: str) -> RecipeDraftForm:
+    """What the recipe create form shows of a draft: its fields and its ingredients
+    with their names, read with their visibility rule.
+
+    Raises:
+        NotFoundError: no such draft, or one of its foods is no longer visible.
+    """
+    draft = _assistant_recipe_draft(connection, user_id, message_id, tool_use_id)
+    try:
+        foods = recipe_draft_foods(connection, user_id, draft)
+    except ValidationError as error:
+        raise NotFoundError("Draft not found.") from error
+    plates = []
+    for plate in draft.plates:
+        lines = []
+        for ingredient in plate.ingredients:
+            if ingredient.new_dish is not None:
+                dish = ingredient.new_dish
+                name, final_state = dish.name, ingredient.final_state
+                carbs = round(dish.nutrients.carbs_100g * ingredient.grams / 100, 1)
+            else:
+                item = foods[(ingredient.entry_type, ingredient.entry_id)]
+                # What it is saved with (measurement §6.11).
+                name, final_state, carbs = item.name, ingredient.final_state or default_final_state(item), None
+            parts = [value.value for value in (ingredient.cooking, final_state, ingredient.conservation) if value]
+            if ingredient.is_cooked_weight:
+                parts.append("weighed cooked")
+            lines.append(RecipeDraftLine(name, ingredient.grams, " · ".join(parts), carbs))
+        plates.append((plate.name, tuple(lines)))
+    return RecipeDraftForm(
+        message_id=message_id,
+        tool_use_id=tool_use_id,
+        name=draft.name,
+        meal_type=draft.meal_type.value if draft.meal_type else "",
+        extra_meal_types=tuple(meal_type.value for meal_type in draft.extra_meal_types),
+        servings="" if draft.servings is None else str(draft.servings),
+        notes=draft.notes or "",
+        plates=tuple(plates),
+    )
+
+
+_ASSISTANT_DRAFT_NOTES = {
+    AssistantDraftSource.LABEL: "Read by the assistant from the label. Check every value before saving.",
+    AssistantDraftSource.ESTIMATE: "Estimated by the assistant. Check every value before saving.",
+}
 
 
 def _meal_created_event(connection, user_id: int, event_id: int) -> dict:
@@ -1246,7 +1351,7 @@ def _add_ingredient(connection, user_id: int, recipe_id: int, plate_id: int | No
             destination_id=recipe_id,
             recipe_plate_id=target_plate_id,
             amount=item.default_portion if item.default_portion is not None else INITIAL_AMOUNT_WITHOUT_SERVING_G,
-            **_portion_defaults(item),
+            **portion_defaults(item),
         ),
         commit=False,
     )
@@ -1603,10 +1708,15 @@ def setup_food_routes(rt):
         assistant_conversation_id = (
             parse_optional_id(return_to_assistant, "conversation") if ASSISTANT_ENABLED else None
         )
-        label_prefill = None
+        food_draft = None
         draft_message_id = parse_optional_id(assistant_message, "draft") if ASSISTANT_ENABLED else None
         if draft_message_id:
-            label_prefill = _assistant_label_prefill(int(get_current_user_id() or 0), draft_message_id, assistant_tool)
+            food_draft = _assistant_food_draft(int(get_current_user_id() or 0), draft_message_id, assistant_tool)
+            # The draft says where it comes from, not the URL (§7.13).
+            ciqual = food_draft.code if food_draft.source is AssistantDraftSource.CIQUAL else ""
+            barcode = food_draft.code if food_draft.source is AssistantDraftSource.OPEN_FOOD_FACTS else ""
+            clean = barcode
+        label_prefill = food_draft.prefill if food_draft else None
         ciqual_food = None
         ciqual_code = parse_ciqual_code(ciqual)
         if ciqual_code is not None:
@@ -1648,9 +1758,11 @@ def setup_food_routes(rt):
                 off_notice = "Product data could not be loaded. You can fill the form by hand."
         existing_item_id = parse_optional_id(existing_id, "food")
         user_id = get_current_user_id()
+        # A barcode the assistant read on a label: only to warn of a food that has it.
+        check_barcode = valid_barcode or (label_prefill.barcode if label_prefill else None)
         with get_connection() as connection:
-            if valid_barcode and not existing_item_id and user_id:
-                existing = get_catalog_item_by_barcode(connection, int(user_id), valid_barcode)
+            if check_barcode and not existing_item_id and user_id:
+                existing = get_catalog_item_by_barcode(connection, int(user_id), check_barcode)
                 existing_item_id = existing.id if existing else None
             # Autocomplete only; validation is SQL (F4.1).
             brands = get_food_brand_suggestions(connection, search="", limit=500)
@@ -1662,9 +1774,13 @@ def setup_food_routes(rt):
             prefill = prefill_from_ciqual_food(ciqual_food)
             prefill_view = _prefill_view(prefill, "", str(ciqual_food.code), PrefillSource.CIQUAL)
         elif label_prefill:
-            # Transcribed from a photo and reviewed here: the origin stays the label (study §6.3).
+            # Written by the assistant and reviewed here: its U1 is the draft's (study §6.3).
             prefill = label_prefill
-            prefill_view = _prefill_view(prefill, "", "", None, MacrosSource.LABEL)
+            prefill_view = _prefill_view(
+                prefill, prefill.barcode or "", "", None, DRAFT_MACROS_SOURCE[food_draft.source]
+            )
+        if food_draft:
+            _apply_draft_extras(prefill_view, food_draft.extras)
         subtype_prefill = (prefill_view.get("subtype") or "").strip()
         if subtype_prefill:
             prefill_view["subtype"] = _closest_option(subtype_prefill, subtypes)
@@ -1689,11 +1805,10 @@ def setup_food_routes(rt):
                 ciqual_note=reliability_note(ciqual_food) if ciqual_food else None,
                 add_to_recipe=(target_recipe_id, target_plate_id) if target_recipe_id else None,
                 return_to_assistant=assistant_conversation_id,
-                assistant_note=(
-                    "Read by the assistant from the label. Check every value before saving."
-                    if label_prefill
-                    else None
-                ),
+                assistant_note=_ASSISTANT_DRAFT_NOTES.get(food_draft.source) if food_draft else None,
+                # Its own browser draft, so the form does not bring back what was
+                # typed in another create form (frontend §9.11).
+                draft_key=f"assistant_{draft_message_id}_{assistant_tool}" if food_draft else None,
             ),
             show_cart=False,
         )
@@ -1713,8 +1828,20 @@ def setup_food_routes(rt):
         )
 
     @rt("/food/create/recipe/form")
-    def get(request: Request):
-        return render_page(request, lambda _: CreateRecipePage(), show_cart=False)
+    def get(request: Request, assistant_message: str = "", assistant_tool: str = "", return_to_assistant: str = ""):
+        # A recipe draft of the assistant (§8.12, frontend §9.11): only while it exists.
+        draft_message_id = parse_optional_id(assistant_message, "draft") if ASSISTANT_ENABLED else None
+        if not draft_message_id:
+            return render_page(request, lambda _: CreateRecipePage(), show_cart=False)
+        user_id = get_current_user_id()
+        if not user_id:
+            raise AuthenticationError("Your session has expired.")
+        conversation_id = parse_optional_id(return_to_assistant, "conversation")
+        with get_connection() as connection:
+            draft = _recipe_draft_form(connection, int(user_id), draft_message_id, assistant_tool)
+        return render_page(
+            request, lambda _: CreateRecipePage(draft, return_to_assistant=conversation_id), show_cart=False
+        )
 
     @rt("/food/rescue/form")
     def get(request: Request, kind: str = ""):
@@ -1846,7 +1973,7 @@ def setup_food_routes(rt):
                     if unit is AmountInputUnit.PORTION and item.default_portion is None:
                         return _rescue_error(f"{item.name} has no serving. Use grams, lb or oz.")
                     return _rescue_error("Each amount must be greater than 0 g and at most 100000 g.")
-                portions.append((origin, origin_id, grams, {**_portion_defaults(item), "ripeness": ripeness}))
+                portions.append((origin, origin_id, grams, {**portion_defaults(item), "ripeness": ripeness}))
 
             try:
                 with connection.transaction():
@@ -2901,7 +3028,9 @@ def setup_food_routes(rt):
             except ValidationError as error:
                 return _error_msg(str(error))
             serving_grams = origin_item.default_portion
-            portion_defaults = _portion_defaults(origin_item)
+            # The page's `Final state` control already shows the food's default and
+            # sends what the portion is born with (measurement §6.11).
+            log_defaults = {"amount_method": origin_item.default_amount_method}
             try:
                 total_grams = parse_amount_grams(amount_to_grams(typed_amount, unit, serving_grams))
                 if plated_unit is AmountInputUnit.PERCENT:
@@ -2932,7 +3061,7 @@ def setup_food_routes(rt):
                     offset_minutes = new_plate_offset_minutes(event_data)
 
                     if amount_method is not None:
-                        portion_defaults["amount_method"] = chosen_amount_method
+                        log_defaults["amount_method"] = chosen_amount_method
                     target_plate_id = resolve_event_plate(
                         connection, int(user_id), event_id, parse_optional_id(plate_id, "plate"), offset_minutes
                     )
@@ -2952,7 +3081,7 @@ def setup_food_routes(rt):
                             # A fruit only (study §6.3); the leftovers' container gets none.
                             ripeness=parsed_ripeness,
                             is_cooked_weight=(cooked_weight if kind is FoodEntryType.CATALOG else False),
-                            **portion_defaults,
+                            **log_defaults,
                         ),
                         commit=False,
                     )
@@ -2972,7 +3101,7 @@ def setup_food_routes(rt):
                                         amount=leftover_grams,
                                         cooking=parsed_cooking,
                                         final_state=parsed_final_state,
-                                        amount_method=portion_defaults["amount_method"],
+                                        amount_method=log_defaults["amount_method"],
                                         is_cooked_weight=(cooked_weight if kind is FoodEntryType.CATALOG else False),
                                     ),
                                 ),
@@ -3308,7 +3437,7 @@ def setup_food_routes(rt):
                             destination_id=event_id,
                             plate_id=target_plate_id,
                             amount=portion_amount,
-                            **_portion_defaults(catalog_item),  # measurement §6.11
+                            **portion_defaults(catalog_item),  # measurement §6.11
                         ),
                         commit=False,
                     )
@@ -3359,7 +3488,7 @@ def setup_food_routes(rt):
                             destination_id=event_id,
                             plate_id=target_plate_id,
                             amount=portion_amount,
-                            **_portion_defaults(manual_intake),
+                            **portion_defaults(manual_intake),
                         ),
                         commit=False,
                     )
@@ -4023,6 +4152,8 @@ def setup_food_routes(rt):
         notes: str = "",
         servings: str = "",
         favorite: str = "",
+        assistant_message: str = "",
+        assistant_tool: str = "",
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -4038,27 +4169,37 @@ def setup_food_routes(rt):
                 servings=servings,
                 favorite=favorite,
             )
+            draft_message_id = parse_optional_id(assistant_message, "draft") if ASSISTANT_ENABLED else None
         except ValidationError as error:
             return _error_msg(str(error))
+        header = RecipeCreate(
+            user_id=int(user_id),
+            origin_root_id=None,
+            name=req.name,
+            meal_type=req.meal_type,
+            extra_meal_types=req.extra_meal_types,
+            notes=req.notes,
+            servings=req.servings,
+        )
         with get_connection() as connection:
             try:
-                with connection.transaction():
-                    created_id = create_recipe(
-                        connection,
-                        RecipeCreate(
-                            user_id=int(user_id),
-                            origin_root_id=None,
-                            name=req.name,
-                            meal_type=req.meal_type,
-                            extra_meal_types=req.extra_meal_types,
-                            notes=req.notes,
-                            servings=req.servings,
-                        ),
-                        commit=False,
-                    )
-                    set_user_favorite(
-                        connection, int(user_id), FoodEntryType.RECIPE, created_id, bool(req.favorite), commit=False
-                    )
+                if draft_message_id:
+                    # The ingredients come from the stored draft, never from the form (§7.13).
+                    try:
+                        draft = _assistant_recipe_draft(connection, int(user_id), draft_message_id, assistant_tool)
+                        created_id = create_recipe_from_draft(
+                            connection, int(user_id), draft, header, bool(req.favorite)
+                        )
+                    except NotFoundError:
+                        return _error_msg("An ingredient is no longer available. Ask the assistant again.")
+                    except ValidationError as error:
+                        return _error_msg(str(error))
+                else:
+                    with connection.transaction():
+                        created_id = create_recipe(connection, header, commit=False)
+                        set_user_favorite(
+                            connection, int(user_id), FoodEntryType.RECIPE, created_id, bool(req.favorite), commit=False
+                        )
             except ConflictError as error:
                 return app_error_response(request, error, str(error))
         return HTMLResponse("", headers={"HX-Redirect": f"/food/item/recipe/{created_id}"})
