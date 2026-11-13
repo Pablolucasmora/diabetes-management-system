@@ -1481,12 +1481,13 @@ def QuickCreateButtons(assistant_enabled: bool = False):
             # it is pulled up over the header's top padding and has no top
             # border, only rounded bottom corners (frontend_conventions.md §9.3).
             Button(
-                Span("Tell the assistant", cls="truncate"),
+                Img(src="/images/ui/Logo_DiaBot.svg", alt="", cls="h-8 md:h-11 w-auto max-w-full"),
                 type="button",
+                aria_label="Tell the assistant",
                 data_food_assistant_tab="true",
                 cls="""
-                    self-start flex-1 min-w-0 mx-3 md:mx-5
-                    -mt-2 md:-mt-7 h-14 md:h-[5.25rem] pt-2 md:pt-7 px-3
+                    self-start flex-none w-40 md:w-56 min-w-0 mx-3 md:mx-5
+                    -mt-2 md:-mt-7 h-14 md:h-[5.25rem] pt-2 md:pt-7 pb-3 md:pb-5 px-3
                     bg-surface border border-t-0 border-line-soft
                     shadow-[0_4px_14px_rgba(80,60,40,0.14)]
                     rounded-b-2xl md:rounded-b-3xl
