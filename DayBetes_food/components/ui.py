@@ -97,7 +97,7 @@ def _base_html_shell(content_html: str) -> str:
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="DayBetes Food: plan meals, track ingredients, and manage macros for diabetes nutrition.">
     <title>DayBetes</title>
-    <link rel="icon" href="/images/ui/Clock_Page.svg">
+    <link rel="icon" type="image/svg+xml" href="/images/ui/favicon.svg?v=2">
     <link rel="stylesheet" href="{asset_busted("/css/output.css")}">
     <meta name="csrf-cookie-name" content="{CSRF_COOKIE_NAME}">
     <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.7/dist/htmx.min.js" defer></script>

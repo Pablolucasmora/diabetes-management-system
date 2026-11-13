@@ -97,7 +97,7 @@ def FloatingIsland():
 
 def IslandLogo():
     return Div(
-        Img(id="logo", src="/images/ui/Logo_DayBetes_food.svg", alt="DayBetes logo",
+        Img(id="logo", src="/images/ui/Logo_DayBetes.png", alt="DayBetes logo",
             cls="""
                 lg:w-52 md:w-52
                 w-36 
