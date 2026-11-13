@@ -338,7 +338,8 @@ def TurnBlock(turn: TurnView, conversation_id: int, notices: list[str] | None = 
         _changed_card(turn.changed) if turn.changed else None,
         *(_draft_card(card, conversation_id) for card in turn.drafts),
         *(_notice(text) for text in (notices or [])),
-        cls="w-full flex flex-col gap-2",
+        # Scrolled to below the fixed top bar, not under it.
+        cls="w-full flex flex-col gap-2 scroll-mt-48",
     )
 
 
@@ -460,15 +461,20 @@ def AssistantPage(
     without_meal: bool = False,
 ):
     return Div(
-        _header(),
-        AssistantMealSelect(events, selected_event_id, without_meal=without_meal),
+        # Fixed at the top, like Food's bar (§9.11): Back, the cart and Add to stay
+        # at hand however long the conversation is.
+        Div(
+            _header(),
+            AssistantMealSelect(events, selected_event_id, without_meal=without_meal),
+            cls="sticky top-0 z-[600] w-full flex flex-col gap-3 px-3 pt-6 pb-3 web_glass_strong rounded-b-3xl",
+        ),
         Div(AssistantThread(turns, conversation_id), id=THREAD_BOX_ID, cls="w-full"),
         _thinking(),
         # At the bottom of the screen, above the island; in the flow (sticky,
         # not fixed) so a phone keyboard scrolls it into view.
         Div(_composer(), cls="sticky bottom-28 w-full mt-auto"),
         data_hide_cart="true",
-        cls="w-full max-w-2xl mx-auto px-4 pt-6 pb-28 min-h-dvh flex flex-col gap-4",
+        cls="w-full max-w-2xl mx-auto px-4 pb-28 min-h-dvh flex flex-col gap-4",
     )
 
 

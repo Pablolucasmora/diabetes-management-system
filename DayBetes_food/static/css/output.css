@@ -729,6 +729,9 @@
   .resize-none {
     resize: none;
   }
+  .scroll-mt-48 {
+    scroll-margin-top: calc(var(--spacing) * 48);
+  }
   .list-none {
     list-style-type: none;
   }
@@ -1186,6 +1189,9 @@
   }
   .pb-2 {
     padding-bottom: calc(var(--spacing) * 2);
+  }
+  .pb-3 {
+    padding-bottom: calc(var(--spacing) * 3);
   }
   .pb-28 {
     padding-bottom: calc(var(--spacing) * 28);
