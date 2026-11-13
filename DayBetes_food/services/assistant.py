@@ -14,6 +14,7 @@ what is stored (code_conventions.md §8.12, §11.2.9; study_conventions.md §7.1
 
 import base64
 import logging
+import time
 from dataclasses import dataclass, field
 
 from DayBetes_food.config import ASSISTANT_MAX_TOOL_ROUNDS, ASSISTANT_MODEL
@@ -90,12 +91,45 @@ _ENTRY_LABELS = {
     FoodEntryType.RECIPE: "recipe",
 }
 _ROUND_LIMIT_RESULT = "Not run: the limit of steps for one message was reached."
+# A call after the first one fails once the SDK gave up its own two quick retries.
+# What is in the cart already happened, so the turn is resumed after a pause
+# instead of being left half done (§8.12). Only transient reasons; a timeout
+# already waited three times the limit, and a 4xx would fail again.
+_RESUME_DELAYS_SECONDS = (3, 8)
+_TRANSIENT_REASONS = {"assistant_rate_limited", "assistant_network_error"}
 
 # What the page tells the user (English, frontend §0), with no detail of the provider.
 NOTICE_ROUND_LIMIT = "The assistant stopped after too many steps. Check the cart, and tell it what is missing."
 NOTICE_STOPPED = "The assistant stopped before finishing. Check the cart and try again."
 NOTICE_REFUSED = "The assistant could not answer that message."
 NOTICE_CUT = "The answer was cut short. Check the cart."
+
+
+def _is_transient(reason: str) -> bool:
+    return reason in _TRANSIENT_REASONS or reason.startswith("assistant_status_5")
+
+
+def _answer_after_tools(messages: list[dict], conversation_id: int | None, round_index: int):
+    """One later call of the turn, resumed after a pause when the failure is transient.
+
+    Raises:
+        ExternalServiceError: it still failed, or the failure is not transient.
+    """
+    for attempt in range(len(_RESUME_DELAYS_SECONDS) + 1):
+        try:
+            return create_answer(system=SYSTEM_PROMPT, tools=TOOL_DEFINITIONS, messages=messages)
+        except ExternalServiceError as error:
+            reason = str(error)
+            # Logged here: this failure does not reach the route (§8.3).
+            logger.warning(
+                "Assistant call failed after tools: %s",
+                reason,
+                extra={"conversation_id": conversation_id, "round": round_index, "attempt": attempt + 1},
+            )
+            if attempt == len(_RESUME_DELAYS_SECONDS) or not _is_transient(reason):
+                raise
+            time.sleep(_RESUME_DELAYS_SECONDS[attempt])
+    raise AssertionError("unreachable")
 
 
 @dataclass
@@ -334,7 +368,10 @@ def send_assistant_message(
 
     for round_index in range(ASSISTANT_MAX_TOOL_ROUNDS + 1):
         try:
-            answer = create_answer(system=SYSTEM_PROMPT, tools=TOOL_DEFINITIONS, messages=history + turn.live)
+            if round_index == 0:
+                answer = create_answer(system=SYSTEM_PROMPT, tools=TOOL_DEFINITIONS, messages=history + turn.live)
+            else:
+                answer = _answer_after_tools(history + turn.live, ctx.conversation_id, round_index)
         except ExternalServiceError:
             if round_index == 0:
                 _log_usage(ctx.conversation_id, usages, "failed")
