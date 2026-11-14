@@ -2682,10 +2682,15 @@ def _ensure_insulin_injections_schema(cursor):
             "ALTER COLUMN shot_time TYPE TIMESTAMPTZ USING shot_time AT TIME ZONE 'UTC';"
         )
 
-    # 3) Timestamp backfill
-    cursor.execute("UPDATE insulin_injections SET created_at = COALESCE(created_at, shot_time, CURRENT_TIMESTAMP);")
-    cursor.execute("UPDATE insulin_injections SET updated_at = COALESCE(updated_at, created_at);")
-    cursor.execute("UPDATE insulin_injections SET timezone_at_event = COALESCE(timezone_at_event, 'Europe/Madrid');")
+    # 3) Timestamp backfill, only of the rows still missing it. Rewriting every row
+    # on each run queued the deferred check of `insulin_pen_id` for the rows with a
+    # pen (rows written in this transaction are always checked), and the ALTERs
+    # below then failed with "pending trigger events".
+    cursor.execute(
+        "UPDATE insulin_injections SET created_at = COALESCE(shot_time, CURRENT_TIMESTAMP) WHERE created_at IS NULL;"
+    )
+    cursor.execute("UPDATE insulin_injections SET updated_at = created_at WHERE updated_at IS NULL;")
+    cursor.execute("UPDATE insulin_injections SET timezone_at_event = 'Europe/Madrid' WHERE timezone_at_event IS NULL;")
 
     # 4) Defaults and NOT NULL
     cursor.execute("ALTER TABLE insulin_injections ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP;")
