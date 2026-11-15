@@ -27,6 +27,7 @@ from DayBetes_food.domain.assistant import (
     draft_tool_input,
     food_draft_extras,
     food_draft_prefill,
+    manual_intake_draft,
     parse_tool_use_id,
     recipe_draft,
 )
@@ -830,10 +831,17 @@ def _apply_draft_extras(prefill_view: dict, extras: FoodDraftExtras) -> None:
         "initial_state": extras.initial_state.value if extras.initial_state else None,
         "cooking_factor": extras.cooking_factor,
         "barcode": extras.barcode,
+        "nutriscore": extras.nutriscore.value if extras.nutriscore else None,
+        "nova": extras.nova,
+        "yuka": extras.yuka,
+        "macros_confidence": extras.macros_confidence,
+        "default_amount_method": extras.default_amount_method.value if extras.default_amount_method else None,
     }
     for key, value in values.items():
         if value is not None and not str(prefill_view.get(key) or "").strip():
             prefill_view[key] = value
+    if extras.favorite is not None:
+        prefill_view["favorite"] = extras.favorite
 
 
 def _assistant_recipe_draft(connection, user_id: int, message_id: int, tool_use_id: str) -> RecipeDraft:
@@ -887,7 +895,57 @@ def _recipe_draft_form(connection, user_id: int, message_id: int, tool_use_id: s
         servings="" if draft.servings is None else str(draft.servings),
         notes=draft.notes or "",
         plates=tuple(plates),
+        favorite=draft.favorite is not False,
     )
+
+
+def _manual_draft_prefill(connection, user_id: int, message_id: int, tool_use_id: str) -> dict:
+    """What the dish create form shows of a dish draft (§8.12, "Platos manuales").
+
+    Raises:
+        NotFoundError: no such draft, or no longer valid.
+    """
+    tool_input = _assistant_draft_input(connection, user_id, message_id, tool_use_id, "draft_manual_intake")
+    try:
+        draft = manual_intake_draft(tool_input)
+    except ValidationError as error:
+        raise NotFoundError("Draft not found.") from error
+    nutrients = draft.nutrients
+
+    def text(value):
+        return "" if value is None else value
+
+    return {
+        "name": draft.name,
+        "description": draft.description or "",
+        "subtype": draft.subtype or "",
+        "origin": draft.origin or "",
+        "default_portion": text(draft.default_portion),
+        "calories_100g": text(nutrients.calories_100g),
+        "carbs_100g": text(nutrients.carbs_100g),
+        "sugars_100g": text(nutrients.sugars_100g),
+        "fats_100g": text(nutrients.fats_100g),
+        "saturated_100g": text(nutrients.saturated_100g),
+        "proteins_100g": text(nutrients.proteins_100g),
+        "fiber_100g": text(nutrients.fiber_100g),
+        "caffeine": text(nutrients.caffeine),
+        "alcohol": text(nutrients.alcohol),
+        "glycemic_index": draft.glycemic_index.value if draft.glycemic_index else "",
+        "ig_confidence": draft.ig_confidence,
+        "macros_confidence": draft.macros_confidence,
+        "macros_source": draft.macros_source.value,
+        "default_amount_method": draft.default_amount_method.value if draft.default_amount_method else "",
+        "favorite": draft.favorite is not False,
+        "assistant_note": _MANUAL_DRAFT_NOTES.get(draft.macros_source, _MANUAL_DRAFT_NOTES[MacrosSource.AI_ESTIMATE]),
+    }
+
+
+_MANUAL_DRAFT_NOTES = {
+    MacrosSource.AI_ESTIMATE: "Estimated by the assistant. Check every value before saving.",
+    MacrosSource.OWN_ESTIMATE: "Written by the assistant from what you said. Check every value before saving.",
+    MacrosSource.OFFICIAL: "Taken by the assistant from the place's information. Check every value before saving.",
+    MacrosSource.LABEL: "Read by the assistant from the label. Check every value before saving.",
+}
 
 
 _ASSISTANT_DRAFT_NOTES = {
@@ -1814,16 +1872,33 @@ def setup_food_routes(rt):
         )
 
     @rt("/food/create/manual_intake/form")
-    def get(request: Request):
+    def get(request: Request, assistant_message: str = "", assistant_tool: str = "", return_to_assistant: str = ""):
         user_id = get_current_user_id()
         if not user_id:
             raise AuthenticationError("Your session has expired.")
+        # A dish draft of the assistant (§8.12, frontend §9.11): only while it exists.
+        draft_message_id = parse_optional_id(assistant_message, "draft") if ASSISTANT_ENABLED else None
+        conversation_id = parse_optional_id(return_to_assistant, "conversation") if draft_message_id else None
         with get_connection() as connection:
+            prefill = (
+                _manual_draft_prefill(connection, int(user_id), draft_message_id, assistant_tool)
+                if draft_message_id
+                else None
+            )
             subtypes = get_subtype_suggestions(connection, search="", limit=500)
             origins = get_manual_origin_suggestions(connection, int(user_id), limit=500)
+        if prefill and prefill.get("subtype"):
+            prefill["subtype"] = _closest_option(prefill["subtype"], subtypes)
+            prefill["subtype_is_new"] = prefill["subtype"] not in subtypes
         return render_page(
             request,
-            lambda _: CreateManualPage(subtype_options=subtypes, origin_options=origins),
+            lambda _: CreateManualPage(
+                subtype_options=subtypes,
+                origin_options=origins,
+                prefill=prefill,
+                return_to_assistant=conversation_id,
+                draft_key=f"assistant_{draft_message_id}_{assistant_tool}" if prefill else None,
+            ),
             show_cart=False,
         )
 
@@ -4027,6 +4102,7 @@ def setup_food_routes(rt):
         default_amount_method: str = "",
         favorite: str = "",
         manual_smart_macros_raw: str = "",
+        return_to_assistant: str = "",
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -4053,6 +4129,9 @@ def setup_food_routes(rt):
                 caffeine=caffeine,
                 alcohol=alcohol,
             )
+            assistant_conversation_id = (
+                parse_optional_id(return_to_assistant, "conversation") if ASSISTANT_ENABLED else None
+            )
         except ValidationError as error:
             return _error_msg(str(error))
 
@@ -4073,6 +4152,11 @@ def setup_food_routes(rt):
                 return _error_msg(str(error))
             except ConflictError as error:
                 return app_error_response(request, error, str(error))
+        if assistant_conversation_id:
+            # Back to the conversation that drafted it (frontend §9.11).
+            return HTMLResponse(
+                "", headers={"HX-Redirect": f"/assistant?conversation_id={assistant_conversation_id}"}
+            )
         return HTMLResponse("", headers={"HX-Redirect": "/food"})
 
     @rt("/food/quick_add/form")

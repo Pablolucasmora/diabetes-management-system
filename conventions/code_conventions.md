@@ -990,9 +990,9 @@ Acordado con el usuario el 2026-11-12. Un chat en el que el usuario cuenta lo qu
 
 **Principio: propone y el usuario confirma.** Es la excepción acordada a "no se adivina" (decisión 2026-09-25 y §7.15): el asistente interpreta texto libre, pero nada de lo que hace queda como dato confirmado sin un paso del usuario.
 
-- Solo escribe en la comida `planned` de su conversación: porciones en el carrito, añadidos rápidos estimados con su porción, platos nuevos y los campos de esa comida que el usuario edita en el carrito (ampliación del 2026-11-12, ver **Edición de la comida**). El usuario lo revisa, lo cambia o lo borra, y confirma la comida como siempre.
-- Un alimento, un plato manual o una receta nuevos nunca se crean desde el asistente. Este prepara un borrador y abre el formulario de alta relleno; el usuario lo revisa y lo guarda, y el formulario vuelve al chat (ampliación del 2026-11-13, ver **Alimentos nuevos** y **Recetas**).
-- No existe ninguna herramienta que borre (comidas, platos o porciones), archive, edite un alimento, plato o receta del catálogo, confirme una comida, toque una comida consumida, toque la insulina o la nevera de una comida, registre una inyección o cambie ajustes. La garantía es que esas herramientas no existen, no una instrucción del prompt.
+- Solo escribe en la comida `planned` de su conversación: porciones en el carrito, añadidos rápidos estimados con su porción, platos nuevos, los campos de esa comida que el usuario edita en el carrito (ampliación del 2026-11-12, ver **Edición de la comida**) y el borrador de su insulina (ampliación del 2026-11-15, ver **Insulina**). El usuario lo revisa, lo cambia o lo borra, y confirma la comida como siempre.
+- Un alimento, un plato manual o una receta nuevos nunca se crean desde el asistente. Este prepara un borrador y abre el formulario de alta relleno; el usuario lo revisa y lo guarda, y el formulario vuelve al chat (ampliación del 2026-11-13, ver **Alimentos nuevos**, **Platos manuales** y **Recetas**). El borrador puede rellenar todos los campos del formulario (ampliación del 2026-11-15).
+- No existe ninguna herramienta que borre (comidas, platos o porciones), archive, edite un alimento, plato o receta del catálogo, confirme una comida, toque una comida consumida, toque la nevera de una comida, registre una inyección por su cuenta (fuera del borrador de la comida) o cambie ajustes. La garantía es que esas herramientas no existen, no una instrucción del prompt.
 
 **Capas**
 
@@ -1024,9 +1024,17 @@ Acordado con el usuario el 2026-11-12. Un chat en el que el usuario cuenta lo qu
 
 **Edición de la comida** (decisión del usuario del 2026-11-12). El asistente puede cambiar, de la comida de su conversación, lo mismo que el usuario edita en su tarjeta del carrito, con la misma validación:
 
-- de la comida: la fecha y la hora (`meal_time`), el tipo (`meal_type`), el nombre y las notas;
+- de la comida: la fecha y la hora (`meal_time`), el tipo (`meal_type`), el nombre, las notas y si se comió fuera (`eating_out`, ampliación del 2026-11-15);
 - de cada plato: el nombre y el offset, solo como plantilla o aplicado a todos sus alimentos (`Apply all`, measurement_conventions.md §4.6.2);
 - de cada alimento ya añadido: los gramos, `amount_method`, el offset y la preparación.
+
+El offset, de plato o de alimento, se da en minutos o como hora exacta (`eaten_time`, `HH:MM`), con las reglas de measurement_conventions.md §4.5.1 (ampliación del 2026-11-15). El asistente usa la hora cuando el usuario dice una hora ("el aperitivo a las 13:30").
+
+**Insulina** (decisión del usuario del 2026-11-15). `update_insulin` escribe el borrador del bolo de la comida, el mismo que el usuario edita en el carrito: si lleva insulina (`insulin_dose`), la dosis en U (`insulin_units`, measurement_conventions.md §8.1), la zona (`injection_zone`) y la pluma (`insulin_pen_id`, una pluma rápida abierta del usuario, §8.4), con la misma validación. Reglas:
+
+- Solo anota lo que el usuario dice que se ha puesto o se va a poner. Nunca propone, calcula ni corrige una dosis, ni opina sobre ella: la herramienta no tiene ninguna lógica de dosis.
+- Una dosis, una zona o una pluma activan la insulina de la comida, que recibe la pluma por defecto si no tenía. Con `insulin = false` no se aceptan.
+- Es un borrador: la inyección solo se registra al confirmar la comida, como siempre, y el usuario lo revisa antes en el carrito.
 
 Lo hace solo cuando el usuario lo pide o lo dice al contar la comida ("a las 16:40", "de postre, a los 20 minutos"). Un valor omitido o `null` no cambia nada; vaciar un campo se hace en el carrito. Cada cambio aparece en el chat en la tarjeta `Changed in the cart` (frontend_conventions.md §9.11).
 
@@ -1038,6 +1046,7 @@ Lo hace solo cuando el usuario lo pide o lo dice al contar la comida ("a las 16:
 - el código de barras, si se ve en la foto;
 - el estado inicial;
 - el factor de cocción estimado, en los alimentos que se pesan en crudo y cambian de peso al cocinarse (arroz, pasta, legumbres, cereales); en el resto, vacío (measurement_conventions.md §7);
+- Nutri-Score, NOVA y Yuka, solo si la etiqueta los imprime o el usuario los dice; la confianza de los macros, el método de cantidad por defecto y el favorito, solo si el usuario los dice (ampliación del 2026-11-15);
 - `macros_source` (U1, `study_conventions.md` §6.3), según el origen del borrador:
 
 | `source` | De dónde salen los macros | `macros_source` |
@@ -1049,7 +1058,12 @@ Lo hace solo cuando el usuario lo pide o lo dice al contar la comida ("a las 16:
 
 Con Ciqual y OFF, los macros y lo que traiga la fuente salen de su precarga de siempre (measurement_conventions.md §12.1), y el asistente solo completa lo que la fuente no trae: categoría, subtipo, estado inicial y factor de cocción. Lo que el borrador guarda se vuelve a leer y a validar al abrir el formulario (§7.13), nunca se pasa por la URL.
 
-**Recetas** (decisión del usuario del 2026-11-13). Cuando el usuario describe una receta, `draft_recipe` prepara un borrador y abre el formulario `New recipe` relleno: nombre, tipo de comida, tipos extra, raciones y, en las notas, el procedimiento. Debajo, el formulario muestra los ingredientes propuestos, por platos de la receta, con sus gramos y su preparación (`cooking`, `final_state`, `conservation` e `is_cooked_weight`, con la regla de **Preparación**). Al guardar se crean en una sola transacción la receta, sus platos, los platos manuales nuevos y los ingredientes. Después se editan en el editor de siempre.
+**Platos manuales** (decisión del usuario del 2026-11-15). `draft_manual_intake` abre el formulario de alta de un plato manual (§11.2.3) relleno con todos sus campos: nombre, descripción, subtipo, origen, ración, macros por 100 g, cafeína y alcohol, índice glucémico y su confianza, `macros_source`, la confianza de los macros, el método de cantidad por defecto y el favorito. Es lo que el usuario quiere conservar de algo preparado por otro (un bar, un restaurante, un familiar), o lo que pide guardar como "manual". Para registrarlo solo en esta comida sigue estando el añadido rápido (`add_estimate`).
+
+- `macros_source` lo da el modelo: `ai_estimate` si los estima, `own_estimate` si los dice el usuario, `official` si salen de la carta o la web del sitio, `label` si los lee de una etiqueta.
+- Lo que no se dice queda vacío, como en el resto de borradores; los hidratos por 100 g son obligatorios.
+
+**Recetas** (decisión del usuario del 2026-11-13). Cuando el usuario describe una receta, `draft_recipe` prepara un borrador y abre el formulario `New recipe` relleno: nombre, tipo de comida, tipos extra, raciones, el favorito (si el usuario lo dice, ampliación del 2026-11-15) y, en las notas, el procedimiento. Debajo, el formulario muestra los ingredientes propuestos, por platos de la receta, con sus gramos y su preparación (`cooking`, `final_state`, `conservation` e `is_cooked_weight`, con la regla de **Preparación**). Al guardar se crean en una sola transacción la receta, sus platos, los platos manuales nuevos y los ingredientes. Después se editan en el editor de siempre.
 
 - Cada ingrediente es un alimento o plato del usuario (`catalog` o `manual_intake`, por su id) o un **plato manual nuevo**.
 - Un plato manual nuevo es lo que el usuario llama "manual" o "quick add": un añadido rápido no puede ser ingrediente (§11.2.3), así que se crea como plato reutilizable, con sus macros por 100 g a partir de los totales que estima el asistente para esa cantidad (measurement_conventions.md §5.4) y `macros_source = ai_estimate`, salvo que el usuario dé los valores (`own_estimate`).

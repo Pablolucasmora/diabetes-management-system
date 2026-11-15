@@ -23,17 +23,32 @@ from DayBetes_food.domain.constants import (
     CookingMethod,
     FoodCategory,
     FoodEntryType,
+    NOVA_MAX,
+    NOVA_MIN,
+    YUKA_MAX,
+    YUKA_MIN,
+    AmountMethod,
     FoodPhysicalState,
+    GlycemicIndex,
     MacrosSource,
     MealType,
+    Nutriscore,
 )
 from DayBetes_food.domain.food import (
     FOOD_DEFAULT_PORTION_RANGE,
     FOOD_SUBTYPE_MAX_LENGTH,
     FoodPrefill,
     normalize_food_text,
+    parse_declared_confidence,
 )
-from DayBetes_food.domain.manual_intake import parse_manual_intake_name, require_carbs
+from DayBetes_food.domain.manual_intake import (
+    MANUAL_INTAKE_DESCRIPTION_MAX_LENGTH,
+    MANUAL_INTAKE_NAME_MAX_LENGTH,
+    MANUAL_INTAKE_ORIGIN_MAX_LENGTH,
+    parse_manual_intake_name,
+    require_carbs,
+    validate_ig_confidence,
+)
 from DayBetes_food.domain.nutrition import (
     NUTRIENT_LIMITS,
     NutrientValues,
@@ -74,6 +89,9 @@ ASSISTANT_PHOTO_PLACEHOLDER = "[The user attached a photo here. Photos are not k
 # the stored results, so a reopened conversation shows the same cards.
 TOOL_RESULT_ADDED = "added"
 TOOL_RESULT_DRAFT = "draft"
+# `source` of the draft cards that are not a catalog food (frontend §9.11).
+RECIPE_DRAFT_SOURCE = "recipe"
+MANUAL_INTAKE_DRAFT_SOURCE = "manual_intake"
 # Lines of what a tool changed in the meal (§8.12, "Edición de la comida").
 TOOL_RESULT_CHANGED = "changed"
 
@@ -344,6 +362,31 @@ class FoodDraftExtras:
     initial_state: FoodPhysicalState | None
     cooking_factor: float | None
     barcode: str | None
+    # The rest of the create form (ampliación del 2026-11-15, §8.12): only what
+    # the label prints or the user says.
+    nutriscore: Nutriscore | None = None
+    nova: int | None = None
+    yuka: int | None = None
+    macros_confidence: int | None = None
+    default_amount_method: AmountMethod | None = None
+    favorite: bool | None = None
+
+
+def tool_confidence(value, field: str) -> int | None:
+    """A declared confidence 0-2 of a tool input (measurement §6.10)."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValidationError(f"{field} must be 0, 1 or 2.")
+    return parse_declared_confidence(str(value), field=field)
+
+
+def tool_score(value, field: str, minimum: int, maximum: int) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+        raise ValidationError(f"{field} must be a whole number from {minimum} to {maximum}.")
+    return value
 
 
 def _tool_enum(enum_cls, value, field: str):
@@ -371,6 +414,12 @@ def food_draft_extras(tool_input: dict) -> FoodDraftExtras:
         initial_state=_tool_enum(FoodPhysicalState, tool_input.get("initial_state"), "initial_state"),
         cooking_factor=parse_cooking_factor(cooking_factor) if cooking_factor is not None else None,
         barcode=parse_barcode(barcode) if barcode and barcode.strip() else None,
+        nutriscore=_tool_enum(Nutriscore, tool_input.get("nutriscore"), "nutriscore"),
+        nova=tool_score(tool_input.get("nova"), "nova", NOVA_MIN, NOVA_MAX),
+        yuka=tool_score(tool_input.get("yuka"), "yuka", YUKA_MIN, YUKA_MAX),
+        macros_confidence=tool_confidence(tool_input.get("macros_confidence"), "macros_confidence"),
+        default_amount_method=_tool_enum(AmountMethod, tool_input.get("default_amount_method"), "default_amount_method"),
+        favorite=tool_bool(tool_input.get("favorite"), "favorite"),
     )
 
 
@@ -411,6 +460,82 @@ def food_draft_prefill(tool_input: dict) -> FoodPrefill:
         nova=None,
         nutrients=nutrients,
         alcohol_source_note=None,
+    )
+
+
+# A dish draft (§8.12, "Platos manuales", ampliación del 2026-11-15): a reusable
+# manual_intake the user reviews in its create form. Its macros are per 100 g,
+# as the form's default mode, and its U1 is said by the model.
+MANUAL_DRAFT_MACROS_SOURCES = (
+    MacrosSource.AI_ESTIMATE,
+    MacrosSource.OWN_ESTIMATE,
+    MacrosSource.OFFICIAL,
+    MacrosSource.LABEL,
+)
+
+
+@dataclass(frozen=True)
+class ManualIntakeDraft:
+    name: str
+    description: str | None
+    subtype: str | None
+    origin: str | None
+    default_portion: float | None
+    nutrients: NutrientValues
+    glycemic_index: GlycemicIndex | None
+    ig_confidence: int | None
+    macros_confidence: int | None
+    macros_source: MacrosSource
+    default_amount_method: AmountMethod | None
+    favorite: bool | None
+
+
+def manual_intake_draft(tool_input: dict) -> ManualIntakeDraft:
+    """A dish draft written by the model, checked like the dish create form (§7.13).
+
+    Name and carbs per 100 g are required; an unknown nutrient stays empty,
+    never 0 (§8.9).
+
+    Raises:
+        ValidationError: a value out of the limits of the form, with its message.
+    """
+    name = tool_text(tool_input.get("name"), "name", max_length=MANUAL_INTAKE_NAME_MAX_LENGTH, required=True)
+    parse_manual_intake_name(name)
+    serving = tool_number(tool_input.get("serving_g"), "serving_g")
+    if serving is not None:
+        serving = check_number(serving, "default_portion", FOOD_DEFAULT_PORTION_RANGE)
+    values = {}
+    for field in _LABEL_NUTRIENTS:
+        number = tool_number(tool_input.get(field), field, required=(field == "carbs_100g"))
+        values[field] = check_number(number, field, NUTRIENT_LIMITS[field])
+    for input_name, field in _DRAFT_OTHER_NUTRIENTS.items():
+        values[field] = check_number(tool_number(tool_input.get(input_name), input_name), field, NUTRIENT_LIMITS[field])
+    nutrients = NutrientValues(**values)
+    validate_nutrient_relations(nutrients)
+    require_carbs(nutrients)
+    glycemic_index = _tool_enum(GlycemicIndex, tool_input.get("glycemic_index"), "glycemic_index")
+    ig_confidence = tool_confidence(tool_input.get("ig_confidence"), "ig_confidence")
+    validate_ig_confidence(glycemic_index, ig_confidence)
+    macros_source = _tool_enum(MacrosSource, tool_input.get("macros_source"), "macros_source")
+    if macros_source not in MANUAL_DRAFT_MACROS_SOURCES:
+        raise ValidationError(
+            "macros_source must be one of: " + ", ".join(m.value for m in MANUAL_DRAFT_MACROS_SOURCES) + "."
+        )
+    return ManualIntakeDraft(
+        name=name,
+        description=tool_text(
+            tool_input.get("description"), "description", max_length=MANUAL_INTAKE_DESCRIPTION_MAX_LENGTH
+        ),
+        subtype=tool_text(tool_input.get("subtype"), "subtype", max_length=FOOD_SUBTYPE_MAX_LENGTH),
+        origin=tool_text(tool_input.get("origin"), "origin", max_length=MANUAL_INTAKE_ORIGIN_MAX_LENGTH),
+        default_portion=serving,
+        nutrients=nutrients,
+        glycemic_index=glycemic_index,
+        ig_confidence=ig_confidence,
+        macros_confidence=tool_confidence(tool_input.get("macros_confidence"), "macros_confidence"),
+        macros_source=macros_source,
+        default_amount_method=_tool_enum(AmountMethod, tool_input.get("default_amount_method"), "default_amount_method"),
+        favorite=tool_bool(tool_input.get("favorite"), "favorite"),
     )
 
 
@@ -468,6 +593,7 @@ class RecipeDraft:
     servings: int | None
     notes: str | None
     plates: tuple[RecipePlateDraft, ...]
+    favorite: bool | None = None  # None keeps the form's default
 
     @property
     def ingredient_count(self) -> int:
@@ -561,6 +687,7 @@ def recipe_draft(tool_input: dict) -> RecipeDraft:
         servings=parse_recipe_servings(servings if servings is not None else ""),
         notes=parse_recipe_notes(tool_input.get("notes") if isinstance(tool_input.get("notes"), str) else None),
         plates=tuple(plates),
+        favorite=tool_bool(tool_input.get("favorite"), "favorite"),
     )
 
 
