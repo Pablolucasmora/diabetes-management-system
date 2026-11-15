@@ -10,6 +10,7 @@ nothing, so the text and the photo stay in the composer to send again.
 """
 
 import logging
+from urllib.parse import urlencode
 
 from fasthtml.common import *
 from starlette.datastructures import UploadFile
@@ -64,6 +65,16 @@ def _read_photo(photo) -> tuple[str, bytes] | None:
 def _selected_meal(events: list, chosen: int | None) -> int | None:
     """The meal chosen in the selector, if it is still a planned meal of the user."""
     return chosen if chosen and any(event.id == chosen for event in events) else None
+
+
+def _assistant_url(conversation_id: int | None, intake_event_id: str) -> str:
+    """The URL that reopens the conversation on screen, which replaces the page's
+    own so that Back comes back to it (frontend_conventions.md §5)."""
+    if conversation_id is not None:
+        return f"/assistant?{urlencode({'conversation_id': conversation_id})}"
+    if intake_event_id:
+        return f"/assistant?{urlencode({'intake_event_id': intake_event_id})}"
+    return "/assistant"
 
 
 def setup_assistant_routes(rt):
@@ -123,7 +134,9 @@ def setup_assistant_routes(rt):
             except (NotFoundError, ConflictError):
                 return app_error_response(request, NotFoundError, _MEAL_GONE)
             turns = conversation_turns(connection, int(user_id), conversation.id) if conversation else []
-        return render_fragment(AssistantThread(turns, conversation.id if conversation else None))
+        response = render_fragment(AssistantThread(turns, conversation.id if conversation else None))
+        response.headers["HX-Replace-Url"] = _assistant_url(conversation.id if conversation else None, intake_event_id)
+        return response
 
     @rt("/assistant/message")
     def post(
@@ -187,7 +200,9 @@ def setup_assistant_routes(rt):
         if result.meal_created:
             # The new meal is chosen in `Add to`, so the next message continues it.
             fragments.append(AssistantMealSelect(events, result.event_id, oob=True))
-        return render_fragment(tuple(fragments))
+        response = render_fragment(tuple(fragments))
+        response.headers["HX-Replace-Url"] = _assistant_url(result.conversation_id, intake_event_id)
+        return response
 
     @rt("/assistant/mentions")
     def get(request: Request, q: str = ""):

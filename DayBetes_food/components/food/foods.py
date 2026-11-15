@@ -425,14 +425,14 @@ _FOOD_LIST_INCLUDE = (
 )
 
 
-def _mode_tabs(group: str, tabs: tuple[tuple[str, str], ...], *, hidden: bool = True):
+def _mode_tabs(group: str, tabs: tuple[tuple[str, str], ...], *, selected_value: str, hidden: bool = True):
     """Underlined tabs of one pill of the Food header (frontend_conventions.md §9.3).
-    The first one starts selected; choosing one writes its value in
+    `selected_value` starts selected; choosing one writes its value in
     #food_<group>_mode and reloads the list."""
     width = {2: "w-1/2", 3: "w-1/3"}[len(tabs)]
     columns = []
     for index, (label, value) in enumerate(tabs):
-        selected = index == 0
+        selected = value == selected_value
         align = "text-left" if index == 0 else ("text-right" if index == len(tabs) - 1 else "text-center")
         columns.append(
             Div(
@@ -484,10 +484,30 @@ def _mode_tabs(group: str, tabs: tuple[tuple[str, str], ...], *, hidden: bool = 
 # The pills of the Food header (frontend_conventions.md §9.3), as `(label, filter)`.
 FOOD_FILTERS = (("Search", "all"), ("Food", "food"), ("Recipes", "recipes"), ("Favs", "favs"), ("Fridge", "fridge"))
 
+# The tabs of each pill, as `(label, value)`; the first is the default.
+FOOD_SEARCH_TABS = (("Recommended", "recommended"), ("Global", "global"))
+FOOD_FOOD_TABS = (("Catalog", "catalog"), ("Manual", "manual"))
+FOOD_RECIPES_TABS = (("Mine", "mine"), ("Discover", "discover"))
+FOOD_FAVS_TABS = (("Catalog", "catalog"), ("Manual", "manual"), ("Recipes", "recipes"))
 
-def Filters(selected: str = "all"):
-    """`selected` is the pill the page opens on: `fridge` from the button of the
-    home page (§9.2), `all` otherwise."""
+
+@dataclass(frozen=True)
+class FoodView:
+    """What the Food page shows: its pill, the tab of each pill and the meal types
+    of the filters pop-up. It travels in the URL of /food (frontend_conventions.md §5)."""
+
+    filter: str = "all"
+    search_mode: str = FOOD_SEARCH_TABS[0][1]
+    food_mode: str = FOOD_FOOD_TABS[0][1]
+    favs_mode: str = FOOD_FAVS_TABS[0][1]
+    recipes_mode: str = FOOD_RECIPES_TABS[0][1]
+    meal_type: str = ""
+
+
+def Filters(view: FoodView = FoodView()):
+    """`view` is the state the page opens on (frontend_conventions.md §5): the pill,
+    its tab and the filters, as the URL of /food gives them."""
+    selected = view.filter
     buttons = []
     for text, value in FOOD_FILTERS:
         buttons.append(
@@ -558,11 +578,11 @@ def Filters(selected: str = "all"):
 
     return Div(
         Input(type="hidden", id="food_filter", name="filter", value=selected),
-        Input(type="hidden", id="food_search_mode", name="search_mode", value="recommended"),
-        Input(type="hidden", id="food_food_mode", name="food_mode", value="catalog"),
-        Input(type="hidden", id="food_favs_mode", name="favs_mode", value="catalog"),
-        Input(type="hidden", id="food_recipes_mode", name="recipes_mode", value="mine"),
-        Input(type="hidden", id="food_recipes_meal", name="meal_type", value=""),
+        Input(type="hidden", id="food_search_mode", name="search_mode", value=view.search_mode),
+        Input(type="hidden", id="food_food_mode", name="food_mode", value=view.food_mode),
+        Input(type="hidden", id="food_favs_mode", name="favs_mode", value=view.favs_mode),
+        Input(type="hidden", id="food_recipes_mode", name="recipes_mode", value=view.recipes_mode),
+        Input(type="hidden", id="food_recipes_meal", name="meal_type", value=view.meal_type),
         Div(
             *buttons,
             cls="""
@@ -573,29 +593,29 @@ def Filters(selected: str = "all"):
                 rounded-full
             """,
         ),
-        _mode_tabs("search", (("Recommended", "recommended"), ("Global", "global")), hidden=selected != "all"),
-        _mode_tabs("food", (("Catalog", "catalog"), ("Manual", "manual"))),
-        _mode_tabs("recipes", (("Mine", "mine"), ("Discover", "discover"))),
-        _mode_tabs("favs", (("Catalog", "catalog"), ("Manual", "manual"), ("Recipes", "recipes"))),
+        _mode_tabs("search", FOOD_SEARCH_TABS, selected_value=view.search_mode, hidden=selected != "all"),
+        _mode_tabs("food", FOOD_FOOD_TABS, selected_value=view.food_mode, hidden=selected != "food"),
+        _mode_tabs("recipes", FOOD_RECIPES_TABS, selected_value=view.recipes_mode, hidden=selected != "recipes"),
+        _mode_tabs("favs", FOOD_FAVS_TABS, selected_value=view.favs_mode, hidden=selected != "favs"),
         cls="md:w-xl lg:w-xl w-xs transition-all",
     )
 
 
-def _food_filters_button():
+def _food_filters_button(view: FoodView):
     """Inside the search box, on the right. It opens the filters pop-up (§9.3)."""
     return Button(
         Img(src="/images/ui/filter.svg", alt="", cls="w-5 h-5"),
         # Marks that a filter is on: from outside the pop-up it would not show.
         Span(
             id="food_filters_active",
-            cls="hidden absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-danger border border-white",
+            cls=f"{'' if view.meal_type else 'hidden '}absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-danger border border-white",
         ),
         type="button",
         id="food_filters_button",
         aria_label="Filters",
         title="Filters",
-        cls="""
-            hidden absolute right-1.5 top-1/2 -translate-y-1/2
+        cls=f"""
+            {'' if view.filter == 'recipes' else 'hidden'} absolute right-1.5 top-1/2 -translate-y-1/2
             web_button web_button_primary
             rounded-xl w-9 h-9
             flex items-center justify-center
@@ -660,7 +680,7 @@ def FoodFiltersModal():
     )
 
 
-def SearchInput():
+def SearchInput(view: FoodView = FoodView()):
     return Div(
         Input(
             inputmode="text",
@@ -682,7 +702,7 @@ def SearchInput():
             hx_include="#food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
             hx_swap="innerHTML",
         ),
-        _food_filters_button(),
+        _food_filters_button(view),
         cls="relative md:w-xl lg:w-xl w-xs",
     )
 
