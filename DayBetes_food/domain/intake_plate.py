@@ -13,7 +13,8 @@ measured against the same `meal_time` (§4.6).
 
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from DayBetes_food.domain.constants import AmountInputUnit
 from DayBetes_food.domain.portion_detail import (
@@ -96,6 +97,7 @@ class IntakePlateRead:
     intake_event_id: int
     name: str | None
     offset_minutes: int | None
+    eaten_at: datetime | None  # exact-time template; None = offset in minutes (§4.5.1)
     created_at: datetime
     updated_at: datetime
 
@@ -106,6 +108,7 @@ class IntakePlateCreate:
     intake_event_id: int
     name: str | None = None
     offset_minutes: int | None = None
+    eaten_at: datetime | None = None
 
 
 def auto_offset_minutes(meal_time: datetime | None, now: datetime) -> int | None:
@@ -121,6 +124,61 @@ def auto_offset_minutes(meal_time: datetime | None, now: datetime) -> int | None
     if not INTAKE_PLATE_OFFSET_MIN_MINUTES <= offset <= INTAKE_PLATE_OFFSET_MAX_MINUTES:
         return None
     return offset
+
+
+def offset_from_eaten_at(meal_time: datetime | None, eaten_at: datetime) -> int | None:
+    """Offset derived from an exact time (measurement_conventions.md §4.5.1): the
+    same rule as the automatic one, so out of range is None and the time is kept.
+
+    `meal_time` is taken to the minute: a time is typed as `HH:MM`, and the
+    seconds of a `meal_time` set "now" would turn the same minute into -1.
+    """
+    if meal_time is not None:
+        meal_time = meal_time.replace(second=0, microsecond=0)
+    return auto_offset_minutes(meal_time, eaten_at)
+
+
+def parse_eaten_time(raw_value: str) -> time | None:
+    """Validate an exact time typed as `HH:MM` (code_conventions.md §7.4, §7.5).
+    Empty is None.
+
+    Raises:
+        ValidationError: it is not a valid `HH:MM` time.
+    """
+    text = (raw_value or "").strip()
+    if not text:
+        return None
+    if not re.fullmatch(r"[0-9]{1,2}:[0-9]{2}", text):
+        raise ValidationError("The time must be HH:MM.")
+    hours, minutes = (int(part) for part in text.split(":"))
+    if hours > 23 or minutes > 59:
+        raise ValidationError("The time must be HH:MM.")
+    return time(hours, minutes)
+
+
+def resolve_eaten_at(meal_time: datetime | None, timezone_name: str, eaten_time: time, now: datetime) -> datetime:
+    """The instant of `eaten_time` in the meal's zone closest to `meal_time` (the
+    same day, the day before or the day after, §4.5.1). Without `meal_time`, the
+    closest to `now`."""
+    zone = ZoneInfo(timezone_name)
+    anchor = meal_time or now
+    local_day = anchor.astimezone(zone).date()
+    candidates = [
+        datetime.combine(local_day + timedelta(days=shift), eaten_time, tzinfo=zone)
+        for shift in (-1, 0, 1)
+    ]
+    return min(candidates, key=lambda candidate: abs(candidate - anchor))
+
+
+def eaten_time_text(meal_time: datetime | None, timezone_name: str, eaten_at: datetime | None, offset_minutes: int | None) -> str:
+    """`HH:MM` shown in the time field: the stored time or, to switch to it,
+    `meal_time + offset` (§4.5.1). Empty when neither is known."""
+    zone = ZoneInfo(timezone_name)
+    if eaten_at is not None:
+        return eaten_at.astimezone(zone).strftime("%H:%M")
+    if meal_time is None or offset_minutes is None:
+        return ""
+    return (meal_time + timedelta(minutes=offset_minutes)).astimezone(zone).strftime("%H:%M")
 
 
 def derive_plate_name(ingredient_names: list[str]) -> str:

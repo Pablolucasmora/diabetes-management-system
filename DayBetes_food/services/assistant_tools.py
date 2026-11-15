@@ -2,12 +2,12 @@
 
 What the model can do is exactly this list: search, add to the planned meal of
 its conversation, read that meal, change the fields of that meal the user edits
-in its cart card, and prepare a draft of a new food or recipe, which the user
-reviews and saves in its create form. There is no tool that
-deletes anything, archives or edits a food, dish or recipe, confirms a meal,
-touches a consumed meal, its insulin or the fridge, logs insulin or changes
-settings: the guarantee is that those tools do not exist, not an instruction
-of the prompt.
+in its cart card (its insulin draft included), and prepare a draft of a new
+food, dish or recipe, which the user reviews and saves in its create form.
+There is no tool that deletes anything, archives or edits a food, dish or
+recipe, confirms a meal, touches a consumed meal or the fridge, logs an
+injection outside the meal's draft or changes settings: the guarantee is that
+those tools do not exist, not an instruction of the prompt.
 
 Each tool calls the same queries and services as the equivalent route, with
 the same validation (§7) and the owner in the SQL (§5.3). A wrong input goes
@@ -22,6 +22,11 @@ from datetime import datetime
 from enum import Enum
 
 from DayBetes_food.database.queries import (
+    list_open_insulin_pens,
+    set_event_default_pen,
+    set_event_insulin_pen,
+    set_event_insulin_units,
+    set_injection_zone,
     apply_plate_offset_to_portions,
     create_intake_plate,
     create_portion_detail,
@@ -31,6 +36,7 @@ from DayBetes_food.database.queries import (
     get_manual_intake,
     get_mention_suggestions,
     get_off_product_by_code,
+    get_planned_intake_event,
     get_portion_detail,
     get_recipe,
     link_assistant_conversation_event,
@@ -53,8 +59,12 @@ from DayBetes_food.domain.assistant import (
     TOOL_RESULT_ADDED,
     TOOL_RESULT_CHANGED,
     TOOL_RESULT_DRAFT,
+    MANUAL_INTAKE_DRAFT_SOURCE,
+    RECIPE_DRAFT_SOURCE,
     food_draft_extras,
     food_draft_prefill,
+    manual_intake_draft,
+    MANUAL_DRAFT_MACROS_SOURCES,
     recipe_draft,
     tool_bool,
     tool_id,
@@ -72,12 +82,17 @@ from DayBetes_food.domain.constants import (
     FoodCategory,
     FoodEntryType,
     FoodPhysicalState,
+    GlycemicIndex,
+    InjectionZone,
+    InsulinType,
     MacrosSource,
     MealType,
+    Nutriscore,
     PortionDestination,
     PortionOrigin,
     Ripeness,
 )
+from DayBetes_food.domain.insulin import parse_insulin_units
 from DayBetes_food.domain.intake_event import (
     INTAKE_EVENT_NAME_MAX_LENGTH,
     INTAKE_EVENT_NOTES_MAX_LENGTH,
@@ -113,7 +128,9 @@ from DayBetes_food.services.intake_event import (
     new_plate_offset_minutes,
     plate_event_id,
     portion_event_id,
+    OFFSET_MODE_TIME,
     resolve_event_plate,
+    resolve_offset_input,
     resolve_target_event,
     update_meal_time,
 )
@@ -153,6 +170,18 @@ _OFFSET = {
     "type": ["integer", "null"],
     "description": "Minutes from the meal time to when it was eaten (-300 to 300).",
 }
+_EATEN_TIME = {
+    "type": ["string", "null"],
+    "description": "Clock time HH:MM it was eaten, when the user says a time instead of minutes "
+    "(\"el aperitivo a las 13:30\"). Wins over offset_minutes; the app derives the offset.",
+}
+# Fields of every create form the user fills only when they say them
+# (§8.12, ampliación del 2026-11-15).
+_DRAFT_DETAILS = {
+    "macros_confidence": {"type": ["integer", "null"], "description": "0 low, 1 medium, 2 high."},
+    "default_amount_method": _nullable_enum(AmountMethod, "How the user usually gets its amount."),
+    "favorite": {"type": ["boolean", "null"], "description": "Null keeps the form's default (favorite)."},
+}
 # How it was prepared: only what the user said, else null (§8.12, "Preparación").
 _PREPARATION = {
     "cooking": _nullable_enum(CookingMethod),
@@ -179,8 +208,9 @@ def _schema(properties: dict) -> dict:
 
 def _tool(name: str, description: str, properties: dict, *, strict: bool = True) -> dict:
     """`strict` makes the API guarantee the schema. The API caps the nullable
-    parameters of strict tools at 16 in all, so the two tools with many optional
-    numbers go without it: their handlers check every value anyway (§7)."""
+    parameters of strict tools at 16 in all, so the tools with many optional
+    fields (the drafts, add_estimate and the update_* ones) go without it: their
+    handlers check every value anyway (§7)."""
     return {"name": name, "description": description, "input_schema": _schema(properties), "strict": strict}
 
 
@@ -251,9 +281,9 @@ TOOL_DEFINITIONS = [
     ),
     _tool(
         "show_meal",
-        "Read the meal of this conversation as it is now: its time, type, name and notes, "
-        "and its plates with their foods, with the ids that add_food, update_plate and "
-        "update_food take. The context block already has a summary: use this only when "
+        "Read the meal of this conversation as it is now: its time, type, name, notes and "
+        "whether they ate out, its insulin draft with the open rapid pens, and its plates "
+        "with their foods, with the ids that add_food, update_plate and update_food take. The context block already has a summary: use this only when "
         "you need more.",
         {},
     ),
@@ -268,7 +298,10 @@ TOOL_DEFINITIONS = [
         "source, also fill category, subtype, initial_state and, for foods weighed raw "
         "that change weight when cooked (rice, pasta, legumes, grains), cooking_factor "
         "(cooked/raw weight); serving_g only if the label prints it or the user says it, "
-        "and barcode if you can read it. The user sees a button that opens the form.",
+        "and barcode if you can read it. nutriscore, nova and yuka only if the label prints "
+        "them or the user says them; macros_confidence (0 low, 1 medium, 2 high), "
+        "default_amount_method and favorite only if the user says them. The user sees a "
+        "button that opens the form.",
         {
             "source": {"type": "string", "enum": [source.value for source in AssistantDraftSource]},
             "code": _NULLABLE_TEXT,
@@ -289,6 +322,43 @@ TOOL_DEFINITIONS = [
             "fiber_100g": _NULLABLE_NUMBER,
             "caffeine_mg_100g": _NULLABLE_NUMBER,
             "alcohol_g_100g": _NULLABLE_NUMBER,
+            **_DRAFT_DETAILS,
+            "nutriscore": _nullable_enum(Nutriscore),
+            "nova": _NULLABLE_INTEGER,
+            "yuka": _NULLABLE_INTEGER,
+        },
+        strict=False,
+    ),
+    _tool(
+        "draft_manual_intake",
+        "Prepare a new dish for the user to review and save; you never create dishes. A "
+        "dish is food someone else prepared (a bar, a restaurant, grandma) or anything the "
+        "user calls \"manual\" and wants to keep for next time. Macros per 100 g; name and "
+        "carbs_100g required, an unknown nutrient null, never 0. macros_source: ai_estimate "
+        "when you estimate them, own_estimate when the user gives them, official when they "
+        "come from the place's menu or website, label from a label. origin: who or where "
+        "made it. serving_g: the usual serving. glycemic_index, ig_confidence, "
+        "macros_confidence (0 low, 1 medium, 2 high), default_amount_method and favorite "
+        "only if the user says them. The user sees a button that opens the form.",
+        {
+            "name": {"type": "string"},
+            "description": _NULLABLE_TEXT,
+            "subtype": {"type": ["string", "null"], "description": "Specific kind, e.g. tapa, pizza, stew."},
+            "origin": _NULLABLE_TEXT,
+            "serving_g": _NULLABLE_NUMBER,
+            "calories_100g": _NULLABLE_NUMBER,
+            "carbs_100g": {"type": "number"},
+            "sugars_100g": _NULLABLE_NUMBER,
+            "fats_100g": _NULLABLE_NUMBER,
+            "saturated_100g": _NULLABLE_NUMBER,
+            "proteins_100g": _NULLABLE_NUMBER,
+            "fiber_100g": _NULLABLE_NUMBER,
+            "caffeine_mg_100g": _NULLABLE_NUMBER,
+            "alcohol_g_100g": _NULLABLE_NUMBER,
+            "macros_source": {"type": "string", "enum": [m.value for m in MANUAL_DRAFT_MACROS_SOURCES]},
+            "glycemic_index": _nullable_enum(GlycemicIndex),
+            "ig_confidence": {"type": ["integer", "null"], "description": "0 low, 1 medium, 2 high. Needs glycemic_index."},
+            **_DRAFT_DETAILS,
         },
         strict=False,
     ),
@@ -298,7 +368,7 @@ TOOL_DEFINITIONS = [
         "the meal into courses eaten at different times (\"de primero\", \"de postre a los 20 "
         "minutos\"). Then add its foods with its plate_id. The name is optional: without "
         "one it takes the names of its foods.",
-        {"name": _NULLABLE_TEXT, "offset_minutes": _OFFSET},
+        {"name": _NULLABLE_TEXT, "offset_minutes": _OFFSET, "eaten_time": _EATEN_TIME},
     ),
     _tool(
         "update_meal",
@@ -311,6 +381,23 @@ TOOL_DEFINITIONS = [
             "meal_type": _nullable_enum(MealType),
             "name": _NULLABLE_TEXT,
             "notes": _NULLABLE_TEXT,
+            "eating_out": {"type": ["boolean", "null"], "description": "True when the user ate out (bar, restaurant, someone else's home)."},
+        },
+        strict=False,
+    ),
+    _tool(
+        "update_insulin",
+        "Write down the insulin of the meal of this conversation, only what the user says "
+        "they injected or will inject: the dose in units, the injection zone and the pen "
+        "(pen_id from show_meal's open_rapid_pens; the meal already has the default pen). "
+        "insulin false when the user says this meal has no insulin. Never suggest, "
+        "calculate or correct a dose, and never fill one the user did not say. The user "
+        "checks it before confirming the meal.",
+        {
+            "insulin": {"type": ["boolean", "null"], "description": "Whether this meal carries a bolus."},
+            "units": {"type": ["number", "null"], "description": "Dose in U, steps of 0.5, exactly as said."},
+            "zone": _nullable_enum(InjectionZone),
+            "pen_id": _NULLABLE_INTEGER,
         },
         strict=False,
     ),
@@ -323,6 +410,7 @@ TOOL_DEFINITIONS = [
             "plate_id": {"type": "integer"},
             "name": _NULLABLE_TEXT,
             "offset_minutes": _OFFSET,
+            "eaten_time": _EATEN_TIME,
             "apply_to_foods": _NULLABLE_BOOLEAN,
         },
         strict=False,
@@ -337,6 +425,7 @@ TOOL_DEFINITIONS = [
             "grams": _NULLABLE_NUMBER,
             "amount_method": _nullable_enum(AmountMethod),
             "offset_minutes": _OFFSET,
+            "eaten_time": _EATEN_TIME,
             **_PREPARATION,
         },
         strict=False,
@@ -410,6 +499,7 @@ TOOL_DEFINITIONS = [
                     "required": ["ingredients"],
                 },
             },
+            "favorite": _DRAFT_DETAILS["favorite"],
         },
         strict=False,
     ),
@@ -710,7 +800,7 @@ def _add_estimate(ctx: ToolContext, tool_input: dict) -> dict:
 def _show_meal(ctx: ToolContext, tool_input: dict) -> dict:
     if ctx.event_id is None:
         return {"plates": [], "note": "The meal is empty: nothing has been added yet."}
-    event = get_intake_event(ctx.connection, ctx.user_id, ctx.event_id)
+    event = get_intake_event(ctx.connection, ctx.user_id, _meal_event(ctx))
     if event is None:
         raise NotFoundError("intake_event_not_found")
     when = to_local(event.meal_time) if event.meal_time else None
@@ -730,6 +820,7 @@ def _show_meal(ctx: ToolContext, tool_input: dict) -> dict:
                         "carbs_g": _round(carbs),
                         "amount_method": portion.amount_method.value if portion.amount_method else None,
                         "offset_minutes": portion.offset_minutes,
+                        "eaten_time": f"{to_local(portion.eaten_at):%H:%M}" if portion.eaten_at else None,
                         "cooking": portion.cooking.value if portion.cooking else None,
                         "final_state": portion.final_state.value if portion.final_state else None,
                         "conservation": portion.conservation.value if portion.conservation else None,
@@ -740,7 +831,13 @@ def _show_meal(ctx: ToolContext, tool_input: dict) -> dict:
             )
         plates.append(
             _compact(
-                {"plate_id": plate.id, "name": plate.name, "offset_minutes": plate.offset_minutes, "foods": foods}
+                {
+                    "plate_id": plate.id,
+                    "name": plate.name,
+                    "offset_minutes": plate.offset_minutes,
+                    "eaten_time": f"{to_local(plate.eaten_at):%H:%M}" if plate.eaten_at else None,
+                    "foods": foods,
+                }
             )
         )
     return {
@@ -751,8 +848,21 @@ def _show_meal(ctx: ToolContext, tool_input: dict) -> dict:
                 "meal_type": event.meal_type.value if event.meal_type else None,
                 "name": event.name,
                 "notes": event.notes,
+                "eating_out": event.eating_out,
             }
         ),
+        "insulin": _compact(
+            {
+                "insulin": event.insulin_dose,
+                "units": event.insulin_units,
+                "zone": event.injection_zone.value if event.injection_zone else None,
+                "pen_id": event.insulin_pen_id,
+            }
+        ),
+        "open_rapid_pens": [
+            {"pen_id": pen.id, "brand": pen.brand_name, "format": pen.format.value}
+            for pen in list_open_insulin_pens(ctx.connection, ctx.user_id, InsulinType.RAPID)
+        ],
         "plates": plates,
     }
 
@@ -761,23 +871,59 @@ def _offset_text(minutes: int) -> str:
     return f"{minutes:+d} min"
 
 
+def _tool_offset(ctx: ToolContext, event_id: int, tool_input: dict) -> tuple[bool, int | None, datetime | None]:
+    """`(given, offset_minutes, eaten_at)` of a tool call: `eaten_time` (`HH:MM`)
+    wins over `offset_minutes` and stores the exact time with its derived offset
+    (measurement_conventions.md §4.5.1)."""
+    raw_time = tool_input.get("eaten_time")
+    if raw_time is not None:
+        if not isinstance(raw_time, str):
+            raise ToolInputError("eaten_time must be HH:MM.")
+        event = get_intake_event(ctx.connection, ctx.user_id, event_id)
+        if event is None:
+            raise NotFoundError("intake_event_not_found")
+        try:
+            offset, eaten_at = resolve_offset_input(event, OFFSET_MODE_TIME, "", raw_time)
+        except ValidationError as error:
+            raise ToolInputError(str(error)) from error
+        return eaten_at is not None, offset, eaten_at
+    offset = check_offset_minutes(tool_int(tool_input.get("offset_minutes"), "offset_minutes"))
+    return offset is not None, offset, None
+
+
+def _offset_change_text(offset: int | None, eaten_at: datetime | None) -> str:
+    if eaten_at is None:
+        return _offset_text(offset)
+    shown = f"at {to_local(eaten_at):%H:%M}"
+    return f"{shown} ({_offset_text(offset)})" if offset is not None else f"{shown} (out of range)"
+
+
 def _meal_event(ctx: ToolContext) -> int:
-    """The meal the edits act on: the conversation's, which must exist."""
+    """The meal the edits act on: the conversation's, which must exist and still be
+    planned. Checked on every call, not only when the message arrives: the user can
+    confirm the meal in the cart while the model answers, and the assistant never
+    touches a consumed meal (§8.12).
+
+    Raises:
+        ToolInputError: the conversation has no meal yet.
+        ConflictError: the meal was confirmed meanwhile.
+        NotFoundError: the meal was deleted meanwhile.
+    """
     if ctx.event_id is None:
         raise ToolInputError("The meal is empty: there is nothing to change yet.")
-    return ctx.event_id
+    return get_planned_intake_event(ctx.connection, ctx.user_id, ctx.event_id)
 
 
 def _add_plate(ctx: ToolContext, tool_input: dict) -> dict:
     name = tool_text(tool_input.get("name"), "name", max_length=INTAKE_PLATE_NAME_MAX_LENGTH)
-    offset_minutes = check_offset_minutes(tool_int(tool_input.get("offset_minutes"), "offset_minutes"))
     event_id = ctx.target_event()
+    given, offset_minutes, eaten_at = _tool_offset(ctx, event_id, tool_input)
     plate_id = create_intake_plate(
         ctx.connection,
-        IntakePlateCreate(intake_event_id=event_id, name=name, offset_minutes=offset_minutes),
+        IntakePlateCreate(intake_event_id=event_id, name=name, offset_minutes=offset_minutes, eaten_at=eaten_at),
         commit=False,
     )
-    detail = ", ".join(part for part in (name, _offset_text(offset_minutes) if offset_minutes is not None else None) if part)
+    detail = ", ".join(part for part in (name, _offset_change_text(offset_minutes, eaten_at) if given else None) if part)
     return {"plate_id": plate_id, TOOL_RESULT_CHANGED: ["New plate" + (f": {detail}" if detail else "")]}
 
 
@@ -786,6 +932,7 @@ def _update_meal(ctx: ToolContext, tool_input: dict) -> dict:
     raw_date, raw_time = tool_input.get("date"), tool_input.get("time")
     meal_type = MealType(tool_input["meal_type"]) if tool_input.get("meal_type") is not None else None
     name = tool_text(tool_input.get("name"), "name", max_length=INTAKE_EVENT_NAME_MAX_LENGTH)
+    eating_out = tool_bool(tool_input.get("eating_out"), "eating_out")
     notes = tool_input.get("notes")
     if notes is not None:
         if not isinstance(notes, str):
@@ -821,8 +968,63 @@ def _update_meal(ctx: ToolContext, tool_input: dict) -> dict:
     if notes is not None:
         update_intake_event_notes(ctx.connection, ctx.user_id, event_id, notes, commit=False)
         changed.append("Meal notes")
+    if eating_out is not None:
+        update_intake_event(
+            ctx.connection, user_id=ctx.user_id, event_id=event_id, data=IntakeEventUpdate(eating_out=eating_out), commit=False
+        )
+        changed.append("Eating out" if eating_out else "Not eating out")
     if not changed:
         raise ToolInputError("Nothing to change: give at least one field.")
+    return {TOOL_RESULT_CHANGED: changed}
+
+
+def _update_insulin(ctx: ToolContext, tool_input: dict) -> dict:
+    """The bolus draft of the meal, as the cart writes it (code_conventions.md
+    §8.12, "Insulina"): only what the user said, and the user confirms it with the
+    meal. A dose, zone or pen turns the meal's insulin on unless `insulin` is false."""
+    event_id = _meal_event(ctx)
+    insulin = tool_bool(tool_input.get("insulin"), "insulin")
+    try:
+        units = parse_insulin_units(tool_input.get("units")) if tool_input.get("units") is not None else None
+    except ValidationError as error:
+        raise ToolInputError(str(error)) from error
+    zone = InjectionZone(tool_input["zone"]) if tool_input.get("zone") is not None else None
+    pen_id = tool_id(tool_input.get("pen_id"), "pen_id") if tool_input.get("pen_id") is not None else None
+    has_bolus_data = units is not None or zone is not None or pen_id is not None
+    if insulin is False and has_bolus_data:
+        raise ToolInputError("A meal without insulin has no dose, zone or pen.")
+    if insulin is None and has_bolus_data:
+        insulin = True
+    if insulin is None:
+        raise ToolInputError("Nothing to change: give insulin, units, zone or pen_id.")
+
+    changed = []
+    event = get_intake_event(ctx.connection, ctx.user_id, event_id)
+    if event is None:
+        raise NotFoundError("intake_event_not_found")
+    if insulin != event.insulin_dose:
+        update_intake_event(
+            ctx.connection, user_id=ctx.user_id, event_id=event_id, data=IntakeEventUpdate(insulin_dose=insulin), commit=False
+        )
+        changed.append("Insulin: yes" if insulin else "Insulin: no")
+    if insulin:
+        set_event_default_pen(ctx.connection, ctx.user_id, event_id, commit=False)
+    try:
+        if units is not None:
+            set_event_insulin_units(ctx.connection, ctx.user_id, event_id, units, commit=False)
+            changed.append(f"Dose: {units:g} U")
+        if zone is not None:
+            set_injection_zone(ctx.connection, user_id=ctx.user_id, intake_event_id=event_id, zone=zone, commit=False)
+            changed.append(f"Zone: {zone.value.replace('_', ' ')}")
+        if pen_id is not None:
+            set_event_insulin_pen(ctx.connection, ctx.user_id, event_id, pen_id, commit=False)
+            changed.append("Pen chosen")
+    except ValidationError as error:
+        raise ToolInputError(str(error)) from error
+    except NotFoundError as error:
+        raise ToolInputError("That pen is not an open rapid pen of the user: see show_meal.") from error
+    if not changed:
+        return {"note": "Nothing changed: the meal already had that."}
     return {TOOL_RESULT_CHANGED: changed}
 
 
@@ -835,20 +1037,23 @@ def _update_plate(ctx: ToolContext, tool_input: dict) -> dict:
     except NotFoundError as error:
         raise ToolInputError(f"There is no plate {plate_id} in this meal.") from error
     name = tool_text(tool_input.get("name"), "name", max_length=INTAKE_PLATE_NAME_MAX_LENGTH)
-    offset_minutes = check_offset_minutes(tool_int(tool_input.get("offset_minutes"), "offset_minutes"))
+    given, offset_minutes, eaten_at = _tool_offset(ctx, event_id, tool_input)
     apply_to_foods = bool(tool_bool(tool_input.get("apply_to_foods"), "apply_to_foods"))
     changed = []
     if name is not None:
         update_intake_plate_name(ctx.connection, plate_id, name, commit=False)
         changed.append(f"Plate name: {name}")
-    if offset_minutes is not None:
+    if given:
+        shown = _offset_change_text(offset_minutes, eaten_at)
         if apply_to_foods:
-            if not apply_plate_offset_to_portions(ctx.connection, plate_id, offset_minutes, commit=False):
+            if not apply_plate_offset_to_portions(
+                ctx.connection, plate_id, offset_minutes, eaten_at=eaten_at, commit=False
+            ):
                 raise NotFoundError("intake_plate_not_found")
-            changed.append(f"Plate offset: {_offset_text(offset_minutes)}, applied to its foods")
+            changed.append(f"Plate offset: {shown}, applied to its foods")
         else:
-            update_intake_plate_offset(ctx.connection, plate_id, offset_minutes, commit=False)
-            changed.append(f"Plate offset: {_offset_text(offset_minutes)}, for the foods added next")
+            update_intake_plate_offset(ctx.connection, plate_id, offset_minutes, eaten_at=eaten_at, commit=False)
+            changed.append(f"Plate offset: {shown}, for the foods added next")
     if not changed:
         raise ToolInputError("Nothing to change: give a name or an offset.")
     return {TOOL_RESULT_CHANGED: changed}
@@ -867,7 +1072,7 @@ def _update_food(ctx: ToolContext, tool_input: dict) -> dict:
     amount_method = (
         AmountMethod(tool_input["amount_method"]) if tool_input.get("amount_method") is not None else None
     )
-    offset_minutes = check_offset_minutes(tool_int(tool_input.get("offset_minutes"), "offset_minutes"))
+    offset_given, offset_minutes, eaten_at = _tool_offset(ctx, event_id, tool_input)
     is_cooked_weight = tool_bool(tool_input.get("is_cooked_weight"), "is_cooked_weight")
     preparation = _preparation(tool_input)
     if is_cooked_weight is not None:
@@ -882,9 +1087,9 @@ def _update_food(ctx: ToolContext, tool_input: dict) -> dict:
     if amount_method is not None:
         update_portion_flag(ctx.connection, ctx.user_id, portion_id, "amount_method", amount_method.value, commit=False)
         changed.append(f"amount from {amount_method.value.replace('_', ' ')}")
-    if offset_minutes is not None:
-        update_portion_offset(ctx.connection, ctx.user_id, portion_id, offset_minutes, commit=False)
-        changed.append(f"offset {_offset_text(offset_minutes)}")
+    if offset_given:
+        update_portion_offset(ctx.connection, ctx.user_id, portion_id, offset_minutes, eaten_at=eaten_at, commit=False)
+        changed.append(f"offset {_offset_change_text(offset_minutes, eaten_at)}")
     # Last: these two are part of the row's key and can merge it into an equal row
     # of the same plate (measurement_conventions.md §4.6.4).
     if is_cooked_weight is not None and is_cooked_weight != portion.is_cooked_weight:
@@ -939,6 +1144,18 @@ def _draft_new_food(ctx: ToolContext, tool_input: dict) -> dict:
     return {TOOL_RESULT_DRAFT: draft, "note": "The user will review and save it, then come back."}
 
 
+def _draft_manual_intake(ctx: ToolContext, tool_input: dict) -> dict:
+    try:
+        # Checked now so the model can fix it; the form reads it again (§7.13).
+        draft = manual_intake_draft(tool_input)
+    except ValidationError as error:
+        raise ToolInputError(str(error)) from error
+    return {
+        TOOL_RESULT_DRAFT: {"source": MANUAL_INTAKE_DRAFT_SOURCE, "name": draft.name},
+        "note": "The user will review and save it, then come back.",
+    }
+
+
 def _draft_recipe(ctx: ToolContext, tool_input: dict) -> dict:
     try:
         # Checked now so the model can fix it; the form reads it again (§7.13).
@@ -949,7 +1166,7 @@ def _draft_recipe(ctx: ToolContext, tool_input: dict) -> dict:
     except ValidationError as error:
         raise ToolInputError(str(error)) from error
     return {
-        TOOL_RESULT_DRAFT: {"source": "recipe", "name": draft.name, "ingredients": draft.ingredient_count},
+        TOOL_RESULT_DRAFT: {"source": RECIPE_DRAFT_SOURCE, "name": draft.name, "ingredients": draft.ingredient_count},
         "note": "The user will review and save it in the recipe form.",
     }
 
@@ -962,8 +1179,10 @@ _HANDLERS = {
     "add_estimate": _add_estimate,
     "show_meal": _show_meal,
     "draft_new_food": _draft_new_food,
+    "draft_manual_intake": _draft_manual_intake,
     "add_plate": _add_plate,
     "update_meal": _update_meal,
+    "update_insulin": _update_insulin,
     "update_plate": _update_plate,
     "update_food": _update_food,
     "draft_recipe": _draft_recipe,

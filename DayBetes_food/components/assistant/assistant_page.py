@@ -14,6 +14,8 @@ from DayBetes_food.components.food.rescue import carbs_meta
 from DayBetes_food.components.modal import MODAL_NAME_CLS
 from DayBetes_food.components.navigation import back_js
 from DayBetes_food.domain.assistant import (
+    MANUAL_INTAKE_DRAFT_SOURCE,
+    RECIPE_DRAFT_SOURCE,
     ASSISTANT_TEXT_MAX_LENGTH,
     NO_MEAL_CHOICE,
     AddedCard,
@@ -271,14 +273,22 @@ def _changed_card(lines: list[str]):
     )
 
 
-# A recipe draft's card (frontend §9.11): its tool result says `source` "recipe".
-RECIPE_DRAFT_SOURCE = "recipe"
+# The create form of each kind of draft (frontend §9.11): a recipe and a dish say
+# so in their tool result's `source`; any other source is a catalog food.
+_DRAFT_FORM_PATHS = {
+    RECIPE_DRAFT_SOURCE: "/food/create/recipe/form",
+    MANUAL_INTAKE_DRAFT_SOURCE: "/food/create/manual_intake/form",
+}
+_DRAFT_TITLES = {
+    RECIPE_DRAFT_SOURCE: "New recipe to review",
+    MANUAL_INTAKE_DRAFT_SOURCE: "New dish to review",
+}
 
 
 def draft_form_url(card: DraftCard, conversation_id: int) -> str:
     """The create form prefilled with a draft (§9.11). The form reads the draft from
     its stored tool call; saving a food comes back here."""
-    path = "/food/create/recipe/form" if card.source == RECIPE_DRAFT_SOURCE else "/food/create/catalog/form"
+    path = _DRAFT_FORM_PATHS.get(card.source, "/food/create/catalog/form")
     query = urlencode(
         {
             "assistant_message": card.message_id,
@@ -301,11 +311,13 @@ def _draft_subtitle(card: DraftCard) -> str:
     if card.source == RECIPE_DRAFT_SOURCE:
         count = card.ingredients or 0
         return f"{count} ingredient{'s' if count != 1 else ''}"
+    if card.source == MANUAL_INTAKE_DRAFT_SOURCE:
+        return "Dish proposed by the assistant"
     return _DRAFT_SOURCE_LABELS.get(card.source, "")
 
 
 def _draft_card(card: DraftCard, conversation_id: int):
-    title = "New recipe to review" if card.source == RECIPE_DRAFT_SOURCE else "New food to review"
+    title = _DRAFT_TITLES.get(card.source, "New food to review")
     return Div(
         Div(
             Span(title, cls="web_section_label"),

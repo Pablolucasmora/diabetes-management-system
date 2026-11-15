@@ -903,6 +903,7 @@ class DBSchema:
         offset_minutes INTEGER
             CONSTRAINT ck_intake_plate_offset_minutes
             CHECK (offset_minutes IS NULL OR (offset_minutes >= -300 AND offset_minutes <= 300)), -- Template inherited by the portions added to this plate, not a clinical value; same sanity range as portion_detail.offset_minutes (measurement_conventions.md 4.5, 4.6.2)
+        eaten_at TIMESTAMPTZ, -- Exact-time template the offset was written as; NULL = written in minutes. Inherited with the offset (measurement_conventions.md 4.5.1)
 
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -997,13 +998,16 @@ class DBSchema:
         is_cooked_weight BOOLEAN DEFAULT FALSE, -- If the food was weighed already cooked, catalog.cooking_factor back-calculates the raw weight ONLY inside the macro calculation; `amount` always keeps what the user weighed and is never overwritten (measurement_conventions.md 5.2, decision 2026-09-18). Only for catalog origins.
         offset_minutes INTEGER
             CONSTRAINT ck_portion_detail_offset_minutes
-            CHECK (offset_minutes IS NULL OR (offset_minutes >= -300 AND offset_minutes <= 300)), -- Minutes between the event's meal_time and the moment this food is eaten. Literal value, never recalculated (measurement_conventions.md 4.5); inherited from its plate on insert (4.6.2).
+            CHECK (offset_minutes IS NULL OR (offset_minutes >= -300 AND offset_minutes <= 300)), -- Minutes between the event's meal_time and the moment this food is eaten. Literal value, never recalculated (measurement_conventions.md 4.5); inherited from its plate on insert (4.6.2). Derived from eaten_at when the portion has one (4.5.1).
+        eaten_at TIMESTAMPTZ, -- Exact time this food was eaten, when the offset was written as a time; NULL = written in minutes. offset_minutes = eaten_at - meal_time, NULL out of range (measurement_conventions.md 4.5.1)
 
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
         CONSTRAINT ck_portion_detail_offset_only_for_event
             CHECK (offset_minutes IS NULL OR intake_event_id IS NOT NULL),
+        CONSTRAINT ck_portion_detail_eaten_at_only_for_event
+            CHECK (eaten_at IS NULL OR intake_event_id IS NOT NULL),
         CONSTRAINT ck_portion_detail_ripeness_event
             CHECK (ripeness IS NULL OR intake_event_id IS NOT NULL)
     );

@@ -152,11 +152,24 @@ desde esa misma decisión—, no se deja a cero. Constraint:
 
 `portion_detail.offset_minutes` es el momento en que ese ingrediente se consume menos el `meal_time` del evento, en minutos, **guardado como entero literal** y fijado al crear la porción. Es positivo si el ingrediente se come después de `meal_time` y negativo si se come antes.
 
-- **No se recalcula nunca** cuando cambia el `meal_time` del evento. El offset es un dato propio de la porción, no una función del `meal_time`: el análisis obtiene la hora real sumándolo al `meal_time` vigente en ese momento (`meal_time + offset_minutes`), de modo que si la hora del evento cambia, el resultado se mueve con ella. Hasta el 2026-10-25 este párrafo decía "restándolo", con el signo contrario al del código (`routes/food_routes.py`, `_event_auto_offset_minutes`).
+- **No se recalcula nunca** cuando cambia el `meal_time` del evento, salvo en una porción con hora exacta (§4.5.1). El offset es un dato propio de la porción, no una función del `meal_time`: el análisis obtiene la hora real sumándolo al `meal_time` vigente en ese momento (`meal_time + offset_minutes`), de modo que si la hora del evento cambia, el resultado se mueve con ella. Hasta el 2026-10-25 este párrafo decía "restándolo", con el signo contrario al del código (`routes/food_routes.py`, `_event_auto_offset_minutes`).
 - Admite valores negativos y positivos. Rango: `-300 <= offset_minutes <= 300`, con `CHECK`. Es una cota de cordura para que un valor corrupto no pase por plausible, no una frontera de negocio.
 - **Admite `NULL`, que significa desconocido** (decisión 2026-11-05). El análisis no lo trata como `0`. El usuario puede vaciar en el carrito el offset de una tanda o de un ingrediente, y `Apply all` con el campo vacío vacía los de toda la tanda.
 - **Offset automático fuera de rango** (decisión 2026-11-05). Si la diferencia entre `meal_time` y el instante de añadir queda fuera de `-300..300`, en cualquiera de los dos sentidos, la tanda nace con `NULL`, sin recortarlo ni rechazar la petición: no se sabe cuándo se come, y `±300` sería un dato inventado. Se calcula en un solo sitio, `auto_offset_minutes` (`domain/intake_plate.py`). Dentro del rango se sigue guardando, también si es negativo, como una comida planificada para más tarde.
 - El valor de cada porción **se hereda de la tanda** a la que se añade (§4.6.2), pero una vez escrito es independiente de ella: `intake_plate.offset_minutes` es una plantilla, no un dato clínico.
+
+#### 4.5.1 Hora exacta (decisión del usuario del 2026-11-15)
+
+El caso que lo motiva: un aperitivo a las 13:30 antes de una comida cuya hora todavía no se sabe. En minutos no se puede escribir, porque depende de un `meal_time` desconocido, y cuando se sabe ya no se recuerda la hora del aperitivo.
+
+- El offset de una tanda o de un ingrediente se escribe **en minutos o como hora exacta**, y el usuario alterna entre las dos formas en la cabecera de la tanda y en el pop-up `Adjust` del ingrediente (`frontend_conventions.md` §7).
+- La hora se guarda en `eaten_at` (`TIMESTAMPTZ`, `NULL` = el offset se escribió en minutos), en `portion_detail` y como plantilla en `intake_plate`. Solo existe en porciones de una comida, como el offset.
+- Con hora, `offset_minutes` se guarda **también**, calculado como `eaten_at − meal_time` en minutos enteros, con `meal_time` truncado al minuto (la hora se escribe sin segundos) y redondeo hacia abajo, como `auto_offset_minutes`. El análisis sigue leyendo solo `offset_minutes` (§4.6.2).
+- **Excepción a "no se recalcula nunca":** cuando cambia el `meal_time` de la comida, cada porción y tanda con hora conserva su hora local (`HH:MM`), se vuelve a situar en el día más cercano al nuevo `meal_time` (regla de abajo) y su offset se recalcula. Así, el aperitivo de las 13:30 sigue a las 13:30 si la comida pasa de las 00:44 a las 14:00, en vez de quedarse en el día anterior. La hora es el dato; el entero se deriva de ella. Las porciones sin hora no cambian.
+- **Fuera de rango:** si la diferencia queda fuera de `-300..300`, `offset_minutes` es `NULL` y la hora se conserva. Si después cambia `meal_time` y entra en el rango, el offset se rellena.
+- La hora se escribe como `HH:MM` en la zona de la comida (`timezone_at_event`) y se resuelve al instante con esa hora **más cercano a `meal_time`** (el mismo día, el anterior o el siguiente), para que una cena a las 00:30 y un aperitivo a las 23:45 queden en días distintos.
+- **Alternar:** pasar a minutos borra la hora y deja el entero vigente, que vuelve a ser literal. Pasar a hora propone `meal_time + offset_minutes` como hora inicial y la guarda; sin offset, el campo empieza vacío.
+- **Herencia y `Apply all`:** una porción nueva hereda la hora de su tanda junto con el offset, y `Apply all` escribe los dos en todas las porciones de la tanda. Una porción que nace de otra (la nevera, §4.6.4) copia los dos.
 
 ### 4.6 Tandas (platos) dentro de un evento (decisión 2026-09-19)
 
@@ -170,6 +183,7 @@ intake_plate
   intake_event_id  -> intake_event  ON DELETE CASCADE
   name             VARCHAR(255)   -- NULL = nombre derivado (4.6.3)
   offset_minutes   INTEGER        -- plantilla heredada por las filas nuevas (4.6.2)
+  eaten_at         TIMESTAMPTZ    -- plantilla de hora exacta; NULL = offset en minutos (4.5.1)
   created_at / updated_at
 
 portion_detail
@@ -184,7 +198,7 @@ La tabla **no tiene columna de posición**. El orden de las tandas dentro de un 
 
 #### 4.6.2 Qué offset es el válido
 
-`portion_detail.offset_minutes` (§4.5) sigue siendo **el único valor autoritativo**: es el que describe cuándo se comió ese alimento concreto y el que usa el análisis. Conserva la semántica de la decisión del 2026-09-18 — entero literal, fijado al insertar, nunca recalculado, rango `-300..300`.
+`portion_detail.offset_minutes` (§4.5) sigue siendo **el único valor autoritativo**: es el que describe cuándo se comió ese alimento concreto y el que usa el análisis. Conserva la semántica de la decisión del 2026-09-18 — entero literal, fijado al insertar, nunca recalculado, rango `-300..300` —, salvo en las porciones con hora exacta, donde se deriva de ella (§4.5.1).
 
 `intake_plate.offset_minutes` **no es un dato clínico**, es una plantilla:
 

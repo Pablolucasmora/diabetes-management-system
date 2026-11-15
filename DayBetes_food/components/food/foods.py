@@ -1771,7 +1771,7 @@ def CreateCatalogPage(
         _pv(k, "").strip()
         for k in (
             "initial_state", "nutriscore", "nova", "yuka", "caffeine", "alcohol", "barcode", "cooking_factor",
-            "macros_source",
+            "macros_source", "macros_confidence", "default_amount_method",
         )
     )
     notices = Div(
@@ -1918,12 +1918,12 @@ def CreateCatalogPage(
             _form_subgroup(
                 "Data quality",
                 _macros_source_select(_pv("macros_source") or None),
-                _macros_confidence_select(None),
-                _amount_method_default_select(None),
+                _macros_confidence_select(int(_pv("macros_confidence")) if _pv("macros_confidence") else None),
+                _amount_method_default_select(_pv("default_amount_method") or None),
             ),
             open_=details_open,
         ),
-        _favorite_row(),
+        _favorite_row(data.get("favorite", True) is not False),
         _form_submit("Create food"),
         hx_post="/food/create/catalog",
         hx_target=f"#{result_id}",
@@ -1997,30 +1997,59 @@ def _manual_origin_input(origin_options: list[str] | None, value: str | None = N
 def CreateManualPage(
     subtype_options: list[str] | None = None,
     origin_options: list[str] | None = None,
+    prefill: dict | None = None,
+    return_to_assistant: int | None = None,
+    draft_key: str | None = None,
 ):
-    """Reusable dish (code_conventions.md §11.2.3): name and carbs required."""
+    """Reusable dish (code_conventions.md §11.2.3): name and carbs required.
+
+    With `prefill`, a dish draft of the assistant (§8.12, frontend §9.11): its
+    values are shown for review, `return_to_assistant` sends the save back to the
+    conversation and `draft_key` gives it its own browser draft (§7.14)."""
     result_id = "create_manual_result_page"
+    data = prefill or {}
+
+    def _pv(key: str) -> str:
+        value = data.get(key)
+        return "" if value is None else str(value)
+
+    details_open = any(
+        _pv(key) for key in (
+            "description", "glycemic_index", "ig_confidence", "caffeine", "alcohol",
+            "macros_source", "macros_confidence", "default_amount_method",
+        )
+    )
+    note = data.get("assistant_note")
     form = Form(
-        _form_header("New dish", _name_title_input("", "Name of the dish", MANUAL_INTAKE_NAME_MAX_LENGTH)),
+        _form_header("New dish", _name_title_input(_pv("name"), "Name of the dish", MANUAL_INTAKE_NAME_MAX_LENGTH)),
+        *(
+            [Input(type="hidden", name="return_to_assistant", value=str(return_to_assistant))]
+            if return_to_assistant
+            else []
+        ),
+        Div(P(note, cls="text-xs text-gray-700"), cls="web_container w-full px-4 py-3") if note else None,
         _form_section(
             "About the dish",
-            _manual_origin_input(origin_options),
+            _manual_origin_input(origin_options, _pv("origin") or None),
             _searchable_autocomplete_input(
                 "Subtype",
                 "subtype",
                 subtype_options or [],
                 help_text="Specific subtype. Optional.",
                 allow_add=True,
+                value=_pv("subtype") or None,
                 maxlength=FOOD_SUBTYPE_MAX_LENGTH,
+                added=bool(data.get("subtype_is_new")),
             ),
             step=1,
         ),
         _form_section(
             "Nutrition",
             _nutrient_mode_select("manual"),
-            _manual_portion_input(),
+            _manual_portion_input(_pv("default_portion") or None),
             _smart_macros_block(
                 "manual",
+                prefill=data,
                 label="Macros per 100 g",
                 label_total="Macros of one serving",
             ),
@@ -2030,37 +2059,38 @@ def CreateManualPage(
         _optional_section(
             "More details",
             "Description, glycemic response, caffeine, data quality",
-            _form_subgroup("Description", _manual_description_input(), cols=1),
+            _form_subgroup("Description", _manual_description_input(_pv("description")), cols=1),
             _form_subgroup(
                 "Glycemic response",
-                _glycemic_index_select(None),
+                _glycemic_index_select(_pv("glycemic_index") or None),
                 _confidence_select(
                     "IG confidence",
                     "ig_confidence",
-                    None,
+                    data.get("ig_confidence"),
                     "How sure you are about the glycemic index. Needs a glycemic index.",
                 ),
             ),
             _form_subgroup(
                 "Other nutrients",
-                _manual_nutrient_input("Caffeine (mg/100 g)", "Caffeine (mg in total)", "caffeine"),
-                _manual_nutrient_input("Alcohol (g/100 g)", "Alcohol (g in total)", "alcohol"),
+                _manual_nutrient_input("Caffeine (mg/100 g)", "Caffeine (mg in total)", "caffeine", _pv("caffeine") or None),
+                _manual_nutrient_input("Alcohol (g/100 g)", "Alcohol (g in total)", "alcohol", _pv("alcohol") or None),
             ),
             _form_subgroup(
                 "Data quality",
-                _macros_source_select(None),
-                _macros_confidence_select(None),
-                _amount_method_default_select(None),
+                _macros_source_select(_pv("macros_source") or None),
+                _macros_confidence_select(data.get("macros_confidence")),
+                _amount_method_default_select(_pv("default_amount_method") or None),
             ),
+            open_=details_open,
         ),
-        _favorite_row(),
+        _favorite_row(data.get("favorite", True) is not False),
         _form_submit("Create dish"),
         Script(src=asset_busted("/js/manual_intake_form.js"), defer="defer"),
         hx_post="/food/create/manual_intake",
         hx_target=f"#{result_id}",
         hx_swap="innerHTML",
         hx_push_url="false",
-        data_draft_key="food_form_create_manual_page",
+        data_draft_key=f"food_form_create_manual_page::{draft_key}" if draft_key else "food_form_create_manual_page",
         cls="flex flex-col gap-4 w-full",
     )
     return _form_page_shell(form, result_id, Script(src=asset_busted("/js/smart_macros.js"), defer="defer"))
@@ -2188,6 +2218,7 @@ class RecipeDraftForm:
     servings: str
     notes: str
     plates: tuple  # (plate name or None, tuple[RecipeDraftLine, ...])
+    favorite: bool = True
 
 
 def _recipe_draft_line(line: RecipeDraftLine):
@@ -2276,7 +2307,7 @@ def CreateRecipePage(draft: RecipeDraftForm | None = None, return_to_assistant: 
             hint="" if draft else "You add the ingredients on the next screen.",
         ),
         _recipe_draft_section(draft) if draft else None,
-        _favorite_row(),
+        _favorite_row(draft.favorite if draft else True),
         _form_submit("Create recipe"),
         hx_post="/food/create/recipe",
         hx_target=f"#{result_id}",

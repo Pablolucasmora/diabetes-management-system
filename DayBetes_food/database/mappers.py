@@ -360,7 +360,8 @@ def intake_plate_read_from_row(row: dict) -> IntakePlateRead:
 
     Required columns: id, intake_event_id, created_at, updated_at.
     Nullable columns: name (NULL = derived name, measurement §4.6.3) and
-    offset_minutes (NULL = the plate has no offset template yet).
+    offset_minutes (NULL = the plate has no offset template yet) and eaten_at
+    (NULL = the offset was written in minutes, measurement §4.5.1).
     """
     try:
         return IntakePlateRead(
@@ -368,6 +369,7 @@ def intake_plate_read_from_row(row: dict) -> IntakePlateRead:
             intake_event_id=int(row["intake_event_id"]),
             name=row.get("name"),
             offset_minutes=row.get("offset_minutes"),
+            eaten_at=row.get("eaten_at"),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -470,6 +472,7 @@ def portion_detail_read_from_row(row: dict) -> PortionDetailRead:
             amount_method=_enum_from_row(row, "amount_method", AmountMethod),
             is_cooked_weight=bool(row.get("is_cooked_weight")),
             offset_minutes=row.get("offset_minutes"),
+            eaten_at=row.get("eaten_at"),
             source_fridge_id=row.get("source_fridge_id"),
             created_at=row["created_at"],
             updated_at=row["updated_at"],

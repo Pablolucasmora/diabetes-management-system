@@ -47,6 +47,7 @@ from DayBetes_food.domain.intake_event import (
 from DayBetes_food.domain.intake_plate import (
     INTAKE_PLATE_NAME_MAX_LENGTH,
     derive_plate_name,
+    eaten_time_text,
 )
 from DayBetes_food.components.modal import (
     close_modal_js,
@@ -476,6 +477,87 @@ def plate_display_name(plate, plate_portions) -> str:
     return derive_plate_name([portion_name(portion) for portion in plate_portions])
 
 
+def OffsetControl(event, control_id, offset_minutes, eaten_at, post_url, card_target, aria_name, input_cls):
+    """Offset of a plate or an ingredient, in minutes or as an exact time, with the
+    button that switches between them (frontend_conventions.md §7.3,
+    measurement_conventions.md §4.5.1).
+
+    The container's `data-mode` says which form is active; `Apply all` reads it
+    with both fields. Switching saves at once: to minutes it keeps the current
+    offset and clears the time; to a time it stores `meal_time + offset`. With
+    no offset to start from, it only shows the empty time field.
+    """
+    is_time = eaten_at is not None
+    minutes_id = f"{control_id}_minutes"
+    time_id = f"{control_id}_time"
+    minutes_value = "" if offset_minutes is None else str(int(offset_minutes))
+    time_value = eaten_time_text(event.meal_time, event.timezone_at_event, eaten_at, offset_minutes)
+    # Both fields share the container's sync queue, which `Apply all` also joins
+    # (see _ApplyAllButton): its click replaces the request of the field's blur.
+    common = dict(
+        hx_post=post_url, hx_trigger="change", hx_target=card_target, hx_swap="outerHTML",
+        hx_sync=f"#{control_id}:replace",
+    )
+
+    if is_time:
+        switch = dict(hx_post=post_url, hx_target=card_target, hx_swap="outerHTML",
+                      hx_vals=json.dumps({"offset_mode": "minutes", "offset_minutes": minutes_value}))
+    elif time_value:
+        switch = dict(hx_post=post_url, hx_target=card_target, hx_swap="outerHTML",
+                      hx_vals=json.dumps({"offset_mode": "time", "eaten_time": time_value}))
+    else:
+        switch = dict(onclick=(
+            f"var c=document.getElementById('{control_id}');c.dataset.mode='time';"
+            f"document.getElementById('{minutes_id}').classList.add('hidden');"
+            f"var t=document.getElementById('{time_id}');t.classList.remove('hidden');"
+            f"document.getElementById('{control_id}_unit').textContent='';this.textContent='Min';t.focus();"
+        ))
+
+    if is_time:
+        result = "out of range" if offset_minutes is None else f"{int(offset_minutes):+d} min"
+    else:
+        result = "min"
+    return Div(
+        Input(
+            type="text",
+            id=minutes_id,
+            name="offset_minutes",
+            # Full keyboard: the numeric keypad has no minus sign (frontend §4).
+            inputmode="text",
+            pattern="-?[0-9]*",
+            value=minutes_value,
+            aria_label=f"{aria_name} offset minutes",
+            cls=f"{input_cls}{' hidden' if is_time else ''}",
+            hx_vals=json.dumps({"offset_mode": "minutes"}),
+            onclick="this.select()",
+            **common,
+        ),
+        Input(
+            type="time",
+            id=time_id,
+            name="eaten_time",
+            value=time_value if is_time else "",
+            aria_label=f"{aria_name} time eaten",
+            cls=f"{input_cls} w-auto{'' if is_time else ' hidden'}",
+            hx_vals=json.dumps({"offset_mode": "time"}),
+            **common,
+        ),
+        Span(result, id=f"{control_id}_unit", cls="text-xs text-gray-600 whitespace-nowrap"),
+        Button(
+            # Names the form it switches to; the active one is the field itself.
+            "Min" if is_time else "Time",
+            type="button",
+            aria_label="Switch between minutes and exact time",
+            title="Switch between minutes and exact time",
+            cls="px-2 py-1 rounded-lg border border-line text-xs text-gray-700 shrink-0 cursor-pointer",
+            **switch,
+        ),
+        id=control_id,
+        data_mode="time" if is_time else "minutes",
+        cls="flex items-center gap-1.5",
+    )
+
+
 def _ApplyAllButton(plate, offset_input_id, card_target):
     """`Apply all`: propagate an offset to the whole plate (§4.6.2, §7.3/§7.4).
 
@@ -501,7 +583,11 @@ def _ApplyAllButton(plate, offset_input_id, card_target):
         hx_target=card_target,
         hx_swap="outerHTML",
         hx_sync=f"#{offset_input_id}:replace",
-        **{"hx-vals": f"js:{{offset_minutes: document.getElementById('{offset_input_id}').value}}"},
+        **{"hx-vals": (
+            f"js:{{offset_mode: document.getElementById('{offset_input_id}').dataset.mode, "
+            f"offset_minutes: document.getElementById('{offset_input_id}_minutes').value, "
+            f"eaten_time: document.getElementById('{offset_input_id}_time').value}}"
+        )},
     )
 
 
@@ -596,7 +682,6 @@ def PlateHeader(event, plate, display_name, card_target, has_portions=False):
     name_input_id = f"plate_name_{plate.id}"
     offset_input_id = f"plate_offset_{plate.id}"
     confirm_id = f"delete_plate_confirm_{plate.id}"
-    offset_value = "" if plate.offset_minutes is None else plate.offset_minutes
 
     return Div(
         Div(
@@ -637,25 +722,17 @@ def PlateHeader(event, plate, display_name, card_target, has_portions=False):
             cls="flex items-center gap-2",
         ),
         Div(
-            Label("Offset", cls="text-xs text-gray-600", **{"for": offset_input_id}),
-            Input(
-                type="text",
-                id=offset_input_id,
-                name="offset_minutes",
-                # Full keyboard: the phone's numeric keypad has no minus sign
-                # and the offset can be negative (frontend_conventions.md §4).
-                inputmode="text",
-                pattern="-?[0-9]*",
-                value=str(offset_value),
-                aria_label="Plate offset minutes",
-                cls="web_input border border-line rounded-xl px-2 py-1.5 w-16 text-sm",
-                hx_post=f"/cart/plate/{plate.id}/offset",
-                hx_trigger="change",
-                hx_target=card_target,
-                hx_swap="outerHTML",
-                onclick="this.select()",
+            Label("Offset", cls="text-xs text-gray-600", **{"for": f"{offset_input_id}_minutes"}),
+            OffsetControl(
+                event,
+                offset_input_id,
+                plate.offset_minutes,
+                plate.eaten_at,
+                f"/cart/plate/{plate.id}/offset",
+                card_target,
+                "Plate",
+                "web_input border border-line rounded-xl px-2 py-1.5 w-16 text-sm",
             ),
-            Span("min", cls="text-xs text-gray-600"),
             _ApplyAllButton(plate, offset_input_id, card_target),
             *(
                 _SaveRecipeButton(
@@ -886,7 +963,6 @@ def IngredientSettingsModal(event, plate, sample, item_key, ingredient_name, pla
     portion_id = int(sample.id)
     modal_id = f"ingredient_settings_{item_key}"
     offset_input_id = f"offset_input_{item_key}"
-    offset_value = "" if sample.offset_minutes is None else int(sample.offset_minutes)
     shows_cooked_weight = sample.origin is PortionOrigin.CATALOG and (
         sample.source.cooking_factor is not None or sample.is_cooked_weight
     )
@@ -961,24 +1037,17 @@ def IngredientSettingsModal(event, plate, sample, item_key, ingredient_name, pla
         _settings_group(
             "Timing and plate",
             Div(
-                Label("Offset", cls="text-xs text-gray-600 w-24 shrink-0", **{"for": offset_input_id}),
-                Input(
-                    type="text",
-                    id=offset_input_id,
-                    name="offset_minutes",
-                    # Full keyboard: the numeric keypad has no minus sign (§4).
-                    inputmode="text",
-                    pattern="-?[0-9]*",
-                    value=str(offset_value),
-                    aria_label=f"Offset minutes for {ingredient_name}",
-                    cls=f"{_FIELD_CLS} w-20",
-                    hx_post=f"/cart/portion/{portion_id}/offset",
-                    hx_trigger="change",
-                    hx_target=card_target,
-                    hx_swap="outerHTML",
-                    onclick="this.select()",
+                Label("Offset", cls="text-xs text-gray-600 w-24 shrink-0", **{"for": f"{offset_input_id}_minutes"}),
+                OffsetControl(
+                    event,
+                    offset_input_id,
+                    sample.offset_minutes,
+                    sample.eaten_at,
+                    f"/cart/portion/{portion_id}/offset",
+                    card_target,
+                    ingredient_name,
+                    f"{_FIELD_CLS} w-20",
                 ),
-                Span("min", cls="text-xs text-gray-600"),
                 cls="flex items-center gap-2 flex-wrap",
             ),
             _MoveIngredientSelect(

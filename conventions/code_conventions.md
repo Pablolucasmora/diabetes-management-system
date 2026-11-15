@@ -990,9 +990,9 @@ Acordado con el usuario el 2026-11-12. Un chat en el que el usuario cuenta lo qu
 
 **Principio: propone y el usuario confirma.** Es la excepción acordada a "no se adivina" (decisión 2026-09-25 y §7.15): el asistente interpreta texto libre, pero nada de lo que hace queda como dato confirmado sin un paso del usuario.
 
-- Solo escribe en la comida `planned` de su conversación: porciones en el carrito, añadidos rápidos estimados con su porción, platos nuevos y los campos de esa comida que el usuario edita en el carrito (ampliación del 2026-11-12, ver **Edición de la comida**). El usuario lo revisa, lo cambia o lo borra, y confirma la comida como siempre.
-- Un alimento, un plato manual o una receta nuevos nunca se crean desde el asistente. Este prepara un borrador y abre el formulario de alta relleno; el usuario lo revisa y lo guarda, y el formulario vuelve al chat (ampliación del 2026-11-13, ver **Alimentos nuevos** y **Recetas**).
-- No existe ninguna herramienta que borre (comidas, platos o porciones), archive, edite un alimento, plato o receta del catálogo, confirme una comida, toque una comida consumida, toque la insulina o la nevera de una comida, registre una inyección o cambie ajustes. La garantía es que esas herramientas no existen, no una instrucción del prompt.
+- Solo escribe en la comida `planned` de su conversación: porciones en el carrito, añadidos rápidos estimados con su porción, platos nuevos, los campos de esa comida que el usuario edita en el carrito (ampliación del 2026-11-12, ver **Edición de la comida**) y el borrador de su insulina (ampliación del 2026-11-15, ver **Insulina**). El usuario lo revisa, lo cambia o lo borra, y confirma la comida como siempre.
+- Un alimento, un plato manual o una receta nuevos nunca se crean desde el asistente. Este prepara un borrador y abre el formulario de alta relleno; el usuario lo revisa y lo guarda, y el formulario vuelve al chat (ampliación del 2026-11-13, ver **Alimentos nuevos**, **Platos manuales** y **Recetas**). El borrador puede rellenar todos los campos del formulario (ampliación del 2026-11-15).
+- No existe ninguna herramienta que borre (comidas, platos o porciones), archive, edite un alimento, plato o receta del catálogo, confirme una comida, toque una comida consumida, toque la nevera de una comida, registre una inyección por su cuenta (fuera del borrador de la comida) o cambie ajustes. La garantía es que esas herramientas no existen, no una instrucción del prompt.
 
 **Capas**
 
@@ -1022,11 +1022,19 @@ Acordado con el usuario el 2026-11-12. Un chat en el que el usuario cuenta lo qu
 - **Aceite sin cantidad** (decisión del usuario del 2026-11-13). Si el usuario dice que cocinó "con aceite" sin dar los gramos, el asistente añade una cantidad típica (unos 5 g por persona en una sartén) con `amount_method = ai_estimate` y lo dice en su respuesta, en vez de preguntar.
 - Las menciones (`/`) viajan como pares `entry_type` + `entry_id`. El servidor las vuelve a leer con la regla de visibilidad (§11.4); una que el usuario ya no ve se descarta y se avisa.
 
-**Edición de la comida** (decisión del usuario del 2026-11-12). El asistente puede cambiar, de la comida de su conversación, lo mismo que el usuario edita en su tarjeta del carrito, con la misma validación:
+**Edición de la comida** (decisión del usuario del 2026-11-12). El asistente puede cambiar, de la comida de su conversación, lo mismo que el usuario edita en su tarjeta del carrito, con la misma validación. Cada herramienta de edición (y `show_meal`) comprueba en cada llamada que la comida sigue planificada: el usuario puede confirmarla en el carrito mientras el modelo responde. Puede cambiar:
 
-- de la comida: la fecha y la hora (`meal_time`), el tipo (`meal_type`), el nombre y las notas;
+- de la comida: la fecha y la hora (`meal_time`), el tipo (`meal_type`), el nombre, las notas y si se comió fuera (`eating_out`, ampliación del 2026-11-15);
 - de cada plato: el nombre y el offset, solo como plantilla o aplicado a todos sus alimentos (`Apply all`, measurement_conventions.md §4.6.2);
 - de cada alimento ya añadido: los gramos, `amount_method`, el offset y la preparación.
+
+El offset, de plato o de alimento, se da en minutos o como hora exacta (`eaten_time`, `HH:MM`), con las reglas de measurement_conventions.md §4.5.1 (ampliación del 2026-11-15). El asistente usa la hora cuando el usuario dice una hora ("el aperitivo a las 13:30").
+
+**Insulina** (decisión del usuario del 2026-11-15). `update_insulin` escribe el borrador del bolo de la comida, el mismo que el usuario edita en el carrito: si lleva insulina (`insulin_dose`), la dosis en U (`insulin_units`, measurement_conventions.md §8.1), la zona (`injection_zone`) y la pluma (`insulin_pen_id`, una pluma rápida abierta del usuario, §8.4), con la misma validación. Reglas:
+
+- Solo anota lo que el usuario dice que se ha puesto o se va a poner. Nunca propone, calcula ni corrige una dosis, ni opina sobre ella: la herramienta no tiene ninguna lógica de dosis.
+- Una dosis, una zona o una pluma activan la insulina de la comida, que recibe la pluma por defecto si no tenía. Con `insulin = false` no se aceptan.
+- Es un borrador: la inyección solo se registra al confirmar la comida, como siempre, y el usuario lo revisa antes en el carrito.
 
 Lo hace solo cuando el usuario lo pide o lo dice al contar la comida ("a las 16:40", "de postre, a los 20 minutos"). Un valor omitido o `null` no cambia nada; vaciar un campo se hace en el carrito. Cada cambio aparece en el chat en la tarjeta `Changed in the cart` (frontend_conventions.md §9.11).
 
@@ -1038,6 +1046,7 @@ Lo hace solo cuando el usuario lo pide o lo dice al contar la comida ("a las 16:
 - el código de barras, si se ve en la foto;
 - el estado inicial;
 - el factor de cocción estimado, en los alimentos que se pesan en crudo y cambian de peso al cocinarse (arroz, pasta, legumbres, cereales); en el resto, vacío (measurement_conventions.md §7);
+- Nutri-Score, NOVA y Yuka, solo si la etiqueta los imprime o el usuario los dice; la confianza de los macros, el método de cantidad por defecto y el favorito, solo si el usuario los dice (ampliación del 2026-11-15);
 - `macros_source` (U1, `study_conventions.md` §6.3), según el origen del borrador:
 
 | `source` | De dónde salen los macros | `macros_source` |
@@ -1049,7 +1058,12 @@ Lo hace solo cuando el usuario lo pide o lo dice al contar la comida ("a las 16:
 
 Con Ciqual y OFF, los macros y lo que traiga la fuente salen de su precarga de siempre (measurement_conventions.md §12.1), y el asistente solo completa lo que la fuente no trae: categoría, subtipo, estado inicial y factor de cocción. Lo que el borrador guarda se vuelve a leer y a validar al abrir el formulario (§7.13), nunca se pasa por la URL.
 
-**Recetas** (decisión del usuario del 2026-11-13). Cuando el usuario describe una receta, `draft_recipe` prepara un borrador y abre el formulario `New recipe` relleno: nombre, tipo de comida, tipos extra, raciones y, en las notas, el procedimiento. Debajo, el formulario muestra los ingredientes propuestos, por platos de la receta, con sus gramos y su preparación (`cooking`, `final_state`, `conservation` e `is_cooked_weight`, con la regla de **Preparación**). Al guardar se crean en una sola transacción la receta, sus platos, los platos manuales nuevos y los ingredientes. Después se editan en el editor de siempre.
+**Platos manuales** (decisión del usuario del 2026-11-15). `draft_manual_intake` abre el formulario de alta de un plato manual (§11.2.3) relleno con todos sus campos: nombre, descripción, subtipo, origen, ración, macros por 100 g, cafeína y alcohol, índice glucémico y su confianza, `macros_source`, la confianza de los macros, el método de cantidad por defecto y el favorito. Es lo que el usuario quiere conservar de algo preparado por otro (un bar, un restaurante, un familiar), o lo que pide guardar como "manual". Para registrarlo solo en esta comida sigue estando el añadido rápido (`add_estimate`).
+
+- `macros_source` lo da el modelo: `ai_estimate` si los estima, `own_estimate` si los dice el usuario, `official` si salen de la carta o la web del sitio, `label` si los lee de una etiqueta.
+- Lo que no se dice queda vacío, como en el resto de borradores; los hidratos por 100 g son obligatorios.
+
+**Recetas** (decisión del usuario del 2026-11-13). Cuando el usuario describe una receta, `draft_recipe` prepara un borrador y abre el formulario `New recipe` relleno: nombre, tipo de comida, tipos extra, raciones, el favorito (si el usuario lo dice, ampliación del 2026-11-15) y, en las notas, el procedimiento. Debajo, el formulario muestra los ingredientes propuestos, por platos de la receta, con sus gramos y su preparación (`cooking`, `final_state`, `conservation` e `is_cooked_weight`, con la regla de **Preparación**). Al guardar se crean en una sola transacción la receta, sus platos, los platos manuales nuevos y los ingredientes. Después se editan en el editor de siempre.
 
 - Cada ingrediente es un alimento o plato del usuario (`catalog` o `manual_intake`, por su id) o un **plato manual nuevo**.
 - Un plato manual nuevo es lo que el usuario llama "manual" o "quick add": un añadido rápido no puede ser ingrediente (§11.2.3), así que se crea como plato reutilizable, con sus macros por 100 g a partir de los totales que estima el asistente para esa cantidad (measurement_conventions.md §5.4) y `macros_source = ai_estimate`, salvo que el usuario dé los valores (`own_estimate`).
@@ -1084,16 +1098,18 @@ Con Ciqual y OFF, los macros y lo que traiga la fuente salen de su precarga de s
   - `add_food`: un alimento o plato, en gramos o en raciones, con su `amount_method`;
   - `add_recipe`;
   - `add_estimate`: un añadido rápido con `ai_estimate` en U1 y U2;
-  - `show_meal`: la comida con sus platos y alimentos, con sus ids y los campos que se pueden cambiar;
+  - `show_meal`: la comida con sus platos y alimentos, con sus ids y los campos que se pueden cambiar, el borrador de su insulina y las plumas rápidas abiertas;
   - `draft_new_food`: `ciqual`, `open_food_facts`, `label` o `estimate`, con los campos de **Alimentos nuevos**;
+  - `draft_manual_intake`: el borrador de **Platos manuales**;
   - `add_plate`: un plato vacío, con nombre y offset opcionales;
   - `update_meal`, `update_plate` y `update_food`: los cambios de **Edición de la comida**;
+  - `update_insulin`: el borrador de **Insulina**;
   - `draft_recipe`: el borrador de **Recetas**.
 
   `add_food` y `add_estimate` aceptan el plato de destino (`null` = el último), y `add_food` la preparación.
 
-  Un resultado de Ciqual o de OFF no se añade directamente: se ofrece su formulario de alta precargado, como el de una etiqueta. Las herramientas son `strict`, salvo `add_estimate`, `draft_new_food`, las tres `update_*` y `draft_recipe`. La API admite como mucho 16 parámetros anulables entre todas las herramientas `strict`, y esas tienen muchos campos opcionales. Sus handlers validan todos los valores igualmente (§7).
-- **Turno** (`services/assistant.py`). Cada ronda de herramientas es una transacción: guarda a la vez lo que hacen las herramientas y los mensajes que lo explican, así que la conversación siempre se puede reenviar. Cada herramienta corre en su propio savepoint, y si falla no deja nada. Si una llamada posterior a la primera falla después de los reintentos del SDK, el turno se reanuda: se repite hasta dos veces más, tras 3 s y 8 s, solo si el motivo es transitorio (`429`, `5xx` o red). Un timeout no se repite, porque ya esperó tres veces el límite. Un `4xx` tampoco, porque volvería a fallar. Si sigue fallando, se conserva lo hecho y se avisa. Al llegar a `ASSISTANT_MAX_TOOL_ROUNDS`, las llamadas pendientes se contestan como no ejecutadas, para que el historial siga siendo válido.
+  Un resultado de Ciqual o de OFF no se añade directamente: se ofrece su formulario de alta precargado, como el de una etiqueta. Las herramientas son `strict`, salvo `add_estimate`, `draft_new_food`, `draft_manual_intake`, las cuatro `update_*` y `draft_recipe`. La API admite como mucho 16 parámetros anulables entre todas las herramientas `strict`, y esas tienen muchos campos opcionales. Sus handlers validan todos los valores igualmente (§7).
+- **Turno** (`services/assistant.py`). Las lecturas que preparan el mensaje se cierran con un `commit` antes de la primera llamada al modelo, para que ninguna transacción (ni sus bloqueos) quede abierta mientras el modelo responde. Cada ronda de herramientas es una transacción: guarda a la vez lo que hacen las herramientas y los mensajes que lo explican, así que la conversación siempre se puede reenviar. Cada herramienta corre en su propio savepoint, y si falla no deja nada. Si una llamada posterior a la primera falla después de los reintentos del SDK, el turno se reanuda: se repite hasta dos veces más, tras 3 s y 8 s, solo si el motivo es transitorio (`429`, `5xx` o red). Un timeout no se repite, porque ya esperó tres veces el límite. Un `4xx` tampoco, porque volvería a fallar. Si sigue fallando, se conserva lo hecho y se avisa. Al llegar a `ASSISTANT_MAX_TOOL_ROUNDS`, las llamadas pendientes se contestan como no ejecutadas, para que el historial siga siendo válido.
 - **Contexto.** Cada mensaje del usuario empieza con un bloque `<daybetes_context>` que escribe el servidor y que la página no muestra. Lleva la hora local, la comida (nombre, hora y lo que ya tiene) y las entradas fijadas con `/`, ya releídas. El `system` está en inglés, es fijo y pide responder en el idioma en que escribe el usuario.
 - **Registro** (§8.3). Una línea `INFO` por mensaje del usuario, con la conversación, el modelo, las rondas, los tokens de cada clase, la duración y el resultado. Un fallo del proveedor en la primera llamada se registra una vez en la ruta, con el motivo interno del adaptador (`assistant_timeout`, `assistant_status_400`...). Un fallo en una llamada posterior no llega a la ruta: el servicio registra un `WARNING` por intento, con el motivo en el texto, la conversación, la ronda y el intento.
 - **Errores.** Las acciones del asistente usan el canal de errores de las acciones en línea: status semántico, cuerpo vacío y toast (`error_conventions.md` §7.1). HTMX no reemplaza nada, y el texto y la foto se quedan en el compositor para volver a enviarlos. Si la comida de la conversación se confirmó o se borró, la respuesta es `404` o `409`, con "That meal was confirmed or deleted. Choose another meal.". Un fallo del proveedor es `502`, con "The assistant is not available right now. Try again in a moment.".
