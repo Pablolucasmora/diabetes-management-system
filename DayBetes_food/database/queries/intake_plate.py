@@ -213,15 +213,17 @@ def set_exact_time(
     the caller's transaction (§4.5.1)."""
     if table not in _EXACT_TIME_TABLES:
         raise ValueError(f"No exact time in {table}")
-    with connection.cursor() as cursor:
-        cursor.execute(
-            f"""
-            UPDATE {table}
-            SET eaten_at = %(eaten_at)s, offset_minutes = %(offset_minutes)s, updated_at = NOW()
-            WHERE id = %(id)s;
-            """,
-            {"eaten_at": eaten_at, "offset_minutes": offset_minutes, "id": row_id},
-        )
+    _execute_query(
+        connection,
+        f"""
+        UPDATE {table}
+        SET eaten_at = %(eaten_at)s, offset_minutes = %(offset_minutes)s, updated_at = NOW()
+        WHERE id = %(id)s
+        RETURNING id;
+        """,
+        {"eaten_at": eaten_at, "offset_minutes": offset_minutes, "id": row_id},
+        commit=False,
+    )
 
 
 def apply_plate_offset_to_portions(
