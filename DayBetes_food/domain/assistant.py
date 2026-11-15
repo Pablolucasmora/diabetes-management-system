@@ -352,6 +352,24 @@ DRAFT_MACROS_SOURCE = {
 }
 
 
+def _draft_nutrients(tool_input: dict) -> NutrientValues:
+    """The nutrients per 100 g of a food or dish draft, checked like the create
+    forms' (§7.13): carbs required, an unknown one empty, never 0 (§8.9).
+
+    Raises:
+        ValidationError: a value out of its limits or inconsistent with the rest.
+    """
+    values = {}
+    for field in _LABEL_NUTRIENTS:
+        number = tool_number(tool_input.get(field), field, required=(field == "carbs_100g"))
+        values[field] = check_number(number, field, NUTRIENT_LIMITS[field])
+    for input_name, field in _DRAFT_OTHER_NUTRIENTS.items():
+        values[field] = check_number(tool_number(tool_input.get(input_name), input_name), field, NUTRIENT_LIMITS[field])
+    nutrients = NutrientValues(**values)
+    validate_nutrient_relations(nutrients)
+    return nutrients
+
+
 @dataclass(frozen=True)
 class FoodDraftExtras:
     """What the model adds to any food draft, also on top of a Ciqual or OFF
@@ -439,14 +457,7 @@ def food_draft_prefill(tool_input: dict) -> FoodPrefill:
     serving = tool_number(tool_input.get("serving_g"), "serving_g")
     if serving is not None:
         serving = check_number(serving, "default_portion", FOOD_DEFAULT_PORTION_RANGE)
-    values = {}
-    for field in _LABEL_NUTRIENTS:
-        number = tool_number(tool_input.get(field), field, required=(field == "carbs_100g"))
-        values[field] = check_number(number, field, NUTRIENT_LIMITS[field])
-    for input_name, field in _DRAFT_OTHER_NUTRIENTS.items():
-        values[field] = check_number(tool_number(tool_input.get(input_name), input_name), field, NUTRIENT_LIMITS[field])
-    nutrients = NutrientValues(**values)
-    validate_nutrient_relations(nutrients)
+    nutrients = _draft_nutrients(tool_input)
     extras = food_draft_extras(tool_input)
     return FoodPrefill(
         barcode=extras.barcode,
@@ -504,14 +515,7 @@ def manual_intake_draft(tool_input: dict) -> ManualIntakeDraft:
     serving = tool_number(tool_input.get("serving_g"), "serving_g")
     if serving is not None:
         serving = check_number(serving, "default_portion", FOOD_DEFAULT_PORTION_RANGE)
-    values = {}
-    for field in _LABEL_NUTRIENTS:
-        number = tool_number(tool_input.get(field), field, required=(field == "carbs_100g"))
-        values[field] = check_number(number, field, NUTRIENT_LIMITS[field])
-    for input_name, field in _DRAFT_OTHER_NUTRIENTS.items():
-        values[field] = check_number(tool_number(tool_input.get(input_name), input_name), field, NUTRIENT_LIMITS[field])
-    nutrients = NutrientValues(**values)
-    validate_nutrient_relations(nutrients)
+    nutrients = _draft_nutrients(tool_input)
     require_carbs(nutrients)
     glycemic_index = _tool_enum(GlycemicIndex, tool_input.get("glycemic_index"), "glycemic_index")
     ig_confidence = tool_confidence(tool_input.get("ig_confidence"), "ig_confidence")
