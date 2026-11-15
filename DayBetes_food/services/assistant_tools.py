@@ -22,11 +22,6 @@ from datetime import datetime
 from enum import Enum
 
 from DayBetes_food.database.queries import (
-    list_open_insulin_pens,
-    set_event_default_pen,
-    set_event_insulin_pen,
-    set_event_insulin_units,
-    set_injection_zone,
     apply_plate_offset_to_portions,
     create_intake_plate,
     create_portion_detail,
@@ -41,9 +36,14 @@ from DayBetes_food.database.queries import (
     get_recipe,
     link_assistant_conversation_event,
     list_intake_plates,
+    list_open_insulin_pens,
     list_portions_by_event,
     search_ciqual_foods,
     search_off_products,
+    set_event_default_pen,
+    set_event_insulin_pen,
+    set_event_insulin_units,
+    set_injection_zone,
     update_intake_event,
     update_intake_event_name,
     update_intake_event_notes,
@@ -56,15 +56,15 @@ from DayBetes_food.database.queries import (
 )
 from DayBetes_food.domain.assistant import (
     ASSISTANT_SEARCH_RESULTS_MAX,
+    MANUAL_DRAFT_MACROS_SOURCES,
+    MANUAL_INTAKE_DRAFT_SOURCE,
+    RECIPE_DRAFT_SOURCE,
     TOOL_RESULT_ADDED,
     TOOL_RESULT_CHANGED,
     TOOL_RESULT_DRAFT,
-    MANUAL_INTAKE_DRAFT_SOURCE,
-    RECIPE_DRAFT_SOURCE,
     food_draft_extras,
     food_draft_prefill,
     manual_intake_draft,
-    MANUAL_DRAFT_MACROS_SOURCES,
     recipe_draft,
     tool_bool,
     tool_id,
@@ -97,6 +97,8 @@ from DayBetes_food.domain.intake_event import (
     INTAKE_EVENT_NAME_MAX_LENGTH,
     INTAKE_EVENT_NOTES_MAX_LENGTH,
     IntakeEventUpdate,
+    parse_meal_date,
+    parse_meal_hour,
 )
 from DayBetes_food.domain.intake_plate import (
     INTAKE_PLATE_NAME_MAX_LENGTH,
@@ -123,12 +125,12 @@ from DayBetes_food.domain.portion_detail import (
 from DayBetes_food.domain.recipe import RecipeAddRequest, parse_recipe_add_servings
 from DayBetes_food.errors import ConflictError, NotFoundError, ValidationError
 from DayBetes_food.services.intake_event import (
+    OFFSET_MODE_TIME,
     add_quick_add_to_meal,
     default_meal_type_now,
     new_plate_offset_minutes,
     plate_event_id,
     portion_event_id,
-    OFFSET_MODE_TIME,
     resolve_event_plate,
     resolve_offset_input,
     resolve_target_event,
@@ -876,6 +878,9 @@ def _tool_offset(ctx: ToolContext, event_id: int, tool_input: dict) -> tuple[boo
     wins over `offset_minutes` and stores the exact time with its derived offset
     (measurement_conventions.md §4.5.1)."""
     raw_time = tool_input.get("eaten_time")
+    if isinstance(raw_time, str) and not raw_time.strip():
+        # Blank is "not given", like null: offset_minutes still counts.
+        raw_time = None
     if raw_time is not None:
         if not isinstance(raw_time, str):
             raise ToolInputError("eaten_time must be HH:MM.")
@@ -944,10 +949,10 @@ def _update_meal(ctx: ToolContext, tool_input: dict) -> dict:
     changed = []
     if raw_date is not None or raw_time is not None:
         try:
-            local_date = datetime.strptime(str(raw_date), "%Y-%m-%d").date() if raw_date is not None else None
-            local_time = datetime.strptime(str(raw_time), "%H:%M").time() if raw_time is not None else None
-        except ValueError as error:
-            raise ToolInputError("date must be YYYY-MM-DD and time HH:MM.") from error
+            local_date = parse_meal_date(raw_date)
+            local_time = parse_meal_hour(raw_time) if raw_time is not None else None
+        except ValidationError as error:
+            raise ToolInputError(f"{error} date must be YYYY-MM-DD and time HH:MM.") from error
         if local_time is None:
             event = get_intake_event(ctx.connection, ctx.user_id, event_id)
             if event is None or event.meal_time is None:

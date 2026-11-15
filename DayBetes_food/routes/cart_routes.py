@@ -15,7 +15,6 @@ from DayBetes_food.components.cart.cart_leftovers import (
 from DayBetes_food.components.modal import ModalFormError
 from DayBetes_food.components.cart.cart_shared import calculate_macro_summary_metrics
 from DayBetes_food.components.ui import render_fragment, render_page
-from datetime import datetime
 import math
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.database.queries import (
@@ -73,6 +72,8 @@ from DayBetes_food.domain.intake_event import (
     INTAKE_EVENT_NAME_MAX_LENGTH,
     INTAKE_EVENT_NOTES_MAX_LENGTH,
     IntakeEventUpdate,
+    parse_meal_date,
+    parse_meal_hour,
 )
 from DayBetes_food.domain.intake_plate import (
     INTAKE_PLATE_NAME_MAX_LENGTH,
@@ -426,18 +427,12 @@ def setup_cart_routes(rt):
         if not user_id:
             return _error(request, AuthenticationError, _NO_SESSION)
         try:
-            parsed_time = datetime.strptime(meal_hour, "%H:%M").time()
-        except ValueError:
+            parsed_time = parse_meal_hour(meal_hour)
+            chosen_date = parse_meal_date(meal_date)
+        except ValidationError as error:
             # Value present and well formed as a request, invalid content:
-            # validation_error → 422 (error_conventions.md §3.2).
-            return _error(request, ValidationError, "The meal time is not valid.")
-        chosen_date = None
-        if meal_date:
-            try:
-                chosen_date = datetime.strptime(meal_date, "%Y-%m-%d").date()
-            except ValueError:
-                # "invalid date" is validation_error → 422, not 400.
-                return _error(request, ValidationError, "The meal date is not valid.")
+            # validation_error → 422, not 400 (error_conventions.md §3.2).
+            return _error(request, ValidationError, str(error))
 
         with get_connection() as connection:
             try:

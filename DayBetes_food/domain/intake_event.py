@@ -5,7 +5,7 @@ SQL row to these dataclasses lives in DayBetes_food/database/mappers.py, not her
 """
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, time
 
 from DayBetes_food.domain.constants import (
     AmountInputUnit,
@@ -14,6 +14,7 @@ from DayBetes_food.domain.constants import (
     IntakeEventState,
     MealType,
 )
+from DayBetes_food.errors import ValidationError
 
 
 # Maximum length of intake_event.name, equal to the column's VARCHAR(255)
@@ -121,3 +122,32 @@ class IntakeEventUpdate:
     ingested_amount: float | None = None
     amount_confidence: float | None = None
     notes: str | None = None
+
+
+def parse_meal_hour(raw) -> time:
+    """Local time of a meal typed as `HH:MM` (code_conventions.md §7.4, §10.4),
+    in the cart or by the assistant.
+
+    Raises:
+        ValidationError: it is not a valid `HH:MM` time.
+    """
+    try:
+        return datetime.strptime(str(raw or "").strip(), "%H:%M").time()
+    except ValueError as error:
+        raise ValidationError("The meal time is not valid.") from error
+
+
+def parse_meal_date(raw) -> date | None:
+    """Local date of a meal typed as `YYYY-MM-DD`; empty is None (the meal keeps
+    its own day).
+
+    Raises:
+        ValidationError: it is not a valid date.
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError as error:
+        raise ValidationError("The meal date is not valid.") from error

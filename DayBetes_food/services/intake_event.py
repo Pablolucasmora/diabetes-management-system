@@ -21,10 +21,10 @@ from DayBetes_food.database.queries import (
     get_intake_plate,
     get_meal_type_schedule,
     get_planned_intake_event,
-    list_portions_by_event,
     list_event_exact_times,
-    set_exact_time,
+    list_portions_by_event,
     scale_plate_portion_amounts,
+    set_exact_time,
     update_intake_event,
 )
 from DayBetes_food.domain.constants import IntakeEventState, MealType, PortionDestination, PortionOrigin

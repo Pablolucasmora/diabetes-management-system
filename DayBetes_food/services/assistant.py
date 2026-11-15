@@ -243,6 +243,9 @@ def _meal_lines(connection, user_id: int, event_id: int | None, without_meal: bo
     for plate in plates:
         foods = [p for p in portions if p.plate_id == plate.id]
         offset = f", offset {plate.offset_minutes:+d} min" if plate.offset_minutes is not None else ""
+        if plate.eaten_at is not None:
+            # Written as a clock time (measurement §4.5.1): the model sees it as said.
+            offset = f", eaten at {to_local(plate.eaten_at):%H:%M}" + (offset or ", out of range")
         label = f'"{plate.name}"' if plate.name else "no name"
         items = "; ".join(f"food_id {p.id}: {p.source.name} {p.amount:g} g" for p in foods) or "empty"
         lines.append(f"Plate {plate.id} ({label}{offset}): {items}.")
