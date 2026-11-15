@@ -78,7 +78,6 @@ from DayBetes_food.domain.intake_plate import (
     INTAKE_PLATE_NAME_MAX_LENGTH,
     IntakePlateCreate,
     PlateEaten,
-    parse_offset_minutes,
 )
 from DayBetes_food.domain.fridge import (
     LeftoverPlan,
@@ -100,6 +99,8 @@ from DayBetes_food.services.intake_event import (
     delete_planned_portion,
     plate_event_id,
     portion_event_id,
+    OFFSET_MODE_MINUTES,
+    resolve_offset_input,
     update_meal_time,
 )
 from DayBetes_food.domain.recipe import parse_recipe_name
@@ -791,22 +792,31 @@ def setup_cart_routes(rt):
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/portion/{portion_id}/offset")
-    def post(request: Request, portion_id: PathId, offset_minutes: str = ""):
+    def post(
+        request: Request,
+        portion_id: PathId,
+        offset_minutes: str = "",
+        eaten_time: str = "",
+        offset_mode: str = OFFSET_MODE_MINUTES,
+    ):
+        """The ingredient's offset, in minutes or as an exact time (§4.5.1)."""
         if request.headers.get("HX-Request") != "true":
             return _error(request, AuthorizationError, _NOT_HTMX)
         user_id = get_current_user_id()
         if not user_id:
             return _error(request, AuthenticationError, _NO_SESSION)
-        try:
-            value = parse_offset_minutes(offset_minutes)
-        except ValidationError as error:
-            return _error(request, ValidationError, str(error))
         with get_connection() as connection:
             try:
                 portion = get_portion_detail(connection, int(user_id), portion_id)
                 event_id = portion_event_id(connection, int(user_id), portion)
+                event = get_intake_event(connection, int(user_id), event_id)
+                if event is None:
+                    raise NotFoundError("intake_event_not_found")
+                value, eaten_at = resolve_offset_input(event, offset_mode, offset_minutes, eaten_time)
                 with connection.transaction():
-                    update_portion_offset(connection, int(user_id), portion_id, value, commit=False)
+                    update_portion_offset(
+                        connection, int(user_id), portion_id, value, eaten_at=eaten_at, commit=False
+                    )
             except NotFoundError:
                 return _error(request, NotFoundError, _INGREDIENT_GONE)
             except ConflictError:
@@ -919,6 +929,7 @@ def setup_cart_routes(rt):
                             IntakePlateCreate(
                                 intake_event_id=event_id,
                                 offset_minutes=portion.offset_minutes,
+                                eaten_at=portion.eaten_at,
                             ),
                             commit=False,
                         )
@@ -1128,8 +1139,14 @@ def setup_cart_routes(rt):
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/plate/{plate_id}/offset")
-    def post(request: Request, plate_id: PathId, offset_minutes: str = ""):
-        """Template offset of the plate.
+    def post(
+        request: Request,
+        plate_id: PathId,
+        offset_minutes: str = "",
+        eaten_time: str = "",
+        offset_mode: str = OFFSET_MODE_MINUTES,
+    ):
+        """Template offset of the plate, in minutes or as an exact time (§4.5.1).
 
         It does not rewrite its portions: that is `Apply all` (§4.6.2). It only
         changes what the foods added afterwards will inherit.
@@ -1139,20 +1156,28 @@ def setup_cart_routes(rt):
         user_id = get_current_user_id()
         if not user_id:
             return _error(request, AuthenticationError, _NO_SESSION)
-        try:
-            value = parse_offset_minutes(offset_minutes)
-        except ValidationError as error:
-            return _error(request, ValidationError, str(error))
         with get_connection() as connection:
             try:
                 event_id = plate_event_id(connection, int(user_id), plate_id, require_planned=False)
-                update_intake_plate_offset(connection, plate_id, value)
+                event = get_intake_event(connection, int(user_id), event_id)
+                if event is None:
+                    raise NotFoundError("intake_event_not_found")
+                value, eaten_at = resolve_offset_input(event, offset_mode, offset_minutes, eaten_time)
+                update_intake_plate_offset(connection, plate_id, value, eaten_at=eaten_at)
             except NotFoundError:
                 return _error(request, NotFoundError, _PLATE_GONE)
+            except ValidationError as error:
+                return _error(request, ValidationError, str(error))
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/plate/{plate_id}/apply_offset")
-    def post(request: Request, plate_id: PathId, offset_minutes: str = ""):
+    def post(
+        request: Request,
+        plate_id: PathId,
+        offset_minutes: str = "",
+        eaten_time: str = "",
+        offset_mode: str = OFFSET_MODE_MINUTES,
+    ):
         """`Apply all`: set the plate's offset and propagate it to its portions.
 
         Same endpoint for the header button and for a row's button
@@ -1164,16 +1189,18 @@ def setup_cart_routes(rt):
         user_id = get_current_user_id()
         if not user_id:
             return _error(request, AuthenticationError, _NO_SESSION)
-        try:
-            value = parse_offset_minutes(offset_minutes)
-        except ValidationError as error:
-            return _error(request, ValidationError, str(error))
         with get_connection() as connection:
             try:
                 event_id = plate_event_id(connection, int(user_id), plate_id, require_planned=False)
+                event = get_intake_event(connection, int(user_id), event_id)
+                if event is None:
+                    raise NotFoundError("intake_event_not_found")
+                value, eaten_at = resolve_offset_input(event, offset_mode, offset_minutes, eaten_time)
             except NotFoundError:
                 return _error(request, NotFoundError, _PLATE_GONE)
-            if not apply_plate_offset_to_portions(connection, plate_id, value):
+            except ValidationError as error:
+                return _error(request, ValidationError, str(error))
+            if not apply_plate_offset_to_portions(connection, plate_id, value, eaten_at=eaten_at):
                 return _error(request, MalformedRequestError, _PLATE_FAILED)
             return _card_response(request, connection, int(user_id), event_id)
 

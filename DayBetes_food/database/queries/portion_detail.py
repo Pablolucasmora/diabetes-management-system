@@ -73,6 +73,7 @@ _PORTION_COLUMNS = """
     pd.amount_method,
     pd.is_cooked_weight,
     pd.offset_minutes,
+    pd.eaten_at,
     pd.source_fridge_id,
     pd.created_at,
     pd.updated_at,
@@ -157,7 +158,7 @@ def _ensure_destination_owned(connection, user_id: int, destination: PortionDest
 def _plate_row(connection, plate_id: int):
     return _execute_query(
         connection,
-        "SELECT intake_event_id, offset_minutes FROM intake_plate WHERE id = %(plate_id)s;",
+        "SELECT intake_event_id, offset_minutes, eaten_at FROM intake_plate WHERE id = %(plate_id)s;",
         {"plate_id": plate_id},
         commit=False,
     )
@@ -225,7 +226,7 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
         raise ValidationError("plate_required")
     if not is_event and payload.plate_id is not None:
         raise ValidationError("plate_only_for_event")
-    if payload.offset_minutes is not None and not is_event:
+    if (payload.offset_minutes is not None or payload.eaten_at is not None) and not is_event:
         raise ValidationError("offset_only_for_event")
     if payload.source_fridge_id is not None and not is_event:
         raise ValidationError("source_fridge_only_for_event")
@@ -235,12 +236,16 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
         _ensure_ripeness_applies(connection, destination, origin, payload.origin_id)
 
     offset_minutes = payload.offset_minutes
+    eaten_at = payload.eaten_at
     if is_event:
         plate = _plate_row(connection, payload.plate_id)
         if not plate or int(plate["intake_event_id"]) != int(payload.destination_id):
             raise NotFoundError("portion_plate_not_found")
-        if offset_minutes is None:
+        # Neither given: the portion inherits the plate's offset and its exact
+        # time together (measurement §4.6.2, §4.5.1).
+        if offset_minutes is None and eaten_at is None:
             offset_minutes = plate["offset_minutes"]
+            eaten_at = plate["eaten_at"]
     if is_recipe:
         # The composite FK guarantees it; this gives a 404 instead of a violation.
         recipe_plate = _execute_query(
@@ -268,6 +273,7 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
         "amount_method": payload.amount_method.value if payload.amount_method is not None else None,
         "is_cooked_weight": bool(payload.is_cooked_weight),
         "offset_minutes": offset_minutes,
+        "eaten_at": eaten_at,
         "source_fridge_id": payload.source_fridge_id,
     }
 
@@ -289,14 +295,14 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
             intake_event_id, recipe_id, fridge_id, plate_id, recipe_plate_id,
             cooking, conservation, final_state, ripeness,
             amount_method,
-            is_cooked_weight, offset_minutes, source_fridge_id
+            is_cooked_weight, offset_minutes, eaten_at, source_fridge_id
         )
         VALUES (
             %(amount)s, %(catalog_id)s, %(manual_intake_id)s,
             %(intake_event_id)s, %(recipe_id)s, %(fridge_id)s, %(plate_id)s, %(recipe_plate_id)s,
             %(cooking)s, %(conservation)s, %(final_state)s, %(ripeness)s,
             %(amount_method)s,
-            %(is_cooked_weight)s, %(offset_minutes)s, %(source_fridge_id)s
+            %(is_cooked_weight)s, %(offset_minutes)s, %(eaten_at)s, %(source_fridge_id)s
         )
         {conflict}
         RETURNING id;
@@ -416,14 +422,19 @@ def update_portion_amount(connection, user_id: int, portion_id: int, amount: flo
         raise NotFoundError("portion_not_found")
 
 
-def update_portion_offset(connection, user_id: int, portion_id: int, offset_minutes, commit: bool = True) -> None:
+def update_portion_offset(
+    connection, user_id: int, portion_id: int, offset_minutes, *, eaten_at=None, commit: bool = True
+) -> None:
+    """Write a portion's offset. `eaten_at` is the exact time it was written as,
+    with `offset_minutes` already derived from it; None means minutes and clears
+    the time (measurement_conventions.md §4.5.1)."""
     if offset_minutes is not None and not (
         PORTION_DETAIL_OFFSET_MIN_MINUTES <= offset_minutes <= PORTION_DETAIL_OFFSET_MAX_MINUTES
     ):
         raise ValidationError("offset_out_of_range")
     query = f"""
         UPDATE portion_detail pd
-        SET offset_minutes = %(offset_minutes)s, updated_at = NOW()
+        SET offset_minutes = %(offset_minutes)s, eaten_at = %(eaten_at)s, updated_at = NOW()
         WHERE pd.id = %(portion_id)s
         {_PORTION_OWNED_BY_USER}
         RETURNING pd.id;
@@ -431,7 +442,7 @@ def update_portion_offset(connection, user_id: int, portion_id: int, offset_minu
     result = _execute_query(
         connection,
         query,
-        {"offset_minutes": offset_minutes, "portion_id": portion_id, "user_id": user_id},
+        {"offset_minutes": offset_minutes, "eaten_at": eaten_at, "portion_id": portion_id, "user_id": user_id},
         commit=commit,
     )
     if not result:

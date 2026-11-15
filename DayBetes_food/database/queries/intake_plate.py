@@ -4,6 +4,7 @@ Model and rules: conventions/measurement_conventions.md §4.6
 (decision 2026-09-19).
 """
 
+from datetime import datetime
 
 from psycopg.errors import ForeignKeyViolation
 
@@ -23,6 +24,7 @@ _INTAKE_PLATE_COLUMNS = """
     ip.intake_event_id,
     ip.name,
     ip.offset_minutes,
+    ip.eaten_at,
     ip.created_at,
     ip.updated_at
 """
@@ -36,8 +38,8 @@ _INTAKE_PLATE_ORDER = "ORDER BY ip.offset_minutes NULLS LAST, ip.id"
 def create_intake_plate(connection, payload: IntakePlateCreate, *, commit: bool = True) -> int:
     """Create a plate inside an event and return its id."""
     query = """
-        INSERT INTO intake_plate (intake_event_id, name, offset_minutes)
-        VALUES (%(intake_event_id)s, %(name)s, %(offset_minutes)s)
+        INSERT INTO intake_plate (intake_event_id, name, offset_minutes, eaten_at)
+        VALUES (%(intake_event_id)s, %(name)s, %(offset_minutes)s, %(eaten_at)s)
         RETURNING id;
     """
     row = _execute_query(
@@ -47,6 +49,7 @@ def create_intake_plate(connection, payload: IntakePlateCreate, *, commit: bool 
             "intake_event_id": payload.intake_event_id,
             "name": payload.name,
             "offset_minutes": payload.offset_minutes,
+            "eaten_at": payload.eaten_at,
         },
         commit=commit,
     )
@@ -146,11 +149,19 @@ def update_intake_plate_name(
 
 
 def update_intake_plate_offset(
-    connection, plate_id: int, offset_minutes: int | None, *, commit: bool = True
+    connection,
+    plate_id: int,
+    offset_minutes: int | None,
+    *,
+    eaten_at: datetime | None = None,
+    commit: bool = True,
 ) -> None:
     """Write the plate's template offset, or clear it with `offset_minutes=None`.
 
-    A dedicated function for the same reason as `update_intake_plate_name`.
+    `eaten_at` is the exact time it was written as, with `offset_minutes` already
+    derived from it; None means the offset was written in minutes, and clears the
+    time (measurement_conventions.md §4.5.1). A dedicated function for the same
+    reason as `update_intake_plate_name`.
 
     Raises:
         NotFoundError: the plate does not exist.
@@ -158,13 +169,59 @@ def update_intake_plate_offset(
     query = """
         UPDATE intake_plate
         SET offset_minutes = %(offset_minutes)s,
+            eaten_at = %(eaten_at)s,
             updated_at = NOW()
         WHERE id = %(plate_id)s
         RETURNING id;
     """
-    row = _execute_query(connection, query, {"plate_id": plate_id, "offset_minutes": offset_minutes}, commit=commit)
+    row = _execute_query(
+        connection,
+        query,
+        {"plate_id": plate_id, "offset_minutes": offset_minutes, "eaten_at": eaten_at},
+        commit=commit,
+    )
     if row is None:
         raise NotFoundError(f"Intake plate {plate_id} not found")
+
+
+def list_event_exact_times(connection, event_id: int) -> list[tuple[str, int, datetime]]:
+    """`(table, id, eaten_at)` of the plates and portions of an event whose offset
+    was written as an exact time (measurement_conventions.md §4.5.1)."""
+    query = """
+        SELECT 'intake_plate' AS table_name, id, eaten_at
+        FROM intake_plate
+        WHERE intake_event_id = %(event_id)s AND eaten_at IS NOT NULL
+        UNION ALL
+        SELECT 'portion_detail' AS table_name, id, eaten_at
+        FROM portion_detail
+        WHERE intake_event_id = %(event_id)s AND eaten_at IS NOT NULL;
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(query, {"event_id": event_id})
+        return [(row["table_name"], int(row["id"]), row["eaten_at"]) for row in cursor.fetchall()]
+
+
+# The two tables that hold an exact time; the name goes into the SQL, so it is
+# never taken from outside this list.
+_EXACT_TIME_TABLES = {"intake_plate", "portion_detail"}
+
+
+def set_exact_time(
+    connection, table: str, row_id: int, eaten_at: datetime, offset_minutes: int | None
+) -> None:
+    """Write an exact time and its derived offset on one plate or portion, inside
+    the caller's transaction (§4.5.1)."""
+    if table not in _EXACT_TIME_TABLES:
+        raise ValueError(f"No exact time in {table}")
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"""
+            UPDATE {table}
+            SET eaten_at = %(eaten_at)s, offset_minutes = %(offset_minutes)s, updated_at = NOW()
+            WHERE id = %(id)s;
+            """,
+            {"eaten_at": eaten_at, "offset_minutes": offset_minutes, "id": row_id},
+        )
 
 
 def apply_plate_offset_to_portions(
@@ -172,9 +229,11 @@ def apply_plate_offset_to_portions(
     plate_id: int,
     offset_minutes: int | None,
     *,
+    eaten_at: datetime | None = None,
     commit: bool = True,
 ) -> bool:
-    """`Apply all`: set the plate's offset and propagate it to all its portions.
+    """`Apply all`: set the plate's offset and propagate it to all its portions,
+    with its exact time when it was written as one (§4.5.1).
 
     Both writes are a single operation (§2.3): if the propagation fails, the
     plate does not keep the new value either. It is the only way the plate's
@@ -187,10 +246,11 @@ def apply_plate_offset_to_portions(
                 """
                 UPDATE intake_plate
                 SET offset_minutes = %(offset_minutes)s,
+                    eaten_at = %(eaten_at)s,
                     updated_at = NOW()
                 WHERE id = %(plate_id)s;
                 """,
-                {"offset_minutes": offset_minutes, "plate_id": plate_id},
+                {"offset_minutes": offset_minutes, "eaten_at": eaten_at, "plate_id": plate_id},
             )
             if cursor.rowcount != 1:
                 if commit:
@@ -200,10 +260,11 @@ def apply_plate_offset_to_portions(
                 """
                 UPDATE portion_detail
                 SET offset_minutes = %(offset_minutes)s,
+                    eaten_at = %(eaten_at)s,
                     updated_at = NOW()
                 WHERE plate_id = %(plate_id)s;
                 """,
-                {"offset_minutes": offset_minutes, "plate_id": plate_id},
+                {"offset_minutes": offset_minutes, "eaten_at": eaten_at, "plate_id": plate_id},
             )
         if commit:
             connection.commit()

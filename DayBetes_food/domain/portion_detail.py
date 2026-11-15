@@ -160,6 +160,7 @@ class PortionDetailRead:
     amount_method: AmountMethod | None  # U2; None = not given (study §6.3)
     is_cooked_weight: bool
     offset_minutes: int | None
+    eaten_at: datetime | None      # exact time the offset was written as; None = minutes (measurement §4.5.1)
     source_fridge_id: int | None   # the container it was taken from (measurement §4.8.4)
     created_at: datetime
     updated_at: datetime
@@ -203,6 +204,9 @@ class PortionDetailCreate:
     amount_method: AmountMethod | None = None
     is_cooked_weight: bool = False
     offset_minutes: int | None = None
+    # Exact time the offset was written as (measurement §4.5.1). None with an
+    # offset given: minutes. Both None: inherited from the plate.
+    eaten_at: datetime | None = None
     source_fridge_id: int | None = None
 
 

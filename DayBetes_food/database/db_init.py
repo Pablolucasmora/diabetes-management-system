@@ -2567,6 +2567,15 @@ def _ensure_portion_detail_schema(cursor):
             "ALTER TABLE portion_detail ADD CONSTRAINT ck_portion_detail_ripeness_event "
             "CHECK (ripeness IS NULL OR intake_event_id IS NOT NULL);"
         )
+    # ---- Exact time of the offset (measurement §4.5.1, decision 2026-11-15) ----
+    # NULL in every existing row: they were all written in minutes.
+    cursor.execute("ALTER TABLE intake_plate ADD COLUMN IF NOT EXISTS eaten_at TIMESTAMPTZ;")
+    cursor.execute("ALTER TABLE portion_detail ADD COLUMN IF NOT EXISTS eaten_at TIMESTAMPTZ;")
+    if not _constraint_exists(cursor, "portion_detail", "ck_portion_detail_eaten_at_only_for_event"):
+        cursor.execute(
+            "ALTER TABLE portion_detail ADD CONSTRAINT ck_portion_detail_eaten_at_only_for_event "
+            "CHECK (eaten_at IS NULL OR intake_event_id IS NOT NULL);"
+        )
 
 
 def _ensure_insulin_injections_schema(cursor):

@@ -5,6 +5,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import date, datetime, time
+from zoneinfo import ZoneInfo
 
 from DayBetes_food.database.queries import (
     confirm_intake_event,
@@ -21,6 +22,8 @@ from DayBetes_food.database.queries import (
     get_meal_type_schedule,
     get_planned_intake_event,
     list_portions_by_event,
+    list_event_exact_times,
+    set_exact_time,
     scale_plate_portion_amounts,
     update_intake_event,
 )
@@ -32,7 +35,16 @@ from DayBetes_food.domain.intake_event import (
     IntakeEventRead,
     IntakeEventUpdate,
 )
-from DayBetes_food.domain.intake_plate import IntakePlateCreate, PlateEaten, auto_offset_minutes, eaten_fraction
+from DayBetes_food.domain.intake_plate import (
+    IntakePlateCreate,
+    PlateEaten,
+    auto_offset_minutes,
+    eaten_fraction,
+    offset_from_eaten_at,
+    parse_eaten_time,
+    parse_offset_minutes,
+    resolve_eaten_at,
+)
 from DayBetes_food.domain.manual_intake import ManualIntakeCreate, QuickAddRequest
 from DayBetes_food.domain.meal_type_schedule import resolve_meal_type_for_time
 from DayBetes_food.domain.portion_detail import (
@@ -235,7 +247,9 @@ def update_meal_time(
     connection, user_id: int, event_id: int, local_time: time, local_date: date | None, *, commit: bool = True
 ) -> None:
     """Move a planned meal to a local time and, optionally, date; without a date it
-    keeps its own day (code_conventions.md §10.4).
+    keeps its own day (code_conventions.md §10.4). The offsets written as an
+    exact time are derived again from it (measurement_conventions.md §4.5.1), in
+    the same transaction.
 
     Raises:
         NotFoundError: the meal does not exist or is not the user's.
@@ -254,8 +268,29 @@ def update_meal_time(
             meal_time=local_naive_to_utc_aware(datetime.combine(chosen_date, local_time)),
             timezone_at_event=APP_TIMEZONE.key,
         ),
-        commit=commit,
+        commit=False,
     )
+    refresh_exact_time_offsets(connection, user_id, event_id)
+    if commit:
+        connection.commit()
+
+
+def refresh_exact_time_offsets(connection, user_id: int, event_id: int) -> None:
+    """After a meal's `meal_time` changes, place each exact time again (§4.5.1).
+
+    Each keeps its local `HH:MM` and moves to the day closest to the new
+    `meal_time`: "the snack at 13:30" stays at 13:30 when the meal moves from
+    00:44 to 14:00, instead of staying on the day before. Its offset is derived
+    again. Runs inside the caller's transaction.
+    """
+    event = get_intake_event(connection, user_id, event_id)
+    if event is None:
+        raise NotFoundError("intake_event_not_found")
+    zone = ZoneInfo(event.timezone_at_event)
+    for table, row_id, eaten_at in list_event_exact_times(connection, event_id):
+        local_time = eaten_at.astimezone(zone).time()
+        moved = resolve_eaten_at(event.meal_time, event.timezone_at_event, local_time, utc_now())
+        set_exact_time(connection, table, row_id, moved, offset_from_eaten_at(event.meal_time, moved))
 
 
 # Where a food added to the cart goes (measurement_conventions.md §4.6.1, §7.7).
@@ -275,6 +310,34 @@ def default_meal_type_now(connection, user_id: int) -> MealType | None:
     """
     overrides = get_meal_type_schedule(connection, user_id)
     return resolve_meal_type_for_time(local_now().time(), overrides)
+
+
+# How an offset is written in the cart (measurement_conventions.md §4.5.1).
+OFFSET_MODE_MINUTES = "minutes"
+OFFSET_MODE_TIME = "time"
+
+
+def resolve_offset_input(
+    event: IntakeEventRead, mode: str, minutes_raw: str, time_raw: str
+) -> tuple[int | None, datetime | None]:
+    """`(offset_minutes, eaten_at)` to store from what the user typed.
+
+    In minutes, the integer and no time. As a time, the instant closest to
+    `meal_time` and the offset derived from it (None out of range, the time is
+    kept). An empty time clears both: the offset is unknown (§4.5).
+
+    Raises:
+        ValidationError: unknown mode, or a value that does not parse.
+    """
+    if mode == OFFSET_MODE_TIME:
+        eaten_time = parse_eaten_time(time_raw)
+        if eaten_time is None:
+            return None, None
+        eaten_at = resolve_eaten_at(event.meal_time, event.timezone_at_event, eaten_time, utc_now())
+        return offset_from_eaten_at(event.meal_time, eaten_at), eaten_at
+    if mode != OFFSET_MODE_MINUTES:
+        raise ValidationError("The offset mode is not valid.")
+    return parse_offset_minutes(minutes_raw), None
 
 
 def new_plate_offset_minutes(event: IntakeEventRead | None) -> int | None:
