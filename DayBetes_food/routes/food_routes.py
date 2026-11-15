@@ -211,6 +211,14 @@ from DayBetes_food.components.food.rescue import (
     RescueLine,
     RescueOptions,
 )
+from DayBetes_food.components.food.foods import (
+    FOOD_FAVS_TABS,
+    FOOD_FILTERS,
+    FOOD_FOOD_TABS,
+    FOOD_RECIPES_TABS,
+    FOOD_SEARCH_TABS,
+    FoodView,
+)
 from DayBetes_food.components.food.foods import catalog_entry_view, manual_intake_entry_view, recipe_entry_view
 from DayBetes_food.components.food.foods import (
     CONFIDENCE_LABELS,
@@ -1736,16 +1744,44 @@ def _recipe_ingredient_nodes(
     return nodes or [H2("No items", cls="text-gray-600")]
 
 
+def _view_value(field: str, value: str, allowed: tuple[tuple[str, str], ...]) -> str:
+    """One value of the Food view: empty is the default (the first), unknown a 422."""
+    clean = (value or "").strip() or allowed[0][1]
+    if clean not in {option for _, option in allowed}:
+        raise ValidationError("Unknown Food list.", fields={field: "invalid"})
+    return clean
+
+
+def _food_view(filter, search_mode, food_mode, favs_mode, recipes_mode, meal_type) -> FoodView:
+    """The view of /food from its URL (frontend_conventions.md §5)."""
+    meal_types = parse_recipe_meal_types(meal_type)
+    return FoodView(
+        filter=_view_value("filter", filter, FOOD_FILTERS),
+        search_mode=_view_value("search_mode", search_mode, FOOD_SEARCH_TABS),
+        food_mode=_view_value("food_mode", food_mode, FOOD_FOOD_TABS),
+        favs_mode=_view_value("favs_mode", favs_mode, FOOD_FAVS_TABS),
+        recipes_mode=_view_value("recipes_mode", recipes_mode, FOOD_RECIPES_TABS),
+        meal_type=",".join(meal.value for meal in meal_types),
+    )
+
+
 def setup_food_routes(rt):
     
     @rt("/food")
-    def get(request, filter: str = ""):
-        """`filter=fridge` opens the Fridge pill (the From fridge button of the home
-        page, frontend §9.2); any other value is a 422 (code_conventions §7.7)."""
-        selected = (filter or "all").strip()
-        if selected not in ("all", "fridge"):
-            raise ValidationError("Unknown Food list.", fields={"filter": "invalid"})
-        return render_page(request, lambda connection: food_main(connection, selected))
+    def get(
+        request,
+        filter: str = "",
+        search_mode: str = "",
+        food_mode: str = "",
+        favs_mode: str = "",
+        recipes_mode: str = "",
+        meal_type: str = "",
+    ):
+        """The page opened on the view of its URL (frontend §5): `filter=fridge` is the
+        From fridge button of the home page (§9.2), the rest is what Back comes back
+        to. An unknown value is a 422 (code_conventions §7.7)."""
+        view = _food_view(filter, search_mode, food_mode, favs_mode, recipes_mode, meal_type)
+        return render_page(request, lambda connection: food_main(connection, view))
 
     @rt("/food/create/catalog/form")
     def get(

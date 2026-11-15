@@ -1,10 +1,15 @@
+from dataclasses import asdict
+from urllib.parse import urlencode
+
 from fasthtml.common import *
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.cart.cart_components import plate_display_name
+from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.config import ASSISTANT_ENABLED
 from DayBetes_food.components.food.food_actions import FoodActionsModal
 from DayBetes_food.components.food.foods import (
     Filters,
+    FoodView,
     FoodFiltersModal,
     MealSelector,
     QuickCreateButtons,
@@ -56,8 +61,8 @@ def plate_selector_options(connection, user_id: int, event_id: int):
     return options, default_plate_id
 
 
-def food_main(connection, selected_filter: str = "all"):
-    """The Food page. `selected_filter` is the pill it opens on (frontend §9.3)."""
+def food_main(connection, view: FoodView = FoodView()):
+    """The Food page, opened on `view`: its pill, tabs and filters (frontend §5, §9.3)."""
     user_id = get_current_user_id()
     events = list_planned_intake_events(connection, int(user_id)) if user_id else []
 
@@ -72,6 +77,11 @@ def food_main(connection, selected_filter: str = "all"):
     )
 
     return Div(
+        # The page is asked for again on coming back, with the state of its URL
+        # (static/js/food_view.js, frontend_conventions.md §5).
+        hx_history="false",
+        data_food_view="true",
+    ), Script(src=asset_busted("/js/food_view.js"), defer="defer"), Div(
         # Blurs the whole page behind an open menu of the header
         # (static/js/food_quick_create.js). It is a single fixed layer with
         # backdrop-filter, instead of `filter: blur()` on each element: Safari
@@ -82,8 +92,8 @@ def food_main(connection, selected_filter: str = "all"):
             cls="fixed inset-0 z-[1] backdrop-blur-[1px] opacity-0 invisible transition-opacity duration-200",
         ),
         QuickCreateButtons(assistant_enabled=ASSISTANT_ENABLED),
-        SearchInput(),
-        Filters(selected_filter),
+        SearchInput(view),
+        Filters(view),
         MealSelector(
             events,
             selected_id=selected_event_id,
@@ -103,7 +113,9 @@ def food_main(connection, selected_filter: str = "all"):
         Div(
             "Loading...",
             id="food-list",
-            hx_get=f"/food/list?filter={selected_filter}&search_mode=recommended&page=1",
+            # The page's own view: a fixed query here showed another tab's list on
+            # coming back. Not hx-include, which the cards inside would inherit.
+            hx_get=f"/food/list?{urlencode({**asdict(view), 'page': 1})}",
             hx_trigger="load",
             hx_swap="innerHTML",
             data_skip_page_loading="true",

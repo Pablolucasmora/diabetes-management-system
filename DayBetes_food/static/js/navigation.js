@@ -31,6 +31,11 @@
     markDepth(depth + 1);
   });
 
+  // HX-Replace-Url swaps the state for htmx's own: the entry keeps its depth.
+  document.addEventListener("htmx:replacedInHistory", function () {
+    markDepth(depth);
+  });
+
   window.addEventListener("popstate", function (event) {
     depth = event.state && typeof event.state.dbDepth === "number" ? event.state.dbDepth : 0;
   });

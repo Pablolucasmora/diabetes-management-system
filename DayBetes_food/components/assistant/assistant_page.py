@@ -78,6 +78,8 @@ def _header():
                     hx_get="/cart",
                     hx_target="#main_content",
                     hx_push_url="true",
+                    # Lands on the chosen meal's card (static/js/assistant.js, frontend §5).
+                    **{"hx-on:click": "dbOpenCartFromAssistant();"},
                 ),
                 cls="flex items-center gap-3",
             ),
@@ -246,6 +248,7 @@ def _review_button():
         hx_get="/cart",
         hx_target="#main_content",
         hx_push_url="true",
+        **{"hx-on:click": "dbOpenCartFromAssistant();"},
     )
 
 
@@ -495,6 +498,9 @@ def AssistantPage(
         # not fixed) so a phone keyboard scrolls it into view.
         Div(_composer(), cls="sticky bottom-28 w-full mt-auto"),
         data_hide_cart="true",
+        # Asked for again on coming back, with the conversation of its URL
+        # (frontend_conventions.md §5): a saved copy loses the `Add to` choice.
+        hx_history="false",
         cls="w-full max-w-2xl mx-auto px-4 pb-28 min-h-dvh flex flex-col gap-4",
     )
 

@@ -4,6 +4,7 @@ from DayBetes_food.components.cart.cart_components import CartCard
 from DayBetes_food.components.cart.cart_leftovers import CartLeftoversModal
 from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.components.insulin_pen import InsulinPenModal
+from DayBetes_food.components.navigation import back_js
 from DayBetes_food.time_utils import local_today
 
 
@@ -30,6 +31,17 @@ def cart_events_list(events, portions_by_event, plates_by_event=None, rapid_pens
     )
 
 
+def _cart_back_button():
+    """Back to the page the cart was opened from, in the state it was left in
+    (DiaBot, Food, Menu...); Menu when there is none (frontend_conventions.md §5)."""
+    return Button(
+        "‹ Back",
+        type="button",
+        cls="self-start text-sm font-medium text-gray-700 cursor-pointer px-1 py-1",
+        onclick=back_js("/menu"),
+    )
+
+
 def cart_main(events, portions_by_event, plates_by_event=None, oob: bool = False, rapid_pens=(), brands=()):
     """
     `oob=True` marks the root Div (#cart_body) as an out-of-band swap
@@ -41,6 +53,7 @@ def cart_main(events, portions_by_event, plates_by_event=None, oob: bool = False
 
     if not events:
         return Div(
+            _cart_back_button(),
             Div(
                 Img(src="/images/ui/cart.svg", alt="", cls="w-10 h-10 opacity-70"),
                 H1("Your cart is empty", cls="text-lg font-semibold text-gray-700"),
@@ -84,6 +97,7 @@ def cart_main(events, portions_by_event, plates_by_event=None, oob: bool = False
 
     return Div(
         Div(
+            _cart_back_button(),
             P("Cart", cls="web_section_label"),
             H1("Planned meals", cls="text-2xl font-bold text-gray-900"),
             P("Check what you are about to eat, then confirm it.", cls="text-sm text-gray-600"),

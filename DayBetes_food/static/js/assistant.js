@@ -20,6 +20,7 @@
   var DEBOUNCE_MS = 150;
   var MAX_QUERY_LENGTH = 80;
   var TEXTAREA_MAX_PX = 160;
+  var CART_CARD_MARGIN_PX = 96; // room for the fixed logo above a cart card
   var PHOTO_MAX_SIDE_PX = 1568; // larger sides are scaled down by the API anyway
   var PHOTO_JPEG_QUALITY = 0.85;
 
@@ -411,6 +412,28 @@
     // htmx loads that conversation, as a change by hand does.
     select.dispatchEvent(new Event("change", { bubbles: true }));
   }
+
+  // The cart opens at the top of the chosen meal's card, so its time and name
+  // show (frontend_conventions.md §5, user's request of 2026-11-15). Without a
+  // meal (`New meal`, `No meal`), or if the card is not there, at the top.
+  window.dbOpenCartFromAssistant = function () {
+    window.scrollTo({ top: 0, behavior: "auto" });
+    var select = mealSelect();
+    var eventId = select && /^[0-9]+$/.test(select.value) ? select.value : null;
+    if (!eventId) return;
+    document.body.addEventListener(
+      "htmx:afterSettle",
+      function onSettle(event) {
+        if (!event.detail.target || event.detail.target.id !== "main_content") return;
+        document.body.removeEventListener("htmx:afterSettle", onSettle);
+        var card = byId("cart_card_event_" + eventId);
+        if (!card) return;
+        // Below the fixed logo at the top of the page.
+        var top = card.getBoundingClientRect().top + window.scrollY - CART_CARD_MARGIN_PX;
+        window.scrollTo({ top: Math.max(0, top), behavior: "auto" });
+      }
+    );
+  };
 
   document.addEventListener("change", function (event) {
     if (event.target !== mealSelect()) return;
