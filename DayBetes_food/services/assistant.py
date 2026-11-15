@@ -367,6 +367,10 @@ def send_assistant_message(
         _context_block(connection, user_id, ctx.event_id, mention_lines, ctx.without_meal), request
     )
     turn = _Turn(live=[live_user], stored=[stored_user])
+    # The reads above opened an implicit transaction: end it before the model is
+    # called, so each round below is a transaction of its own and not a savepoint
+    # of one held open (locks included) while the model answers (§8.12, "Turno").
+    connection.commit()
     usages: list[AssistantUsage] = []
     outcome = "end_turn"
 

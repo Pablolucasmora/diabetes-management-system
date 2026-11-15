@@ -2,12 +2,12 @@
 
 What the model can do is exactly this list: search, add to the planned meal of
 its conversation, read that meal, change the fields of that meal the user edits
-in its cart card, and prepare a draft of a new food or recipe, which the user
-reviews and saves in its create form. There is no tool that
-deletes anything, archives or edits a food, dish or recipe, confirms a meal,
-touches a consumed meal, its insulin or the fridge, logs insulin or changes
-settings: the guarantee is that those tools do not exist, not an instruction
-of the prompt.
+in its cart card (its insulin draft included), and prepare a draft of a new
+food, dish or recipe, which the user reviews and saves in its create form.
+There is no tool that deletes anything, archives or edits a food, dish or
+recipe, confirms a meal, touches a consumed meal or the fridge, logs an
+injection outside the meal's draft or changes settings: the guarantee is that
+those tools do not exist, not an instruction of the prompt.
 
 Each tool calls the same queries and services as the equivalent route, with
 the same validation (§7) and the owner in the SQL (§5.3). A wrong input goes
@@ -36,6 +36,7 @@ from DayBetes_food.database.queries import (
     get_manual_intake,
     get_mention_suggestions,
     get_off_product_by_code,
+    get_planned_intake_event,
     get_portion_detail,
     get_recipe,
     link_assistant_conversation_event,
@@ -207,8 +208,9 @@ def _schema(properties: dict) -> dict:
 
 def _tool(name: str, description: str, properties: dict, *, strict: bool = True) -> dict:
     """`strict` makes the API guarantee the schema. The API caps the nullable
-    parameters of strict tools at 16 in all, so the two tools with many optional
-    numbers go without it: their handlers check every value anyway (§7)."""
+    parameters of strict tools at 16 in all, so the tools with many optional
+    fields (the drafts, add_estimate and the update_* ones) go without it: their
+    handlers check every value anyway (§7)."""
     return {"name": name, "description": description, "input_schema": _schema(properties), "strict": strict}
 
 
@@ -279,9 +281,9 @@ TOOL_DEFINITIONS = [
     ),
     _tool(
         "show_meal",
-        "Read the meal of this conversation as it is now: its time, type, name and notes, "
-        "and its plates with their foods, with the ids that add_food, update_plate and "
-        "update_food take. The context block already has a summary: use this only when "
+        "Read the meal of this conversation as it is now: its time, type, name, notes and "
+        "whether they ate out, its insulin draft with the open rapid pens, and its plates "
+        "with their foods, with the ids that add_food, update_plate and update_food take. The context block already has a summary: use this only when "
         "you need more.",
         {},
     ),
@@ -798,7 +800,7 @@ def _add_estimate(ctx: ToolContext, tool_input: dict) -> dict:
 def _show_meal(ctx: ToolContext, tool_input: dict) -> dict:
     if ctx.event_id is None:
         return {"plates": [], "note": "The meal is empty: nothing has been added yet."}
-    event = get_intake_event(ctx.connection, ctx.user_id, ctx.event_id)
+    event = get_intake_event(ctx.connection, ctx.user_id, _meal_event(ctx))
     if event is None:
         raise NotFoundError("intake_event_not_found")
     when = to_local(event.meal_time) if event.meal_time else None
@@ -897,10 +899,19 @@ def _offset_change_text(offset: int | None, eaten_at: datetime | None) -> str:
 
 
 def _meal_event(ctx: ToolContext) -> int:
-    """The meal the edits act on: the conversation's, which must exist."""
+    """The meal the edits act on: the conversation's, which must exist and still be
+    planned. Checked on every call, not only when the message arrives: the user can
+    confirm the meal in the cart while the model answers, and the assistant never
+    touches a consumed meal (§8.12).
+
+    Raises:
+        ToolInputError: the conversation has no meal yet.
+        ConflictError: the meal was confirmed meanwhile.
+        NotFoundError: the meal was deleted meanwhile.
+    """
     if ctx.event_id is None:
         raise ToolInputError("The meal is empty: there is nothing to change yet.")
-    return ctx.event_id
+    return get_planned_intake_event(ctx.connection, ctx.user_id, ctx.event_id)
 
 
 def _add_plate(ctx: ToolContext, tool_input: dict) -> dict:
