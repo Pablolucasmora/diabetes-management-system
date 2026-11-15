@@ -8,7 +8,7 @@ what is stored (code_conventions.md §8.12, §11.2.9; study_conventions.md §7.1
 - Each round of tools is one transaction: the tool effects and the messages
   that explain them are stored together, so the conversation can always be
   replayed. A failure in a later round keeps the earlier ones.
-- A photo is sent once and stored as a text marker (study §7.1).
+- Each photo is sent once and stored as a text marker (study §7.1).
 - Usage is logged per message, never its content (§8.3).
 """
 
@@ -266,17 +266,17 @@ def _context_block(
 
 
 def _user_message(context: dict, request: AssistantTurnRequest) -> tuple[dict, AssistantMessageCreate]:
-    """The first message of the turn, as sent and as stored (photo replaced)."""
+    """The first message of the turn, as sent and as stored (photos replaced)."""
     live = [context]
     stored = [context]
-    if request.photo is not None:
+    for photo in request.photos:
         live.append(
             {
                 "type": "image",
                 "source": {
                     "type": "base64",
-                    "media_type": request.photo.media_type,
-                    "data": base64.standard_b64encode(request.photo.data).decode("ascii"),
+                    "media_type": photo.media_type,
+                    "data": base64.standard_b64encode(photo.data).decode("ascii"),
                 },
             }
         )

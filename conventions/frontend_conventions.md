@@ -560,16 +560,18 @@ Contrato del servidor en `code_conventions.md` §8.12. Solo existe si el asisten
 
 **Enviar** (decisión del usuario, 2026-11-12: síncrono).
 
-- Solo envía el botón, y Enter hace un salto de línea. El botón está activo si hay texto, una mención o una foto.
+- Solo envía el botón, y Enter hace un salto de línea. El botón está activo si hay texto, una mención o alguna foto.
 - Mientras el servidor responde, aparece una burbuja `Thinking` con tres puntos que suben uno tras otro (quietos si el sistema pide reducir el movimiento, §10) y el botón se desactiva.
-- Si sale bien, se añade al final el turno: el mensaje del usuario, a la derecha, con la píldora `Photo` si llevaba una; las respuestas del asistente, a la izquierda y como texto plano (solo las de un mensaje sin llamadas a herramientas: el texto que el modelo escribe junto a una llamada no es una respuesta); y las tarjetas de lo que hizo. Después se vacía el compositor (texto, menciones y foto) y se desplaza la vista al turno nuevo.
+- Si sale bien, se añade al final el turno: el mensaje del usuario, a la derecha, con la píldora `Photo` si llevaba una foto, o `N photos` si llevaba varias; las respuestas del asistente, a la izquierda y como texto plano (solo las de un mensaje sin llamadas a herramientas: el texto que el modelo escribe junto a una llamada no es una respuesta); y las tarjetas de lo que hizo. Después se vacía el compositor (texto, menciones y fotos) y se desplaza la vista al turno nuevo.
 - Si falla, el toast lo explica (`code_conventions.md` §8.12) y el compositor se queda como estaba.
 
-**Foto.** El botón de la cámara adjunta una sola foto, de un plato o de una etiqueta nutricional, y se muestra como una píldora con una × para quitarla.
+**Fotos** (decisión del usuario, 2026-11-15: hasta 4 por mensaje, con miniaturas). El botón de la cámara adjunta fotos de un plato o de una etiqueta nutricional, por ejemplo la cara delantera y la trasera de un envase.
 
-- Antes de enviarla, el navegador la reduce a 1568 px por el lado mayor y la convierte en JPEG (`code_conventions.md` §8.12, coste).
-- Si el navegador no puede, envía la original, y el servidor rechaza una de más de 3,75 MB o que no sea JPEG, PNG o WebP según sus bytes.
-- No se guarda: el historial muestra la píldora `Photo` sin la imagen.
+- Se pueden elegir varias a la vez o añadirlas de una en una, hasta 4. Las que pasan de 4 no se añaden, y un toast lo dice.
+- Encima del texto aparece una miniatura de cada una, con una × para quitarla. Mientras una se prepara, su miniatura sale atenuada y el botón de enviar espera.
+- Antes de enviarlas, el navegador reduce cada una a 1568 px por el lado mayor y la convierte en JPEG (`code_conventions.md` §8.12, coste).
+- Si el navegador no puede, envía la original, y el servidor rechaza el mensaje si lleva más de 4 fotos, o una de más de 3,75 MB o que no sea JPEG, PNG o WebP según sus bytes.
+- No se guardan: el historial muestra la píldora `Photo` o `N photos`, sin las imágenes.
 
 **Tarjetas.**
 
@@ -605,7 +607,7 @@ Las tarjetas se leen de los resultados guardados de las herramientas, así que u
 | `GET /assistant/mentions?q=` (al escribir tras `/`, con un retraso de 150 ms; una respuesta que llega tarde se descarta) | `#assistant_mentions` | `innerHTML` | las filas, o una línea `No foods match` | sin sesión: `401`, por el canal de errores |
 
 | `GET /assistant/thread?intake_event_id=` (al cambiar `Add to`) | `#assistant_thread_box` | `innerHTML` | la conversación de esa comida, o la vacía con la introducción | comida confirmada o borrada: `404` por el canal de errores |
-| `POST /assistant/message` (`multipart/form-data`: `message`, `mentions`, `photo`, `intake_event_id`, `conversation_id`) | `#assistant_thread` | `beforeend` | el turno, con el id de la conversación y, si creó la comida, `Add to` fuera de banda | validación `422`, comida confirmada o borrada `404`/`409`, proveedor `502`: status, cuerpo vacío y toast |
+| `POST /assistant/message` (`multipart/form-data`: `message`, `mentions`, `photo` (repetido, hasta 4), `intake_event_id`, `conversation_id`) | `#assistant_thread` | `beforeend` | el turno, con el id de la conversación y, si creó la comida, `Add to` fuera de banda | validación `422`, comida confirmada o borrada `404`/`409`, proveedor `502`: status, cuerpo vacío y toast |
 
 Las tres exigen el header `HX-Request` (`403` si falta). Repetir un envío es un mensaje nuevo: el asistente puede volver a añadir lo mismo, y la copia se quita en el carrito.
 

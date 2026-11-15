@@ -70,8 +70,10 @@ from DayBetes_food.errors import ValidationError
 # What one message of the user can carry (frontend_conventions.md §9.11).
 ASSISTANT_TEXT_MAX_LENGTH = 8000  # room for a pasted recipe (§8.12, "Recetas")
 ASSISTANT_MENTIONS_MAX = 10
-# One photo per message, already reduced in the browser (§8.12, cost). The API
-# takes up to 5 MB per image in base64, which is about 3.75 MB of bytes.
+# Up to four photos per message (decision of 2026-11-15), each already reduced in
+# the browser (§8.12, cost). The API takes up to 5 MB per image in base64, which
+# is about 3.75 MB of bytes.
+ASSISTANT_PHOTOS_MAX = 4
 ASSISTANT_PHOTO_MAX_BYTES = 3_750_000
 ASSISTANT_PHOTO_MEDIA_TYPES = ("image/jpeg", "image/png", "image/webp")
 
@@ -81,7 +83,7 @@ ASSISTANT_SEARCH_RESULTS_MAX = 5
 # Marks the block of a user row that the server writes (date, meal, mentions):
 # the page shows the user's own text only.
 ASSISTANT_CONTEXT_TAG = "<daybetes_context>"
-# What a stored photo becomes: photos are never kept (§11.2.9, study §7.1).
+# What each stored photo becomes: photos are never kept (§11.2.9, study §7.1).
 ASSISTANT_PHOTO_PLACEHOLDER = "[The user attached a photo here. Photos are not kept.]"
 
 # Keys of a tool result that the page shows as a card (frontend §9.11): what
@@ -127,7 +129,7 @@ class AssistantTurnRequest:
 
     text: str
     mentions: tuple[Mention, ...]
-    photo: AssistantPhoto | None
+    photos: tuple[AssistantPhoto, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -218,28 +220,42 @@ def parse_mentions(raw) -> tuple[Mention, ...]:
     return tuple(mentions)
 
 
-def parse_assistant_photo(content_type, data: bytes | None) -> AssistantPhoto | None:
-    """The attached photo, or None. The format is checked on the bytes, not only
-    on the declared type, and the size against ASSISTANT_PHOTO_MAX_BYTES."""
-    if not data:
-        return None
-    media_type = str(content_type or "").split(";")[0].strip().lower()
-    if media_type not in ASSISTANT_PHOTO_MEDIA_TYPES:
-        raise ValidationError("Attach a JPEG, PNG or WebP photo.", fields={"photo": "invalid"})
-    if len(data) > ASSISTANT_PHOTO_MAX_BYTES:
-        raise ValidationError("The photo is too large.", fields={"photo": "too_large"})
-    if media_type == "image/webp":
-        valid = data[:4] == b"RIFF" and data[8:12] == b"WEBP"
-    else:
-        valid = data.startswith(_PHOTO_SIGNATURES[media_type])
-    if not valid:
-        raise ValidationError("The photo could not be read.", fields={"photo": "invalid"})
-    return AssistantPhoto(media_type, data)
+def check_photo_count(count: int) -> None:
+    """Checked before the files are read."""
+    if count > ASSISTANT_PHOTOS_MAX:
+        raise ValidationError(
+            f"Attach at most {ASSISTANT_PHOTOS_MAX} photos in one message.", fields={"photo": "too_many"}
+        )
+
+
+def parse_assistant_photos(uploads: list[tuple[str, bytes]]) -> tuple[AssistantPhoto, ...]:
+    """The attached photos, in order. Each format is checked on the bytes, not
+    only on the declared type, and each size against ASSISTANT_PHOTO_MAX_BYTES."""
+    check_photo_count(len(uploads))
+    photos = []
+    for position, (content_type, data) in enumerate(uploads, start=1):
+        if not data:
+            continue
+        # "Photo 2 ..." when there are several, so the user knows which one to change.
+        which = f"Photo {position}" if len(uploads) > 1 else "The photo"
+        media_type = str(content_type or "").split(";")[0].strip().lower()
+        if media_type not in ASSISTANT_PHOTO_MEDIA_TYPES:
+            raise ValidationError(f"{which} must be JPEG, PNG or WebP.", fields={"photo": "invalid"})
+        if len(data) > ASSISTANT_PHOTO_MAX_BYTES:
+            raise ValidationError(f"{which} is too large.", fields={"photo": "too_large"})
+        if media_type == "image/webp":
+            valid = data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+        else:
+            valid = data.startswith(_PHOTO_SIGNATURES[media_type])
+        if not valid:
+            raise ValidationError(f"{which} could not be read.", fields={"photo": "invalid"})
+        photos.append(AssistantPhoto(media_type, data))
+    return tuple(photos)
 
 
 def require_turn_content(request: AssistantTurnRequest) -> None:
     """A message needs something to read: text, a mention or a photo."""
-    if not request.text and not request.mentions and request.photo is None:
+    if not request.text and not request.mentions and not request.photos:
         raise ValidationError("Write what you ate.", fields={"message": "required"})
 
 
@@ -730,7 +746,7 @@ class TurnView:
     """One message of the user and everything the assistant did for it."""
 
     user_text: str
-    had_photo: bool
+    photo_count: int
     replies: list[str]
     added: list[AddedCard]
     drafts: list[DraftCard]
@@ -758,11 +774,11 @@ def turn_views(messages: list[AssistantMessageRead]) -> list[TurnView]:
                 if block.get("type") == "text" and not is_context_block(block)
                 and block.get("text") != ASSISTANT_PHOTO_PLACEHOLDER
             ]
-            had_photo = any(
+            photo_count = sum(
                 block.get("type") == "image" or block.get("text") == ASSISTANT_PHOTO_PLACEHOLDER
                 for block in message.content
             )
-            turns.append(TurnView("\n".join(texts).strip(), had_photo, [], [], [], []))
+            turns.append(TurnView("\n".join(texts).strip(), photo_count, [], [], [], []))
             continue
         if not turns:
             continue
