@@ -270,9 +270,9 @@ VPS de OVH en la UE, con Ubuntu 26.04 LTS: SSH solo con clave y sin root, firewa
 Producción ejecuta siempre `main`, protegida: solo admite cambios por Pull Request.
 
 ```
-rama ─▶ Pull Request ─▶ pip-audit + pruebas ─▶ merge en main ─▶ GitHub Actions
-                                                                   │  (SSH con clave dedicada y comando forzado)
-                                                                   ▼
+rama ─▶ Pull Request ─▶ pip-audit + pruebas + imágenes ─▶ merge en main ─▶ GitHub Actions
+                                                                              │  (SSH con clave dedicada y comando forzado)
+                                                                              ▼
                           VPS: git ─▶ migraciones ─▶ build + up ─▶ comprobación de salud ─▶ vuelta atrás si falla
 ```
 
