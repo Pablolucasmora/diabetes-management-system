@@ -1,18 +1,19 @@
 import hashlib
 import re
 import secrets
-try:
-    from argon2 import PasswordHasher
-    from argon2.exceptions import VerifyMismatchError, InvalidHashError
-except Exception:
-    PasswordHasher = None
-    VerifyMismatchError = Exception
-    InvalidHashError = Exception
+
+# A direct import: argon2-cffi is a required dependency, and if it cannot be
+# imported the app must fail at startup, not reject every login silently.
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerifyMismatchError
 
 from DayBetes_food.config import AUTH_TOKEN_PEPPER, PASSWORD_PEPPER
 
 
-_password_hasher = PasswordHasher() if PasswordHasher else None
+_password_hasher = PasswordHasher()
+# Hash of a random secret, verified when the user does not exist so that a
+# missing user takes as long as a wrong password (no user enumeration by timing).
+_DUMMY_PASSWORD_HASH = _password_hasher.hash(secrets.token_urlsafe(32) + PASSWORD_PEPPER)
 _EMAIL_RE = re.compile(r"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$", re.IGNORECASE)
 _USERNAME_RE = re.compile(r"^[a-zA-Z0-9_]{3,32}$")
 
@@ -52,15 +53,11 @@ def is_strong_password(password: str) -> bool:
 
 
 def hash_password(password: str) -> str:
-    if not _password_hasher:
-        raise RuntimeError("argon2-cffi is required for password hashing")
     peppered = password + PASSWORD_PEPPER
     return _password_hasher.hash(peppered)
 
 def verify_password(password_hash: str, password: str) -> tuple[bool, str | None]:
     if not password_hash or not password:
-        return False, None
-    if not _password_hasher:
         return False, None
 
     # 1. Try with the pepper (user already migrated)
@@ -79,6 +76,15 @@ def verify_password(password_hash: str, password: str) -> tuple[bool, str | None
         return True, new_hash
     except (VerifyMismatchError, InvalidHashError, TypeError):
         return False, None
+
+def burn_password_check(password: str) -> None:
+    """Spend the time of one Argon2 verification without a real hash: used when
+    the login identifier matches no active user (code_conventions.md §5.2)."""
+    try:
+        _password_hasher.verify(_DUMMY_PASSWORD_HASH, (password or "") + PASSWORD_PEPPER)
+    except (VerifyMismatchError, InvalidHashError):
+        pass
+
 
 def generate_token() -> str:
     return secrets.token_urlsafe(48)

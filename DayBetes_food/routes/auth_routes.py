@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 from DayBetes_food.auth.security import (
     generate_token,
     hash_password,
+    burn_password_check,
     hash_token,
     is_strong_password,
     is_valid_email,
@@ -24,6 +25,7 @@ from DayBetes_food.errors import ConflictError
 from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.auth.service import (
     GENERIC_AUTH_ERROR,
+    RATE_LIMITED_ERROR,
     clear_login_failures,
     create_session,
     create_user,
@@ -158,6 +160,26 @@ def _registration_form(request: Request, error: str = "", status_code: int = 200
     )
 
 
+def _login_form(request: Request, error: str = "", status_code: int = 200):
+    return _form_shell(
+        title="Log in",
+        action="/auth/login/submit",
+        csrf_token=getattr(request.state, "csrf_token", ""),
+        fields_html=f"""
+            <input name="identifier" placeholder="Email or username" required="required"
+              maxlength="{USER_EMAIL_MAX_LENGTH}"
+              class="web_input border border-white rounded-lg px-3 py-2 text-sm">
+            <input type="password" name="password" placeholder="Password" required="required"
+              class="web_input border border-white rounded-lg px-3 py-2 text-sm">
+        """,
+        submit_text="Log in",
+        alt_text="No account yet? Sign up" if REGISTRATION_ENABLED else "",
+        alt_href="/auth/register" if REGISTRATION_ENABLED else "",
+        error=error,
+        status_code=status_code,
+    )
+
+
 def _set_auth_cookies(response, session_token: str, csrf_token: str):
     response.set_cookie(
         SESSION_COOKIE_NAME,
@@ -200,6 +222,14 @@ def _setup_registration_routes(rt):
     ):
         if getattr(request.state, "user", None):
             return RedirectResponse(url="/menu", status_code=303)
+
+        # Every attempt counts, valid or not, per client IP (§5.2): signing up
+        # has no failure to wait for, and it creates rows.
+        limiter_key_hash = hash_token(f"register:{_client_ip(request)}")
+        with get_connection() as connection:
+            if not rate_limit_login_allowed(connection, limiter_key_hash):
+                return _registration_form(request, error=RATE_LIMITED_ERROR, status_code=429)
+            register_login_failure(connection, limiter_key_hash)
 
         username = normalize_identifier(sanitize_text(username))
         email = normalize_identifier(sanitize_text(email))
@@ -250,23 +280,7 @@ def setup_auth_routes(rt):
         if getattr(req.state, "user", None):
             return RedirectResponse(url="/menu", status_code=303)
 
-        csrf_token = getattr(req.state, "csrf_token", "")
-        return _form_shell(
-            title="Log in",
-            action="/auth/login/submit",
-            csrf_token=csrf_token,
-            fields_html=f"""
-                <input name="identifier" placeholder="Email or username" required="required"
-                  maxlength="{USER_EMAIL_MAX_LENGTH}"
-                  class="web_input border border-white rounded-lg px-3 py-2 text-sm">
-                <input type="password" name="password" placeholder="Password" required="required"
-                  class="web_input border border-white rounded-lg px-3 py-2 text-sm">
-            """,
-            submit_text="Log in",
-            alt_text="No account yet? Sign up" if REGISTRATION_ENABLED else "",
-            alt_href="/auth/register" if REGISTRATION_ENABLED else "",
-            error=req.query_params.get("error", ""),
-        )
+        return _login_form(req, error=req.query_params.get("error", ""))
 
     if REGISTRATION_ENABLED:
         _setup_registration_routes(rt)
@@ -282,22 +296,30 @@ def setup_auth_routes(rt):
         with get_connection() as connection:
             purge_expired_sessions(connection)
             if not rate_limit_login_allowed(connection, limiter_key_hash):
-                return _redirect_with_error("/auth/login", GENERIC_AUTH_ERROR)
+                # 429 so the client can tell a block from a wrong password
+                # (§5.2). The block is per identifier and IP, and a missing
+                # user is blocked the same way, so it reveals nothing.
+                return _login_form(request, error=RATE_LIMITED_ERROR, status_code=429)
 
             # An identifier longer than the column cannot match any user: it
             # is rejected without truncating it (§7.3) and through the same
             # path as a nonexistent user, so both cases look the same
             # (error_conventions.md §3.5).
             if len(identifier) > USER_EMAIL_MAX_LENGTH:
+                burn_password_check(password)
                 register_login_failure(connection, limiter_key_hash)
                 return _redirect_with_error("/auth/login", GENERIC_AUTH_ERROR)
 
-            # Gradual database migration to add the pepper
+            # A missing or inactive user spends the same Argon2 time as a wrong
+            # password and gets the same answer (§5.2: no user enumeration).
+            # An inactive user never gets a session.
             user = get_user_by_identifier(connection, identifier)
-            if not user:
+            if not user or not user.is_active:
+                burn_password_check(password)
                 register_login_failure(connection, limiter_key_hash)
                 return _redirect_with_error("/auth/login", GENERIC_AUTH_ERROR)
 
+            # A hash without the pepper is rehashed with it (legacy accounts).
             is_valid, new_hash = verify_password(user.password_hash, password or "")
             if not is_valid:
                 register_login_failure(connection, limiter_key_hash)
