@@ -671,9 +671,9 @@ python-dotenv==1.2.2 \
     # via
     #   -r requirements.in
     #   uvicorn
-python-fasthtml==0.14.13 \
-    --hash=sha256:549a9ee3d1aceb41158ee2e47670faf0e7ae39b901bb333ff5ce7b799b07d8bd \
-    --hash=sha256:fbdef364d3824f5db2f40e0884b4541f00b2d7ec925e5e1e62949b2ede7daf5d
+python-fasthtml==0.14.23 \
+    --hash=sha256:00befe5fdb8a79685bac90e0ef402984fccefa7aac968b28fed6d930978e26f8 \
+    --hash=sha256:7c58e6508af12a31e01eb1e7b7bfe10601b82538cb9785ace4df78e130e61af1
     # via -r requirements.in
 python-multipart==0.0.34 \
     --hash=sha256:b998ae90ca6e1e363261ce2e0e230281b8af53867b757970abd69ee9edcd843a \
@@ -1056,4 +1056,6 @@ websockets==17.4 \
     --hash=sha256:f5b1d315a615cec81a79e2ce3a94221dc5c23e7fd4012897085d3b5e5a5638d0 \
     --hash=sha256:f5f06f59e19aa0770aaf651ce91c196fa620b35aed49a7e6c36e7335f3f83db7 \
     --hash=sha256:fcac44d917672ad6257ad64b80b5168306f168a78cab5c0612e4c699caed18cf
-    # via uvicorn
+    # via
+    #   python-fasthtml
+    #   uvicorn
