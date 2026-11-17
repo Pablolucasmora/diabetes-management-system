@@ -468,6 +468,13 @@ Está prohibido hacer un `SELECT` por ID, obtener el registro y comprobar poster
 - La capa interna puede registrar o clasificar el motivo sin exponerlo en la respuesta.
 - La función no debe devolver datos privados antes de comprobar ownership.
 
+### 5.5 Rutas públicas y cabeceras de seguridad
+
+- Las rutas que no exigen sesión se deciden en `main.py` con prefijos que **terminan en `/`** (`/auth/`, `/css/`, `/js/`, `/images/`) más una lista de rutas exactas. Un prefijo sin barra haría pública por accidente una ruta futura como `/authors`.
+- Toda respuesta de la app lleva `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Strict-Transport-Security` y `Content-Security-Policy`, puestas por el middleware.
+- La `Content-Security-Policy` (decisión 2026-11-17, auditoría general H-18) es una segunda barrera, no la principal: el escapado del HTML sigue siendo obligatorio. Limita los orígenes de scripts, estilos y conexiones a la propia app y a los CDN que cargan las páginas, y prohíbe `object`, `base` ajeno, formularios hacia otros orígenes y que la app se incruste en marcos. Mientras las páginas usen manejadores en línea (`onclick=`, `Script` con código, `hx-on`), admite `'unsafe-inline'` y `'unsafe-eval'` en scripts. Pasar a una política con `nonce` exige quitar antes esos manejadores; es requisito de la fase 2 (contenido de otros usuarios).
+- Un script o estilo de un origen nuevo se añade a la política en el mismo cambio que lo introduce.
+
 ## 6. Concurrencia e idempotencia
 
 Esta sección define cómo debe comportarse el sistema cuando dos peticiones acceden o modifican los mismos datos al mismo tiempo, o cuando una petición se repite por reintento del navegador, HTMX, una red inestable o un cliente externo.

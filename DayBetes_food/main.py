@@ -139,6 +139,27 @@ ASSET_PREFIXES = ("/css/", "/js/", "/images/")
 # is not public by accident; the exact paths are listed apart.
 PUBLIC_PATH_PREFIXES = ("/auth/", "/css/", "/js/", "/images/")
 PUBLIC_EXACT_PATHS = {"/", "/auth", "/favicon.ico", "/robots.txt"}
+# Second barrier against injected markup (code_conventions.md §5.5). Scripts
+# still allow inline code and eval: the pages use inline handlers and hx-on,
+# which a nonce-based policy would block. The hosts are the CDNs the pages
+# load from (components/ui.py, tags_settings.py, static/js/scanner.js).
+_SCRIPT_HOSTS = "https://cdn.jsdelivr.net https://fastly.jsdelivr.net https://unpkg.com https://esm.sh"
+CONTENT_SECURITY_POLICY = "; ".join(
+    (
+        "default-src 'self'",
+        f"script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' {_SCRIPT_HOSTS}",
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+        "img-src 'self' data: blob:",
+        "font-src 'self' data:",
+        f"connect-src 'self' {_SCRIPT_HOSTS}",
+        "worker-src 'self' blob:",
+        "media-src 'self' blob:",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+    )
+)
 # Everything else needs the CSRF token, also a method nobody has thought of (§5.2).
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 # Forms sent before there is a session, with the page that shows each one. There is no
@@ -258,6 +279,7 @@ async def auth_security_middleware(request: Request, call_next):
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+    response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
 
     # If the route itself (e.g. login/register) already set the CSRF cookie
     # bound to the session it just created, do not overwrite it with the
