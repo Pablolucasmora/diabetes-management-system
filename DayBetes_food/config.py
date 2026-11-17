@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 
 from dotenv import load_dotenv
 
@@ -31,6 +32,13 @@ def _as_int(name: str, default: int) -> int:
         return int(raw.strip())
     except ValueError as exc:
         raise RuntimeError(f"Invalid integer value for {name}: {raw!r}.") from exc
+
+
+def _as_int_in_range(name: str, default: int, minimum: int, maximum: int) -> int:
+    value = _as_int(name, default)
+    if not minimum <= value <= maximum:
+        raise RuntimeError(f"{name} must be between {minimum} and {maximum}, got {value}.")
+    return value
 
 
 def _require(name: str) -> str:
@@ -87,13 +95,31 @@ if MIGRATIONS_DATABASE_URL and not MIGRATIONS_DATABASE_URL.startswith(("postgres
 # Runtime role that the bootstrap grants DML on the objects it creates.
 DB_RUNTIME_ROLE = (os.getenv("DB_RUNTIME_ROLE") or "daybetes_app").strip()
 
-SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "daybetes_session")
-CSRF_COOKIE_NAME = os.getenv("CSRF_COOKIE_NAME", "daybetes_csrf")
-SESSION_TTL_SECONDS = _as_int("SESSION_TTL_SECONDS", 60 * 60 * 24 * 14)
-SESSION_RETENTION_SECONDS = _as_int("SESSION_RETENTION_SECONDS", 60 * 60 * 24 * 14)
-SESSION_REFRESH_SECONDS = _as_int("SESSION_REFRESH_SECONDS", 60 * 30)
+_COOKIE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+SESSION_COOKIE_NAME = (os.getenv("SESSION_COOKIE_NAME") or "daybetes_session").strip()
+CSRF_COOKIE_NAME = (os.getenv("CSRF_COOKIE_NAME") or "daybetes_csrf").strip()
+for _cookie_variable, _cookie_name in (
+    ("SESSION_COOKIE_NAME", SESSION_COOKIE_NAME),
+    ("CSRF_COOKIE_NAME", CSRF_COOKIE_NAME),
+):
+    if not _COOKIE_NAME_RE.match(_cookie_name):
+        raise RuntimeError(f"{_cookie_variable} must be 1-64 letters, digits, '_' or '-'.")
+if SESSION_COOKIE_NAME == CSRF_COOKIE_NAME:
+    raise RuntimeError("SESSION_COOKIE_NAME and CSRF_COOKIE_NAME must be different.")
+
+_DAY_SECONDS = 60 * 60 * 24
+SESSION_TTL_SECONDS = _as_int_in_range("SESSION_TTL_SECONDS", 14 * _DAY_SECONDS, 5 * 60, 365 * _DAY_SECONDS)
+SESSION_RETENTION_SECONDS = _as_int_in_range(
+    "SESSION_RETENTION_SECONDS", 14 * _DAY_SECONDS, 0, 365 * _DAY_SECONDS
+)
+SESSION_REFRESH_SECONDS = _as_int_in_range("SESSION_REFRESH_SECONDS", 30 * 60, 60, SESSION_TTL_SECONDS)
 SESSION_COOKIE_SECURE = _as_bool("SESSION_COOKIE_SECURE", APP_ENV != "development")
-SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "lax")
+SESSION_COOKIE_SAMESITE = (os.getenv("SESSION_COOKIE_SAMESITE") or "lax").strip().lower()
+if SESSION_COOKIE_SAMESITE not in {"lax", "strict", "none"}:
+    raise RuntimeError("SESSION_COOKIE_SAMESITE must be one of: lax, strict, none")
+# Browsers drop a SameSite=None cookie that is not Secure.
+if SESSION_COOKIE_SAMESITE == "none" and not SESSION_COOKIE_SECURE:
+    raise RuntimeError("SESSION_COOKIE_SAMESITE=none requires SESSION_COOKIE_SECURE=true")
 
 # User registration: open in development and closed by default in production
 # (§8.1). When closed, its routes are not registered and answer 404.
@@ -103,12 +129,19 @@ REGISTRATION_ENABLED = _as_bool("REGISTRATION_ENABLED", APP_ENV == "development"
 # Cloudflare Tunnel is the only way into the app, i.e. in production.
 TRUST_CF_CONNECTING_IP = _as_bool("TRUST_CF_CONNECTING_IP", APP_ENV == "production")
 
-AUTH_RATE_LIMIT_ATTEMPTS =_as_int("AUTH_RATE_LIMIT_ATTEMPTS", 6)
-AUTH_RATE_LIMIT_WINDOW_SECONDS = _as_int("AUTH_RATE_LIMIT_WINDOW_SECONDS", 60 * 10)
-AUTH_RATE_LIMIT_BLOCK_SECONDS = _as_int("AUTH_RATE_LIMIT_BLOCK_SECONDS", 60 * 15)
+# Login and sign-up attempts (code_conventions.md §5.2).
+AUTH_RATE_LIMIT_ATTEMPTS = _as_int_in_range("AUTH_RATE_LIMIT_ATTEMPTS", 6, 1, 100)
+AUTH_RATE_LIMIT_WINDOW_SECONDS = _as_int_in_range("AUTH_RATE_LIMIT_WINDOW_SECONDS", 10 * 60, 10, _DAY_SECONDS)
+AUTH_RATE_LIMIT_BLOCK_SECONDS = _as_int_in_range("AUTH_RATE_LIMIT_BLOCK_SECONDS", 15 * 60, 10, _DAY_SECONDS)
 
 AUTH_TOKEN_PEPPER = _require("AUTH_TOKEN_PEPPER")
 PASSWORD_PEPPER = _require("PASSWORD_PEPPER")
+
+# User that the schema bootstrap creates when the password is set (db_init.py).
+# Empty password = no default user.
+DEFAULT_USER_EMAIL = (os.getenv("DEFAULT_USER_EMAIL") or "default@daybetes.local").strip()
+DEFAULT_USER_USERNAME = (os.getenv("DEFAULT_USER_USERNAME") or "default_user").strip()
+DEFAULT_USER_PASSWORD = os.getenv("DEFAULT_USER_PASSWORD") or ""
 
 # Open Food Facts adapter (H17, §8.1). It is only a prefill of the create form,
 # so the timeout stays short and there are no retries.

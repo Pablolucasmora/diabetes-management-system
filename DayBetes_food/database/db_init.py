@@ -5,6 +5,7 @@ from psycopg import sql
 
 from DayBetes_food.auth.models import USER_EMAIL_MAX_LENGTH, USER_USERNAME_MAX_LENGTH
 from DayBetes_food.auth.security import hash_password, normalize_identifier, sanitize_text
+from DayBetes_food import config
 from DayBetes_food.config import DB_RUNTIME_ROLE
 from DayBetes_food.database.connection import get_migrations_connection
 from DayBetes_food.database.queries.crud import fuzzy_compact_sql
@@ -41,9 +42,9 @@ from DayBetes_food.domain.tag import SYSTEM_TAG_COLORS
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_USER_EMAIL = normalize_identifier(os.getenv("DEFAULT_USER_EMAIL", "default@daybetes.local"))
-DEFAULT_USER_USERNAME = normalize_identifier(os.getenv("DEFAULT_USER_USERNAME", "default_user"))
-DEFAULT_USER_PASSWORD = os.getenv("DEFAULT_USER_PASSWORD", "")
+DEFAULT_USER_EMAIL = normalize_identifier(config.DEFAULT_USER_EMAIL)
+DEFAULT_USER_USERNAME = normalize_identifier(config.DEFAULT_USER_USERNAME)
+DEFAULT_USER_PASSWORD = config.DEFAULT_USER_PASSWORD
 
 
 def _has_column(cursor, table: str, column: str) -> bool:
