@@ -138,6 +138,7 @@ from DayBetes_food.database.queries.intake_plate import (
     apply_plate_offset_to_portions,
     delete_intake_plate,
     ensure_default_plate,
+    set_intake_plate_eaten_fraction,
 )
 from DayBetes_food.database.queries.portion_detail import (
     create_portion_detail,
@@ -308,6 +309,7 @@ __all__ = [
     "set_exact_time",
     "apply_plate_offset_to_portions",
     "delete_intake_plate",
+    "set_intake_plate_eaten_fraction",
     "ensure_default_plate",
     "create_portion_detail",
     "get_portion_detail",

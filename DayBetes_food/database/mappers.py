@@ -372,6 +372,7 @@ def intake_plate_read_from_row(row: dict) -> IntakePlateRead:
             eaten_at=row.get("eaten_at"),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            eaten_fraction=row.get("eaten_fraction"),
         )
     except KeyError as exc:
         raise InfrastructureError(f"Missing required field {exc} in intake plate row") from exc

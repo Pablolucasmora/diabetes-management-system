@@ -904,6 +904,9 @@ class DBSchema:
             CONSTRAINT ck_intake_plate_offset_minutes
             CHECK (offset_minutes IS NULL OR (offset_minutes >= -300 AND offset_minutes <= 300)), -- Template inherited by the portions added to this plate, not a clinical value; same sanity range as portion_detail.offset_minutes (measurement_conventions.md 4.5, 4.6.2)
         eaten_at TIMESTAMPTZ, -- Exact-time template the offset was written as; NULL = written in minutes. Inherited with the offset (measurement_conventions.md 4.5.1)
+        eaten_fraction REAL
+            CONSTRAINT ck_intake_plate_eaten_fraction
+            CHECK (eaten_fraction IS NULL OR (eaten_fraction > 0 AND eaten_fraction <= 1)), -- Share of the plate eaten, stored at confirm; NULL = not recorded (planned, or confirmed before 2026-11-17). What was served is amount / eaten_fraction (study_conventions.md 6.3)
 
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP

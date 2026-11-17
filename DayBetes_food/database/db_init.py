@@ -2571,6 +2571,14 @@ def _ensure_portion_detail_schema(cursor):
     # ---- Exact time of the offset (measurement §4.5.1, decision 2026-11-15) ----
     # NULL in every existing row: they were all written in minutes.
     cursor.execute("ALTER TABLE intake_plate ADD COLUMN IF NOT EXISTS eaten_at TIMESTAMPTZ;")
+    # ---- Fraction eaten of each plate (study §6.3, decision 2026-11-17) ----
+    # NULL in every existing row: the fraction of past confirms was not kept.
+    cursor.execute("ALTER TABLE intake_plate ADD COLUMN IF NOT EXISTS eaten_fraction REAL;")
+    if not _constraint_exists(cursor, "intake_plate", "ck_intake_plate_eaten_fraction"):
+        cursor.execute(
+            "ALTER TABLE intake_plate ADD CONSTRAINT ck_intake_plate_eaten_fraction "
+            "CHECK (eaten_fraction IS NULL OR (eaten_fraction > 0 AND eaten_fraction <= 1));"
+        )
     cursor.execute("ALTER TABLE portion_detail ADD COLUMN IF NOT EXISTS eaten_at TIMESTAMPTZ;")
     if not _constraint_exists(cursor, "portion_detail", "ck_portion_detail_eaten_at_only_for_event"):
         cursor.execute(

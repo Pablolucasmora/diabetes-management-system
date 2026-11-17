@@ -100,6 +100,8 @@ class IntakePlateRead:
     eaten_at: datetime | None  # exact-time template; None = offset in minutes (§4.5.1)
     created_at: datetime
     updated_at: datetime
+    # Share eaten, (0, 1], stored at confirm; None = not recorded (study §6.3).
+    eaten_fraction: float | None = None
 
 
 @dataclass(frozen=True)

@@ -24,6 +24,7 @@ from DayBetes_food.database.queries import (
     list_event_exact_times,
     list_portions_by_event,
     scale_plate_portion_amounts,
+    set_intake_plate_eaten_fraction,
     set_exact_time,
     update_intake_event,
 )
@@ -165,6 +166,9 @@ def confirm_planned_event(
     # Ownership + idempotency in a single statement (§6.6).
     confirm_intake_event(connection, user_id=user_id, event_id=event_id, commit=False)
     for plate_id, plate_portions in by_plate.items():
+        # Kept so that what was served (amount / fraction) and the share left
+        # can be known after the portions are scaled (study §6.3).
+        set_intake_plate_eaten_fraction(connection, user_id, plate_id, fractions[plate_id], commit=False)
         if plate_id in plans:
             store_plate_leftovers(connection, user_id, plate_portions, fractions[plate_id], plans[plate_id])
         if fractions[plate_id] < 1.0:

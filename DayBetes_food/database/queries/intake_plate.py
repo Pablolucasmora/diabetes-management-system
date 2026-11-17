@@ -14,7 +14,7 @@ from DayBetes_food.database.queries.crud import (
     _execute_query_many,
 )
 from DayBetes_food.domain.intake_plate import IntakePlateCreate, IntakePlateRead
-from DayBetes_food.errors import ConflictError, InfrastructureError, NotFoundError
+from DayBetes_food.errors import ConflictError, InfrastructureError, NotFoundError, ValidationError
 
 # Read columns of the table. Explicit list, never `SELECT *` (§3.2): adding a
 # column must not change the read contract without touching the code that
@@ -25,6 +25,7 @@ _INTAKE_PLATE_COLUMNS = """
     ip.name,
     ip.offset_minutes,
     ip.eaten_at,
+    ip.eaten_fraction,
     ip.created_at,
     ip.updated_at
 """
@@ -285,6 +286,37 @@ def apply_plate_offset_to_portions(
         if commit:
             connection.rollback()
         raise
+
+
+def set_intake_plate_eaten_fraction(
+    connection, user_id: int, plate_id: int, fraction: float, *, commit: bool = True
+) -> None:
+    """Store what was eaten of a plate, in (0, 1], when its meal is confirmed
+    (study_conventions.md §6.3). Ownership is checked in the SQL (§5.3).
+
+    Raises:
+        ValidationError: fraction out of (0, 1].
+        NotFoundError: the plate does not exist or is not the user's.
+    """
+    if not (0.0 < fraction <= 1.0):
+        raise ValidationError("invalid_fraction")
+    row = _execute_query(
+        connection,
+        """
+        UPDATE intake_plate ip
+        SET eaten_fraction = %(fraction)s,
+            updated_at = NOW()
+        FROM intake_event ie
+        WHERE ip.id = %(plate_id)s
+          AND ie.id = ip.intake_event_id
+          AND ie.users_id = %(user_id)s
+        RETURNING ip.id;
+        """,
+        {"fraction": fraction, "plate_id": plate_id, "user_id": user_id},
+        commit=commit,
+    )
+    if row is None:
+        raise NotFoundError("intake_plate_not_found")
 
 
 def delete_intake_plate(connection, plate_id: int, *, commit: bool = True) -> None:
