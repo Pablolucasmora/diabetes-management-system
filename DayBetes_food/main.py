@@ -135,7 +135,10 @@ app.add_middleware(GZipMiddleware, minimum_size=512)
 
 STATIC_CACHE_CONTROL = "public, max-age=604800"
 ASSET_PREFIXES = ("/css/", "/js/", "/images/")
-PUBLIC_PATH_PREFIXES = ("/auth", "/css", "/js", "/images", "/favicon", "/robots.txt")
+# Prefixes end in "/" so that a future route such as /authors or /images-admin
+# is not public by accident; the exact paths are listed apart.
+PUBLIC_PATH_PREFIXES = ("/auth/", "/css/", "/js/", "/images/")
+PUBLIC_EXACT_PATHS = {"/", "/auth", "/favicon.ico", "/robots.txt"}
 # Everything else needs the CSRF token, also a method nobody has thought of (§5.2).
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 # Forms sent before there is a session, with the page that shows each one. There is no
@@ -144,7 +147,7 @@ SESSIONLESS_FORM_PAGES = {"/auth/login/submit": "/auth/login", "/auth/register/s
 
 
 def _is_public_path(path: str) -> bool:
-    return path == "/" or path.startswith(PUBLIC_PATH_PREFIXES)
+    return path in PUBLIC_EXACT_PATHS or path.startswith(PUBLIC_PATH_PREFIXES)
 
 
 def _is_htmx_request(request: Request) -> bool:
