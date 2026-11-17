@@ -30,6 +30,12 @@ from DayBetes_food.errors import (
     ValidationError,
 )
 from DayBetes_food.body_limit import BodySizeLimitMiddleware
+from DayBetes_food.time_utils import (
+    TIMEZONE_COOKIE_NAME,
+    parse_timezone,
+    reset_request_timezone,
+    set_request_timezone,
+)
 from DayBetes_food.http_errors import (
     app_error_headers,
     error_json_body,
@@ -277,9 +283,12 @@ async def auth_security_middleware(request: Request, call_next):
         )
 
     ctx_token = set_current_user_id(request.state.user["id"] if request.state.user else None)
+    # The browser's zone for this request (time_utils, measurement §9).
+    tz_token = set_request_timezone(parse_timezone(request.cookies.get(TIMEZONE_COOKIE_NAME)))
     try:
         response = await call_next(request)
     finally:
+        reset_request_timezone(tz_token)
         reset_current_user_id(ctx_token)
 
     response.headers.setdefault("X-Content-Type-Options", "nosniff")

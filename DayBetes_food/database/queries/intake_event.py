@@ -9,7 +9,7 @@ injection operations (H1, H2):
 """
 
 from dataclasses import fields as dataclass_fields
-from datetime import date
+from datetime import date, datetime, time, timedelta
 from enum import Enum
 
 from psycopg import sql
@@ -27,7 +27,7 @@ from DayBetes_food.domain.constants import IntakeEventState, InsulinType, Inject
 from DayBetes_food.domain.intake_event import IntakeEventCreate, IntakeEventRead, IntakeEventUpdate
 from DayBetes_food.domain.insulin import InsulinInjectionCreate, validate_insulin_dose
 from DayBetes_food.errors import ConflictError, InfrastructureError, NotFoundError, ValidationError
-from DayBetes_food.time_utils import local_today, utc_now, APP_TIMEZONE
+from DayBetes_food.time_utils import current_timezone, local_today, utc_now
 
 
 _INTAKE_EVENT_COLUMNS = """
@@ -332,7 +332,7 @@ def create_injection_for_event(
             user_id=row["user_id"],
             intake_event_id=intake_event_id,
             shot_time=row["meal_time"] or utc_now(),
-            timezone_at_event=row["timezone_at_event"] or APP_TIMEZONE.key,
+            timezone_at_event=row["timezone_at_event"] or current_timezone().key,
             insulin_type=InsulinType.RAPID,
             units=row.get("insulin_units"),
             injection_zone=zone,
@@ -420,8 +420,8 @@ def confirm_intake_event(
 def create_intake_event(connection, payload: IntakeEventCreate, *, commit: bool = True) -> int:
     """Create an event and return its id (§3.3, §3.4).
 
-    timezone_at_event is set to the application's zone: it is the zone in
-    which meal_time was interpreted (§10.4).
+    timezone_at_event is set to the zone of the request (the browser's, time_utils):
+    it is the zone in which meal_time was interpreted (§10.4).
 
     Raises:
         InfrastructureError: if the INSERT returns no row.
@@ -443,7 +443,7 @@ def create_intake_event(connection, payload: IntakeEventCreate, *, commit: bool 
         "meal_type": payload.meal_type.value if payload.meal_type else None,
         "name": payload.name,
         "meal_time": payload.meal_time,
-        "timezone_at_event": APP_TIMEZONE.key,
+        "timezone_at_event": current_timezone().key,
     }
     try:
         with connection.cursor() as cursor:
@@ -498,16 +498,22 @@ def list_planned_intake_events(connection, user_id: int) -> list[IntakeEventRead
 def list_consumed_intake_events_for_day(
     connection, user_id: int, day: date | None = None
 ) -> list[IntakeEventRead]:
-    """Consumed events of one local calendar day of the user."""
+    """Consumed events of one local calendar day of the user, in the zone of the
+    request. The day is a range of instants, so the index on meal_time is used
+    (DATE(meal_time AT TIME ZONE ...) could not use it)."""
     if day is None:
         day = local_today()
+    zone = current_timezone()
+    day_start = datetime.combine(day, time.min, tzinfo=zone)
+    next_day_start = datetime.combine(day + timedelta(days=1), time.min, tzinfo=zone)
     query = f"""
         SELECT {_INTAKE_EVENT_COLUMNS}
         FROM intake_event
         WHERE users_id = %(user_id)s
           AND state = %(state)s
           AND deleted_at IS NULL
-          AND DATE(meal_time AT TIME ZONE %(app_timezone)s) = %(day)s
+          AND meal_time >= %(day_start)s
+          AND meal_time < %(next_day_start)s
         ORDER BY meal_time ASC, id ASC;
     """
     rows = _execute_query_many(
@@ -516,8 +522,8 @@ def list_consumed_intake_events_for_day(
         {
             "user_id": user_id,
             "state": IntakeEventState.CONSUMED.value,
-            "day": day,
-            "app_timezone": APP_TIMEZONE.key,
+            "day_start": day_start,
+            "next_day_start": next_day_start,
         },
         commit=False,
     )

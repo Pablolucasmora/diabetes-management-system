@@ -56,7 +56,7 @@ from DayBetes_food.domain.portion_detail import (
 )
 from DayBetes_food.errors import ConflictError, NotFoundError, ValidationError
 from DayBetes_food.services.fridge import return_to_fridge, store_plate_leftovers
-from DayBetes_food.time_utils import APP_TIMEZONE, local_naive_to_utc_aware, local_now, to_local, utc_now
+from DayBetes_food.time_utils import current_timezone, local_naive_to_utc_aware, local_now, to_local, utc_now
 
 
 def _portions_by_plate(portions: list[PortionDetailRead]) -> dict[int, list[PortionDetailRead]]:
@@ -270,7 +270,7 @@ def update_meal_time(
         event_id=event_id,
         data=IntakeEventUpdate(
             meal_time=local_naive_to_utc_aware(datetime.combine(chosen_date, local_time)),
-            timezone_at_event=APP_TIMEZONE.key,
+            timezone_at_event=current_timezone().key,
         ),
         commit=False,
     )

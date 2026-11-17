@@ -919,6 +919,8 @@ Todos los instantes se almacenan como `TIMESTAMPTZ` y representan UTC. La aplica
 
 Los eventos relevantes para análisis histórico conservan además la zona IANA aplicable en el momento del evento mediante un campo `timezone_at_event`, por ejemplo `Europe/Madrid`. `TIMESTAMPTZ` conserva el instante universal, pero no el nombre de la zona original.
 
+**De dónde sale la zona** (decisión del usuario del 2026-11-17, auditoría general H-10; hasta entonces era siempre `Europe/Madrid`). Es la del navegador: `static/js/timezone.js` guarda en la cookie `daybetes_tz` el nombre IANA que da `Intl`, y el middleware lo comprueba contra la lista de zonas conocidas y lo fija para la petición. Sin cookie, o con un nombre que no es una zona IANA, se usa `Europe/Madrid`. Con esa zona se interpretan las horas que escribe el usuario, se muestran todas las horas y se guarda `timezone_at_event` al crear un evento o cambiar su hora. Un evento creado antes de un viaje conserva la zona en la que se registró. La cookie se actualiza en la primera página que se abre tras cambiar de zona, así que la primera petición tras el cambio todavía usa la anterior.
+
 Las comparaciones de intervalos, retrasos y orden temporal se realizan sobre el instante UTC. Los análisis de hora local convierten cada instante usando su `timezone_at_event`, no la zona actual del usuario ni una zona fija de presentación.
 
 El offset numérico no sustituye a la zona IANA. Puede conservarse adicionalmente cuando sea necesario reproducir exactamente la representación original, pero la zona IANA es el dato canónico para resolver cambios históricos y horario de verano.

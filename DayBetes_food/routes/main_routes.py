@@ -14,7 +14,7 @@ from DayBetes_food.domain.catalog import parse_barcode
 from DayBetes_food.domain.insulin import InsulinInjectionCreate, parse_insulin_units, parse_shot_local
 from DayBetes_food.errors import AuthenticationError, AuthorizationError, NotFoundError, ValidationError
 from DayBetes_food.http_errors import app_error_response
-from DayBetes_food.time_utils import local_naive_to_utc_aware, APP_TIMEZONE
+from DayBetes_food.time_utils import current_timezone, local_naive_to_utc_aware
 
 
 def setup_main_routes(rt):
@@ -67,7 +67,7 @@ def setup_main_routes(rt):
                 user_id=int(user_id),
                 insulin_type=pen.insulin_type,
                 shot_time=shot_time,
-                timezone_at_event=APP_TIMEZONE.key,
+                timezone_at_event=current_timezone().key,
                 units=units_value,
                 injection_zone=injection_zone,
                 insulin_pen_id=pen_id,

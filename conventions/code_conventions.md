@@ -1385,7 +1385,7 @@ No se mezclan `float` y `Decimal` en una misma operación. Cuando una migración
 
 Las fechas y horas se almacenan en UTC según `measurement_conventions.md`. La implementación se realiza en boundaries y helpers comunes:
 
-- La entrada del usuario se interpreta en la zona horaria de la aplicación.
+- La entrada del usuario se interpreta en la zona horaria de la petición: la del navegador, o `Europe/Madrid` sin ella (`measurement_conventions.md` §9.1, decisión del 2026-11-17). Los helpers de `time_utils.py` (`local_now`, `to_local`, `local_naive_to_utc_aware`, `current_timezone`) ya la usan; ningún módulo escribe una zona fija.
 - El dominio nuevo utiliza `datetime` aware en UTC.
 - Las columnas heredadas `TIMESTAMP` sin zona reciben un UTC naive únicamente en el mapper de persistencia.
 - La conversión aware UTC a naive UTC ocurre solo al escribir en una columna heredada sin zona.

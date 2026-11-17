@@ -103,6 +103,7 @@ def _form_shell(title: str, action: str, csrf_token: str, fields_html: str, subm
         <link rel="icon" type="image/svg+xml" href="/images/ui/favicon.svg?v=2">
         <link rel="stylesheet" href="{asset_busted("/css/output.css")}">
         <script src="{asset_busted("/js/browser_tweaks.js")}" defer></script>
+        <script src="{asset_busted("/js/timezone.js")}" defer></script>
       </head>
       <body>
         <div class="min-h-screen flex flex-col items-center justify-center gap-4 px-4">

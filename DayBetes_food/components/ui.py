@@ -109,6 +109,7 @@ def _base_html_shell(content_html: str) -> str:
     <script src="{asset_busted("/js/app_toast.js")}" defer></script>
     <script src="{asset_busted("/js/island_indicator.js")}" defer></script>
     <script src="{asset_busted("/js/browser_tweaks.js")}" defer></script>
+    <script src="{asset_busted("/js/timezone.js")}" defer></script>
     <script src="{asset_busted("/js/dropdown_layer.js")}" defer></script>
     <script src="{asset_busted("/js/modal.js")}" defer></script>
     <script src="{asset_busted("/js/navigation.js")}" defer></script>
