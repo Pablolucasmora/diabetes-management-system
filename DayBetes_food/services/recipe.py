@@ -144,7 +144,7 @@ def save_event_as_recipe(connection, user_id: int, event_id: int, name: str) -> 
         portions = list_portions_by_event(connection, user_id, event.id)
         plates = [
             (plate.name, [portion for portion in portions if portion.plate_id == plate.id])
-            for plate in list_intake_plates(connection, event.id)
+            for plate in list_intake_plates(connection, user_id, event.id)
         ]
         plates = [(name_, rows) for name_, rows in plates if rows]
         if not plates:

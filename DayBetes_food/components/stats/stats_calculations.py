@@ -47,14 +47,16 @@ def _has_non_zero_totals(totals: dict) -> bool:
     return any(to_float(totals.get(nutrient_key)) > 0 for nutrient_key, _, _ in NUTRIENT_SPECS)
 
 
-def _event_day_key(event) -> str:
+def _event_day_key(event) -> str | None:
+    """Local day of the event, or None when it has no date: an undated event
+    is left out of the daily figures instead of counting as one more day."""
     meal_time = event.meal_time
     if isinstance(meal_time, datetime):
         local_time = to_local(meal_time)
         return local_time.date().isoformat() if local_time else meal_time.date().isoformat()
     if isinstance(meal_time, date):
         return meal_time.isoformat()
-    return "sin_fecha"
+    return None
 
 
 def compute_stats_payload(
@@ -85,6 +87,8 @@ def compute_stats_payload(
     meal_type_historical_totals = {}
     for event in all_consumed_events:
         day_key = _event_day_key(event)
+        if day_key is None:
+            continue
         if day_key not in daily_totals_by_day:
             daily_totals_by_day[day_key] = empty_totals()
         event_totals = _compute_totals_for_portions(portions_by_event.get(event.id, []))

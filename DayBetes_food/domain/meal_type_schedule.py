@@ -17,7 +17,6 @@ same value from the moment of creation (general principle, see
 code_conventions.md §7.14).
 """
 
-from dataclasses import dataclass
 from datetime import time
 
 from DayBetes_food.domain.constants import MealType
@@ -45,14 +44,6 @@ DEFAULT_MEAL_TYPE_WINDOWS: dict[MealType, tuple[time, time]] = {
     MealType.AFTERNOON_SNACK: (time(17, 0), time(19, 30)),
     MealType.DINNER: (time(19, 30), time(0, 0)),
 }
-
-
-@dataclass(frozen=True)
-class MealTypeWindow:
-    """A time slot customized by the user for a meal_type."""
-    meal_type: MealType
-    start_time: time
-    end_time: time
 
 
 def resolve_meal_type_window(

@@ -1,7 +1,7 @@
 """Check `parse_smart_macros` against the JS/Python shared cases.
 
-No test suite exists in this project (prelude of code_conventions.md): this is
-the manual check of F7 for smart macros. It reads
+The check of F7 for smart macros, run by the CI workflow next to the tests of
+tests/ (tests/test_nutrition.py runs the same cases). It reads
 DayBetes_food/static/data/smart_macros_cases.json, runs the Python parser and
 exits with code 1 if any case does not match. A case has either `expected`
 (the seven values) or `error` (the exact ValidationError message). In the browser the same cases are

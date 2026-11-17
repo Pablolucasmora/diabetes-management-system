@@ -14,7 +14,7 @@ from DayBetes_food.database.queries.crud import (
     _execute_query_many,
 )
 from DayBetes_food.domain.intake_plate import IntakePlateCreate, IntakePlateRead
-from DayBetes_food.errors import ConflictError, InfrastructureError, NotFoundError
+from DayBetes_food.errors import ConflictError, InfrastructureError, NotFoundError, ValidationError
 
 # Read columns of the table. Explicit list, never `SELECT *` (§3.2): adding a
 # column must not change the read contract without touching the code that
@@ -25,6 +25,7 @@ _INTAKE_PLATE_COLUMNS = """
     ip.name,
     ip.offset_minutes,
     ip.eaten_at,
+    ip.eaten_fraction,
     ip.created_at,
     ip.updated_at
 """
@@ -58,19 +59,25 @@ def create_intake_plate(connection, payload: IntakePlateCreate, *, commit: bool 
     return int(row["id"])
 
 
-def list_intake_plates(connection, event_id: int) -> list[IntakePlateRead]:
-    """Plates of an event, in the §4.6.1 order."""
+def list_intake_plates(connection, user_id: int, event_id: int) -> list[IntakePlateRead]:
+    """Plates of an event of the user, in the §4.6.1 order. Ownership is
+    checked in the SQL itself (code_conventions.md §5.3): another user's
+    event returns no plates."""
     query = f"""
         SELECT {_INTAKE_PLATE_COLUMNS}
         FROM intake_plate ip
+        JOIN intake_event ie ON ie.id = ip.intake_event_id
         WHERE ip.intake_event_id = %(event_id)s
+          AND ie.users_id = %(user_id)s
         {_INTAKE_PLATE_ORDER};
     """
-    rows = _execute_query_many(connection, query, {"event_id": event_id}, commit=False)
+    rows = _execute_query_many(
+        connection, query, {"event_id": event_id, "user_id": user_id}, commit=False
+    )
     return [intake_plate_read_from_row(row) for row in rows]
 
 
-def list_intake_plates_by_events(connection, event_ids: list[int]) -> list[IntakePlateRead]:
+def list_intake_plates_by_events(connection, user_id: int, event_ids: list[int]) -> list[IntakePlateRead]:
     """Plates of several events in a single query (§6.9: no N+1 in the cart list).
 
     The order is by event and, inside each one, the §4.6.1 order. The caller
@@ -81,10 +88,14 @@ def list_intake_plates_by_events(connection, event_ids: list[int]) -> list[Intak
     query = f"""
         SELECT {_INTAKE_PLATE_COLUMNS}
         FROM intake_plate ip
+        JOIN intake_event ie ON ie.id = ip.intake_event_id
         WHERE ip.intake_event_id = ANY(%(event_ids)s)
+          AND ie.users_id = %(user_id)s
         ORDER BY ip.intake_event_id, ip.offset_minutes NULLS LAST, ip.id;
     """
-    rows = _execute_query_many(connection, query, {"event_ids": list(event_ids)}, commit=False)
+    rows = _execute_query_many(
+        connection, query, {"event_ids": list(event_ids), "user_id": user_id}, commit=False
+    )
     return [intake_plate_read_from_row(row) for row in rows]
 
 
@@ -275,6 +286,37 @@ def apply_plate_offset_to_portions(
         if commit:
             connection.rollback()
         raise
+
+
+def set_intake_plate_eaten_fraction(
+    connection, user_id: int, plate_id: int, fraction: float, *, commit: bool = True
+) -> None:
+    """Store what was eaten of a plate, in (0, 1], when its meal is confirmed
+    (study_conventions.md §6.3). Ownership is checked in the SQL (§5.3).
+
+    Raises:
+        ValidationError: fraction out of (0, 1].
+        NotFoundError: the plate does not exist or is not the user's.
+    """
+    if not (0.0 < fraction <= 1.0):
+        raise ValidationError("invalid_fraction")
+    row = _execute_query(
+        connection,
+        """
+        UPDATE intake_plate ip
+        SET eaten_fraction = %(fraction)s,
+            updated_at = NOW()
+        FROM intake_event ie
+        WHERE ip.id = %(plate_id)s
+          AND ie.id = ip.intake_event_id
+          AND ie.users_id = %(user_id)s
+        RETURNING ip.id;
+        """,
+        {"fraction": fraction, "plate_id": plate_id, "user_id": user_id},
+        commit=commit,
+    )
+    if row is None:
+        raise NotFoundError("intake_plate_not_found")
 
 
 def delete_intake_plate(connection, plate_id: int, *, commit: bool = True) -> None:

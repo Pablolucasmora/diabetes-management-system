@@ -22,7 +22,7 @@ from DayBetes_food.domain.constants import IntakeEventState, PortionOrigin, Syst
 from DayBetes_food.domain.food_entry import MENTION_SUGGESTIONS_MAX, MENTION_USAGE_DAYS, MentionSuggestion
 from DayBetes_food.domain.search_text import normalize_search_text, search_text_sql
 from DayBetes_food.domain.tag import SYSTEM_TAG_MEAL_TYPE
-from DayBetes_food.time_utils import APP_TIMEZONE
+from DayBetes_food.time_utils import current_timezone
 
 
 def get_subtype_suggestions(connection, search: str = "", limit: int = 50) -> list[str]:
@@ -264,7 +264,7 @@ def get_consumed_food_usage_rankings(connection, users_id: int, days: int = 60) 
         {
             "users_id": users_id,
             "days": safe_days,
-            "app_timezone": APP_TIMEZONE.key,
+            "app_timezone": current_timezone().key,
             # §4.1: the state comes from the central enum, not from a literal in the SQL.
             "state": IntakeEventState.CONSUMED.value,
         },

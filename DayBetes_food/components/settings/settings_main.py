@@ -1,13 +1,10 @@
 from fasthtml.common import *
 from DayBetes_food.components.data_sources import ciqual_attribution, off_attribution
 from DayBetes_food.components.navigation import back_js
-from DayBetes_food.database.queries import get_meal_type_schedule
 from DayBetes_food.components.injection_zone import (
-    BASE_INJECTION_ZONE_IMAGE,
     INJECTION_ZONE_IMAGE_BY_ZONE,
     injection_zone_image,
     injection_zone_label,
-    parse_injection_zone,
     asset_busted,
 )
 from DayBetes_food.components.insulin_pen import pen_label
@@ -20,7 +17,6 @@ from DayBetes_food.time_utils import to_local
 from DayBetes_food.config import CSRF_COOKIE_NAME
 from DayBetes_food.components.modal import (
     ConfirmActionModal,
-    close_modal_js,
     modal_confirm_button,
     ModalLayer,
     open_modal_js,
@@ -28,7 +24,7 @@ from DayBetes_food.components.modal import (
 import re
 
 
-def settings_main(connection, current_user=None):
+def settings_main(current_user=None):
     username = (current_user or {}).get("username") or "Usuario"
     email = (current_user or {}).get("email") or ""
     return Div(
@@ -185,8 +181,9 @@ def meal_type_schedule_row(meal_type, start_time, end_time, is_default: bool):
     )
 
 
-def meal_type_schedule_settings_page(connection, user_id: int):
-    overrides = get_meal_type_schedule(connection, user_id)
+def meal_type_schedule_settings_page(overrides: dict):
+    """The time slots of each meal type: `overrides` are the user's own slots
+    (get_meal_type_schedule), the rest take the default."""
     rows = [
         meal_type_schedule_row(
             meal_type,
@@ -276,7 +273,6 @@ def _injection_edit_modal(injection, open_pens, pens_by_id):
     shot_date = local_dt.strftime("%Y-%m-%d") if local_dt else ""
     selected_zone = injection.injection_zone
     units = injection.units
-    base_image = asset_busted(BASE_INJECTION_ZONE_IMAGE)
     image = asset_busted(injection_zone_image(selected_zone))
     selector_js = (
         f"const mid='{modal_id}';"

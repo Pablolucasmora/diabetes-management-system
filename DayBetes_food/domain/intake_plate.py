@@ -100,6 +100,8 @@ class IntakePlateRead:
     eaten_at: datetime | None  # exact-time template; None = offset in minutes (§4.5.1)
     created_at: datetime
     updated_at: datetime
+    # Share eaten, (0, 1], stored at confirm; None = not recorded (study §6.3).
+    eaten_fraction: float | None = None
 
 
 @dataclass(frozen=True)
@@ -179,6 +181,14 @@ def eaten_time_text(meal_time: datetime | None, timezone_name: str, eaten_at: da
     if meal_time is None or offset_minutes is None:
         return ""
     return (meal_time + timedelta(minutes=offset_minutes)).astimezone(zone).strftime("%H:%M")
+
+
+def plate_label(plate, plate_portions) -> str:
+    """Visible name of a plate: its own, or the one derived from its current
+    ingredients (§4.6.3), which is not stored."""
+    if plate.name:
+        return plate.name
+    return derive_plate_name([portion.source.name or f"Ingredient #{portion.id}" for portion in plate_portions])
 
 
 def derive_plate_name(ingredient_names: list[str]) -> str:

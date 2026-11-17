@@ -24,8 +24,6 @@ from DayBetes_food.database.queries.assistant import (
     list_assistant_messages,
 )
 from DayBetes_food.database.queries.users import (
-    get_users_by_email,
-    get_all_users,
     update_password_hash,
 )
 from DayBetes_food.database.queries.food_brands import (
@@ -140,6 +138,7 @@ from DayBetes_food.database.queries.intake_plate import (
     apply_plate_offset_to_portions,
     delete_intake_plate,
     ensure_default_plate,
+    set_intake_plate_eaten_fraction,
 )
 from DayBetes_food.database.queries.portion_detail import (
     create_portion_detail,
@@ -227,8 +226,6 @@ __all__ = [
     "get_latest_meal_free_conversation",
     "link_assistant_conversation_event",
     "list_assistant_messages",
-    "get_users_by_email",
-    "get_all_users",
     "update_password_hash",
     "clean_brand_label",
     "brand_code",
@@ -312,6 +309,7 @@ __all__ = [
     "set_exact_time",
     "apply_plate_offset_to_portions",
     "delete_intake_plate",
+    "set_intake_plate_eaten_fraction",
     "ensure_default_plate",
     "create_portion_detail",
     "get_portion_detail",

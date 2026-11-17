@@ -72,7 +72,7 @@ def setup_insulin_routes(rt):
     @rt("/settings/insulin")
     def get(req):
         """Menu of `Insulin pens`: Pens and Brands (frontend §9.9)."""
-        return render_page(req, lambda _connection: insulin_menu_page(), show_cart=False)
+        return render_page(req, insulin_menu_page(), show_cart=False)
 
     @rt("/settings/insulin/pens")
     def get(req):
@@ -80,24 +80,21 @@ def setup_insulin_routes(rt):
         if not user_id:
             return HTMLResponse(status_code=401)
 
-        def content(connection):
-            return insulin_pens_page(
-                list_open_insulin_pens(connection, int(user_id)),
-                list_insulin_brands(connection, int(user_id)),
-                utc_now(),
-                local_now().date().isoformat(),
-            )
-
-        return render_page(req, content, show_cart=False)
+        with get_connection() as connection:
+            pens = list_open_insulin_pens(connection, int(user_id))
+            brands = list_insulin_brands(connection, int(user_id))
+        return render_page(
+            req, insulin_pens_page(pens, brands, utc_now(), local_now().date().isoformat()), show_cart=False
+        )
 
     @rt("/settings/insulin/brands")
     def get(req):
         user_id = get_current_user_id()
         if not user_id:
             return HTMLResponse(status_code=401)
-        return render_page(
-            req, lambda connection: insulin_brands_page(list_insulin_brands(connection, int(user_id))), show_cart=False
-        )
+        with get_connection() as connection:
+            brands = list_insulin_brands(connection, int(user_id))
+        return render_page(req, insulin_brands_page(brands), show_cart=False)
 
     @rt("/settings/insulin/pens/list")
     def get(request: Request):

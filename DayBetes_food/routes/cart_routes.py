@@ -142,7 +142,7 @@ def _load_events_and_portions(connection, user_id: int):
     # The plates of every event in a single query, already ordered by the
     # query (§4.6.1); here they are only distributed by event, never reordered.
     plates_by_event = {event_id: [] for event_id in event_ids}
-    for plate in list_intake_plates_by_events(connection, event_ids):
+    for plate in list_intake_plates_by_events(connection, user_id, event_ids):
         plates_by_event.setdefault(plate.intake_event_id, []).append(plate)
     return events, portions_by_event, plates_by_event
 
@@ -193,7 +193,7 @@ def _card_response(request: Request, connection, user_id: int, event_id: int):
     if not event:
         return _error(request, NotFoundError, "That meal no longer exists.")
     portions = list_portions_by_event(connection, user_id, event_id)
-    plates = list_intake_plates(connection, event_id)
+    plates = list_intake_plates(connection, user_id, event_id)
     rapid_pens = list_open_insulin_pens(connection, user_id, InsulinType.RAPID)
     return render_fragment(CartCard(event, portions, plates, rapid_pens))
 
@@ -399,7 +399,7 @@ def _leftovers_response(connection, user_id: int, event_id: int, eaten, pending)
     portions = list_portions_by_event(connection, user_id, event_id)
     labels = {
         plate.id: plate_display_name(plate, [p for p in portions if p.plate_id == plate.id])
-        for plate in list_intake_plates(connection, event_id)
+        for plate in list_intake_plates(connection, user_id, event_id)
     }
     plates = [(plate_id, labels[plate_id], fraction, plate_portions) for plate_id, fraction, plate_portions in pending]
     response = render_fragment(LeftoversForm(event_id, list(eaten), plates))
@@ -414,7 +414,9 @@ def setup_cart_routes(rt):
         """
         Render cart page (cart_main), without the cart button (show_cart=False), when request to /cart
         """
-        return render_page(req, _load_cart_main, show_cart=False)
+        with get_connection() as connection:
+            content = _load_cart_main(connection)
+        return render_page(req, content, show_cart=False)
 
     @rt("/cart/event/{event_id}/meal_hour")
     def post(request: Request, event_id: PathId, meal_hour: str = "", meal_date: str = ""):

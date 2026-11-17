@@ -1,15 +1,7 @@
 from fasthtml.common import *
-from DayBetes_food.auth.context import get_current_user_id
-from DayBetes_food.auth.service import get_user_by_id
 from DayBetes_food.config import ASSISTANT_ENABLED
 from DayBetes_food.components.menu.layout import IslandLogo
 from DayBetes_food.components.menu.sections import quick_actions
-from DayBetes_food.database.queries import (
-    list_insulin_brands,
-    list_open_insulin_pens,
-    list_planned_intake_events,
-    list_portions_by_event,
-)
 
 
 def _greeting(user):
@@ -19,14 +11,8 @@ def _greeting(user):
     )
 
 
-def main_menu(conexion):
-    user_id = get_current_user_id()
-    user = get_user_by_id(conexion, int(user_id)) if user_id else None
-    events = list_planned_intake_events(conexion, int(user_id)) if user_id else []
-    latest_event = events[0] if events else None
-    portions = list_portions_by_event(conexion, int(user_id), latest_event.id) if latest_event and user_id else []
-    pens = list_open_insulin_pens(conexion, int(user_id)) if user_id else []
-    brands = list_insulin_brands(conexion, int(user_id)) if user_id else []
+def main_menu(user, latest_event, portions, pens, brands):
+    """The home page from the data the route read (code_conventions.md §1.4)."""
 
     return Header(IslandLogo()
                   ,cls="""

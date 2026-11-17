@@ -34,7 +34,7 @@ Los inputs cuyo control visual lo dibuja el navegador (`type="time"`, `type="dat
   - `inputmode="numeric"` si el campo es siempre un entero (p. ej. `step="1"` o sin decimales posibles).
 - `inputmode="number"` **no es un valor válido** del atributo (los valores válidos son `none`, `text`, `decimal`, `numeric`, `tel`, `search`, `email`, `url`) y no debe usarse. Un input numérico tampoco debe quedarse con `inputmode="text"`.
 - Un input con `inputmode` incorrecto o ausente en un campo numérico se considera un defecto a corregir, no una variación de estilo aceptable.
-- **Un campo que admite decimales es `type="text"` con `inputmode="decimal"`, no `type="number"`** (decisión 2026-10-27). En los formularios de Food se construye con `_decimal_input` (`components/food/foods.py`). En un móvil configurado en español, el teclado decimal escribe una coma, y un `type="number"` la rechaza: el valor llega vacío o el navegador no deja enviar el formulario. El servidor acepta tanto `12,5` como `12.5` y comprueba el rango, así que en estos campos no se ponen `step`, `min` ni `max`, porque solo valen para `type="number"`. Los campos enteros (NOVA, Yuka) siguen siendo `type="number"` con `inputmode="numeric"`.
+- **Un campo que admite decimales es `type="text"` con `inputmode="decimal"`, no `type="number"`** (decisión 2026-10-27). En los formularios de Food se construye con `_decimal_input` (`components/food/food_widgets.py`). En un móvil configurado en español, el teclado decimal escribe una coma, y un `type="number"` la rechaza: el valor llega vacío o el navegador no deja enviar el formulario. El servidor acepta tanto `12,5` como `12.5` y comprueba el rango, así que en estos campos no se ponen `step`, `min` ni `max`, porque solo valen para `type="number"`. Los campos enteros (NOVA, Yuka) siguen siendo `type="number"` con `inputmode="numeric"`.
 - **Excepción: un campo entero que admite negativos usa `inputmode="text"`** (decisión 2026-10-27, pedida por el usuario). El teclado numérico del iPhone no tiene la tecla "−", y así se puede escribir `-15` directamente. Hoy es el caso del offset del carrito (§7.9), que lleva además `pattern="-?[0-9]*"`.
 
 ## 5. Posición del scroll al cambiar de página
@@ -306,7 +306,7 @@ Decisión 2026-10-10 (rediseño de la interfaz, rama `feat/ui-refresh`). Cómo s
 
 ### 9.1 Páginas de crear y editar (alimento, plato, receta, añadido rápido)
 
-Se construyen con los bloques de `components/food/foods.py`. No se monta un formulario a mano.
+Se construyen con los bloques de `components/food/food_widgets.py` y `food_forms.py`. No se monta un formulario a mano.
 
 - **Cabecera** (`_form_header`). A la izquierda, "‹ Back" (§5). A la derecha, qué se hace, como etiqueta de sección (`NEW FOOD`, `EDIT DISH`…). Debajo, el título. La cabecera no es una tarjeta.
 - **El nombre es el título** (`_name_title_input`). Se escribe y se edita en el propio título, en negrita y sin recuadro: parece texto y se edita al pulsarlo. Vacío, muestra en gris qué se espera (`Name of the food`). No hay un campo "Name" aparte.

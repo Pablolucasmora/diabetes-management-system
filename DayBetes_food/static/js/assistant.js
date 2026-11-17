@@ -431,8 +431,26 @@
     if (event.detail.successful) {
       resetComposer();
       scrollToLatest();
+      return;
     }
+    // A failed send may have done part of its work before failing (the rounds
+    // already stored, code_conventions.md §8.12): reload the conversation so
+    // what reached the cart shows before the message is sent again.
+    reloadThread();
   });
+
+  function reloadThread() {
+    var conversation = byId("assistant_conversation_id");
+    var select = mealSelect();
+    var params = new URLSearchParams();
+    if (conversation && conversation.value) params.set("conversation_id", conversation.value);
+    else if (select) params.set("intake_event_id", select.value);
+    if (!window.htmx) return;
+    window.htmx.ajax("GET", "/assistant/thread?" + params.toString(), {
+      target: "#assistant_thread_box",
+      swap: "innerHTML",
+    });
+  }
 
   // Add to (§9.11): remember the choice, and show `New chat` only for `No meal`.
   var CHOICE_KEY = "assistant_add_to";

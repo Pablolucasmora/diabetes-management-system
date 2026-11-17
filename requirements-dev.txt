@@ -1,0 +1,2 @@
+# Development and CI only, not in the image (infra_conventions.md §10).
+pytest==9.2.0

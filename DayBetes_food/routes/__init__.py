@@ -17,7 +17,7 @@ This package contains all route setup functions for different modules:
 from .assistant_routes import setup_assistant_routes
 from .auth_routes import setup_auth_routes
 from .cart_routes import setup_cart_routes
-from .food_routes import setup_food_routes
+from .food import setup_food_routes
 from .fridge_routes import setup_fridge_routes
 from .insulin_routes import setup_insulin_routes
 from .main_routes import setup_main_routes

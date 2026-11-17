@@ -24,6 +24,7 @@ from DayBetes_food.database.queries import (
     list_event_exact_times,
     list_portions_by_event,
     scale_plate_portion_amounts,
+    set_intake_plate_eaten_fraction,
     set_exact_time,
     update_intake_event,
 )
@@ -55,7 +56,7 @@ from DayBetes_food.domain.portion_detail import (
 )
 from DayBetes_food.errors import ConflictError, NotFoundError, ValidationError
 from DayBetes_food.services.fridge import return_to_fridge, store_plate_leftovers
-from DayBetes_food.time_utils import APP_TIMEZONE, local_naive_to_utc_aware, local_now, to_local, utc_now
+from DayBetes_food.time_utils import current_timezone, local_naive_to_utc_aware, local_now, to_local, utc_now
 
 
 def _portions_by_plate(portions: list[PortionDetailRead]) -> dict[int, list[PortionDetailRead]]:
@@ -165,6 +166,9 @@ def confirm_planned_event(
     # Ownership + idempotency in a single statement (§6.6).
     confirm_intake_event(connection, user_id=user_id, event_id=event_id, commit=False)
     for plate_id, plate_portions in by_plate.items():
+        # Kept so that what was served (amount / fraction) and the share left
+        # can be known after the portions are scaled (study §6.3).
+        set_intake_plate_eaten_fraction(connection, user_id, plate_id, fractions[plate_id], commit=False)
         if plate_id in plans:
             store_plate_leftovers(connection, user_id, plate_portions, fractions[plate_id], plans[plate_id])
         if fractions[plate_id] < 1.0:
@@ -266,7 +270,7 @@ def update_meal_time(
         event_id=event_id,
         data=IntakeEventUpdate(
             meal_time=local_naive_to_utc_aware(datetime.combine(chosen_date, local_time)),
-            timezone_at_event=APP_TIMEZONE.key,
+            timezone_at_event=current_timezone().key,
         ),
         commit=False,
     )

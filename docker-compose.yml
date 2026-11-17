@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:17
+    image: postgres:17@sha256:0d938e975177bef9f1f61f3f9dbcf2e0aa0a139568f66d3415ed8892eb97f6ac
     container_name: diabetes_db
     restart: always
     environment:
@@ -9,8 +9,9 @@ services:
       POSTGRES_DB: ${DB_NAME}
     volumes:
       - pgdata_dev:/var/lib/postgresql/data
+    # Only this machine reaches the development database, also on a public wifi.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
 
   web:
     build: 
@@ -19,8 +20,10 @@ services:
     container_name: diabetes_app
     volumes:
       - .:/app
+    # Only this machine by default. To try the app from the phone on the same
+    # network: WEB_BIND_ADDRESS=0.0.0.0 docker compose up -d
     ports:
-      - "8000:8000"
+      - "${WEB_BIND_ADDRESS:-127.0.0.1}:8000:8000"
     # The same variables build the connection URL
     environment:
       - DATABASE_URL=${DATABASE_URL}

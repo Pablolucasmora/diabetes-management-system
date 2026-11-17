@@ -1,13 +1,13 @@
 # DayBetes — Sistema de gestión personalizada para la diabetes
 
-> Registro preciso de comidas, insulina y contexto diario, como base para entender **cómo responde la glucosa de una persona concreta** y, a futuro, darle recomendaciones hechas a su medida.
+> Registro preciso de comidas, insulina y contexto diario, guardando junto a cada dato **cuánto se puede confiar en él**, como base para entender cómo responde la glucosa de una persona concreta y, a futuro, ayudarla con recomendaciones hechas a su medida.
 
 | | |
 |---|---|
-| **Estado** | En producción, uso personal diario (un único usuario) |
+| **Estado** | En producción, uso personal diario (un único usuario). Datos todavía de prueba |
 | **Web** | [daybetes.com](https://daybetes.com), de acceso privado |
-| **Fase** | Trabajo de Fin de Grado (TFG): registro y análisis personal |
-| **Stack** | Python · FastHTML · HTMX · PostgreSQL 17 · Tailwind CSS · Docker |
+| **Fase** | Trabajo de Fin de Grado (TFG): diseño del estudio y adaptación de la app |
+| **Stack** | Python 3.12 · FastHTML · HTMX · PostgreSQL 17 · Tailwind CSS · Docker |
 | **Despliegue** | VPS + Cloudflare Tunnel, con despliegue continuo desde GitHub Actions |
 
 ---
@@ -16,203 +16,238 @@
 
 1. [Qué es DayBetes](#1-qué-es-daybetes)
 2. [Objetivo y visión](#2-objetivo-y-visión)
-3. [Estado actual](#3-estado-actual)
-4. [Funcionalidades](#4-funcionalidades)
-5. [Modelo de datos](#5-modelo-de-datos)
-6. [Arquitectura técnica](#6-arquitectura-técnica)
-7. [Despliegue y operación](#7-despliegue-y-operación)
-8. [Cómo se desarrolla](#8-cómo-se-desarrolla)
-9. [Desarrollo local](#9-desarrollo-local)
-10. [Hoja de ruta](#10-hoja-de-ruta)
-11. [Documentación del proyecto](#11-documentación-del-proyecto)
+3. [Fases del proyecto](#3-fases-del-proyecto)
+4. [Estado actual](#4-estado-actual)
+5. [Funcionalidades](#5-funcionalidades)
+6. [Modelo de datos](#6-modelo-de-datos)
+7. [Arquitectura técnica](#7-arquitectura-técnica)
+8. [Despliegue y operación](#8-despliegue-y-operación)
+9. [Cómo se desarrolla](#9-cómo-se-desarrolla)
+10. [Desarrollo local](#10-desarrollo-local)
+11. [Hoja de ruta](#11-hoja-de-ruta)
+12. [Documentación del proyecto](#12-documentación-del-proyecto)
 
 ---
 
 ## 1. Qué es DayBetes
 
-DayBetes nace de una necesidad personal de su autor: **entender cómo reaccionan sus niveles de glucosa** ante lo que come, la insulina que se pone y el resto de factores del día a día. Las aplicaciones comerciales para la diabetes registran datos, pero rara vez aprenden de la persona que las usa. Tratan a todos los usuarios con las mismas reglas, aunque la respuesta glucémica a una misma comida varía mucho de una persona a otra.
+Una persona con diabetes tipo 1 decide varias veces al día cuánta insulina ponerse. La regla que se enseña divide los gramos de hidratos de la comida entre un número fijo, el *ratio*. En la práctica se queda corta:
 
-DayBetes parte de la idea contraria: **cada persona necesita su propio modelo**. Para construirlo, lo primero es tener datos fiables. Por eso el núcleo actual del proyecto es un sistema de registro muy preciso, que guarda qué se ha comido y además **con qué fiabilidad se conoce cada dato**:
-- si el alimento se pesó o se estimó;
-- si los macronutrientes son exactos o aproximados;
-- si se pesó en crudo o cocinado;
-- cuánto se sirvió y cuánto se comió de verdad.
+- **La comida es más que hidratos.** La grasa y la proteína provocan subidas tardías, a veces horas después.
+- **El contexto cambia la respuesta.** El ejercicio, una mala noche, el estrés, una enfermedad o el alcohol modifican la sensibilidad a la insulina.
+- **Los datos de partida son inciertos.** Nadie sabe con exactitud cuántos hidratos tiene un plato de restaurante, y estimar a ojo tiene un error considerable.
+- **Cada persona responde de forma distinta**, y la misma persona cambia con el tiempo.
 
-Sobre esos datos se construirán después el análisis de la respuesta glucémica y, en una fase posterior, un algoritmo personalizado que aprenda de los patrones de cada usuario.
+Cada uno acaba construyendo su propio conocimiento a base de prueba y error. Las aplicaciones generalistas de salud no tratan la glucosa ni la insulina como el centro, y las de diabetes suelen limitarse a un diario de dosis e hidratos.
+
+DayBetes parte de la idea contraria a "las mismas reglas para todos": **cada persona necesita su propio modelo**, y para construirlo hacen falta datos buenos de esa persona. Lo que se registra habitualmente no lo es por dos razones: registrar con detalle cuesta demasiado tiempo, y los registros no dicen cuánto se puede confiar en cada dato. La aplicación ataca las dos:
+
+- **Baja el esfuerzo de registrar**, con recetas reutilizables, un escáner de códigos de barras, una nevera de sobras reutilizables y un asistente de IA (DiaBot) que convierte una frase o una foto en una comida lista para revisar.
+- **Guarda la fiabilidad con el dato**: cómo se obtuvo cada cantidad (báscula, envase, medida casera, a ojo o estimación de la IA), de dónde salen los macros de cada alimento, si se pesó crudo o cocinado y qué parte de cada plato se comió de verdad.
 
 ---
 
 ## 2. Objetivo y visión
 
-El proyecto se plantea en dos fases.
+### Fase 1: TFG, estudio de un único participante (actual)
 
-### Fase 1: TFG, estudio personalizado de un individuo (actual)
+El TFG es un estudio observacional **n-of-1**: un único participante, el autor, que registra su vida normal sin cambiar el tratamiento por estar en el estudio. Durante la recogida ningún modelo decide ni sugiere dosis; todo se analiza después.
 
-El Trabajo de Fin de Grado se centra en **una sola persona, el autor**, y tiene tres objetivos:
+Las preguntas, en su versión actual (pendientes de revisar con orientación metodológica):
 
-1. **Construir un sistema de registro de calidad**: comidas con sus porciones, macronutrientes, momento de cada plato, dosis de insulina, zona de inyección y tipo de comida. Cada dato lleva su nivel de confianza y su cobertura.
-2. **Cruzar esos registros con otras fuentes de datos**:
-   - la **glucosa** del sensor continuo, importada de LibreView;
-   - los datos de **Apple Health y el Apple Watch**: ejercicio, sueño, frecuencia cardiaca, su variabilidad... En esta fase se exportan y se cruzan **en el análisis, fuera de la app**. Integrarlos dentro de la aplicación es trabajo de la fase 2.
-3. **Analizar la respuesta glucémica personal**: qué alimentos, combinaciones, horarios, dosis, actividad física y descanso producen qué curvas de glucosa, con estadísticas de tiempo en rango, comparativas entre días y franjas horarias, y correlaciones entre lo registrado y lo medido.
+| | Pregunta |
+|---|---|
+| P1 | ¿Cuánta incertidumbre tienen los valores nutricionales de cada comida? |
+| P2 | ¿Cuáles son los parámetros reales (ratio, sensibilidad, duración de la insulina) y cómo cambian con el momento y el contexto? |
+| P3 | ¿Cómo responde la glucosa a los distintos alimentos: subidas tardías, momento del bolo, comidas que funcionan bien? |
+| P4 | ¿Se puede predecir la glucosa a 30–120 minutos con un margen de error razonable? |
+| P5 | ¿Un cálculo de dosis ajustado a los datos personales habría acertado más que la fórmula clásica? (evaluado después, sin cambiar ninguna dosis real) |
 
-El resultado esperado del TFG es tanto la herramienta, ya en uso diario, como el análisis de los datos recogidos con ella. El análisis incluye una valoración crítica de qué factores explican la variabilidad de la glucosa en este caso concreto.
+El estudio une cuatro fuentes en una misma línea de tiempo:
 
-### Fase 2: aplicación para personas con diabetes (posterior al TFG)
+| Fuente | Qué aporta | Situación |
+|---|---|---|
+| DayBetes | Comidas, macros y su fiabilidad, insulina y contexto | Comidas e insulina, hecho; contexto, pendiente |
+| Sensor continuo (LibreView) | Glucosa cada pocos minutos | Se cruza en el análisis, fuera de la app |
+| Boli de insulina con memoria | Hora y unidades exactas de cada dosis | Pendiente de importar |
+| Reloj (Apple Health) | Ejercicio, frecuencia cardiaca, sueño, pasos | Se cruza en el análisis, fuera de la app |
 
-La ambición a largo plazo es convertir DayBetes en un **acompañante digital para personas con diabetes**, basado en un **algoritmo personalizado por usuario**:
+Criterios ya pensados: un piloto de dos semanas cuyos datos no se analizan, unas doce semanas de recogida con las últimas reservadas para validar, una comida de referencia repetida para medir la variabilidad propia, y estimaciones previas al pesado en comidas elegidas al azar para medir el error real de estimar a ojo y con la IA.
 
-- **Un modelo por persona**, entrenado con sus propios datos de comidas, insulina, glucosa, actividad física, sueño y estrés. No hay un modelo único para todos.
-- **Predicción de la respuesta glucémica** ante una comida planificada, antes de comerla.
-- **Recomendaciones**: momento de la comida y de la insulina, y avisos de riesgo de hipoglucemia o hiperglucemia, cada vez más precisos a medida que el modelo aprende del usuario.
-- **Integración directa de Apple Health** en la aplicación (frecuencia cardiaca, variabilidad de la frecuencia cardiaca como indicador de estrés, ejercicio, sueño...), en lugar de la exportación manual que se usa en el TFG.
-- **Varios usuarios**, cada uno con sus datos aislados y su propio modelo.
+### Fase 2: aplicación para personas con diabetes (posterior al TFG, condicionada)
 
-> DayBetes no es un producto sanitario. Sus análisis y sus futuras recomendaciones son una herramienta de apoyo y no sustituyen el criterio del equipo médico, aunque se pretende si se llega a crear un modelo sólido comunicarlo con médicos y especialistas para mejorar la fiabilidad y robustez de la aplicación.
+Si el estudio demuestra que el planteamiento funciona, la idea es abrir la aplicación a otras personas: un modelo por usuario, predicción de la glucosa con su margen de error, avisos y una **carga de registro ajustable**, en la que cada usuario elige cuánto registrar sabiendo qué gana y qué pierde con cada dato. Eso exige antes protección de datos de salud (RGPD), consentimiento expreso, encaje regulatorio como posible producto sanitario y validación clínica. Nada de esto está hecho.
+
+> DayBetes no es un producto sanitario. Sus análisis y sus futuras recomendaciones son una herramienta de apoyo y no sustituyen el criterio del equipo médico.
 
 ---
 
-## 3. Estado actual
+## 3. Fases del proyecto
 
-La aplicación está **en producción y se usa a diario**. La parte de registro está prácticamente completa. La integración de datos de glucosa y el análisis son lo siguiente.
+| N.º | Fase | Periodo | Estado |
+|---|---|---|---|
+| 0 | Prototipo | dic. 2025 – verano 2026 | Completada: biblioteca de alimentos, comidas, escáner y cuentas |
+| 1 | Estabilización | sept. – oct. 2026 | Completada en su mayor parte: convenciones y auditoría tabla a tabla |
+| 2 | Puesta en producción | oct. 2026 | Completada: servidor propio, despliegue automático y copias cifradas |
+| 3 | Diseño del estudio | oct. 2026 – inicio de 2027 | En curso: variables, pautas de registro, métricas y plan de análisis |
+| 4 | Adaptación de la app al estudio | nov. 2026 – inicio de 2027 | En curso: lo que el estudio necesita y la app aún no recoge |
+| 5 | Piloto | dos semanas | Planificada |
+| 6 | Recogida de datos | unas doce semanas, primavera de 2027 | Planificada |
+| 7 | Análisis y memoria | tras la recogida | Planificada |
+| 8 | Apertura a otros usuarios | después del TFG | Condicionada a los resultados |
+
+---
+
+## 4. Estado actual
+
+La aplicación está **en producción** y se usa a diario desde el móvil y el ordenador. Es de acceso privado y el registro de usuarios está cerrado. La interfaz está en inglés.
 
 | Área | Estado |
 |---|---|
-| Catálogo de alimentos, recetas e ingestas manuales | ✅ Implementado |
-| Eventos de comida: planificar, ajustar platos y porciones, confirmar lo comido | ✅ Implementado |
-| Confianza y cobertura de los macronutrientes | ✅ Implementado |
-| Registro de inyecciones de insulina, con zona de inyección | ✅ Implementado |
-| Escáner de código de barras + Open Food Facts | ✅ Implementado |
-| Comidas de rescate (hipoglucemia) | ✅ Implementado |
-| Ajustes: horario de tipos de comida, etiquetas, inyecciones | ✅ Implementado |
-| Estadísticas básicas: totales diarios y desglose por tipo de comida | ✅ Implementado |
-| Autenticación y sesiones; registro cerrado en producción | ✅ Implementado |
-| Despliegue en VPS, CI/CD, copias de seguridad cifradas | ✅ En marcha |
-| Nevera (tuppers y sobras reutilizables) | 🟡 Modelo de datos creado, falta la interfaz |
-| Importación de glucosa desde LibreView | ⏳ Pendiente (siguiente paso del TFG) |
-| Análisis de la respuesta glucémica | ⏳ Pendiente (TFG) |
-| Cruce con Apple Health y Apple Watch (en el análisis, fuera de la app) | ⏳ Pendiente (TFG) |
-| Integración de Apple Health en la app | ⏳ Pendiente (fase 2) |
-| Modelo predictivo y recomendaciones | ⏳ Pendiente (fase 2) |
+| Alimentos, recetas y platos preparados por otros, con origen de los macros | ✅ Construido |
+| Comidas por platos: planificar, ajustar, confirmar lo comido de cada plato | ✅ Construido |
+| Método de cada cantidad, confianza y cobertura de los macros | ✅ Construido |
+| Fracción comida de cada plato, guardada al confirmar | ✅ Construido |
+| Insulina: inyecciones con dosis, hora, zona y boli; historial de cambios | ✅ Construido |
+| Bolis de insulina: apertura, caducidad y lo que queda | ✅ Construido |
+| Nevera y congelador: sobras reutilizables con su origen | ✅ Construido |
+| Escáner de código de barras, Open Food Facts y Ciqual | ✅ Construido |
+| Rescate de hipoglucemias y registro durante el ejercicio | ✅ Construido |
+| Asistente DiaBot (texto y fotos) | 🟡 Funcional, en fase preliminar |
+| Estadísticas | 🟡 Versión básica, por pulir |
+| Campos del estudio (objetivo del bolo, hora de fin, diario, periodos, contexto…) | ⏳ En definición (fase 4) |
+| Versionado de los alimentos | ⏳ Diseñado, sin construir |
+| Glucosa y Apple Health | ⏳ Se cruzan en el análisis del TFG, fuera de la app |
+| Modelo predictivo y recomendaciones | ⏳ Fase 2 |
 
-En cifras: unas 22 000 líneas de Python y 2 000 de JavaScript; 16 tablas; 84 rutas; seis documentos de convenciones; y más de 60 decisiones de arquitectura registradas.
-
----
-
-## 4. Funcionalidades
-
-La interfaz se organiza en cuatro secciones, a las que se accede desde una barra de navegación flotante (**Menu, Stats, Food, Settings**). Además hay un **carrito** siempre accesible con las comidas en curso.
-
-### 4.1 Alimentos (Food)
-
-- **Biblioteca unificada** de tres tipos de entrada:
-  - **alimentos del catálogo**, con valores nutricionales por 100 g;
-  - **recetas**, que combinan ingredientes y calculan sus macros;
-  - **ingestas manuales**, para comidas de fuera o sin información exacta.
-- **Búsqueda en tiempo real** (HTMX), filtros, favoritos y etiquetas.
-- **Creación rápida con "smart macros"**: se escribe `120kcal 30hc 12az 20prot` y el sistema rellena los campos. Usa una gramática estricta, que rechaza lo que no entiende en lugar de adivinar. El navegador muestra una vista previa, pero quien decide es siempre el servidor.
-- **Escáner de código de barras**: busca el producto en una copia local de **Open Food Facts** y, si no está, en su API, y rellena el formulario de alta para revisarlo antes de guardar.
-- **Productos de supermercado en el buscador**: debajo de los alimentos propios aparecen productos de esa copia local; al pulsar uno se abre el mismo formulario relleno.
-- **Biblioteca personal y publicada**: un alimento es privado de quien lo crea hasta que se publica.
-- **Comidas de rescate**: un registro rápido de lo que se toma para tratar una hipoglucemia, con sus propias opciones y su propio tipo de comida.
-
-### 4.2 Carrito y eventos de comida
-
-Cada comida es un **evento de ingesta**: se **planifica**, se ajusta y se **confirma como consumida**. Un evento se puede archivar y restaurar. Dentro de un evento:
-- **Platos (tandas)**: una comida puede tener varios platos, servidos en momentos distintos. Cada plato tiene su desfase en minutos respecto al inicio de la comida.
-- **Porciones**: cada alimento del plato lleva su cantidad, su propio desfase y dos indicadores: si se pesó de forma estricta y si se pesó en crudo o cocinado. Si los macros son exactos o aproximados es un dato del alimento, no de la porción.
-- **Datos del evento**: tipo de comida (asignado automáticamente según el horario configurado), hora, si se comió fuera, dosis de insulina, zona de inyección y notas.
-- **Confirmación**: al confirmar, se registra lo que se comió de verdad y se guarda la **confianza en la cantidad**.
-
-### 4.3 Confianza y cobertura
-
-Es una de las piezas diferenciales del proyecto. Para cada evento se calculan las métricas siguientes. La confianza en la cantidad se guarda al confirmar. La confianza en la calidad y las coberturas dependen de los datos del alimento, así que se calculan siempre en vivo y siguen a sus valores actuales, también en las comidas ya confirmadas:
-- la **confianza en la cantidad** (`amount_confidence`): cuánto se sabe de lo que se comió realmente;
-- la **confianza en la calidad** (`quality_confidence`): cuánto se sabe de la composición de lo comido;
-- la **cobertura de cada nutriente** (hidratos, azúcares, grasas, saturadas, proteínas, fibra): qué parte de lo comido tiene ese nutriente registrado.
-
-Las tres se miden entre 0 y 1, ponderadas por la cantidad de cada ingrediente, y en las tres más alto es mejor.
-
-Así, el análisis posterior puede **distinguir un dato fiable de uno aproximado**, en lugar de tratarlos igual. Las reglas exactas están en [`measurement_conventions.md`](conventions/measurement_conventions.md) §6.
-
-### 4.4 Insulina, ajustes y estadísticas
-
-- **Registro de inyecciones de insulina**: rápida o basal, con dosis, momento y zona del cuerpo, en un registro editable.
-- **Ajustes**: el horario que asigna automáticamente el tipo de comida (desayuno, almuerzo, comida, merienda, cena...), las etiquetas y las inyecciones.
-- **Estadísticas**: totales y promedios diarios de macronutrientes, y desglose por tipo de comida. Es la base sobre la que se construirá el análisis con datos de glucosa.
+En cifras: unas 39 000 líneas de Python y 4 100 de JavaScript; 25 tablas; 136 rutas; 64 pruebas automáticas de la lógica de dominio; seis documentos de convenciones versionados más el protocolo del estudio; y 86 decisiones de arquitectura registradas.
 
 ---
 
-## 5. Modelo de datos
+## 5. Funcionalidades
 
-PostgreSQL 17, con **16 tablas**. Las restricciones de integridad, los valores de los enumerados y la propiedad de cada fila se garantizan **también en SQL**, no solo en la aplicación.
+La interfaz se organiza en cuatro secciones, accesibles desde una barra de navegación flotante (**Menu, Stats, Food, Settings**), más un **carrito** siempre accesible con las comidas en curso y el asistente **DiaBot**.
+
+### 5.1 Alimentos (Food)
+
+- **Biblioteca personal** con tres tipos de entrada: alimentos con sus valores por 100 g, **recetas** que combinan ingredientes por platos, y **platos preparados por otros** (un bar, un familiar).
+- **Origen de los macros** de cada alimento: etiqueta, web oficial, Open Food Facts, tabla de composición, calculado de sus ingredientes, estimación de la IA o propia.
+- **Búsqueda en tiempo real**, filtros, favoritos y etiquetas.
+- **Smart macros**: se escribe `120kcal 30hc 12az 20prot` y se rellenan los campos, con una gramática estricta que rechaza lo que no entiende en vez de adivinar.
+- **Escáner de código de barras** contra una copia local de **Open Food Facts** y, si no está, su API. **Alimentos genéricos de Ciqual**, la tabla de composición de la agencia francesa de seguridad alimentaria.
+- **Rescate**: registro rápido de lo que se toma para tratar una bajada o haciendo deporte.
+
+### 5.2 Comidas y carrito
+
+Cada comida se **planifica**, se ajusta y se **confirma**. Dentro de ella:
+
+- **Platos (tandas)** servidos en momentos distintos, cada uno con su desfase o su hora exacta.
+- **Porciones** con su cantidad, **cómo se obtuvo** (báscula de cocina o de mano, peso del envase, medida casera, a ojo, estimación de la IA), cocción, conservación, estado final, madurez en la fruta y si se pesó ya cocinado.
+- **Datos de la comida**: tipo (propuesto según el horario), hora, si se comió fuera, notas y el borrador de la insulina (dosis, zona y boli).
+- **Confirmación**: se indica cuánto se comió de cada plato, en % o en gramos. La fracción se **guarda** para recuperar después lo servido (con lo que se decidió la dosis) y saber qué platos no se acabaron. Lo que sobra se puede guardar en la nevera.
+- **Nevera y congelador**: tuppers con su contenido, su fecha y sus movimientos, que se usan en comidas posteriores sin perder de dónde venían.
+
+### 5.3 Confianza y cobertura
+
+Para cada comida se calculan, entre 0 y 1 y ponderadas por la cantidad de cada ingrediente:
+
+- la **confianza en la cantidad** (`amount_confidence`): la parte del peso medida con báscula o con el peso del envase; se guarda al confirmar;
+- la **confianza en la calidad** (`quality_confidence`): la parte del peso cuyos macros son publicados por quien hace o vende el producto;
+- la **cobertura de cada nutriente**: qué parte de lo comido tiene ese nutriente informado. Un valor que falta es desconocido, nunca cero.
+
+Las reglas exactas están en [`measurement_conventions.md`](conventions/measurement_conventions.md) §6.
+
+### 5.4 Asistente DiaBot
+
+El usuario escribe lo que ha comido, o adjunta hasta cuatro fotos, y DiaBot lo deja en el carrito para revisarlo. Busca primero entre los alimentos del usuario, después en Ciqual y Open Food Facts, y solo estima cuando no encuentra nada, marcándolo como estimación de la IA. También lee etiquetas nutricionales y prepara borradores de alimentos, platos y recetas, que el usuario revisa en el formulario antes de guardar.
+
+Sus límites son estructurales, no instrucciones del prompt: tiene un conjunto fijo de herramientas y **ninguna borra, confirma comidas, edita la biblioteca ni calcula dosis**. La insulina de la comida solo la anota cuando el usuario la indica expresamente. Cada conversación se guarda para medir sus errores; las fotos no se guardan. Usa la API de Claude (por defecto, Claude Haiku con esfuerzo alto), con un tiempo máximo por mensaje por debajo del de Cloudflare.
+
+### 5.5 Insulina, ajustes y estadísticas
+
+- **Inyecciones** rápidas y basales con dosis, hora, zona y boli. Cada cambio o borrado guarda la versión anterior.
+- **Bolis**: marcas, apertura, caducidad, capacidad y motivo de retirada.
+- **Ajustes**: horario de los tipos de comida, etiquetas, bolis e inyecciones.
+- **Estadísticas**: totales y promedios diarios de macronutrientes y su reparto por tipo de comida.
+
+---
+
+## 6. Modelo de datos
+
+PostgreSQL 17, con **25 tablas**. Las restricciones de integridad, los valores de los enumerados (generados desde el código) y la propiedad de cada fila se garantizan **también en SQL**, no solo en la aplicación.
 
 | Grupo | Tablas | Para qué |
 |---|---|---|
-| Usuarios y seguridad | `users`, `auth_sessions`, `auth_rate_limits` | Cuentas, sesiones revocables y límite de intentos de login |
-| Alimentos | `catalog`, `food_brands`, `recipe`, `manual_intake` | Alimentos con su información nutricional, marcas, recetas e ingestas manuales |
-| Comidas | `intake_event`, `intake_plate`, `portion_detail` | Eventos de comida, sus platos y las porciones de cada uno |
-| Insulina y horario | `insulin_injections`, `meal_type_schedule` | Inyecciones y franjas horarias de cada tipo de comida |
+| Usuarios y seguridad | `users`, `auth_sessions`, `auth_rate_limits` | Cuentas, sesiones revocables y límite de intentos |
+| Alimentos | `catalog`, `manual_intake`, `recipe`, `recipe_plate`, `food_brands` | Alimentos, platos preparados, recetas con sus platos y marcas |
+| Referencia | `off_product`, `ciqual_food` | Copias de Open Food Facts y Ciqual, de solo lectura para la app |
+| Comidas | `intake_event`, `intake_plate`, `portion_detail`, `meal_type_schedule` | Comidas, sus platos, sus porciones y el horario de los tipos de comida |
+| Sobras | `fridge`, `fridge_move` | Tuppers y su historial de movimientos (solo inserción) |
+| Insulina | `insulin_injections`, `insulin_injection_history`, `insulin_brand`, `insulin_pen` | Inyecciones, su historial de cambios, marcas y bolis |
 | Organización | `tags`, `linked_tags`, `user_favorites` | Etiquetas y favoritos |
-| Sobras | `fridge` | Tuppers reutilizables (pendiente de interfaz) |
+| Asistente | `assistant_conversation`, `assistant_message` | Conversaciones con DiaBot (solo inserción) |
 
-`portion_detail` usa un **patrón de arco**: cada porción tiene **un único origen** (un alimento del catálogo, una ingesta manual o una receta) y **un único destino** (un plato de un evento, una receta o un tupper de la nevera). Así, una misma tabla describe tanto lo que se come como de qué está hecha una receta.
+`portion_detail` usa un **patrón de arco**: cada porción tiene un único origen (alimento o plato preparado) y un único destino (una comida, una receta o un tupper). Cada instante se guarda en UTC con la **zona horaria del navegador** en la que se registró.
 
 ---
 
-## 6. Arquitectura técnica
+## 7. Arquitectura técnica
 
-### 6.1 Stack
+### 7.1 Stack
 
 | Capa | Tecnología |
 |---|---|
 | Lenguaje | Python 3.12 |
 | Web | [FastHTML](https://fastht.ml) 0.14 sobre Starlette 1.x y Uvicorn |
-| Interactividad | HTMX 2, con JavaScript propio y mínimo para detalles concretos (escáner, vista previa de macros, avisos) |
-| Estilos | Tailwind CSS. El CSS se compila en desarrollo y se versiona |
-| Base de datos | PostgreSQL 17, accedida con `psycopg` 3 (SQL explícito, sin ORM) |
-| Seguridad | Argon2 para contraseñas, sesiones en base de datos, CSRF, límite de intentos de login |
-| Datos externos | Open Food Facts |
-| Contenedores | Docker y Docker Compose |
-| Infraestructura | VPS de OVH (Ubuntu 26.04 LTS), Cloudflare (DNS, Tunnel, R2), GitHub Actions |
+| Interactividad | HTMX 2, con JavaScript propio y mínimo en `static/js/` |
+| Estilos | Tailwind CSS 4. El CSS se compila en desarrollo y se versiona |
+| Base de datos | PostgreSQL 17 con `psycopg` 3 y un pool de conexiones (SQL explícito, sin ORM) |
+| Seguridad | Argon2 con pepper, sesiones en base de datos, CSRF, límite de intentos, CSP |
+| Datos externos | Open Food Facts, Ciqual, API de Claude (asistente) |
+| Contenedores | Docker y Docker Compose, imágenes fijadas por digest |
+| Infraestructura | VPS de OVH en la UE, Cloudflare (DNS, Tunnel, R2), GitHub Actions |
 
-### 6.2 Estructura del código
+### 7.2 Estructura del código
 
 ```
 DayBetes_food/
-├── main.py              # Arranque de la app, middleware de seguridad y gestión de errores
+├── main.py              # Arranque, middleware de seguridad y gestión de errores
 ├── config.py            # Toda la configuración, cargada y validada al arrancar
 ├── auth/                # Autenticación, sesiones, contraseñas y CSRF
 ├── domain/              # Reglas de negocio puras: enumerados, dataclasses, nutrición y confianza
+├── services/            # Operaciones de varios pasos: comidas, recetas, nevera, bolis, asistente
 ├── database/
 │   ├── schema.py        # Definición del esquema
-│   ├── db_init.py       # Bootstrap y migraciones del esquema
-│   └── queries/         # Un módulo por tabla
-├── integrations/        # Adaptadores externos (Open Food Facts)
-├── routes/              # Endpoints: auth, food, cart, menu, stats, settings, scanner
-├── components/          # Componentes de interfaz (funciones Python que devuelven HTML)
+│   ├── db_init.py       # Orquesta el bootstrap del esquema
+│   ├── bootstrap/       # Pasos idempotentes del esquema, por área
+│   └── queries/         # SQL, un módulo por tabla
+├── integrations/        # Adaptadores externos: Open Food Facts, Ciqual, Claude
+├── routes/              # Endpoints; los de Food, en routes/food/ por área
+├── components/          # Interfaz: funciones Python que devuelven HTML, sin acceso a la base
 └── static/              # CSS compilado, JavaScript e imágenes
+tests/                   # Pruebas automáticas de la lógica de domain/
 ```
 
-### 6.3 Principios de diseño
+### 7.3 Principios de diseño
 
-- **HTML desde el servidor.** Las páginas y fragmentos se generan en Python, y HTMX actualiza solo la parte de la página que cambia. Apenas hay estado en el navegador.
-- **Capas con responsabilidades claras.** Las rutas validan la entrada y la autorización. `domain/` contiene la lógica pura, sin base de datos. `database/queries/` contiene el SQL, organizado por tabla. Los componentes solo pintan.
-- **Dos identidades de base de datos.** La app trabaja con un rol **sin permisos para modificar el esquema**. El esquema solo lo cambia una identidad de migraciones, que no se usa nunca en tiempo de ejecución.
-- **La propiedad de los datos se comprueba en SQL.** Cada consulta filtra por usuario, de modo que un fallo en una ruta no puede exponer datos de otra persona.
-- **Errores tipados y uniformes.** Un único formato de error, códigos HTTP con significado y mensajes que no revelan información interna.
+- **HTML desde el servidor.** HTMX actualiza solo la parte de la página que cambia. Apenas hay estado en el navegador.
+- **Capas con responsabilidades claras.** Las rutas validan y autorizan; los servicios coordinan; `domain/` es lógica pura; `queries/` contiene el SQL; los componentes solo pintan lo que la ruta les pasa.
+- **Dos identidades de base de datos.** La app trabaja con un rol sin permisos para modificar el esquema; el esquema lo cambia una identidad de migraciones que nunca se usa en ejecución.
+- **La propiedad de los datos se comprueba en SQL.** Cada consulta filtra por usuario dentro del propio SQL.
+- **Historiales que la app no puede reescribir.** Los movimientos de la nevera, los mensajes del asistente y el historial de inyecciones son de solo inserción, también por permisos.
+- **Errores tipados y uniformes**, con códigos HTTP con significado y mensajes que no revelan información interna.
 
-### 6.4 Datos de terceros
+### 7.4 Datos de terceros
 
-DayBetes usa datos de [Open Food Facts](https://world.openfoodfacts.org), disponibles bajo la [Open Database License](https://opendatacommons.org/licenses/odbl/1-0/) (ODbL). Sus contenidos individuales están bajo la [Database Contents License](https://opendatacommons.org/licenses/dbcl/1-0/). Son datos colaborativos y orientativos, sin garantía de exactitud. El detalle está en [`measurement_conventions.md`](conventions/measurement_conventions.md) §12.2.
+DayBetes usa datos de [Open Food Facts](https://world.openfoodfacts.org) bajo la [Open Database License](https://opendatacommons.org/licenses/odbl/1-0/) (contenidos bajo la [Database Contents License](https://opendatacommons.org/licenses/dbcl/1-0/)) y de [Ciqual](https://ciqual.anses.fr) (ANSES). Son datos orientativos, sin garantía de exactitud; el detalle está en [`measurement_conventions.md`](conventions/measurement_conventions.md) §12.
 
 ---
 
-## 7. Despliegue y operación
+## 8. Despliegue y operación
 
-La aplicación funciona en producción en **[daybetes.com](https://daybetes.com)** desde octubre de 2026.
+En producción en **[daybetes.com](https://daybetes.com)** desde octubre de 2026.
 
-### 7.1 Cómo llega una visita
+### 8.1 Cómo llega una visita
 
 ```
 Navegador ──HTTPS──▶ Cloudflare ──Tunnel (conexión saliente)──▶ VPS
@@ -222,61 +257,61 @@ Navegador ──HTTPS──▶ Cloudflare ──Tunnel (conexión saliente)─�
                                               └─────────────────────────────────┘
 ```
 
-- **El servidor no tiene ningún puerto web abierto.** El contenedor `cloudflared` abre una conexión **saliente** hacia Cloudflare, y las visitas entran por ella. La IP del servidor no aparece en el DNS, y el firewall solo deja pasar SSH.
-- **Acceso privado.** El registro de usuarios está cerrado en producción, y la autenticación de la app es la primera barrera. Está previsto añadir Cloudflare Access para que solo usuarios autorizados lleguen a la web.
+- **El servidor no tiene ningún puerto web abierto.** `cloudflared` abre una conexión saliente y las visitas entran por ella; el firewall solo deja pasar SSH.
+- **Acceso privado.** El registro está cerrado en producción y la autenticación de la app es la barrera. Cloudflare Access se estudiará más adelante.
+- La app corre en el contenedor con un **usuario sin privilegios** y envía cabeceras de seguridad, incluida una `Content-Security-Policy`.
 
-### 7.2 Servidor
+### 8.2 Servidor
 
-- VPS de OVH en la UE, con Ubuntu 26.04 LTS.
-- Endurecimiento: acceso SSH solo con clave y sin contraseñas ni root; firewall con todo cerrado salvo SSH; parches de seguridad automáticos con reinicio programado cuando hacen falta; swap de reserva; logs de contenedores limitados.
+VPS de OVH en la UE, con Ubuntu 26.04 LTS: SSH solo con clave y sin root, firewall cerrado salvo SSH, parches de seguridad automáticos, swap de reserva y logs de contenedores limitados.
 
-### 7.3 Despliegue continuo
+### 8.3 Despliegue continuo
 
-Producción ejecuta siempre la rama `main`, que está protegida: solo admite cambios mediante Pull Request y con la auditoría de dependencias en verde.
+Producción ejecuta siempre `main`, protegida: solo admite cambios por Pull Request.
 
 ```
-rama ─▶ Pull Request ─▶ pip-audit ─▶ merge en main ─▶ GitHub Actions
-                                                         │  (SSH con clave dedicada y de un solo uso)
-                                                         ▼
-                                          VPS: git pull ─▶ migraciones ─▶ build + up ─▶ comprobación de salud
+rama ─▶ Pull Request ─▶ pip-audit + pruebas ─▶ merge en main ─▶ GitHub Actions
+                                                                   │  (SSH con clave dedicada y comando forzado)
+                                                                   ▼
+                          VPS: git ─▶ migraciones ─▶ build + up ─▶ comprobación de salud ─▶ vuelta atrás si falla
 ```
 
-- **Las migraciones del esquema** se ejecutan en un contenedor de un solo uso **antes** de sustituir la app. Si fallan, la versión anterior sigue funcionando.
-- **El usuario de despliegue no tiene terminal.** Su clave solo puede lanzar el script de despliegue, de modo que si se filtrara solo serviría para desplegar lo que ya está en `main`.
-- Las dependencias se auditan con `pip-audit` en cada Pull Request y antes de cada despliegue.
+- Las **migraciones** se ejecutan en un contenedor de un solo uso **antes** de sustituir la app.
+- Si la versión nueva no responde, el despliegue **vuelve a la imagen y al código anteriores** y termina en error.
+- Las dependencias, transitivas incluidas, están **bloqueadas con hashes**; `pip-audit` las revisa en cada PR y Dependabot propone sus actualizaciones.
+- El usuario de despliegue no tiene terminal: su clave solo puede lanzar el script de despliegue.
 
-### 7.4 Copias de seguridad
+### 8.4 Copias de seguridad
 
-- Cada noche se hace un volcado completo de la base de datos, **cifrado con `age` en el propio servidor**. El servidor solo tiene la clave pública, así que puede cifrar pero no descifrar.
-- Las copias se guardan en Cloudflare R2, en la jurisdicción de la UE, durante 90 días, y además localmente durante 7 días.
-- Un servicio de monitorización avisa si una copia falla **o si no llega a ejecutarse**.
-- La restauración se prueba de principio a fin cada mes. Una copia que nunca se ha restaurado no se da por válida.
+- Volcado nocturno de la base, **cifrado con `age` en el propio servidor** (que solo tiene la clave pública).
+- Copias en Cloudflare R2, jurisdicción UE, durante 90 días, y localmente durante 7 días.
+- Un vigilante externo avisa si una copia falla **o si no llega a ejecutarse**, y la restauración se prueba cada mes.
 
-Los detalles de toda la infraestructura están en [`infra_conventions.md`](conventions/infra_conventions.md).
+El detalle está en [`infra_conventions.md`](conventions/infra_conventions.md).
 
 ---
 
-## 8. Cómo se desarrolla
+## 9. Cómo se desarrolla
 
-### 8.1 Desarrollo guiado por convenciones
+### 9.1 Desarrollo guiado por convenciones
 
-Todas las decisiones de diseño están escritas en [`conventions/`](conventions/), y el código se escribe **siguiéndolas**:
+Todas las decisiones de diseño están escritas en [`conventions/`](conventions/) y el código se escribe siguiéndolas. Cuando aparece una decisión nueva no cubierta, se para hasta acordarla y documentarla; las relevantes se registran con su contexto, alternativas y motivo. El código, en inglés; la documentación, en español.
 
-- Cuando aparece una decisión nueva que no está cubierta, se para el desarrollo hasta acordarla y documentarla.
-- Las decisiones relevantes se registran con su contexto, las alternativas consideradas y el motivo de la elección.
-- El código y sus comentarios se escriben en inglés. Los textos de la interfaz y la documentación, en español.
+### 9.2 Auditorías
 
-### 8.2 Auditorías por tabla
+El código se revisa **tabla a tabla** contra las convenciones (esquema, restricciones, consultas, rutas e interfaz), con agentes de [Claude Code](https://claude.com/claude-code) definidos en [`.claude/agents/`](.claude/agents/). En noviembre de 2026 se hizo además una auditoría general del proyecto, cuyos hallazgos se han ido cerrando.
 
-El código se revisa **tabla a tabla** contra las convenciones: esquema, restricciones, consultas, rutas e interfaz que dependen de cada una. Cada auditoría produce una lista de hallazgos y un plan de corrección, que se aplica y se verifica contra la base de datos real. En este proceso se usan agentes de [Claude Code](https://claude.com/claude-code) definidos en [`.claude/agents/`](.claude/agents/): `audit-tabla` para auditar y `propose` para preparar el plan.
+### 9.3 Pruebas
 
-### 8.3 Flujo de trabajo
+Un conjunto mínimo de pruebas automáticas (`tests/`, con `pytest`) cubre la lógica de la que depende el estudio: cantidades y unidades, factor de cocción, fracción comida, confianza y cobertura, smart macros, hora exacta, zona horaria e historial del asistente. Se ejecutan en cada Pull Request y bloquean el despliegue si fallan. El resto se verifica a mano.
 
-[GitHub Flow](https://docs.github.com/en/get-started/using-github/github-flow): cada cambio en su rama, una Pull Request revisada y la fusión en `main`, que despliega automáticamente. Los commits siguen el formato [Conventional Commits](https://www.conventionalcommits.org) (`feat`, `fix`, `docs`, `chore`...).
+### 9.4 Flujo de trabajo
+
+[GitHub Flow](https://docs.github.com/en/get-started/using-github/github-flow) con commits en formato [Conventional Commits](https://www.conventionalcommits.org) (`feat`, `fix`, `refactor`, `docs`…).
 
 ---
 
-## 9. Desarrollo local
+## 10. Desarrollo local
 
 Requisitos: Docker (o Docker Desktop).
 
@@ -287,40 +322,46 @@ cp .env.example .env        # rellenar los valores (no se suben nunca a git)
 docker compose up -d        # base de datos, app con recarga automática y Tailwind en modo watch
 ```
 
-La app queda en `http://localhost:8000`. En desarrollo, el registro de usuarios está abierto y el esquema se crea solo al arrancar.
+La app queda en `http://localhost:8000`, solo accesible desde el propio equipo (para probar desde el móvil: `WEB_BIND_ADDRESS=0.0.0.0 docker compose up -d`). En desarrollo el registro está abierto y el esquema se crea solo al arrancar.
 
-Desarrollo y producción usan **archivos de Compose separados** (`docker-compose.yml` y `docker-compose.prod.yml`) y **volúmenes de datos distintos**. Los comandos de producción se ejecutan siempre con `./scripts/prod.sh`.
+Las pruebas:
+
+```sh
+docker run --rm -v "$PWD":/w -w /w python:3.12-slim sh -c "pip install -q --require-hashes -r requirements.txt && pip install -q -r requirements-dev.txt && python -m pytest"
+```
+
+Desarrollo y producción usan **archivos de Compose separados** y **volúmenes distintos**. Los comandos de producción se ejecutan siempre con `./scripts/prod.sh`.
 
 ---
 
-## 10. Hoja de ruta
+## 11. Hoja de ruta
 
-**Corto plazo**
-- Cloudflare Access delante de la aplicación.
-- Límite de intentos en el registro y respuesta `429` en los bloqueos de login.
-- Interfaz de la nevera (sobras y tuppers).
+**Antes del piloto (fases 3 y 4)**
+- Cerrar el protocolo: preguntas, variables, pautas de registro, reglas de calidad y métricas.
+- Añadir los campos del estudio: objetivo del bolo y "qué tuve en cuenta", hora de fin de la comida, comida sin detalle, estimaciones previas al pesado.
+- Registros de contexto: diario del día, periodos especiales, eventos, peso, medicación, cambios de sensor.
+- Importación de las dosis del boli con memoria.
+- Versionado de los alimentos e historial formal de migraciones.
+- Pulir DiaBot y las estadísticas.
 
 **TFG**
-- Importación de datos de glucosa desde **LibreView**: lecturas del sensor, tendencias e insulina.
-- Panel de **análisis glucémico**: curvas tras cada comida, tiempo en rango, comparativas por día y franja horaria.
-- Exportación de **Apple Health y el Apple Watch** (ejercicio, sueño, frecuencia cardiaca, variabilidad...) para cruzarla con los registros en el análisis.
-- **Análisis de correlación** entre lo registrado (macros, cantidades, horarios, dosis, confianza de los datos), la actividad y el sueño, y la respuesta de glucosa.
-- Memoria del TFG con los resultados del análisis personal.
+- Piloto de dos semanas, recogida de unas doce semanas y análisis, cruzando la glucosa de LibreView y los datos de Apple Health fuera de la app.
+- Memoria con los resultados del análisis personal.
 
-**Después del TFG**
-- Integración directa de **Apple Health** en la app: actividad, sueño, frecuencia cardiaca, variabilidad...
-- **Modelo predictivo personalizado** por usuario y motor de recomendaciones.
-- Soporte de varios usuarios y una experiencia pensada para móvil.
+**Después del TFG (condicionado a los resultados)**
+- Requisitos para abrir a otras personas: protección de datos, consentimiento, encaje regulatorio, seguridad reforzada (límites de uso del asistente, Cloudflare Access o WAF) y validación clínica.
+- Modelo predictivo personalizado, avisos e integración directa de Apple Health.
 
 ---
 
-## 11. Documentación del proyecto
+## 12. Documentación del proyecto
 
 | Documento | Contenido |
 |---|---|
-| [`code_conventions.md`](conventions/code_conventions.md) | Capas, transacciones, tipado, seguridad, configuración y esquema |
-| [`measurement_conventions.md`](conventions/measurement_conventions.md) | Unidades, cantidades, porciones, platos, confianza y cobertura |
+| [`code_conventions.md`](conventions/code_conventions.md) | Capas, transacciones, tipado, seguridad, configuración, asistente y esquema |
+| [`measurement_conventions.md`](conventions/measurement_conventions.md) | Unidades, cantidades, porciones, platos, nevera, confianza, insulina y tiempo |
 | [`error_conventions.md`](conventions/error_conventions.md) | Tipos de error, códigos HTTP, mensajes y registros |
-| [`frontend_conventions.md`](conventions/frontend_conventions.md) | Componentes, HTMX, interfaz e idioma |
+| [`frontend_conventions.md`](conventions/frontend_conventions.md) | Componentes, HTMX, páginas e idioma |
 | [`infra_conventions.md`](conventions/infra_conventions.md) | Entornos, despliegue, servidor, copias de seguridad y dependencias |
 | [`decisions.md`](conventions/decisions.md) | Registro histórico de decisiones de arquitectura |
+| `study_conventions.md` | Protocolo del estudio (privado, fuera de git) |

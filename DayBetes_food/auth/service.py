@@ -36,6 +36,7 @@ from DayBetes_food.database.queries import (
 
 
 GENERIC_AUTH_ERROR = "Invalid credentials"
+RATE_LIMITED_ERROR = "Too many attempts. Try again in a few minutes."
 
 
 def _utcnow() -> datetime:

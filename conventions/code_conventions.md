@@ -6,7 +6,9 @@ Durante una auditoría de tabla, módulo o Pull Request, este documento es el cr
 
 Las convenciones se aplican inmediatamente al código nuevo. El código existente se adapta progresivamente por tabla o módulo, sin mezclar en una misma corrección cambios funcionales no relacionados.
 
-Durante la fase de desarrollo personal (TFG, un único desarrollador, un único usuario) no se exige una suite de tests automatizados. La verificación manual del comportamiento afectado es suficiente antes de dar por cerrada una tabla o módulo. Esta decisión se revisará cuando el proyecto salga de esta fase; no debe señalarse como convención faltante en auditorías mientras siga vigente.
+Durante la fase de desarrollo personal (TFG, un único desarrollador, un único usuario) no se exige una suite de tests completa. La verificación manual del comportamiento afectado es suficiente antes de dar por cerrada una tabla o módulo. Esta decisión se revisará cuando el proyecto salga de esta fase; no debe señalarse como convención faltante en auditorías mientras siga vigente.
+
+Sí existe un conjunto **mínimo** de pruebas automáticas (decisión del usuario del 2026-11-17, auditoría general H-12): `tests/`, con `pytest`, solo sobre la lógica pura de la que depende el estudio (`domain/` y `time_utils.py`: cantidades, fracción comida, confianza y cobertura, parsers, nombre de tanda, hora exacta, zona de la petición, historial del asistente). No usan base de datos ni red y tardan menos de un segundo. El workflow las ejecuta en cada PR, junto con `scripts/check_smart_macros.py`, y un fallo bloquea el despliegue. Se ejecutan en local con `docker run --rm -v "$PWD":/w -w /w python:3.12-slim sh -c "pip install -q --require-hashes -r requirements.txt && pip install -q -r requirements-dev.txt && python -m pytest"`, o dentro del contenedor de desarrollo. Una regla nueva de `domain/` que cambie un dato del estudio lleva su prueba en el mismo cambio; el resto no lo exige.
 
 ## 0. Idioma (obligatorio)
 
@@ -126,7 +128,7 @@ Reglas:
 - Pasar la misma conexión a los servicios, queries y componentes que la necesiten para leer datos.
 - No abrir varias conexiones para completar una misma operación lógica.
 - No abrir conexiones dentro de componentes, mappers o helpers de presentación.
-- No mantener conexiones en variables globales ni en `ContextVar`.
+- No mantener conexiones en variables globales ni en `ContextVar`. La única excepción es el pool de `database/connection.py` (decisión del usuario del 2026-11-17, auditoría general H-24): `get_connection()` presta una conexión del pool para una unidad de trabajo y, al salir del bloque `with`, confirma o revierte como una conexión normal y la devuelve al pool en vez de cerrarla. El pool tiene como máximo `DB_POOL_MAX_SIZE` conexiones (20 por defecto); con todas en uso, una petición espera `DB_POOL_TIMEOUT_SECONDS` y después falla. Por eso una unidad de trabajo nunca pide una segunda conexión mientras retiene la primera: con el pool lleno se bloquearía.
 - Un componente no puede ocultar una lectura de base de datos durante el renderizado.
 - El middleware, la ruta, el servicio y el renderizado no deben abrir conexiones duplicadas para la misma unidad de trabajo.
 
@@ -467,6 +469,14 @@ Está prohibido hacer un `SELECT` por ID, obtener el registro y comprobar poster
 - El endpoint devuelve `404`, no `403`, para ese caso.
 - La capa interna puede registrar o clasificar el motivo sin exponerlo en la respuesta.
 - La función no debe devolver datos privados antes de comprobar ownership.
+
+### 5.5 Rutas públicas y cabeceras de seguridad
+
+- Las rutas que no exigen sesión se deciden en `main.py` con prefijos que **terminan en `/`** (`/auth/`, `/css/`, `/js/`, `/images/`) más una lista de rutas exactas. Un prefijo sin barra haría pública por accidente una ruta futura como `/authors`.
+- Toda respuesta de la app lleva `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Strict-Transport-Security` y `Content-Security-Policy`, puestas por el middleware.
+- La `Content-Security-Policy` (decisión 2026-11-17, auditoría general H-18) es una segunda barrera, no la principal: el escapado del HTML sigue siendo obligatorio. Limita los orígenes de scripts, estilos y conexiones a la propia app y a los CDN que cargan las páginas, y prohíbe `object`, `base` ajeno, formularios hacia otros orígenes y que la app se incruste en marcos. Mientras las páginas usen manejadores en línea (`onclick=`, `Script` con código, `hx-on`), admite `'unsafe-inline'` y `'unsafe-eval'` en scripts. Pasar a una política con `nonce` exige quitar antes esos manejadores; es requisito de la fase 2 (contenido de otros usuarios).
+- Un script o estilo de un origen nuevo se añade a la política en el mismo cambio que lo introduce.
+- **Tamaño del cuerpo** (auditoría general H-31). `body_limit.py` corta una petición cuyo cuerpo supera 1 MB, o el de las fotos del asistente en `/assistant/message` (cuatro fotos al máximo más 1 MB), antes de que Starlette la lea entera: por su `Content-Length` o contando los bytes si no lo declara. Responde `400 malformed_request` por el canal de errores (`error_conventions.md` §7.1). Una ruta nueva que reciba archivos declara su límite en ese módulo.
 
 ## 6. Concurrencia e idempotencia
 
@@ -1003,9 +1013,10 @@ Acordado con el usuario el 2026-11-12. Un chat en el que el usuario cuenta lo qu
 **Configuración** (§8.1)
 
 - `ANTHROPIC_API_KEY`: secreto opcional. Vacío = asistente desactivado: sus rutas no se registran (`404`) y no aparece ningún acceso en la interfaz.
-- `ASSISTANT_MODEL`: por defecto `claude-opus-5-5`. Se cambia sin tocar código.
-- `ASSISTANT_EFFORT`: por defecto `low`.
-- `ASSISTANT_TIMEOUT_SECONDS` y `ASSISTANT_MAX_TOOL_ROUNDS` (rondas de herramientas por mensaje). Al llegar al límite se corta, se guarda lo hecho y se avisa al usuario.
+- `ASSISTANT_MODEL`: por defecto `claude-haiku-5-5` (decisión del usuario del 2026-11-17: mucho más económico y suficiente para registrar comidas). Se cambia sin tocar código.
+- `ASSISTANT_EFFORT`: por defecto `high`.
+- `ASSISTANT_TIMEOUT_SECONDS` (una llamada), `ASSISTANT_MESSAGE_BUDGET_SECONDS` (el mensaje entero, por defecto 75 s, ver **Turno**) y `ASSISTANT_MAX_TOOL_ROUNDS` (rondas de herramientas por mensaje). Al llegar al límite de rondas o de tiempo se corta, se guarda lo hecho y se avisa al usuario.
+- **Límite de uso** (decisión del usuario del 2026-11-17, auditoría general H-04). §5.2 exige rate limiting en los endpoints externos costosos; el asistente queda exento mientras haya un solo usuario y el modelo por defecto sea Haiku. El tope por usuario y día y el límite de gasto en la consola del proveedor son requisito de la fase 2, antes de abrir el asistente a otros usuarios.
 
 **Datos**
 
@@ -1021,6 +1032,7 @@ Acordado con el usuario el 2026-11-12. Un chat en el que el usuario cuenta lo qu
   `is_cooked_weight` sigue las reglas del carrito (measurement_conventions.md §5.2 y decisión 2026-09-24): solo en alimentos con factor de cocción.
 - **Aceite sin cantidad** (decisión del usuario del 2026-11-13). Si el usuario dice que cocinó "con aceite" sin dar los gramos, el asistente añade una cantidad típica (unos 5 g por persona en una sartén) con `amount_method = ai_estimate` y lo dice en su respuesta, en vez de preguntar.
 - Las menciones (`/`) viajan como pares `entry_type` + `entry_id`. El servidor las vuelve a leer con la regla de visibilidad (§11.4); una que el usuario ya no ve se descarta y se avisa.
+- **Texto de terceros** (auditoría general H-29). Lo que devuelven las herramientas son datos, nunca instrucciones, y el `system` lo dice. Los nombres y marcas de Open Food Facts, escritos por desconocidos, llegan en una sola línea, recortados a 120 caracteres y con una nota que los marca como datos de terceros. El alcance de una instrucción incrustada sigue acotado por las herramientas que existen y por la revisión en el carrito.
 
 **Edición de la comida** (decisión del usuario del 2026-11-12). El asistente puede cambiar, de la comida de su conversación, lo mismo que el usuario edita en su tarjeta del carrito, con la misma validación. Cada herramienta de edición (y `show_meal`) comprueba en cada llamada que la comida sigue planificada: el usuario puede confirmarla en el carrito mientras el modelo responde. Puede cambiar:
 
@@ -1079,6 +1091,7 @@ Con Ciqual y OFF, los macros y lo que traiga la fuente salen de su precarga de s
 - Al modelo nunca se le envía el catálogo. Busca con herramientas que devuelven como mucho 5 resultados compactos: id, tipo, nombre, marca u origen, hidratos por 100 g y ración.
 - El `system` y las herramientas son fijos y van cacheados. La fecha, la hora y las comidas planificadas van en el mensaje del usuario, nunca en el `system`, para no romper la caché.
 - Una conversación por comida. No se arrastra el historial de otras.
+- Al modelo se le reenvían como mucho los 30 últimos mensajes del usuario de la conversación, con sus respuestas y herramientas (auditoría general H-30). El corte se hace al principio de un mensaje del usuario, para que ninguna llamada a herramienta quede sin su resultado, y por saltos de 10 mensajes, para que el prefijo cacheado no cambie con cada mensaje. La conversación entera se sigue guardando y mostrando.
 - Las imágenes se reducen en el navegador antes de enviarlas.
 - Se registra el uso (tokens de entrada, de caché y de salida, rondas y duración) por mensaje, sin su contenido (§8.3).
 
@@ -1089,9 +1102,9 @@ Con Ciqual y OFF, los macros y lo que traiga la fuente salen de su precarga de s
 - **Llamada al modelo** (`integrations/anthropic_client.py`). Usa `client.beta.messages.create` sin streaming, porque las respuestas son cortas, con `max_tokens` 4096. Lleva tres opciones:
   - pensamiento adaptativo (el valor por defecto del modelo) con `block_binding.prefix_mismatch_behavior = "drop_block"`;
   - caché de toda la petición (`cache_control` de nivel superior);
-  - respaldo del servidor ante una negativa (`fallbacks: "default"`).
+  - respaldo del servidor ante una negativa (`fallbacks: "default"`), solo en los modelos que lo tienen: Haiku no lo tiene y no se envía.
 
-  `drop_block` hace falta porque cada foto guardada es un marcador de texto. Eso cambia el historial al que estaban ligados los bloques de pensamiento anteriores, y sin esta opción la API rechazaría la llamada con un `400`. Los reintentos son los del SDK (más la reanudación del **Turno**): dos, con backoff, `Retry-After`, y solo ante 408, 409, 429, 5xx y errores de red. Enviar un mensaje no escribe nada en el proveedor, así que repetirlo es seguro (§8.7).
+  `drop_block` hace falta porque cada foto guardada es un marcador de texto. Eso cambia el historial al que estaban ligados los bloques de pensamiento anteriores, y sin esta opción la API rechazaría la llamada con un `400`. El SDK no reintenta (`max_retries = 0`): sus reintentos no se pueden acotar por el presupuesto de tiempo del mensaje. Los reintentos los hace el servicio (**Turno**). Enviar un mensaje no escribe nada en el proveedor, así que repetirlo es seguro (§8.7).
 - **Herramientas** (`services/assistant_tools.py`), en una lista fija y en un orden fijo, porque forman parte del prefijo cacheado:
   - `search_my_foods`: lo que ve en Food, con la consulta de las menciones `/` y como mucho 5 filas;
   - `search_reference_foods`: Ciqual u OFF;
@@ -1109,10 +1122,10 @@ Con Ciqual y OFF, los macros y lo que traiga la fuente salen de su precarga de s
   `add_food` y `add_estimate` aceptan el plato de destino (`null` = el último), y `add_food` la preparación.
 
   Un resultado de Ciqual o de OFF no se añade directamente: se ofrece su formulario de alta precargado, como el de una etiqueta. Las herramientas son `strict`, salvo `add_estimate`, `draft_new_food`, `draft_manual_intake`, las cuatro `update_*` y `draft_recipe`. La API admite como mucho 16 parámetros anulables entre todas las herramientas `strict`, y esas tienen muchos campos opcionales. Sus handlers validan todos los valores igualmente (§7).
-- **Turno** (`services/assistant.py`). Las lecturas que preparan el mensaje se cierran con un `commit` antes de la primera llamada al modelo, para que ninguna transacción (ni sus bloqueos) quede abierta mientras el modelo responde. Cada ronda de herramientas es una transacción: guarda a la vez lo que hacen las herramientas y los mensajes que lo explican, así que la conversación siempre se puede reenviar. Cada herramienta corre en su propio savepoint, y si falla no deja nada. Si una llamada posterior a la primera falla después de los reintentos del SDK, el turno se reanuda: se repite hasta dos veces más, tras 3 s y 8 s, solo si el motivo es transitorio (`429`, `5xx` o red). Un timeout no se repite, porque ya esperó tres veces el límite. Un `4xx` tampoco, porque volvería a fallar. Si sigue fallando, se conserva lo hecho y se avisa. Al llegar a `ASSISTANT_MAX_TOOL_ROUNDS`, las llamadas pendientes se contestan como no ejecutadas, para que el historial siga siendo válido.
+- **Turno** (`services/assistant.py`). Las lecturas que preparan el mensaje se cierran con un `commit` antes de la primera llamada al modelo, para que ninguna transacción (ni sus bloqueos) quede abierta mientras el modelo responde. Cada ronda de herramientas es una transacción: guarda a la vez lo que hacen las herramientas y los mensajes que lo explican, así que la conversación siempre se puede reenviar. Cada herramienta corre en su propio savepoint, y si falla no deja nada. **Presupuesto de tiempo** (auditoría general H-05): el mensaje entero, reintentos y rondas incluidos, dura como mucho `ASSISTANT_MESSAGE_BUDGET_SECONDS` (75 s por defecto, entre 20 y 95), por debajo de los ~100 s que Cloudflare espera una respuesta. Una petición cortada por el túnel seguiría escribiendo en el servidor mientras el usuario ve un error y la repite, duplicando alimentos. Cada llamada recibe como timeout lo que queda del presupuesto, sin pasar de `ASSISTANT_TIMEOUT_SECONDS`, y si quedan menos de 8 s no se hace. Una llamada que falla por un motivo transitorio (`429`, `5xx` o red) se repite hasta dos veces, tras 2 s y 6 s, si el presupuesto lo permite; en la primera ronda no hay nada guardado, y en las siguientes el turno se reanuda en vez de quedarse a medias. Un timeout no se repite, porque ya gastó el presupuesto. Un `4xx` tampoco, porque volvería a fallar. Si una ronda posterior a la primera sigue fallando o se acaba el tiempo, se conserva lo hecho y se avisa (`The assistant stopped before finishing`). Al llegar a `ASSISTANT_MAX_TOOL_ROUNDS`, las llamadas pendientes se contestan como no ejecutadas, para que el historial siga siendo válido.
 - **Contexto.** Cada mensaje del usuario empieza con un bloque `<daybetes_context>` que escribe el servidor y que la página no muestra. Lleva la hora local, la comida (nombre, hora y lo que ya tiene) y las entradas fijadas con `/`, ya releídas. El `system` está en inglés, es fijo y pide responder en el idioma en que escribe el usuario.
 - **Registro** (§8.3). Una línea `INFO` por mensaje del usuario, con la conversación, el modelo, las rondas, los tokens de cada clase, la duración y el resultado. Un fallo del proveedor en la primera llamada se registra una vez en la ruta, con el motivo interno del adaptador (`assistant_timeout`, `assistant_status_400`...). Un fallo en una llamada posterior no llega a la ruta: el servicio registra un `WARNING` por intento, con el motivo en el texto, la conversación, la ronda y el intento.
-- **Errores.** Las acciones del asistente usan el canal de errores de las acciones en línea: status semántico, cuerpo vacío y toast (`error_conventions.md` §7.1). HTMX no reemplaza nada, y el texto y las fotos se quedan en el compositor para volver a enviarlos. Si la comida de la conversación se confirmó o se borró, la respuesta es `404` o `409`, con "That meal was confirmed or deleted. Choose another meal.". Un fallo del proveedor es `502`, con "The assistant is not available right now. Try again in a moment.".
+- **Errores.** Las acciones del asistente usan el canal de errores de las acciones en línea: status semántico, cuerpo vacío y toast (`error_conventions.md` §7.1). HTMX no reemplaza nada, y el texto y las fotos se quedan en el compositor para volver a enviarlos. Tras un envío fallido la página vuelve a cargar la conversación (`/assistant/thread?conversation_id=`), para que se vea lo que ya llegó al carrito antes de repetir el mensaje. Si la comida de la conversación se confirmó o se borró, la respuesta es `404` o `409`, con "That meal was confirmed or deleted. Choose another meal.". Un fallo del proveedor es `502`, con "The assistant is not available right now. Try again in a moment.".
 
 ## 9. Endpoints, HTTP y HTMX
 
@@ -1374,7 +1387,7 @@ No se mezclan `float` y `Decimal` en una misma operación. Cuando una migración
 
 Las fechas y horas se almacenan en UTC según `measurement_conventions.md`. La implementación se realiza en boundaries y helpers comunes:
 
-- La entrada del usuario se interpreta en la zona horaria de la aplicación.
+- La entrada del usuario se interpreta en la zona horaria de la petición: la del navegador, o `Europe/Madrid` sin ella (`measurement_conventions.md` §9.1, decisión del 2026-11-17). Los helpers de `time_utils.py` (`local_now`, `to_local`, `local_naive_to_utc_aware`, `current_timezone`) ya la usan; ningún módulo escribe una zona fija.
 - El dominio nuevo utiliza `datetime` aware en UTC.
 - Las columnas heredadas `TIMESTAMP` sin zona reciben un UTC naive únicamente en el mapper de persistencia.
 - La conversión aware UTC a naive UTC ocurre solo al escribir en una columna heredada sin zona.
@@ -1472,7 +1485,7 @@ La clasificación de cada tabla se declara en este registro, que es el sitio ún
 | `auth_rate_limits` | **Pendiente**: no hay clasificación documentada. | Físico en la práctica (contador operativo). | Sin auditoría propia; extraída de `auth/service.py`. |
 | `catalog` | **Archivable**, irreversible (sin `restore_`). Contrato completo en §11.2.2. | Solo `deleted_at`; nunca físico (otras personas tienen porciones, recetas y favoritos que apuntan al alimento). | `audit/audits/audit_catalog.md`, hallazgos 5 y 6; decisiones 2026-09-23 y 2026-09-24. |
 | `food_brands` | **Pendiente**: por naturaleza no archivable (catálogo auxiliar), pero `is_active` actúa como soft-delete de facto y no encaja en §11.2/§11.3. | Sin función de borrado. | `audit/audit_food_brands.md`; `audit/deuda_pendiente.md`, H4 y H11. |
-| `insulin_injections` | **Historical**. Pendiente decidir si es archivable (`deleted_at`) o no archivable con borrado físico documentado. | Físico (statu quo). | `audit/audit_insulin_injections.md`; `audit/deuda_pendiente.md`, "Clasificación archivable / no archivable". |
+| `insulin_injections` | **Historical**. Pendiente decidir si es archivable (`deleted_at`) o no archivable con borrado físico documentado. | Físico (statu quo), con la fila anterior guardada en `insulin_injection_history` (§11.10). | `audit/audit_insulin_injections.md`; `audit/deuda_pendiente.md`, "Clasificación archivable / no archivable". |
 | `intake_event` | **Híbrida por `state`**: `planned` no archivable, `consumed` archivable. | Físico en `planned`; `deleted_at` en `consumed`. | Decisión 2026-09-08. |
 | `manual_intake` | **Archivable**, irreversible (sin `restore_`), con el mismo contrato que `catalog`. Contrato completo en §11.2.3. | Solo `deleted_at`; nunca físico (porciones de eventos consumidos y, si se publica, favoritos y recetas de otros usuarios apuntan al plato). | `audit/audits/audit_manual_intake.md`, hallazgos 5 y 14; decisiones 2026-10-09. |
 | `recipe` | **Non-archivable**, con borrado físico solo por su propietario. Contrato completo en §11.2.4. | Físico: lo consumido no referencia la receta. Se revisa en la fase 2. | Decisión del usuario (2026-11-05), `audit/audits/audit_recipe.md`. |
@@ -1838,6 +1851,14 @@ Para datos clínicos, históricos o que alimenten modelos, se debe distinguir en
 
 La auditoría puede implementarse mediante tabla histórica, trigger o servicio centralizado. La estrategia elegida debe ser única por caso y debe documentar si cubre escrituras realizadas fuera de la aplicación.
 
+**`insulin_injections`** (decisión del usuario del 2026-11-17, auditoría general H-10). Historial simple por trigger:
+
+- Entidad y operación: cada `UPDATE` que cambia algo más que `updated_at` y cada `DELETE` de `insulin_injections` guardan la fila **anterior** entera (`old_row`, JSONB) en `insulin_injection_history`, con `operation` (`update` o `delete`), el id de la inyección (sin FK, porque sobrevive al borrado) y su usuario. El valor nuevo es la fila actual o la entrada siguiente.
+- Actor: `changed_by_role`, el rol de base de datos de la sesión: el de la app o el de quien cambió algo a mano. Con un solo usuario, el usuario de la app es el dueño de la fila. No guarda `request_id`: el trigger no lo conoce.
+- Timestamp: `changed_at`, UTC.
+- Cubre las escrituras hechas fuera de la app: lo escribe el trigger `trg_insulin_injections_history` (`database/bootstrap/insulin.py`), con una función `SECURITY DEFINER` y `search_path` fijo. El rol de la app solo puede leer la tabla.
+- Retención: sin límite durante el TFG; se decide con la política de retención de la fase 2.
+
 ### 11.11 Borrado físico
 
 El borrado físico solo se permite cuando la entidad está declarada como no archivable y no destruye información histórica necesaria.
@@ -1851,13 +1872,13 @@ El esquema debe evolucionar de forma explícita, idempotente y verificable. Un c
 ### 12.1 Fuentes y responsabilidades
 
 - `schema.py` representa la definición declarativa esperada para instalaciones nuevas.
-- `db_init.py` puede mantener bootstrap y migraciones pragmáticas durante el TFG.
+- `db_init.py` puede mantener bootstrap y migraciones pragmáticas durante el TFG. Desde el 2026-11-17 (auditoría general H-11) solo orquesta: crea las tablas de `schema.py`, llama a los pasos `_ensure_*` en su orden y concede los privilegios del rol de la app. Los pasos viven en `database/bootstrap/`, un módulo por área (`users`, `foods`, `meals`, `insulin`, `assistant`) más `helpers` con las consultas al catálogo y los helpers idempotentes.
 - Cada migración debe tener una finalidad identificable y no mezclar cambios funcionales no relacionados.
 - Un cambio aplicado manualmente a PostgreSQL debe reflejarse en `schema.py` y en el bootstrap/migración.
 - La base de datos real debe poder compararse con la definición esperada.
 - La migración no se considera completa hasta que el código que la consume también esté actualizado.
 
-Mientras no exista un sistema de migraciones versionadas independiente, las funciones de `db_init.py` deben seguir el patrón `_ensure_<feature>_schema` y ser idempotentes. Si el proyecto requiere despliegues con historial formal, se introducirá una tabla de versiones o herramienta de migraciones como decisión separada.
+Mientras no exista un sistema de migraciones versionadas independiente, las funciones de `database/bootstrap/` deben seguir el patrón `_ensure_<feature>_schema` y ser idempotentes. Si el proyecto requiere despliegues con historial formal, se introducirá una tabla de versiones o herramienta de migraciones como decisión separada.
 
 ### 12.2 Idempotencia
 

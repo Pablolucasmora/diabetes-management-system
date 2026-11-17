@@ -4,10 +4,12 @@
 One operation: send the conversation and get one answer of the model. The
 tool loop, the tools and what is stored live in services/assistant.py.
 
-- Timeout: ASSISTANT_TIMEOUT_SECONDS per call (§8.6).
-- Retries (§8.7, §8.8): the SDK's own, twice, with exponential backoff and
-  `Retry-After`, only on 408, 409, 429, 5xx and network errors. Sending a
-  message writes nothing on the provider's side, so repeating it is safe.
+- Timeout: the one the caller gives, never more than ASSISTANT_TIMEOUT_SECONDS
+  (§8.6): the service fits every call in the time budget of the message.
+- Retries (§8.7, §8.8): none in the SDK. The service repeats a transient failure
+  itself, only while the budget allows it; SDK retries could not be bounded by
+  it. Sending a message writes nothing on the provider's side, so repeating it
+  is safe.
 - Errors: any failure becomes ExternalServiceError with an internal reason
   (`assistant_timeout`, `assistant_rate_limited`...), never the provider's
   message. It never logs: its caller logs once (§8.3).
@@ -15,7 +17,8 @@ tool loop, the tools and what is stored live in services/assistant.py.
   is replaced by a text marker, which changes the history the earlier thinking
   blocks were bound to, and the API drops them instead of rejecting the call.
 - Refusals: server-side fallback to the model the API chooses (`fallbacks:
-  "default"`). A refusal of the whole chain is an answer with no text.
+  "default"`) on the models that have it. Haiku has none, so it is not sent
+  there. A refusal (of the whole chain) is an answer with no text.
 """
 
 import time
@@ -35,7 +38,11 @@ from DayBetes_food.errors import ExternalServiceError
 # Answers are short: a sentence and the tool calls. Non-streaming requests stay
 # well under the SDK's HTTP limits with this ceiling.
 _MAX_TOKENS = 4096
-_BETAS = ["thinking-binding-controls-2026-08-01", "server-side-fallback-2026-07-01"]
+_BINDING_BETA = "thinking-binding-controls-2026-08-01"
+_FALLBACK_BETA = "server-side-fallback-2026-07-01"
+# Haiku models have no server-side fallback: a list of fallbacks is a 400 there,
+# and "default" does nothing.
+_HAS_SERVER_FALLBACK = not ASSISTANT_MODEL.startswith("claude-haiku")
 # Blocks the API returns before a mid-output fallback that cannot be sent back
 # (the echo rule of server-side fallbacks): only text survives before it.
 _NOT_REPLAYED_BEFORE_FALLBACK = {"thinking", "redacted_thinking", "tool_use", "server_tool_use"}
@@ -59,7 +66,7 @@ def _get_client() -> anthropic.Anthropic:
         _client = anthropic.Anthropic(
             api_key=ANTHROPIC_API_KEY,
             timeout=float(ASSISTANT_TIMEOUT_SECONDS),
-            max_retries=2,
+            max_retries=0,
         )
     return _client
 
@@ -78,7 +85,7 @@ def _replayable(content: list[dict]) -> list[dict]:
     ]
 
 
-def create_answer(*, system: str, tools: list[dict], messages: list[dict]) -> ModelAnswer:
+def create_answer(*, system: str, tools: list[dict], messages: list[dict], timeout: float) -> ModelAnswer:
     """Send the conversation and return the model's answer.
 
     `system` and `tools` must be the same on every call: with them first and
@@ -89,9 +96,11 @@ def create_answer(*, system: str, tools: list[dict], messages: list[dict]) -> Mo
         ExternalServiceError: timeout, network, rate limit, an error status or an
             answer that cannot be read.
     """
+    fallback = {"fallbacks": "default"} if _HAS_SERVER_FALLBACK else {}
+    betas = [_BINDING_BETA, _FALLBACK_BETA] if _HAS_SERVER_FALLBACK else [_BINDING_BETA]
     started = time.monotonic()
     try:
-        response = _get_client().beta.messages.create(
+        response = _get_client().with_options(timeout=min(float(ASSISTANT_TIMEOUT_SECONDS), timeout)).beta.messages.create(
             model=ASSISTANT_MODEL,
             max_tokens=_MAX_TOKENS,
             system=[{"type": "text", "text": system}],
@@ -100,8 +109,8 @@ def create_answer(*, system: str, tools: list[dict], messages: list[dict]) -> Mo
             thinking={"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}},
             output_config={"effort": ASSISTANT_EFFORT},
             cache_control={"type": "ephemeral"},
-            fallbacks="default",
-            betas=_BETAS,
+            betas=betas,
+            **fallback,
         )
     except anthropic.APITimeoutError as exc:
         raise ExternalServiceError("assistant_timeout") from exc

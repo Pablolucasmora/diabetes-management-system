@@ -1,7 +1,6 @@
 from fasthtml.common import *
 from fastcore.xml import to_xml
 from starlette.responses import HTMLResponse
-from DayBetes_food.database.connection import get_connection
 from DayBetes_food.components.menu.layout import FloatingIsland, Cart
 from DayBetes_food.config import CSRF_COOKIE_NAME
 from DayBetes_food.components.injection_zone import asset_busted
@@ -109,6 +108,7 @@ def _base_html_shell(content_html: str) -> str:
     <script src="{asset_busted("/js/app_toast.js")}" defer></script>
     <script src="{asset_busted("/js/island_indicator.js")}" defer></script>
     <script src="{asset_busted("/js/browser_tweaks.js")}" defer></script>
+    <script src="{asset_busted("/js/timezone.js")}" defer></script>
     <script src="{asset_busted("/js/dropdown_layer.js")}" defer></script>
     <script src="{asset_busted("/js/modal.js")}" defer></script>
     <script src="{asset_busted("/js/navigation.js")}" defer></script>
@@ -141,28 +141,26 @@ def _base_html_shell(content_html: str) -> str:
   </body>
 </html>"""
 
-def render_page(request, content_fn, show_cart=True):
-    """
-    Helper to render pages with a common structure.
-    """
-    with get_connection() as connection:
-        if request.headers.get("HX-Request") == "true":
-            fragment = content_fn(connection)
-            return render_fragment(fragment)
+def render_page(request, content, show_cart=True):
+    """A page with the common structure around `content`, already built by the
+    route: this helper never reads the database (code_conventions.md §1.4). An
+    htmx request gets the content alone."""
+    if request.headers.get("HX-Request") == "true":
+        return render_fragment(content)
 
-        page_fragment = Div(
-            Main(
-                content_fn(connection),
-                id="main_content",
-                # The history snapshot and a restore that misses the cache
-                # both use this element, so a page comes back as the same
-                # fragment the routes return to htmx (navigation.js).
-                hx_history_elt="true",
-                style="transition: opacity 220ms ease;",
-            ),
-            FloatingIsland(),
-            Cart(display=show_cart),
-            PageLoadingOverlay(),
-            AppToast(),
-        )
-        return HTMLResponse(_base_html_shell(_safe_fragment_to_html(page_fragment)))
+    page_fragment = Div(
+        Main(
+            content,
+            id="main_content",
+            # The history snapshot and a restore that misses the cache
+            # both use this element, so a page comes back as the same
+            # fragment the routes return to htmx (navigation.js).
+            hx_history_elt="true",
+            style="transition: opacity 220ms ease;",
+        ),
+        FloatingIsland(),
+        Cart(display=show_cart),
+        PageLoadingOverlay(),
+        AppToast(),
+    )
+    return HTMLResponse(_base_html_shell(_safe_fragment_to_html(page_fragment)))

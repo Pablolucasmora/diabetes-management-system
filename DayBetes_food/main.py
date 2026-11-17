@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from html import escape
 import hmac
 import logging
+import secrets
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import JSONResponse
@@ -20,13 +21,20 @@ from DayBetes_food.config import (
     SESSION_REFRESH_SECONDS,
 )
 from DayBetes_food.database.db_init import init_db
-from DayBetes_food.database.connection import get_connection
+from DayBetes_food.database.connection import close_pool, get_connection
 from DayBetes_food.errors import (
     AppError,
     AuthenticationError,
     AuthorizationError,
     InfrastructureError,
     ValidationError,
+)
+from DayBetes_food.body_limit import BodySizeLimitMiddleware
+from DayBetes_food.time_utils import (
+    TIMEZONE_COOKIE_NAME,
+    parse_timezone,
+    reset_request_timezone,
+    set_request_timezone,
 )
 from DayBetes_food.http_errors import (
     app_error_headers,
@@ -55,6 +63,7 @@ async def lifespan(app):
     if DB_INIT_ON_STARTUP:
         init_db()
     yield
+    close_pool()
 
 
 app, fasthtml_rt = fast_app(
@@ -62,6 +71,10 @@ app, fasthtml_rt = fast_app(
     htmlkw={"lang": "en"},
     static_path='DayBetes_food/static',
     lifespan=lifespan,
+    # FastHTML's own session cookie is not used (auth has its own sessions in
+    # the database). A random key per process keeps FastHTML from writing a
+    # .sesskey file, which the unprivileged user of the image cannot do.
+    secret_key=secrets.token_hex(32),
 )
 
 logger = logging.getLogger(__name__)
@@ -135,7 +148,31 @@ app.add_middleware(GZipMiddleware, minimum_size=512)
 
 STATIC_CACHE_CONTROL = "public, max-age=604800"
 ASSET_PREFIXES = ("/css/", "/js/", "/images/")
-PUBLIC_PATH_PREFIXES = ("/auth", "/css", "/js", "/images", "/favicon", "/robots.txt")
+# Prefixes end in "/" so that a future route such as /authors or /images-admin
+# is not public by accident; the exact paths are listed apart.
+PUBLIC_PATH_PREFIXES = ("/auth/", "/css/", "/js/", "/images/")
+PUBLIC_EXACT_PATHS = {"/", "/auth", "/favicon.ico", "/robots.txt"}
+# Second barrier against injected markup (code_conventions.md §5.5). Scripts
+# still allow inline code and eval: the pages use inline handlers and hx-on,
+# which a nonce-based policy would block. The hosts are the CDNs the pages
+# load from (components/ui.py, tags_settings.py, static/js/scanner.js).
+_SCRIPT_HOSTS = "https://cdn.jsdelivr.net https://fastly.jsdelivr.net https://unpkg.com https://esm.sh"
+CONTENT_SECURITY_POLICY = "; ".join(
+    (
+        "default-src 'self'",
+        f"script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' {_SCRIPT_HOSTS}",
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+        "img-src 'self' data: blob:",
+        "font-src 'self' data:",
+        f"connect-src 'self' {_SCRIPT_HOSTS}",
+        "worker-src 'self' blob:",
+        "media-src 'self' blob:",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+    )
+)
 # Everything else needs the CSRF token, also a method nobody has thought of (§5.2).
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 # Forms sent before there is a session, with the page that shows each one. There is no
@@ -144,7 +181,7 @@ SESSIONLESS_FORM_PAGES = {"/auth/login/submit": "/auth/login", "/auth/register/s
 
 
 def _is_public_path(path: str) -> bool:
-    return path == "/" or path.startswith(PUBLIC_PATH_PREFIXES)
+    return path in PUBLIC_EXACT_PATHS or path.startswith(PUBLIC_PATH_PREFIXES)
 
 
 def _is_htmx_request(request: Request) -> bool:
@@ -246,15 +283,19 @@ async def auth_security_middleware(request: Request, call_next):
         )
 
     ctx_token = set_current_user_id(request.state.user["id"] if request.state.user else None)
+    # The browser's zone for this request (time_utils, measurement §9).
+    tz_token = set_request_timezone(parse_timezone(request.cookies.get(TIMEZONE_COOKIE_NAME)))
     try:
         response = await call_next(request)
     finally:
+        reset_request_timezone(tz_token)
         reset_current_user_id(ctx_token)
 
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+    response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
 
     # If the route itself (e.g. login/register) already set the CSRF cookie
     # bound to the session it just created, do not overwrite it with the
@@ -282,9 +323,11 @@ async def add_asset_cache_headers(request, call_next):
 
 # Starlette 1.0 removed the @app.middleware decorator. Each add_middleware
 # wraps the previous ones, so the order of these lines sets the execution
-# order: add_asset_cache_headers is the outer layer and GZip the inner one.
+# order: the body limit is the outer layer and GZip the inner one.
 app.add_middleware(BaseHTTPMiddleware, dispatch=auth_security_middleware)
 app.add_middleware(BaseHTTPMiddleware, dispatch=add_asset_cache_headers)
+# Outermost: a too large body is stopped before anything reads it (H-31).
+app.add_middleware(BodySizeLimitMiddleware)
 
 # --- COMPONENT INITIALIZATION ---
 

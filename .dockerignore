@@ -17,6 +17,10 @@ __pycache__/
 .claude/
 scripts_claude/
 audit/
+informe_auditoria/
+tests/
+pytest.ini
+requirements-dev.txt
 
 .sesskey
 

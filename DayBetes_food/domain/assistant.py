@@ -757,9 +757,29 @@ def _number(value) -> float | None:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
-def _starts_turn(message: AssistantMessageRead) -> bool:
+def starts_turn(message: AssistantMessageRead) -> bool:
     """A user row with something other than tool results is a new message of the user."""
     return message.role is AssistantRole.USER and any(block.get("type") != "tool_result" for block in message.content)
+
+
+# Turns of the user sent back to the model (code_conventions.md §8.12, cost).
+# Older ones are cut in steps, so the cached prefix stays the same for several
+# messages in a row instead of changing with every message.
+ASSISTANT_HISTORY_MAX_TURNS = 30
+ASSISTANT_HISTORY_CUT_STEP = 10
+
+
+def history_window(messages: list[AssistantMessageRead]) -> list[AssistantMessageRead]:
+    """The stored messages sent back to the model: at most the last
+    ASSISTANT_HISTORY_MAX_TURNS turns of the user, cut at the start of a turn so
+    that every tool call keeps its result."""
+    starts = [i for i, message in enumerate(messages) if starts_turn(message)]
+    excess = len(starts) - ASSISTANT_HISTORY_MAX_TURNS
+    if excess <= 0:
+        return messages
+    step = ASSISTANT_HISTORY_CUT_STEP
+    cut_turn = min(((excess + step - 1) // step) * step, len(starts) - 1)
+    return messages[starts[cut_turn]:]
 
 
 def turn_views(messages: list[AssistantMessageRead]) -> list[TurnView]:
@@ -767,7 +787,7 @@ def turn_views(messages: list[AssistantMessageRead]) -> list[TurnView]:
     turns: list[TurnView] = []
     tool_message: dict[str, int] = {}  # tool_use_id -> id of the assistant row that called it
     for message in messages:
-        if _starts_turn(message):
+        if starts_turn(message):
             texts = [
                 str(block.get("text", ""))
                 for block in message.content

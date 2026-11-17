@@ -8,13 +8,22 @@ from DayBetes_food.components.scanner.scanner_main import scanner_main
 from DayBetes_food.components.modal import ModalFormError
 from DayBetes_food.components.ui import render_fragment, render_page
 from DayBetes_food.database.connection import get_connection
-from DayBetes_food.database.queries import get_catalog_item_by_barcode, create_insulin_injection, get_open_insulin_pen
+from DayBetes_food.auth.service import get_user_by_id
+from DayBetes_food.database.queries import (
+    create_insulin_injection,
+    get_catalog_item_by_barcode,
+    get_open_insulin_pen,
+    list_insulin_brands,
+    list_open_insulin_pens,
+    list_planned_intake_events,
+    list_portions_by_event,
+)
 from DayBetes_food.domain.constants import InjectionZone, parse_enum, parse_optional_id
 from DayBetes_food.domain.catalog import parse_barcode
 from DayBetes_food.domain.insulin import InsulinInjectionCreate, parse_insulin_units, parse_shot_local
 from DayBetes_food.errors import AuthenticationError, AuthorizationError, NotFoundError, ValidationError
 from DayBetes_food.http_errors import app_error_response
-from DayBetes_food.time_utils import local_naive_to_utc_aware, APP_TIMEZONE
+from DayBetes_food.time_utils import current_timezone, local_naive_to_utc_aware
 
 
 def setup_main_routes(rt):
@@ -24,7 +33,18 @@ def setup_main_routes(rt):
 
     @rt("/menu")
     def get(req):
-        return render_page(req, main_menu)
+        user_id = get_current_user_id()
+        user, latest_event, portions, pens, brands = None, None, [], [], []
+        if user_id:
+            with get_connection() as connection:
+                user = get_user_by_id(connection, int(user_id))
+                events = list_planned_intake_events(connection, int(user_id))
+                latest_event = events[0] if events else None
+                if latest_event:
+                    portions = list_portions_by_event(connection, int(user_id), latest_event.id)
+                pens = list_open_insulin_pens(connection, int(user_id))
+                brands = list_insulin_brands(connection, int(user_id))
+        return render_page(req, main_menu(user, latest_event, portions, pens, brands))
 
     @rt("/menu/injection_log")
     def post(
@@ -67,7 +87,7 @@ def setup_main_routes(rt):
                 user_id=int(user_id),
                 insulin_type=pen.insulin_type,
                 shot_time=shot_time,
-                timezone_at_event=APP_TIMEZONE.key,
+                timezone_at_event=current_timezone().key,
                 units=units_value,
                 injection_zone=injection_zone,
                 insulin_pen_id=pen_id,
@@ -82,7 +102,7 @@ def setup_main_routes(rt):
 
     @rt("/scanner")
     def get(req):
-        return render_page(req, lambda _: scanner_main())
+        return render_page(req, scanner_main())
 
     @rt("/data/smart_macros_cases.json")
     def get():

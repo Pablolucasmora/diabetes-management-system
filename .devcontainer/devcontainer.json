@@ -13,6 +13,10 @@
                 "bradlc.vscode-tailwindcss"
             ],
             "settings": {
+            "terminal.integrated.profiles.linux": {
+                "bash": { "path": "/bin/bash" }
+            },
+            "terminal.integrated.defaultProfile.linux": "bash",
             "editor.linkedEditing": true,
             "editor.bracketPairColorization.independentColorPoolPerBracketType": true,
             "tailwindCSS.includeLanguages": {
