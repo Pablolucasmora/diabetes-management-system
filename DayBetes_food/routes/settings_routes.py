@@ -32,7 +32,7 @@ from DayBetes_food.database.queries import (
     upsert_meal_type_window,
     delete_meal_type_window,
 )
-from DayBetes_food.domain.constants import InjectionZone, InsulinType, MealType, PathId, parse_enum, parse_optional_id
+from DayBetes_food.domain.constants import InjectionZone, MealType, PathId, parse_enum, parse_optional_id
 from DayBetes_food.domain.insulin import InsulinInjectionUpdate, parse_insulin_units, parse_shot_local
 from DayBetes_food.domain.meal_type_schedule import (
     AUTO_ASSIGNABLE_MEAL_TYPES,
@@ -49,7 +49,7 @@ from DayBetes_food.domain.tag import (
 from DayBetes_food.errors import AuthenticationError, AuthorizationError, ConflictError, NotFoundError, ValidationError
 from DayBetes_food.http_errors import app_error_response
 from DayBetes_food.auth.context import get_current_user_id
-from DayBetes_food.time_utils import local_naive_to_utc_aware, APP_TIMEZONE
+from DayBetes_food.time_utils import local_naive_to_utc_aware
 
 
 INJECTIONS_PAGE_SIZE = 15

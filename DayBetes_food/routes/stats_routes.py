@@ -1,4 +1,3 @@
-from fasthtml.common import *
 from DayBetes_food.components.stats.stats_main import stats_main
 from DayBetes_food.components.ui import render_page
 

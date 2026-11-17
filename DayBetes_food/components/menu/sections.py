@@ -13,7 +13,6 @@ from DayBetes_food.components.injection_zone import (
     asset_busted,
 )
 from DayBetes_food.components.modal import (
-    close_modal_js,
     modal_confirm_button,
     ModalLayer,
     open_modal_js,
@@ -310,7 +309,7 @@ def quick_actions(latest_event, portions, pens=(), brands=(), assistant_enabled:
                             type="button",
                             cls="web_button px-2 py-1 text-xs",
                             onclick=(
-                                f"const el=document.getElementById('menu_shot_date_wrap');"
+                                "const el=document.getElementById('menu_shot_date_wrap');"
                                 "if(el){el.classList.toggle('hidden');}"
                             ),
                         ),

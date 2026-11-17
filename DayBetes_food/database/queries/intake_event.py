@@ -11,7 +11,6 @@ injection operations (H1, H2):
 from dataclasses import fields as dataclass_fields
 from datetime import date
 from enum import Enum
-from typing import Optional
 
 from psycopg import sql
 
@@ -24,7 +23,7 @@ from DayBetes_food.database.queries.crud import (
 )
 from DayBetes_food.database.queries.insulin_injections import create_insulin_injection
 from DayBetes_food.database.queries.insulin_pen import DEFAULT_RAPID_PEN_SQL
-from DayBetes_food.domain.constants import IntakeEventState, InsulinType, InjectionZone, MealType
+from DayBetes_food.domain.constants import IntakeEventState, InsulinType, InjectionZone
 from DayBetes_food.domain.intake_event import IntakeEventCreate, IntakeEventRead, IntakeEventUpdate
 from DayBetes_food.domain.insulin import InsulinInjectionCreate, validate_insulin_dose
 from DayBetes_food.errors import ConflictError, InfrastructureError, NotFoundError, ValidationError

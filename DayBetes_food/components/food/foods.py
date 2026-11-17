@@ -1229,24 +1229,6 @@ def _labeled_select(
     )
 
 
-def _tristate_select(label: str, name: str, selected: bool | None, labels: dict, help_text: str = ""):
-    """Three states, three options (frontend §6): "" = unknown, "true", "false".
-    The real stored state is the one marked selected (§7.14)."""
-    select_id = f"field_{name}"
-    return Div(
-        _label_with_help(label, help_text or f"What to select in {label}", for_id=select_id),
-        Select(
-            Option("- Unknown", value="", selected=selected is None),
-            Option(labels[True], value="true", selected=selected is True),
-            Option(labels[False], value="false", selected=selected is False),
-            id=select_id,
-            name=name,
-            cls=FORM_FIELD_CLS,
-        ),
-        cls="flex flex-col gap-1",
-    )
-
-
 def _confidence_select(label: str, name: str, selected: int | None, help_text: str):
     """Declared confidence 0-2 as three options plus "not declared" (measurement §6.10)."""
     return _labeled_select(
@@ -3973,13 +3955,3 @@ def FoodSectionsContent(foods):
         sections.extend(FoodCard(item) for item in items)
     return sections
 
-
-def FoodList(foods):
-    if not foods:
-        return Div(H2("No items", cls="text-gray-600"), cls="flex flex-col items-center")
-
-    return Div(
-        *FoodSectionsContent(foods),
-        id="food-list",
-        cls="flex flex-col items-center md:gap-3 lg:gap-3 gap-2 mt-4 transition-all duration-150 ease-out",
-    )

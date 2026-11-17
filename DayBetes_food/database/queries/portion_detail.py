@@ -41,13 +41,6 @@ _PREPARATION_FIELDS = ("cooking", "conservation", "final_state", "ripeness")
 # amount_method (U2, study §6.3) travels as its code, or None for "not given".
 _FLAG_FIELDS = ("amount_method", "is_cooked_weight")
 
-# Enum-keyed (T2.1): dynamic column composition uses `sql.Identifier` with
-# this whitelist, never an f-string built from caller input.
-_PORTION_ORIGIN_COLUMNS = {
-    PortionOrigin.CATALOG: "catalog_id",
-    PortionOrigin.MANUAL_INTAKE: "manual_intake_id",
-}
-
 _DESTINATION_TABLE = {
     PortionDestination.INTAKE_EVENT: "intake_event",
     PortionDestination.RECIPE: "recipe",

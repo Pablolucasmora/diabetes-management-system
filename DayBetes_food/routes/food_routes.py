@@ -1047,18 +1047,6 @@ def _closest_option(value: str, options: list[str]) -> str:
     return clean
 
 
-def _normalized_choice_set(options: list[str] | None) -> set[str]:
-    return {_normalize_text(opt) for opt in (options or []) if (opt or "").strip()}
-
-
-def _is_allowed_choice(value: str, options: list[str] | None) -> bool:
-    text = (value or "").strip()
-    if not text:
-        return False
-    allowed = _normalized_choice_set(options)
-    return _normalize_text(text) in allowed
-
-
 def _macro_value(portion, macro_key: str):
     return getattr(portion.source, f"{macro_key}_100g", None)
 

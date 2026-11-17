@@ -24,8 +24,6 @@ from DayBetes_food.database.queries.assistant import (
     list_assistant_messages,
 )
 from DayBetes_food.database.queries.users import (
-    get_users_by_email,
-    get_all_users,
     update_password_hash,
 )
 from DayBetes_food.database.queries.food_brands import (
@@ -227,8 +225,6 @@ __all__ = [
     "get_latest_meal_free_conversation",
     "link_assistant_conversation_event",
     "list_assistant_messages",
-    "get_users_by_email",
-    "get_all_users",
     "update_password_hash",
     "clean_brand_label",
     "brand_code",
