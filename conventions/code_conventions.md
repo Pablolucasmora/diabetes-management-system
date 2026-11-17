@@ -1854,7 +1854,7 @@ La auditoría puede implementarse mediante tabla histórica, trigger o servicio 
 - Entidad y operación: cada `UPDATE` que cambia algo más que `updated_at` y cada `DELETE` de `insulin_injections` guardan la fila **anterior** entera (`old_row`, JSONB) en `insulin_injection_history`, con `operation` (`update` o `delete`), el id de la inyección (sin FK, porque sobrevive al borrado) y su usuario. El valor nuevo es la fila actual o la entrada siguiente.
 - Actor: `changed_by_role`, el rol de base de datos de la sesión: el de la app o el de quien cambió algo a mano. Con un solo usuario, el usuario de la app es el dueño de la fila. No guarda `request_id`: el trigger no lo conoce.
 - Timestamp: `changed_at`, UTC.
-- Cubre las escrituras hechas fuera de la app: lo escribe el trigger `trg_insulin_injections_history` (`db_init.py`), con una función `SECURITY DEFINER` y `search_path` fijo. El rol de la app solo puede leer la tabla.
+- Cubre las escrituras hechas fuera de la app: lo escribe el trigger `trg_insulin_injections_history` (`database/bootstrap/insulin.py`), con una función `SECURITY DEFINER` y `search_path` fijo. El rol de la app solo puede leer la tabla.
 - Retención: sin límite durante el TFG; se decide con la política de retención de la fase 2.
 
 ### 11.11 Borrado físico
@@ -1870,13 +1870,13 @@ El esquema debe evolucionar de forma explícita, idempotente y verificable. Un c
 ### 12.1 Fuentes y responsabilidades
 
 - `schema.py` representa la definición declarativa esperada para instalaciones nuevas.
-- `db_init.py` puede mantener bootstrap y migraciones pragmáticas durante el TFG.
+- `db_init.py` puede mantener bootstrap y migraciones pragmáticas durante el TFG. Desde el 2026-11-17 (auditoría general H-11) solo orquesta: crea las tablas de `schema.py`, llama a los pasos `_ensure_*` en su orden y concede los privilegios del rol de la app. Los pasos viven en `database/bootstrap/`, un módulo por área (`users`, `foods`, `meals`, `insulin`, `assistant`) más `helpers` con las consultas al catálogo y los helpers idempotentes.
 - Cada migración debe tener una finalidad identificable y no mezclar cambios funcionales no relacionados.
 - Un cambio aplicado manualmente a PostgreSQL debe reflejarse en `schema.py` y en el bootstrap/migración.
 - La base de datos real debe poder compararse con la definición esperada.
 - La migración no se considera completa hasta que el código que la consume también esté actualizado.
 
-Mientras no exista un sistema de migraciones versionadas independiente, las funciones de `db_init.py` deben seguir el patrón `_ensure_<feature>_schema` y ser idempotentes. Si el proyecto requiere despliegues con historial formal, se introducirá una tabla de versiones o herramienta de migraciones como decisión separada.
+Mientras no exista un sistema de migraciones versionadas independiente, las funciones de `database/bootstrap/` deben seguir el patrón `_ensure_<feature>_schema` y ser idempotentes. Si el proyecto requiere despliegues con historial formal, se introducirá una tabla de versiones o herramienta de migraciones como decisión separada.
 
 ### 12.2 Idempotencia
 

@@ -79,7 +79,7 @@ def _range_check(column: str, limits: NumericRange) -> str:
 def catalog_check_constraints() -> dict[str, str]:
     """CHECK name -> expression of `catalog`, generated from the enums and the
     limits (§4.4, §12.1). The same list feeds the CREATE TABLE and
-    db_init._ensure_catalog_schema, so it lives in one place only."""
+    the catalog bootstrap (database/bootstrap/foods.py), so it lives in one place only."""
     checks = {
         "ck_catalog_category": f"category IN ({sql_in_list(FoodCategory)})",
         "ck_catalog_initial_state": (
@@ -117,7 +117,7 @@ def catalog_check_constraints() -> dict[str, str]:
 def manual_intake_check_constraints() -> dict[str, str]:
     """CHECK name -> expression of `manual_intake`, generated from the enums and
     the limits (§4.4, §12.1). The same list feeds the CREATE TABLE and
-    db_init._ensure_manual_intake_schema. NaN/Infinity are rejected by the
+    _ensure_manual_intake_schema (database/bootstrap/). NaN/Infinity are rejected by the
     ranges (in `real`, NaN is greater than any number), as in catalog."""
     confidence = f"BETWEEN {FOOD_CONFIDENCE_MIN} AND {FOOD_CONFIDENCE_MAX}"
     checks = {
@@ -151,7 +151,7 @@ def manual_intake_check_constraints() -> dict[str, str]:
 
 def recipe_check_constraints() -> dict[str, str]:
     """CHECK name -> expression of `recipe`, generated from the enums and the limits
-    (§4.4, §12.1). The same list feeds the CREATE TABLE and db_init._ensure_recipe_schema."""
+    (§4.4, §12.1). The same list feeds the CREATE TABLE and _ensure_recipe_schema (database/bootstrap/)."""
     return {
         "ck_recipe_meal_type": f"meal_type IS NULL OR meal_type IN ({sql_in_list(RECIPE_MEAL_TYPES)})",
         "ck_recipe_extra_meal_types": (
@@ -168,7 +168,7 @@ def recipe_check_constraints() -> dict[str, str]:
 
 def fridge_check_constraints() -> dict[str, str]:
     """CHECK name -> expression of `fridge` (§4.4, §12.1). The same list feeds the
-    CREATE TABLE and db_init._ensure_fridge_schema."""
+    CREATE TABLE and _ensure_fridge_schema (database/bootstrap/)."""
     return {
         "ck_fridge_location": f"location IN ({sql_in_list(StorageLocation)})",
         "ck_fridge_name_normalized": (
@@ -184,7 +184,7 @@ def fridge_check_constraints() -> dict[str, str]:
 
 def tags_check_constraints() -> dict[str, str]:
     """CHECK name -> expression of `tags` (code_conventions.md §11.2.8).
-    The same list feeds the CREATE TABLE and db_init._ensure_tags_schema."""
+    The same list feeds the CREATE TABLE and _ensure_tags_schema (database/bootstrap/)."""
     return {
         "ck_tags_system_key": f"system_key IS NULL OR system_key IN ({sql_in_list(SystemTag)})",
         # A system tag has no owner; a personal tag has one and no key.
@@ -223,7 +223,7 @@ def assistant_message_check_constraints() -> dict[str, str]:
 
 def insulin_brand_check_constraints() -> dict[str, str]:
     """CHECK name -> expression of `insulin_brand` (code §11.2.7, measurement §8.4).
-    The same list feeds the CREATE TABLE and db_init._ensure_insulin_pen_schema."""
+    The same list feeds the CREATE TABLE and _ensure_insulin_pen_schema (database/bootstrap/)."""
     return {
         "ck_insulin_brand_name_normalized": r"name <> '' AND name = regexp_replace(btrim(name), '\s+', ' ', 'g')",
         "ck_insulin_brand_insulin_type": f"insulin_type IN ({sql_in_list(InsulinType)})",
@@ -449,7 +449,7 @@ class DBSchema:
     -- Lifecycle: archivable, irreversible (no restore_, decision 2026-09-23).
     -- Deleting a user: SET NULL -> their foods join the general library (blocked today, portion_detail H4).
     -- Concurrency: last write wins on edit (§6.7, monousuario; decision in feedback 24).
-    -- Uniqueness: partial unique indexes uq_catalog_* live in db_init._ensure_catalog_schema.
+    -- Uniqueness: partial unique indexes uq_catalog_* live in the catalog bootstrap (database/bootstrap/foods.py).
     CREATE TABLE IF NOT EXISTS catalog (
         id SERIAL CONSTRAINT pk_catalog PRIMARY KEY,
         created_by INTEGER
@@ -512,7 +512,7 @@ class DBSchema:
     -- Lifecycle: archivable, irreversible (no restore_), same contract as catalog.
     -- Deleting a user: CASCADE (blocked today by portion_detail RESTRICT, decision 2026-09-22).
     -- Concurrency: last write wins on edit (§6.7, §6.10, §11.2.3).
-    -- Uniqueness: partial unique indexes uq_manual_intake_* live in db_init._ensure_manual_intake_schema.
+    -- Uniqueness: partial unique indexes uq_manual_intake_* live in _ensure_manual_intake_schema (database/bootstrap/).
     CREATE TABLE IF NOT EXISTS manual_intake (
         id SERIAL CONSTRAINT pk_manual_intake PRIMARY KEY,
         created_by INTEGER NOT NULL
@@ -767,7 +767,7 @@ class DBSchema:
     @classmethod
     def tags(cls):
         """System tags (no owner, SystemTag key) and personal tags of one user
-        (code_conventions.md §11.2.8). Unique indexes in db_init._ensure_tags_schema."""
+        (code_conventions.md §11.2.8). Unique indexes in _ensure_tags_schema (database/bootstrap/)."""
         check_lines = ",\n".join(
             f"        CONSTRAINT {name} CHECK ({expression})" for name, expression in tags_check_constraints().items()
         )
@@ -793,7 +793,7 @@ class DBSchema:
             f"        CONSTRAINT {name} CHECK ({expression})" for name, expression in recipe_check_constraints().items()
         )
         return f"""
-    -- Uniqueness: partial unique indexes uq_recipe_* live in db_init._ensure_recipe_schema.
+    -- Uniqueness: partial unique indexes uq_recipe_* live in _ensure_recipe_schema (database/bootstrap/).
     CREATE TABLE IF NOT EXISTS recipe (
         id SERIAL CONSTRAINT pk_recipe PRIMARY KEY,
         users_id INTEGER NOT NULL
@@ -838,7 +838,7 @@ class DBSchema:
 
     # Dependent of its user, its tag and its food (code_conventions.md §11.2.8): one
     # user put one tag on one food, dish or recipe. Private: nobody else reads it.
-    # Unique indexes in db_init._ensure_tags_schema.
+    # Unique indexes in _ensure_tags_schema (database/bootstrap/).
     linked_tags = """
     CREATE TABLE IF NOT EXISTS linked_tags (
         id SERIAL CONSTRAINT pk_linked_tags PRIMARY KEY,
@@ -993,7 +993,7 @@ class DBSchema:
         CONSTRAINT fk_portion_detail_recipe_plate_id_recipe_plate
             FOREIGN KEY (recipe_id, recipe_plate_id) REFERENCES recipe_plate (recipe_id, id) ON DELETE RESTRICT,
         -- Uniqueness of a food inside a plate (measurement_conventions.md 4.6.4) is a PARTIAL unique
-        -- index and therefore lives in db_init._ensure_portion_detail_schema, not here: a partial
+        -- index and therefore lives in _ensure_portion_detail_schema (database/bootstrap/), not here: a partial
         -- index cannot be declared inline in CREATE TABLE.
 
 
