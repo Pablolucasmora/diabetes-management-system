@@ -980,7 +980,7 @@ class DBSchema:
             CHECK (amount > 0 AND amount <= 100000), -- The only amount column of the table (decision 2026-09-18): the quantity of this food in its destination, in grams. While the event is 'planned' it is the served amount; at confirm it is overwritten once with what was actually eaten (measurement_conventions.md 4.4). The cooked amount is NOT stored: it only exists as a form field when plating. 100000 g is the same sanity ceiling as intake_event.ingested_amount (6.9.2); the lower bound is > 0 (decision 2026-09-22): an unconsumed ingredient is deleted, not set to zero. NaN/Infinity are rejected by this same CHECK.
         cooking VARCHAR(50)
             CONSTRAINT ck_portion_detail_cooking
-            CHECK (cooking IS NULL OR cooking IN ({_PORTION_PREPARATION_LISTS['cooking']})), -- Cooking method, used to evaluate its effect on blood sugar levels. Default: griddle
+            CHECK (cooking IS NULL OR cooking IN ({_PORTION_PREPARATION_LISTS['cooking']})), -- Cooking method, used to evaluate its effect on blood sugar levels. No default: NULL means not given
         conservation VARCHAR(50)
             CONSTRAINT ck_portion_detail_conservation
             CHECK (conservation IS NULL OR conservation IN ({_PORTION_PREPARATION_LISTS['conservation']})), -- Storage method
