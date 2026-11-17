@@ -77,11 +77,7 @@ def _injection_pens(connection, user_id: int, rows) -> tuple[list, dict]:
 def setup_settings_routes(rt):
     @rt("/settings")
     def get(req):
-        return render_page(
-            req,
-            lambda connection: settings_main(connection, current_user=req.state.user),
-            show_cart=True,
-        )
+        return render_page(req, settings_main(current_user=req.state.user), show_cart=True)
 
     # Settings Tags (frontend_conventions.md §9.10).
 
@@ -90,9 +86,9 @@ def setup_settings_routes(rt):
         user_id = get_current_user_id()
         if not user_id:
             raise AuthenticationError("Your session has expired.")
-        return render_page(
-            req, lambda connection: tags_settings_page(list_tags(connection, int(user_id))), show_cart=False
-        )
+        with get_connection() as connection:
+            tags = list_tags(connection, int(user_id))
+        return render_page(req, tags_settings_page(tags), show_cart=False)
 
     @rt("/settings/tags/list")
     def get(req, q: str = ""):
@@ -176,11 +172,9 @@ def setup_settings_routes(rt):
         user_id = get_current_user_id()
         if not user_id:
             return HTMLResponse(status_code=401)
-        return render_page(
-            req,
-            lambda connection: meal_type_schedule_settings_page(connection, int(user_id)),
-            show_cart=False,
-        )
+        with get_connection() as connection:
+            overrides = get_meal_type_schedule(connection, int(user_id))
+        return render_page(req, meal_type_schedule_settings_page(overrides), show_cart=False)
 
     @rt("/settings/meal_type_schedule/update")
     def post(req: Request, meal_type: str = "", start_time: str = "", end_time: str = ""):
@@ -272,7 +266,7 @@ def setup_settings_routes(rt):
             open_pens=open_pens,
             pens_by_id=pens_by_id,
         )
-        return render_page(req, lambda _: injections_settings_page(first_chunk), show_cart=False)
+        return render_page(req, injections_settings_page(first_chunk), show_cart=False)
 
     @rt("/settings/injections/list")
     def get(req, offset: int = 0):

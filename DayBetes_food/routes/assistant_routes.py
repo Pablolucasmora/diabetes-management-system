@@ -89,7 +89,7 @@ def setup_assistant_routes(rt):
 
         chosen_event, without_meal = parse_meal_choice(intake_event_id)
 
-        def content(connection):
+        with get_connection() as connection:
             events = list_planned_intake_events(connection, int(user_id))
             selected = _selected_meal(events, chosen_event)
             if not intake_event_id and not chosen_conversation and events:
@@ -107,10 +107,7 @@ def setup_assistant_routes(rt):
             else:
                 without = without_meal
             turns = conversation_turns(connection, int(user_id), conversation.id) if conversation else []
-            return AssistantPage(
-                events, selected, conversation.id if conversation else None, turns, without_meal=without
-            )
-
+        content = AssistantPage(events, selected, conversation.id if conversation else None, turns, without_meal=without)
         return render_page(request, content, show_cart=False)
 
     @rt("/assistant/thread")

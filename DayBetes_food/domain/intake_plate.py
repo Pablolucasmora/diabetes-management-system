@@ -183,6 +183,14 @@ def eaten_time_text(meal_time: datetime | None, timezone_name: str, eaten_at: da
     return (meal_time + timedelta(minutes=offset_minutes)).astimezone(zone).strftime("%H:%M")
 
 
+def plate_label(plate, plate_portions) -> str:
+    """Visible name of a plate: its own, or the one derived from its current
+    ingredients (§4.6.3), which is not stored."""
+    if plate.name:
+        return plate.name
+    return derive_plate_name([portion.source.name or f"Ingredient #{portion.id}" for portion in plate_portions])
+
+
 def derive_plate_name(ingredient_names: list[str]) -> str:
     """Name shown for a plate without its own name (§4.6.3).
 

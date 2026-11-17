@@ -414,7 +414,9 @@ def setup_cart_routes(rt):
         """
         Render cart page (cart_main), without the cart button (show_cart=False), when request to /cart
         """
-        return render_page(req, _load_cart_main, show_cart=False)
+        with get_connection() as connection:
+            content = _load_cart_main(connection)
+        return render_page(req, content, show_cart=False)
 
     @rt("/cart/event/{event_id}/meal_hour")
     def post(request: Request, event_id: PathId, meal_hour: str = "", meal_date: str = ""):

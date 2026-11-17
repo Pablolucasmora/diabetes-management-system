@@ -46,7 +46,7 @@ from DayBetes_food.domain.intake_event import (
 )
 from DayBetes_food.domain.intake_plate import (
     INTAKE_PLATE_NAME_MAX_LENGTH,
-    derive_plate_name,
+    plate_label,
     eaten_time_text,
 )
 from DayBetes_food.components.modal import (
@@ -472,9 +472,7 @@ def plate_display_name(plate, plate_portions) -> str:
     The derived one is computed here, at render time, because it is not
     stored: it depends on the ingredients the plate has right now.
     """
-    if plate.name:
-        return plate.name
-    return derive_plate_name([portion_name(portion) for portion in plate_portions])
+    return plate_label(plate, plate_portions)
 
 
 def OffsetControl(event, control_id, offset_minutes, eaten_at, post_url, card_target, aria_name, input_cls):

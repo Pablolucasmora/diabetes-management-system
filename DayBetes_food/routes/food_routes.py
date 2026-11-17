@@ -9,7 +9,8 @@ import re
 import unicodedata
 from urllib.parse import urlencode
 from DayBetes_food.auth.context import get_current_user_id
-from DayBetes_food.components.food.food_main import food_main, plate_selector_options
+from DayBetes_food.components.food.food_main import food_main
+from DayBetes_food.services.plate_selector import plate_selector_options
 from DayBetes_food.components.ui import render_fragment, render_page
 from DayBetes_food.http_errors import app_error_response, request_id
 from DayBetes_food.services.fridge import (
@@ -1769,7 +1770,16 @@ def setup_food_routes(rt):
         From fridge button of the home page (§9.2), the rest is what Back comes back
         to. An unknown value is a 422 (code_conventions §7.7)."""
         view = _food_view(filter, search_mode, food_mode, favs_mode, recipes_mode, meal_type)
-        return render_page(request, lambda connection: food_main(connection, view))
+        user_id = get_current_user_id()
+        events, plate_options, last_used_plate = [], [], None
+        if user_id:
+            with get_connection() as connection:
+                events = list_planned_intake_events(connection, int(user_id))
+                # The selector shows the first meal chosen, so its plates are the
+                # ones listed (frontend_conventions.md §6).
+                if events:
+                    plate_options, last_used_plate = plate_selector_options(connection, int(user_id), events[0].id)
+        return render_page(request, food_main(view, events, plate_options, last_used_plate))
 
     @rt("/food/create/catalog/form")
     def get(
@@ -1875,7 +1885,7 @@ def setup_food_routes(rt):
             prefill_view["brand_is_new"] = prefill_view["brand"] not in brands
         return render_page(
             request,
-            lambda _: CreateCatalogPage(
+            CreateCatalogPage(
                 brand_options=brands,
                 subtype_options=subtypes,
                 prefill=prefill_view,
@@ -1916,7 +1926,7 @@ def setup_food_routes(rt):
             prefill["subtype_is_new"] = prefill["subtype"] not in subtypes
         return render_page(
             request,
-            lambda _: CreateManualPage(
+            CreateManualPage(
                 subtype_options=subtypes,
                 origin_options=origins,
                 prefill=prefill,
@@ -1931,7 +1941,7 @@ def setup_food_routes(rt):
         # A recipe draft of the assistant (§8.12, frontend §9.11): only while it exists.
         draft_message_id = parse_optional_id(assistant_message, "draft") if ASSISTANT_ENABLED else None
         if not draft_message_id:
-            return render_page(request, lambda _: CreateRecipePage(), show_cart=False)
+            return render_page(request, CreateRecipePage(), show_cart=False)
         user_id = get_current_user_id()
         if not user_id:
             raise AuthenticationError("Your session has expired.")
@@ -1939,7 +1949,7 @@ def setup_food_routes(rt):
         with get_connection() as connection:
             draft = _recipe_draft_form(connection, int(user_id), draft_message_id, assistant_tool)
         return render_page(
-            request, lambda _: CreateRecipePage(draft, return_to_assistant=conversation_id), show_cart=False
+            request, CreateRecipePage(draft, return_to_assistant=conversation_id), show_cart=False
         )
 
     @rt("/food/rescue/form")
@@ -2303,7 +2313,7 @@ def setup_food_routes(rt):
                 )
                 return render_page(
                     request,
-                    lambda _: FoodDetailPage(
+                    FoodDetailPage(
                         user_id=user_id or 0,
                         entry_type="catalog",
                         entry=catalog_entry_view(item),
@@ -2337,7 +2347,7 @@ def setup_food_routes(rt):
                 )
                 return render_page(
                     request,
-                    lambda _: FoodDetailPage(
+                    FoodDetailPage(
                         user_id=user_id,
                         entry_type="manual_intake",
                         entry=manual_intake_entry_view(manual_item),
@@ -2376,7 +2386,7 @@ def setup_food_routes(rt):
             )
         return render_page(
             request,
-            lambda _: FoodDetailPage(
+            FoodDetailPage(
                 user_id=user_id or 0,
                 entry_type=entry_type,
                 entry=entry,
@@ -2407,7 +2417,7 @@ def setup_food_routes(rt):
             )
         return render_page(
             request,
-            lambda _: RecipeIngredientPickerPage(recipe_entry_view(recipe), nodes, target_plate_id),
+            RecipeIngredientPickerPage(recipe_entry_view(recipe), nodes, target_plate_id),
             show_cart=False,
         )
 
@@ -2872,7 +2882,7 @@ def setup_food_routes(rt):
                 subtypes = get_subtype_suggestions(connection, search="", limit=500)
                 return render_page(
                     request,
-                    lambda _: EditCatalogPage(
+                    EditCatalogPage(
                         entry=catalog_entry_view(item),
                         brand_options=brands,
                         subtype_options=subtypes,
@@ -2892,7 +2902,7 @@ def setup_food_routes(rt):
                 origins = get_manual_origin_suggestions(connection, int(user_id), limit=500)
                 return render_page(
                     request,
-                    lambda _: EditManualPage(
+                    EditManualPage(
                         entry=manual_intake_entry_view(manual_item),
                         subtype_options=subtypes,
                         origin_options=origins,
@@ -2907,7 +2917,7 @@ def setup_food_routes(rt):
             entry = recipe_entry_view(recipe)
             return render_page(
                 request,
-                lambda _: EditRecipePage(
+                EditRecipePage(
                     entry=entry,
                 ),
                 show_cart=False,
@@ -4197,7 +4207,7 @@ def setup_food_routes(rt):
             )
         return render_page(
             request,
-            lambda _: QuickAddPage(events, plate_options, selected_plate_id),
+            QuickAddPage(events, plate_options, selected_plate_id),
             show_cart=False,
         )
 

@@ -1,5 +1,4 @@
 from fasthtml.common import *
-from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.stats.stats_calculations import compute_stats_payload
 from DayBetes_food.components.stats.stats_sections import (
     daily_totals_section,
@@ -8,28 +7,14 @@ from DayBetes_food.components.stats.stats_sections import (
     stats_header,
 )
 from DayBetes_food.components.stats.stats_shared import STATS_PAGE_CLS
-from DayBetes_food.database.queries import (
-    list_consumed_intake_events,
-    list_consumed_intake_events_for_day,
-    list_portions_by_events,
-)
-from DayBetes_food.time_utils import local_today
 
 
-def stats_main(connection):
-    user_id = get_current_user_id()
-    if not user_id:
-        return Div(no_user_section(), cls=STATS_PAGE_CLS)
+def stats_without_user():
+    return Div(no_user_section(), cls=STATS_PAGE_CLS)
 
-    today = local_today()
-    today_events = list_consumed_intake_events_for_day(connection, user_id=user_id, day=today)
-    today_event_ids = [event.id for event in today_events]
-    today_portions = list_portions_by_events(connection, int(user_id), today_event_ids)
 
-    all_consumed_events = list_consumed_intake_events(connection, user_id=user_id)
-    all_event_ids = [event.id for event in all_consumed_events]
-    all_portions = list_portions_by_events(connection, int(user_id), all_event_ids)
-
+def stats_main(today, today_events: list, today_portions: list, all_consumed_events: list, all_portions: list):
+    """The Stats page from the data the route read (code_conventions.md §1.4)."""
     payload = compute_stats_payload(today_events, today_portions, all_consumed_events, all_portions)
 
     return Div(
