@@ -1,10 +1,18 @@
-FROM debian:bookworm-slim
+# Development only, but output.css is versioned and reaches production, so the
+# binary is pinned to a version and checked against its published SHA-256
+# (infra_conventions.md §10). To update: change the version and the sum from the
+# release's sha256sums.txt.
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 
-RUN apt-get update && apt-get install -y \
+ARG TAILWIND_VERSION=v4.3.3
+ARG TAILWIND_SHA256=55fd0b241214eff3de1e8ee4f22796662f2d2e7a49bcfca7477cfd0bac398195
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     curl \
-    && curl -L -o tailwindcss \
-    https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-arm64 \
+    && curl -fsSL -o tailwindcss \
+    "https://github.com/tailwindlabs/tailwindcss/releases/download/${TAILWIND_VERSION}/tailwindcss-linux-arm64" \
+    && echo "${TAILWIND_SHA256}  tailwindcss" | sha256sum -c - \
     && chmod +x tailwindcss \
     && mv tailwindcss /usr/local/bin/ \
-    && rm -rf /var/lib/apt/lists/* 
-
+    && rm -rf /var/lib/apt/lists/*

@@ -1,12 +1,26 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for more information:
-# https://docs.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
-# https://containers.dev/guide/dependabot
-
+# Dependabot proposes, as pull requests, the updates of every pinned
+# dependency (infra_conventions.md §10): Python packages, base images and
+# GitHub Actions. Each one goes through pip-audit and a manual test before
+# it is merged.
 version: 2
 updates:
- - package-ecosystem: "devcontainers"
-   directory: "/"
-   schedule:
-     interval: weekly
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: weekly
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: weekly
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    schedule:
+      interval: weekly
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: weekly
+  - package-ecosystem: "devcontainers"
+    directory: "/"
+    schedule:
+      interval: weekly

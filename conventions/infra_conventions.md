@@ -82,7 +82,9 @@ Este documento complementa `conventions/code_conventions.md` §8 (configuración
 
 ## 10. Dependencias
 
-- `requirements.txt` fija versiones exactas (`==`) de todas las dependencias directas, para que desarrollo, la imagen de producción y cualquier reconstrucción instalen exactamente lo mismo.
+- `requirements.in` fija versiones exactas (`==`) de las dependencias directas. `requirements.txt` es el archivo de bloqueo que se genera a partir de él con `pip-compile --generate-hashes` (el comando está en la cabecera de `requirements.in`): todas las dependencias, transitivas incluidas, con versión exacta y sus hashes. La imagen instala con `--require-hashes`, así que desarrollo, la imagen de producción y cualquier reconstrucción instalan exactamente lo mismo (auditoría general H-15). Nunca se edita `requirements.txt` a mano.
+- Las imágenes base (`python`, `postgres`, `cloudflared`, `debian`) se fijan por digest además de por etiqueta: una etiqueta puede moverse a otra imagen. El binario de Tailwind se fija por versión y se comprueba con su SHA-256.
+- Dependabot (`.github/dependabot.yml`) vigila `pip`, las imágenes de Docker y Compose y las acciones de GitHub, y propone cada actualización como Pull Request.
 - Antes de cada despliegue se pasa `pip-audit -r requirements.txt`. Con vulnerabilidades conocidas no se despliega: se actualiza la dependencia afectada o se documenta por qué no aplica al proyecto. En la fase de despliegue automático, este paso lo ejecuta la GitHub Action y bloquea el despliegue si falla.
 - Cada actualización de dependencias va en su propio commit, junto con las adaptaciones de código que exija y sin mezclarla con otros cambios.
 - Una actualización se prueba arrancando la app en desarrollo con la imagen reconstruida (`docker compose up -d --build web`), no solo instalando el paquete: las dependencias viven en la imagen, no en el código montado.
