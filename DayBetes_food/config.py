@@ -161,16 +161,18 @@ ANTHROPIC_API_KEY = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
 ASSISTANT_ENABLED = bool(ANTHROPIC_API_KEY)
 # Changed without touching code (§8.12). The model id is not validated against a
 # list: a wrong one fails on the first message with the generic error.
-ASSISTANT_MODEL = (os.getenv("ASSISTANT_MODEL") or "claude-opus-5-5").strip()
-ASSISTANT_EFFORT = (os.getenv("ASSISTANT_EFFORT") or "low").strip().lower()
+# Haiku with high effort by default (user's decision of 2026-11-17): far cheaper,
+# and good enough for logging meals.
+ASSISTANT_MODEL = (os.getenv("ASSISTANT_MODEL") or "claude-haiku-5-5").strip()
+ASSISTANT_EFFORT = (os.getenv("ASSISTANT_EFFORT") or "high").strip().lower()
 if ASSISTANT_EFFORT not in {"low", "medium", "high", "xhigh", "max"}:
     raise RuntimeError("ASSISTANT_EFFORT must be one of: low, medium, high, xhigh, max")
-# One call to the API; the SDK retries 429, 5xx and network errors twice with
-# backoff, so a message waits at most about three times this.
-ASSISTANT_TIMEOUT_SECONDS = _as_int("ASSISTANT_TIMEOUT_SECONDS", 60)
-if not 5 <= ASSISTANT_TIMEOUT_SECONDS <= 300:
-    raise RuntimeError("ASSISTANT_TIMEOUT_SECONDS must be between 5 and 300")
+# One call to the API. Each call also gets at most what is left of the message
+# budget below.
+ASSISTANT_TIMEOUT_SECONDS = _as_int_in_range("ASSISTANT_TIMEOUT_SECONDS", 60, 5, 300)
+# Whole message of the user, retries and tool rounds included. It must stay under
+# the time Cloudflare waits for an answer (about 100 s): a request cut there
+# keeps running here, and the user, who sees an error, sends it again.
+ASSISTANT_MESSAGE_BUDGET_SECONDS = _as_int_in_range("ASSISTANT_MESSAGE_BUDGET_SECONDS", 75, 20, 95)
 # Rounds of tools per message: at the limit it stops, keeps what was done and says so.
-ASSISTANT_MAX_TOOL_ROUNDS = _as_int("ASSISTANT_MAX_TOOL_ROUNDS", 8)
-if not 1 <= ASSISTANT_MAX_TOOL_ROUNDS <= 20:
-    raise RuntimeError("ASSISTANT_MAX_TOOL_ROUNDS must be between 1 and 20")
+ASSISTANT_MAX_TOOL_ROUNDS = _as_int_in_range("ASSISTANT_MAX_TOOL_ROUNDS", 8, 1, 20)

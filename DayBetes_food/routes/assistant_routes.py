@@ -114,9 +114,11 @@ def setup_assistant_routes(rt):
         return render_page(request, content, show_cart=False)
 
     @rt("/assistant/thread")
-    def get(request: Request, intake_event_id: str = "", new_chat: str = ""):
+    def get(request: Request, intake_event_id: str = "", new_chat: str = "", conversation_id: str = ""):
         """The conversation of the meal chosen in `Add to` (§9.11): `New meal` is empty,
-        and `No meal` reopens the latest one unless `New chat` asks for an empty one."""
+        and `No meal` reopens the latest one unless `New chat` asks for an empty one.
+        With `conversation_id`, that conversation: the page reloads it after a failed
+        send, to show what the rounds before the failure already did (§8.12)."""
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
         user_id = get_current_user_id()
@@ -124,12 +126,17 @@ def setup_assistant_routes(rt):
             return app_error_response(request, AuthenticationError, "Your session has expired.")
         try:
             event_id, without_meal = parse_meal_choice(intake_event_id)
+            chosen_conversation_id = parse_optional_id(conversation_id, "conversation")
         except ValidationError as error:
             return app_error_response(request, ValidationError, str(error))
         with get_connection() as connection:
             try:
                 conversation = resolve_conversation(
-                    connection, int(user_id), None, event_id, latest_without_meal=without_meal and not new_chat
+                    connection,
+                    int(user_id),
+                    chosen_conversation_id,
+                    event_id,
+                    latest_without_meal=without_meal and not new_chat,
                 )
             except (NotFoundError, ConflictError):
                 return app_error_response(request, NotFoundError, _MEAL_GONE)
