@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 from fasthtml.common import *
 
 from DayBetes_food.components.food.food_shared import AMOUNT_METHOD_LABELS
-from DayBetes_food.components.food.foods import meal_option_label
+from DayBetes_food.components.food.food_list import meal_option_label
 from DayBetes_food.components.food.rescue import carbs_meta
 from DayBetes_food.components.modal import MODAL_NAME_CLS
 from DayBetes_food.components.navigation import back_js

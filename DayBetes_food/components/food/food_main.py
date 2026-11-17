@@ -5,7 +5,7 @@ from fasthtml.common import *
 from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.config import ASSISTANT_ENABLED
 from DayBetes_food.components.food.food_actions import FoodActionsModal
-from DayBetes_food.components.food.foods import (
+from DayBetes_food.components.food.food_list import (
     Filters,
     FoodView,
     FoodFiltersModal,
