@@ -474,6 +474,7 @@ Está prohibido hacer un `SELECT` por ID, obtener el registro y comprobar poster
 - Toda respuesta de la app lleva `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Strict-Transport-Security` y `Content-Security-Policy`, puestas por el middleware.
 - La `Content-Security-Policy` (decisión 2026-11-17, auditoría general H-18) es una segunda barrera, no la principal: el escapado del HTML sigue siendo obligatorio. Limita los orígenes de scripts, estilos y conexiones a la propia app y a los CDN que cargan las páginas, y prohíbe `object`, `base` ajeno, formularios hacia otros orígenes y que la app se incruste en marcos. Mientras las páginas usen manejadores en línea (`onclick=`, `Script` con código, `hx-on`), admite `'unsafe-inline'` y `'unsafe-eval'` en scripts. Pasar a una política con `nonce` exige quitar antes esos manejadores; es requisito de la fase 2 (contenido de otros usuarios).
 - Un script o estilo de un origen nuevo se añade a la política en el mismo cambio que lo introduce.
+- **Tamaño del cuerpo** (auditoría general H-31). `body_limit.py` corta una petición cuyo cuerpo supera 1 MB, o el de las fotos del asistente en `/assistant/message` (cuatro fotos al máximo más 1 MB), antes de que Starlette la lea entera: por su `Content-Length` o contando los bytes si no lo declara. Responde `400 malformed_request` por el canal de errores (`error_conventions.md` §7.1). Una ruta nueva que reciba archivos declara su límite en ese módulo.
 
 ## 6. Concurrencia e idempotencia
 

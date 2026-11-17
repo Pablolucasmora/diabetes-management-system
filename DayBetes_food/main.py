@@ -28,6 +28,7 @@ from DayBetes_food.errors import (
     InfrastructureError,
     ValidationError,
 )
+from DayBetes_food.body_limit import BodySizeLimitMiddleware
 from DayBetes_food.http_errors import (
     app_error_headers,
     error_json_body,
@@ -307,9 +308,11 @@ async def add_asset_cache_headers(request, call_next):
 
 # Starlette 1.0 removed the @app.middleware decorator. Each add_middleware
 # wraps the previous ones, so the order of these lines sets the execution
-# order: add_asset_cache_headers is the outer layer and GZip the inner one.
+# order: the body limit is the outer layer and GZip the inner one.
 app.add_middleware(BaseHTTPMiddleware, dispatch=auth_security_middleware)
 app.add_middleware(BaseHTTPMiddleware, dispatch=add_asset_cache_headers)
+# Outermost: a too large body is stopped before anything reads it (H-31).
+app.add_middleware(BodySizeLimitMiddleware)
 
 # --- COMPONENT INITIALIZATION ---
 
