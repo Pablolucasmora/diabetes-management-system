@@ -6,7 +6,9 @@ Durante una auditoría de tabla, módulo o Pull Request, este documento es el cr
 
 Las convenciones se aplican inmediatamente al código nuevo. El código existente se adapta progresivamente por tabla o módulo, sin mezclar en una misma corrección cambios funcionales no relacionados.
 
-Durante la fase de desarrollo personal (TFG, un único desarrollador, un único usuario) no se exige una suite de tests automatizados. La verificación manual del comportamiento afectado es suficiente antes de dar por cerrada una tabla o módulo. Esta decisión se revisará cuando el proyecto salga de esta fase; no debe señalarse como convención faltante en auditorías mientras siga vigente.
+Durante la fase de desarrollo personal (TFG, un único desarrollador, un único usuario) no se exige una suite de tests completa. La verificación manual del comportamiento afectado es suficiente antes de dar por cerrada una tabla o módulo. Esta decisión se revisará cuando el proyecto salga de esta fase; no debe señalarse como convención faltante en auditorías mientras siga vigente.
+
+Sí existe un conjunto **mínimo** de pruebas automáticas (decisión del usuario del 2026-11-17, auditoría general H-12): `tests/`, con `pytest`, solo sobre la lógica pura de la que depende el estudio (`domain/` y `time_utils.py`: cantidades, fracción comida, confianza y cobertura, parsers, nombre de tanda, hora exacta, zona de la petición, historial del asistente). No usan base de datos ni red y tardan menos de un segundo. El workflow las ejecuta en cada PR, junto con `scripts/check_smart_macros.py`, y un fallo bloquea el despliegue. Se ejecutan en local con `docker run --rm -v "$PWD":/w -w /w python:3.12-slim sh -c "pip install -q --require-hashes -r requirements.txt && pip install -q -r requirements-dev.txt && python -m pytest"`, o dentro del contenedor de desarrollo. Una regla nueva de `domain/` que cambie un dato del estudio lleva su prueba en el mismo cambio; el resto no lo exige.
 
 ## 0. Idioma (obligatorio)
 
