@@ -6,7 +6,7 @@ otherwise its URLs answer 404 like any unknown URL.
 
 Errors of the HTMX actions keep their status and empty body, with the message
 in the toast (`app_error_response`, error_conventions.md §7.1): htmx swaps
-nothing, so the text and the photo stay in the composer to send again.
+nothing, so the text and the photos stay in the composer to send again.
 """
 
 import logging
@@ -31,7 +31,8 @@ from DayBetes_food.domain.assistant import (
     parse_meal_choice,
     ASSISTANT_PHOTO_MAX_BYTES,
     AssistantTurnRequest,
-    parse_assistant_photo,
+    check_photo_count,
+    parse_assistant_photos,
     parse_assistant_text,
     parse_mentions,
     require_turn_content,
@@ -53,13 +54,12 @@ _MEAL_GONE = "That meal was confirmed or deleted. Choose another meal."
 _UNAVAILABLE = "The assistant is not available right now. Try again in a moment."
 
 
-def _read_photo(photo) -> tuple[str, bytes] | None:
-    """The uploaded file, read up to one byte over the limit: a larger one is
-    rejected without reading it whole."""
-    if not isinstance(photo, UploadFile) or not photo.filename:
-        return None
-    data = photo.file.read(ASSISTANT_PHOTO_MAX_BYTES + 1)
-    return photo.content_type or "", data
+def _read_photos(photos) -> list[tuple[str, bytes]]:
+    """The uploaded files, each read up to one byte over the limit: a larger one
+    is rejected without reading it whole. Too many are rejected before reading."""
+    files = [photo for photo in (photos or []) if isinstance(photo, UploadFile) and photo.filename]
+    check_photo_count(len(files))
+    return [(photo.content_type or "", photo.file.read(ASSISTANT_PHOTO_MAX_BYTES + 1)) for photo in files]
 
 
 def _selected_meal(events: list, chosen: int | None) -> int | None:
@@ -145,7 +145,7 @@ def setup_assistant_routes(rt):
         mentions: str = "",
         intake_event_id: str = "",
         conversation_id: str = "",
-        photo: UploadFile | None = None,
+        photo: list[UploadFile] | None = None,
     ):
         """One message to the assistant (§8.12). Answers the turn, appended to the
         thread, with the conversation id and, if its first add created the meal,
@@ -160,11 +160,10 @@ def setup_assistant_routes(rt):
         if not user_id:
             return app_error_response(request, AuthenticationError, "Your session has expired.")
         try:
-            uploaded = _read_photo(photo)
             turn_request = AssistantTurnRequest(
                 text=parse_assistant_text(message),
                 mentions=parse_mentions(mentions),
-                photo=parse_assistant_photo(*uploaded) if uploaded else None,
+                photos=parse_assistant_photos(_read_photos(photo)),
             )
             require_turn_content(turn_request)
             chosen_event_id, without_meal = parse_meal_choice(intake_event_id)

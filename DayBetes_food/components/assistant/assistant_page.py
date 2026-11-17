@@ -16,6 +16,7 @@ from DayBetes_food.components.navigation import back_js
 from DayBetes_food.domain.assistant import (
     MANUAL_INTAKE_DRAFT_SOURCE,
     RECIPE_DRAFT_SOURCE,
+    ASSISTANT_PHOTOS_MAX,
     ASSISTANT_TEXT_MAX_LENGTH,
     NO_MEAL_CHOICE,
     AddedCard,
@@ -201,8 +202,9 @@ def ConversationIdInput(conversation_id: int | None, *, oob: bool = False):
 
 def _user_bubble(turn: TurnView):
     parts = []
-    if turn.had_photo:
-        parts.append(Span("Photo", cls="inline-block text-[11px] rounded-full bg-white/70 border border-line px-2 py-0.5 w-fit"))
+    if turn.photo_count:
+        label = "Photo" if turn.photo_count == 1 else f"{turn.photo_count} photos"
+        parts.append(Span(label, cls="inline-block text-[11px] rounded-full bg-white/70 border border-line px-2 py-0.5 w-fit"))
     if turn.user_text:
         parts.append(P(turn.user_text, cls="text-sm whitespace-pre-wrap break-words"))
     return Div(
@@ -407,25 +409,15 @@ def _composer():
             """,
         ),
         Div(id="assistant_mention_chips", cls="flex flex-wrap gap-1.5 empty:hidden"),
-        Div(
-            Span(id="assistant_photo_name", cls="truncate"),
-            Button(
-                "×",
-                type="button",
-                id="assistant_photo_remove",
-                aria_label="Remove the photo",
-                cls="shrink-0 h-5 w-5 rounded-full text-gray-500 hover:bg-line-soft cursor-pointer",
-            ),
-            id="assistant_photo_chip",
-            hidden=True,
-            cls="inline-flex items-center gap-1 rounded-full bg-control border border-line pl-2.5 pr-1 py-0.5 text-xs text-gray-800 max-w-full w-fit",
-        ),
+        # One thumbnail per attached photo, drawn by assistant.js (§9.11).
+        Div(id="assistant_photos", aria_label="Attached photos", cls="flex flex-wrap gap-2 empty:hidden"),
         Div(
             Label(
                 _PHOTO_ICON,
-                Input(type="file", id="assistant_photo", name="photo", accept="image/*", cls="sr-only"),
-                aria_label="Attach a photo",
-                title="Attach a photo",
+                # The picker only: assistant.js keeps the chosen photos and sends them.
+                Input(type="file", id="assistant_photo", accept="image/*", multiple=True, cls="sr-only"),
+                aria_label="Attach photos",
+                title="Attach photos",
                 cls="""
                     shrink-0 h-9 w-9 rounded-full border border-line bg-white text-gray-600
                     flex items-center justify-center cursor-pointer
@@ -463,6 +455,7 @@ def _composer():
         id=COMPOSER_FORM_ID,
         hx_post="/assistant/message",
         hx_encoding="multipart/form-data",
+        data_photos_max=str(ASSISTANT_PHOTOS_MAX),
         hx_target=f"#{THREAD_ID}",
         hx_swap="beforeend",
         hx_include=f"#{MEAL_SELECT_ID}, #{CONVERSATION_INPUT_ID}",

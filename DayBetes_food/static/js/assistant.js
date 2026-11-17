@@ -7,7 +7,7 @@
 // Tab or Enter pick, Esc closes, a tap picks. A picked entry replaces
 // `/query` with `/Name ` and becomes a pill above the text box. Mentions
 // travel as entry_type + entry_id in the hidden `mentions` field.
-// A photo is reduced here before it is sent (§8.12, cost). The composer is
+// Up to four photos, each reduced here before it is sent (§8.12, cost). The composer is
 // cleared only after a successful send: on an error the toast explains it and
 // the message stays to send again.
 // Add to: what was chosen last is kept in sessionStorage for this tab's session
@@ -53,48 +53,88 @@
 
   // ---- Send button and photo ----
 
+  // The chosen photos live here, not in the file input: the picker can add more
+  // one by one, and each is replaced by its reduced copy when that is ready.
+  // They are added to the request in htmx:configRequest.
+  var photos = []; // [{id, file, url, ready}]
+  var nextPhotoId = 1;
+
   function photoInput() {
     return byId("assistant_photo");
   }
 
+  function photosMax() {
+    var form = byId("assistant_composer");
+    return parseInt((form && form.getAttribute("data-photos-max")) || "4", 10);
+  }
+
   function hasPhoto() {
-    var el = photoInput();
-    return !!el && !!el.files && el.files.length > 0;
+    return photos.length > 0;
+  }
+
+  function photosPending() {
+    return photos.some(function (photo) {
+      return !photo.ready;
+    });
   }
 
   function updateSend() {
     var button = byId("assistant_send");
     var el = input();
     if (!button || !el) return;
-    button.disabled = !(el.value.trim() || mentions.length || hasPhoto());
+    button.disabled = !(el.value.trim() || mentions.length || hasPhoto()) || photosPending();
   }
 
-  function showPhoto(name) {
-    var chip = byId("assistant_photo_chip");
-    var label = byId("assistant_photo_name");
-    if (label) label.textContent = name || "";
-    if (chip) chip.hidden = !name;
+  function renderPhotos() {
+    var box = byId("assistant_photos");
+    if (!box) return;
+    box.textContent = "";
+    photos.forEach(function (photo, index) {
+      var item = document.createElement("div");
+      item.className = "relative h-14 w-14 shrink-0" + (photo.ready ? "" : " opacity-50");
+      var img = document.createElement("img");
+      img.src = photo.url;
+      img.alt = "Photo " + (index + 1);
+      img.className = "h-14 w-14 rounded-xl object-cover border border-line";
+      var remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "×";
+      remove.setAttribute("data-assistant-remove-photo", String(photo.id));
+      remove.setAttribute("aria-label", "Remove photo " + (index + 1));
+      remove.className =
+        "absolute -top-1.5 -right-1.5 h-5 w-5 rounded-full bg-white border border-line " +
+        "text-xs leading-none text-gray-600 shadow-sm cursor-pointer";
+      item.appendChild(img);
+      item.appendChild(remove);
+      box.appendChild(item);
+    });
   }
 
-  function clearPhoto() {
-    var el = photoInput();
-    if (el) el.value = "";
-    showPhoto("");
+  function removePhoto(id) {
+    photos = photos.filter(function (photo) {
+      if (photo.id === id) URL.revokeObjectURL(photo.url);
+      return photo.id !== id;
+    });
+    renderPhotos();
     updateSend();
   }
 
-  // Scales the photo down and re-encodes it as JPEG in the file input itself,
-  // so the form sends the small one. If the browser cannot, it sends the original
-  // and the server checks its size.
-  function shrinkPhoto(file) {
+  function clearPhotos() {
+    photos.forEach(function (photo) {
+      URL.revokeObjectURL(photo.url);
+    });
+    photos = [];
     var el = photoInput();
-    if (!el || !file || !window.createImageBitmap || !window.DataTransfer) {
-      showPhoto(file ? file.name : "");
-      updateSend();
-      return;
-    }
-    showPhoto("Preparing photo…");
-    createImageBitmap(file)
+    if (el) el.value = "";
+    renderPhotos();
+    updateSend();
+  }
+
+  // Scales the photo down and re-encodes it as JPEG, so the form sends the small
+  // one. If the browser cannot, it sends the original and the server checks its size.
+  function shrinkPhoto(file) {
+    if (!window.createImageBitmap) return Promise.resolve(file);
+    return createImageBitmap(file)
       .then(function (bitmap) {
         var scale = Math.min(1, PHOTO_MAX_SIDE_PX / Math.max(bitmap.width, bitmap.height));
         var canvas = document.createElement("canvas");
@@ -106,17 +146,30 @@
         });
       })
       .then(function (blob) {
-        if (!blob) throw new Error("encode");
-        var transfer = new DataTransfer();
-        transfer.items.add(new File([blob], "photo.jpg", { type: "image/jpeg" }));
-        el.files = transfer.files;
-        showPhoto(file.name || "Photo");
-        updateSend();
+        return blob ? new File([blob], "photo.jpg", { type: "image/jpeg" }) : file;
       })
       .catch(function () {
-        showPhoto(file.name || "Photo");
+        return file;
+      });
+  }
+
+  function addPhotos(files) {
+    var room = photosMax() - photos.length;
+    if (files.length > room && window.dbShowAppToast) {
+      window.dbShowAppToast("You can attach up to " + photosMax() + " photos.");
+    }
+    Array.prototype.slice.call(files, 0, Math.max(room, 0)).forEach(function (file) {
+      var photo = { id: nextPhotoId++, file: file, url: URL.createObjectURL(file), ready: false };
+      photos.push(photo);
+      shrinkPhoto(file).then(function (small) {
+        photo.file = small;
+        photo.ready = true;
+        renderPhotos();
         updateSend();
       });
+    });
+    renderPhotos();
+    updateSend();
   }
 
   function resetComposer() {
@@ -126,7 +179,7 @@
     activeSlash = -1;
     dismissedSlash = -1;
     renderChips();
-    clearPhoto();
+    clearPhotos();
     close();
     autoGrow();
     updateSend();
@@ -342,23 +395,34 @@
 
   document.addEventListener("change", function (event) {
     if (event.target !== photoInput()) return;
-    var file = event.target.files && event.target.files[0];
-    if (file) shrinkPhoto(file);
-    else clearPhoto();
+    if (event.target.files && event.target.files.length) addPhotos(event.target.files);
+    // Emptied so that choosing the same photo again fires `change`.
+    event.target.value = "";
   });
 
   // Sending: only the button sends (Enter is a line break, §9.11). A send while
-  // the photo is being prepared waits for it.
+  // a photo is being prepared waits for it.
   document.addEventListener("htmx:beforeRequest", function (event) {
     var form = byId("assistant_composer");
     if (!form || event.detail.elt !== form) return;
-    var label = byId("assistant_photo_name");
-    if (label && label.textContent === "Preparing photo…") {
+    if (photosPending()) {
       event.preventDefault();
       return;
     }
     close();
     syncHidden();
+  });
+
+  // The photos travel as repeated `photo` parts of the multipart body.
+  document.addEventListener("htmx:configRequest", function (event) {
+    var form = byId("assistant_composer");
+    if (!form || event.detail.elt !== form) return;
+    var data = event.detail.formData;
+    if (!data) return;
+    data.delete("photo");
+    photos.forEach(function (photo) {
+      data.append("photo", photo.file, photo.file.name || "photo.jpg");
+    });
   });
 
   document.addEventListener("htmx:afterRequest", function (event) {
@@ -486,8 +550,9 @@
       if (el) el.focus();
       return;
     }
-    if (event.target.closest && event.target.closest("#assistant_photo_remove")) {
-      clearPhoto();
+    var removePhotoButton = event.target.closest && event.target.closest("[data-assistant-remove-photo]");
+    if (removePhotoButton) {
+      removePhoto(parseInt(removePhotoButton.getAttribute("data-assistant-remove-photo"), 10));
       return;
     }
     var remove = event.target.closest && event.target.closest("[data-assistant-remove-mention]");
