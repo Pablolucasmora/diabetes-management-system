@@ -507,6 +507,10 @@ psycopg-binary==3.3.2 \
     --hash=sha256:f3f601f32244a677c7b029ec39412db2772ad04a28bc2cbb4b1f0931ed0ffad7 \
     --hash=sha256:fc5a189e89cbfff174588665bb18d28d2d0428366cc9dae5864afcaa2e57380b
     # via psycopg
+psycopg-pool==3.3.3 \
+    --hash=sha256:9b9cd6a4fcec47a410f7e82d408540e7f77b478509e91b44c1a5457a13e5ff37 \
+    --hash=sha256:df87b5d9d0ad7db37f6cdad4fa8ce113d250f5997f6db38e9a99192fb67f9e1d
+    # via -r requirements.in
 pycparser==3.12 \
     --hash=sha256:a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e \
     --hash=sha256:f03387877eab82ce01bbdfd0ba7252ee55a90b1c708d5129e2ce915475cf1db6
@@ -780,6 +784,7 @@ typing-extensions==4.16.0 \
     #   httpx2
     #   opentelemetry-api
     #   psycopg
+    #   psycopg-pool
     #   pydantic
     #   pydantic-core
     #   starlette

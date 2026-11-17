@@ -21,7 +21,7 @@ from DayBetes_food.config import (
     SESSION_REFRESH_SECONDS,
 )
 from DayBetes_food.database.db_init import init_db
-from DayBetes_food.database.connection import get_connection
+from DayBetes_food.database.connection import close_pool, get_connection
 from DayBetes_food.errors import (
     AppError,
     AuthenticationError,
@@ -57,6 +57,7 @@ async def lifespan(app):
     if DB_INIT_ON_STARTUP:
         init_db()
     yield
+    close_pool()
 
 
 app, fasthtml_rt = fast_app(

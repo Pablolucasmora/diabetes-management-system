@@ -126,7 +126,7 @@ Reglas:
 - Pasar la misma conexión a los servicios, queries y componentes que la necesiten para leer datos.
 - No abrir varias conexiones para completar una misma operación lógica.
 - No abrir conexiones dentro de componentes, mappers o helpers de presentación.
-- No mantener conexiones en variables globales ni en `ContextVar`.
+- No mantener conexiones en variables globales ni en `ContextVar`. La única excepción es el pool de `database/connection.py` (decisión del usuario del 2026-11-17, auditoría general H-24): `get_connection()` presta una conexión del pool para una unidad de trabajo y, al salir del bloque `with`, confirma o revierte como una conexión normal y la devuelve al pool en vez de cerrarla. El pool tiene como máximo `DB_POOL_MAX_SIZE` conexiones (20 por defecto); con todas en uso, una petición espera `DB_POOL_TIMEOUT_SECONDS` y después falla. Por eso una unidad de trabajo nunca pide una segunda conexión mientras retiene la primera: con el pool lleno se bloquearía.
 - Un componente no puede ocultar una lectura de base de datos durante el renderizado.
 - El middleware, la ruta, el servicio y el renderizado no deben abrir conexiones duplicadas para la misma unidad de trabajo.
 

@@ -92,6 +92,14 @@ if DB_INIT_ON_STARTUP:
 if MIGRATIONS_DATABASE_URL and not MIGRATIONS_DATABASE_URL.startswith(("postgres://", "postgresql://")):
     raise RuntimeError("MIGRATIONS_DATABASE_URL must be a postgres:// or postgresql:// connection string")
 
+# Connection pool of the app (code_conventions.md §2.1). A request waits up to
+# the timeout for a free connection when all are in use.
+DB_POOL_MIN_SIZE = _as_int_in_range("DB_POOL_MIN_SIZE", 2, 1, 20)
+DB_POOL_MAX_SIZE = _as_int_in_range("DB_POOL_MAX_SIZE", 20, 1, 100)
+if DB_POOL_MIN_SIZE > DB_POOL_MAX_SIZE:
+    raise RuntimeError("DB_POOL_MIN_SIZE cannot be greater than DB_POOL_MAX_SIZE")
+DB_POOL_TIMEOUT_SECONDS = _as_int_in_range("DB_POOL_TIMEOUT_SECONDS", 30, 1, 120)
+
 # Runtime role that the bootstrap grants DML on the objects it creates.
 DB_RUNTIME_ROLE = (os.getenv("DB_RUNTIME_ROLE") or "daybetes_app").strip()
 

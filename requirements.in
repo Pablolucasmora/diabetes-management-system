@@ -5,6 +5,7 @@
 python-fasthtml==0.14.13
 python-dotenv==1.2.2
 psycopg[binary]==3.3.2
+psycopg-pool==3.3.3
 argon2-cffi==25.1.0
 starlette==1.7.0
 uvicorn==0.42.0
