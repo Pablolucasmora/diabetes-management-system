@@ -1,7 +1,6 @@
 # Dependabot proposes, as pull requests, the updates of every pinned
 # dependency (infra_conventions.md §10): Python packages, base images and
-# GitHub Actions. Each one goes through pip-audit and a manual test before
-# it is merged.
+# GitHub Actions. Each one is reviewed before it is merged (§10).
 version: 2
 updates:
   - package-ecosystem: "pip"
@@ -12,10 +11,20 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    # Moving to a new Python version is the user's decision, not Dependabot's
+    # (§10): only new digests of the pinned version are proposed.
+    ignore:
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: "docker-compose"
     directory: "/"
     schedule:
       interval: weekly
+    # The same for a new PostgreSQL major version, which also needs a dump
+    # and restore of the data.
+    ignore:
+      - dependency-name: "postgres"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

@@ -41,9 +41,24 @@ jobs:
       # The smart macros parser of Python against the cases shared with JS.
       - run: python scripts/check_smart_macros.py
 
+  images:
+    name: Docker images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The images are built as the VPS builds them, so a base image or a lock
+      # that does not install fails here and not in the deploy (infra §10).
+      - run: docker build --quiet -f Dockerfile.fasthtml -t daybetes-web:ci .
+      - run: docker build --quiet -f Dockerfile.tailwind -t daybetes-tailwind:ci .
+      # The images Compose pulls must exist with their pinned digest.
+      - name: Pull the Compose images
+        run: |
+          grep -hoE 'image: *[^ ]+@sha256:[0-9a-f]+' docker-compose.yml docker-compose.prod.yml \
+            | awk '{print $2}' | sort -u | xargs -n1 docker pull --quiet
+
   deploy:
     name: Deploy to the VPS
-    needs: [audit, tests]
+    needs: [audit, tests, images]
     # Pull requests are only audited; only main is deployed.
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
