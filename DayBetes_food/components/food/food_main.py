@@ -38,7 +38,7 @@ def plate_selector_options(connection, user_id: int, event_id: int):
     request carries no `plate_id`, so that what the selector shows is what
     would really happen (frontend_conventions.md §6).
     """
-    plates = list_intake_plates(connection, event_id)
+    plates = list_intake_plates(connection, user_id, event_id)
     if not plates:
         return [], None
 

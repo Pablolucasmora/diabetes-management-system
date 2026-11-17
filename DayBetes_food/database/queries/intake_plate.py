@@ -58,19 +58,25 @@ def create_intake_plate(connection, payload: IntakePlateCreate, *, commit: bool 
     return int(row["id"])
 
 
-def list_intake_plates(connection, event_id: int) -> list[IntakePlateRead]:
-    """Plates of an event, in the §4.6.1 order."""
+def list_intake_plates(connection, user_id: int, event_id: int) -> list[IntakePlateRead]:
+    """Plates of an event of the user, in the §4.6.1 order. Ownership is
+    checked in the SQL itself (code_conventions.md §5.3): another user's
+    event returns no plates."""
     query = f"""
         SELECT {_INTAKE_PLATE_COLUMNS}
         FROM intake_plate ip
+        JOIN intake_event ie ON ie.id = ip.intake_event_id
         WHERE ip.intake_event_id = %(event_id)s
+          AND ie.users_id = %(user_id)s
         {_INTAKE_PLATE_ORDER};
     """
-    rows = _execute_query_many(connection, query, {"event_id": event_id}, commit=False)
+    rows = _execute_query_many(
+        connection, query, {"event_id": event_id, "user_id": user_id}, commit=False
+    )
     return [intake_plate_read_from_row(row) for row in rows]
 
 
-def list_intake_plates_by_events(connection, event_ids: list[int]) -> list[IntakePlateRead]:
+def list_intake_plates_by_events(connection, user_id: int, event_ids: list[int]) -> list[IntakePlateRead]:
     """Plates of several events in a single query (§6.9: no N+1 in the cart list).
 
     The order is by event and, inside each one, the §4.6.1 order. The caller
@@ -81,10 +87,14 @@ def list_intake_plates_by_events(connection, event_ids: list[int]) -> list[Intak
     query = f"""
         SELECT {_INTAKE_PLATE_COLUMNS}
         FROM intake_plate ip
+        JOIN intake_event ie ON ie.id = ip.intake_event_id
         WHERE ip.intake_event_id = ANY(%(event_ids)s)
+          AND ie.users_id = %(user_id)s
         ORDER BY ip.intake_event_id, ip.offset_minutes NULLS LAST, ip.id;
     """
-    rows = _execute_query_many(connection, query, {"event_ids": list(event_ids)}, commit=False)
+    rows = _execute_query_many(
+        connection, query, {"event_ids": list(event_ids), "user_id": user_id}, commit=False
+    )
     return [intake_plate_read_from_row(row) for row in rows]
 
 

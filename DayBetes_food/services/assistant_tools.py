@@ -808,7 +808,7 @@ def _show_meal(ctx: ToolContext, tool_input: dict) -> dict:
     when = to_local(event.meal_time) if event.meal_time else None
     portions = list_portions_by_event(ctx.connection, ctx.user_id, ctx.event_id)
     plates = []
-    for plate in list_intake_plates(ctx.connection, ctx.event_id):
+    for plate in list_intake_plates(ctx.connection, ctx.user_id, ctx.event_id):
         foods = []
         for portion in (p for p in portions if p.plate_id == plate.id):
             carbs_100g = portion.source.carbs_100g

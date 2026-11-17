@@ -237,7 +237,7 @@ def _meal_lines(connection, user_id: int, event_id: int | None, without_meal: bo
         head += f", at {when:%Y-%m-%d %H:%M}"
     lines = [head + "."]
     portions = list_portions_by_event(connection, user_id, event_id)
-    plates = list_intake_plates(connection, event_id)
+    plates = list_intake_plates(connection, user_id, event_id)
     if not plates:
         lines.append("It is empty.")
     for plate in plates:
