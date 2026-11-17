@@ -1,6 +1,5 @@
 """View models of a food, a dish or a recipe for the Food pages, built from their read models."""
 
-from fasthtml.common import *
 from DayBetes_food.domain.catalog import CatalogItemRead
 from DayBetes_food.domain.recipe import RecipeRead
 from DayBetes_food.domain.manual_intake import ManualIntakeRead
