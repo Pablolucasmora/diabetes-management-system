@@ -31,13 +31,13 @@ Este documento complementa `conventions/code_conventions.md` §8 (configuración
 - Las credenciales del túnel (`<id>.json`) nunca se suben a git; se copian al servidor por un canal seguro (`scp`). El archivo de configuración `cloudflared/daybetes.yml` sí está en git porque no contiene secretos.
 - En el servidor, la credencial vive en `/etc/cloudflared/<id>.json`, fuera del repositorio (no puede subirse a git ni entrar en la imagen por `COPY . .`), y `docker-compose.prod.yml` monta esa ruta fija: `~` no se usa porque depende del usuario que ejecute el comando (con `sudo` es `/root`). El archivo pertenece al UID `65532` (usuario `nonroot` de la imagen de `cloudflared`) con permisos `400`: dentro y fuera del contenedor los usuarios se identifican por número.
 - Al servidor solo va la credencial del túnel. `cert.pem` (certificado de la cuenta de Cloudflare, que permite crear y borrar túneles y cambiar el DNS) nunca sale del equipo del desarrollador.
-- Para probar el entorno de desarrollo desde el móvil se usa la red local (`http://<nombre-del-mac>.local:8000`). Si se necesita acceso remoto al entorno de desarrollo, se decide aparte (red privada o túnel propio de desarrollo con credenciales distintas), nunca reutilizando el túnel de producción.
+- Para probar el entorno de desarrollo desde el móvil se usa la red local (`http://<nombre-del-mac>.local:8000`), arrancando `web` con `WEB_BIND_ADDRESS=0.0.0.0` (§5). Si se necesita acceso remoto al entorno de desarrollo, se decide aparte (red privada o túnel propio de desarrollo con credenciales distintas), nunca reutilizando el túnel de producción.
 
 ## 5. Diferencias obligatorias entre entornos
 
 | Aspecto | Desarrollo (`docker-compose.yml`) | Producción (`docker-compose.prod.yml`) |
 |---|---|---|
-| `ports:` | Permitido, para acceder desde el Mac | Prohibido (§3) |
+| `ports:` | Permitido, ligado a `127.0.0.1` para que solo llegue el Mac también en una wifi pública (auditoría general H-33). `web` se abre a la red local solo cuando se prueba desde el móvil, con `WEB_BIND_ADDRESS=0.0.0.0`; Postgres nunca | Prohibido (§3) |
 | Código | Montado con `.:/app` y `--reload` | Copiado dentro de la imagen; sin montaje de código ni `--reload` |
 | `restart:` | Opcional | Obligatorio en todos los servicios permanentes (`unless-stopped` o `always`); `"no"` en los de una sola ejecución (`migrate`, §14) |
 | Tailwind `--watch` | Sí | No; `output.css` está versionado en git |
