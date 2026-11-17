@@ -91,6 +91,11 @@ Este documento complementa `conventions/code_conventions.md` §8 (configuración
 - La GitHub Action construye también las imágenes en cada Pull Request (`Dockerfile.fasthtml` y `Dockerfile.tailwind`) y descarga las de Compose por su digest, y un fallo bloquea el despliegue (decisión del usuario del 2026-11-17). Las pruebas no instalan nada dentro de la imagen, así que sin este paso un cambio de imagen base que rompe la instalación pasa el CI en verde y falla en el VPS (caso real: Python 3.15 con `psycopg-binary` 3.3.2, que no tenía versión para 3.15).
 - Cada actualización de dependencias va en su propio commit, junto con las adaptaciones de código que exija y sin mezclarla con otros cambios.
 - Una actualización se prueba arrancando la app en desarrollo con la imagen reconstruida (`docker compose up -d --build web`), no solo instalando el paquete: las dependencias viven en la imagen, no en el código montado.
+- **Pull Requests de Dependabot** (decisión del usuario del 2026-11-17). Fusionar una es desplegar, así que:
+  - Ninguna se fusiona sin revisar, aunque el CI esté en verde. Se leen las notas de cada versión. Si cambia una librería que usa la app (FastHTML, Starlette, uvicorn, psycopg, el SDK de Anthropic), se prueba antes como dice el punto anterior.
+  - Las de `pip` que llegan a la vez se juntan en una sola Pull Request, con un commit por paquete y el lock regenerado a partir del anterior. Tocan las mismas líneas de `requirements.in` y del lock: fusionadas por separado, cada una obliga a Dependabot a rehacer las demás y despliega una vez. Al llegar a `main`, Dependabot cierra solas las suyas.
+  - Se fusionan de una en una, y la siguiente espera a que termine el despliegue de la anterior. Un cambio de `cloudflared` se comprueba después desde fuera (la web responde por su dominio): la vuelta atrás de `deploy.sh` solo cubre `web` (§13).
+  - Cerrar una sin fusionarla hace que Dependabot no vuelva a proponer esa versión, pero sí las siguientes.
 - Los avisos de obsolescencia (`DeprecationWarning`) de las dependencias se tratan como deuda: anuncian que la siguiente versión mayor romperá ese código (caso real: `@app.middleware` y `on_event`, eliminados en Starlette 1.0).
 
 ## 11. Servidor de producción
