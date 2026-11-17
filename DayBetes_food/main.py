@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from html import escape
 import hmac
 import logging
+import secrets
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import JSONResponse
@@ -63,6 +64,10 @@ app, fasthtml_rt = fast_app(
     htmlkw={"lang": "en"},
     static_path='DayBetes_food/static',
     lifespan=lifespan,
+    # FastHTML's own session cookie is not used (auth has its own sessions in
+    # the database). A random key per process keeps FastHTML from writing a
+    # .sesskey file, which the unprivileged user of the image cannot do.
+    secret_key=secrets.token_hex(32),
 )
 
 logger = logging.getLogger(__name__)
