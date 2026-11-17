@@ -378,6 +378,25 @@ class DBSchema:
     );
     """
 
+    # Previous version of an injection on every change or deletion (code_conventions.md
+    # §11.10, decision 2026-11-17). Written only by the trigger of db_init.py, so it
+    # also covers changes made outside the app; the runtime can only read it.
+    insulin_injection_history = """
+    CREATE TABLE IF NOT EXISTS insulin_injection_history (
+        id SERIAL CONSTRAINT pk_insulin_injection_history PRIMARY KEY,
+        insulin_injection_id INTEGER NOT NULL, -- No FK: the injection may have been deleted, and its history stays
+        users_id INTEGER NOT NULL
+            CONSTRAINT fk_insulin_injection_history_users_id_users
+            REFERENCES users(id) ON DELETE RESTRICT,
+        operation VARCHAR(10) NOT NULL
+            CONSTRAINT ck_insulin_injection_history_operation
+            CHECK (operation IN ('update', 'delete')),
+        old_row JSONB NOT NULL, -- The whole row before the change; the new values are in the row or in the next entry
+        changed_by_role TEXT NOT NULL DEFAULT session_user, -- Database role: the app's, or another one for a change made by hand
+        changed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    """
+
     @classmethod
     def meal_type_schedule(cls):
         """

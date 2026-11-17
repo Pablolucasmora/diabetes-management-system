@@ -1483,7 +1483,7 @@ La clasificación de cada tabla se declara en este registro, que es el sitio ún
 | `auth_rate_limits` | **Pendiente**: no hay clasificación documentada. | Físico en la práctica (contador operativo). | Sin auditoría propia; extraída de `auth/service.py`. |
 | `catalog` | **Archivable**, irreversible (sin `restore_`). Contrato completo en §11.2.2. | Solo `deleted_at`; nunca físico (otras personas tienen porciones, recetas y favoritos que apuntan al alimento). | `audit/audits/audit_catalog.md`, hallazgos 5 y 6; decisiones 2026-09-23 y 2026-09-24. |
 | `food_brands` | **Pendiente**: por naturaleza no archivable (catálogo auxiliar), pero `is_active` actúa como soft-delete de facto y no encaja en §11.2/§11.3. | Sin función de borrado. | `audit/audit_food_brands.md`; `audit/deuda_pendiente.md`, H4 y H11. |
-| `insulin_injections` | **Historical**. Pendiente decidir si es archivable (`deleted_at`) o no archivable con borrado físico documentado. | Físico (statu quo). | `audit/audit_insulin_injections.md`; `audit/deuda_pendiente.md`, "Clasificación archivable / no archivable". |
+| `insulin_injections` | **Historical**. Pendiente decidir si es archivable (`deleted_at`) o no archivable con borrado físico documentado. | Físico (statu quo), con la fila anterior guardada en `insulin_injection_history` (§11.10). | `audit/audit_insulin_injections.md`; `audit/deuda_pendiente.md`, "Clasificación archivable / no archivable". |
 | `intake_event` | **Híbrida por `state`**: `planned` no archivable, `consumed` archivable. | Físico en `planned`; `deleted_at` en `consumed`. | Decisión 2026-09-08. |
 | `manual_intake` | **Archivable**, irreversible (sin `restore_`), con el mismo contrato que `catalog`. Contrato completo en §11.2.3. | Solo `deleted_at`; nunca físico (porciones de eventos consumidos y, si se publica, favoritos y recetas de otros usuarios apuntan al plato). | `audit/audits/audit_manual_intake.md`, hallazgos 5 y 14; decisiones 2026-10-09. |
 | `recipe` | **Non-archivable**, con borrado físico solo por su propietario. Contrato completo en §11.2.4. | Físico: lo consumido no referencia la receta. Se revisa en la fase 2. | Decisión del usuario (2026-11-05), `audit/audits/audit_recipe.md`. |
@@ -1848,6 +1848,14 @@ Las tablas o campos que requieran trazabilidad deben especificar:
 Para datos clínicos, históricos o que alimenten modelos, se debe distinguir entre valor original, valor corregido e información calculada. La auditoría debe incluir `request_id` cuando exista, siguiendo `error_conventions.md`.
 
 La auditoría puede implementarse mediante tabla histórica, trigger o servicio centralizado. La estrategia elegida debe ser única por caso y debe documentar si cubre escrituras realizadas fuera de la aplicación.
+
+**`insulin_injections`** (decisión del usuario del 2026-11-17, auditoría general H-10). Historial simple por trigger:
+
+- Entidad y operación: cada `UPDATE` que cambia algo más que `updated_at` y cada `DELETE` de `insulin_injections` guardan la fila **anterior** entera (`old_row`, JSONB) en `insulin_injection_history`, con `operation` (`update` o `delete`), el id de la inyección (sin FK, porque sobrevive al borrado) y su usuario. El valor nuevo es la fila actual o la entrada siguiente.
+- Actor: `changed_by_role`, el rol de base de datos de la sesión: el de la app o el de quien cambió algo a mano. Con un solo usuario, el usuario de la app es el dueño de la fila. No guarda `request_id`: el trigger no lo conoce.
+- Timestamp: `changed_at`, UTC.
+- Cubre las escrituras hechas fuera de la app: lo escribe el trigger `trg_insulin_injections_history` (`db_init.py`), con una función `SECURITY DEFINER` y `search_path` fijo. El rol de la app solo puede leer la tabla.
+- Retención: sin límite durante el TFG; se decide con la política de retención de la fase 2.
 
 ### 11.11 Borrado físico
 

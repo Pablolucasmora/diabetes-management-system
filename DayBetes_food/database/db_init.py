@@ -2587,6 +2587,50 @@ def _ensure_portion_detail_schema(cursor):
         )
 
 
+def _ensure_insulin_injection_history(cursor):
+    """History of insulin_injections (code_conventions.md §11.10, decision 2026-11-17).
+
+    A trigger keeps the previous row on every UPDATE that changes something and
+    on every DELETE, whoever makes it: the app, the assistant or SQL by hand. The
+    function is SECURITY DEFINER, so it writes as the owner of the table while
+    the runtime role can only read it (grants in init_db). search_path is fixed,
+    as a definer function needs.
+    """
+    cursor.execute(
+        """
+        CREATE OR REPLACE FUNCTION log_insulin_injection_change()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        SECURITY DEFINER
+        SET search_path = public, pg_temp
+        AS $$
+        BEGIN
+            IF TG_OP = 'UPDATE'
+               AND to_jsonb(OLD) - 'updated_at' = to_jsonb(NEW) - 'updated_at' THEN
+                RETURN NULL;
+            END IF;
+            INSERT INTO insulin_injection_history
+                (insulin_injection_id, users_id, operation, old_row, changed_by_role)
+            VALUES
+                (OLD.id, OLD.users_id, lower(TG_OP), to_jsonb(OLD), session_user);
+            RETURN NULL;
+        END;
+        $$;
+        """
+    )
+    cursor.execute("DROP TRIGGER IF EXISTS trg_insulin_injections_history ON insulin_injections;")
+    cursor.execute(
+        "CREATE TRIGGER trg_insulin_injections_history "
+        "AFTER UPDATE OR DELETE ON insulin_injections "
+        "FOR EACH ROW EXECUTE FUNCTION log_insulin_injection_change();"
+    )
+    _create_index_once(
+        cursor,
+        "idx_insulin_injection_history_injection_id",
+        "ON insulin_injection_history (insulin_injection_id, changed_at)",
+    )
+
+
 def _ensure_insulin_injections_schema(cursor):
     cursor.execute(
         """
@@ -3081,6 +3125,7 @@ def init_db():
             DBSchema.linked_tags,
             DBSchema.intake_event(),
             DBSchema.insulin_injections(),
+            DBSchema.insulin_injection_history,
             DBSchema.meal_type_schedule(),
             DBSchema.intake_plate,
             DBSchema.recipe_plate,
@@ -3113,6 +3158,9 @@ def init_db():
         _ensure_auth_rate_limits_schema(cur)
         _ensure_intake_event_schema(cur)
         _ensure_insulin_injections_schema(cur)
+        # After the injections schema: its own migrations must not be logged as
+        # changes made by someone.
+        _ensure_insulin_injection_history(cur)
         _ensure_insulin_pen_schema(cur)
         # After recipe, catalog and manual_intake: the one-off migration reads their owners.
         _ensure_tags_schema(cur)
@@ -3147,6 +3195,9 @@ def init_db():
         # messages, so the runtime never changes or removes one. They go with
         # their conversation (CASCADE), which runs as the owner of the table.
         cur.execute(sql.SQL("REVOKE UPDATE, DELETE, TRUNCATE ON assistant_message FROM {}").format(role))
+        # History of injections (code §11.10): only its trigger writes it, as the
+        # owner of the table, so the runtime can read it and nothing else.
+        cur.execute(sql.SQL("REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON insulin_injection_history FROM {}").format(role))
 
         conn.commit()
         logger.info("Database initialized successfully.")
