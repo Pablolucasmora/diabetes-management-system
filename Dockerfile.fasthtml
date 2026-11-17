@@ -17,9 +17,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --require-hashes -r requirements.txt
 
 # The app runs as an unprivileged user (audit H-19). The code stays owned by
-# root, so the process cannot change it.
+# root, so the process cannot change it. The user has a home of its own: the
+# VS Code dev container installs its server there (.devcontainer/), and in
+# production nothing writes to it.
 RUN groupadd --system --gid 10001 app \
-    && useradd --system --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app
+    && useradd --system --uid 10001 --gid app --create-home --home-dir /home/app \
+       --shell /usr/sbin/nologin app
 
 COPY . .
 
