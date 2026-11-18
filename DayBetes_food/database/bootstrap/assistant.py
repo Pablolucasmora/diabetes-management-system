@@ -1,4 +1,4 @@
-"""Bootstrap of the assistant's conversations and messages."""
+"""Bootstrap of the assistant's conversations, messages and photos."""
 
 
 from DayBetes_food.database.bootstrap.helpers import (
@@ -8,7 +8,7 @@ from DayBetes_food.database.bootstrap.helpers import (
 
 
 def _ensure_assistant_schema(cursor):
-    """Indexes and later columns of the assistant's tables (code_conventions.md §11.2.9)."""
+    """Indexes and later columns of the assistant's tables (code_conventions.md §11.2.9, §11.2.10)."""
     # `No meal` conversations (2026-11-13): a chat that never gets a meal (§8.12).
     cursor.execute(
         "ALTER TABLE assistant_conversation ADD COLUMN IF NOT EXISTS without_meal BOOLEAN NOT NULL DEFAULT FALSE;"
@@ -37,3 +37,6 @@ def _ensure_assistant_schema(cursor):
         "ix_assistant_conversation_intake_event_id",
         "ON assistant_conversation (intake_event_id) WHERE intake_event_id IS NOT NULL",
     )
+    # JPEG does not compress further: store the photos out of line without
+    # trying to, which only costs time (§11.2.10). Idempotent.
+    cursor.execute("ALTER TABLE assistant_photo ALTER COLUMN image SET STORAGE EXTERNAL;")

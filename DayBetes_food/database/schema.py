@@ -4,6 +4,7 @@ Uses domain constants (InsulinType, InjectionZone) to generate CHECKs
 dynamically where applicable, ensuring a single source of truth.
 """
 
+from DayBetes_food.domain.assistant import ASSISTANT_PHOTOS_MAX
 from DayBetes_food.domain.catalog import (
     CATALOG_BARCODE_MAX_LENGTH,
     CATALOG_BARCODE_MIN_LENGTH,
@@ -218,6 +219,15 @@ def assistant_message_check_constraints() -> dict[str, str]:
         "ck_assistant_message_usage_non_negative": " AND ".join(
             f"({column} IS NULL OR {column} >= 0)" for column in usage_columns
         ),
+    }
+
+
+def assistant_photo_check_constraints() -> dict[str, str]:
+    """CHECK name -> expression of `assistant_photo` (code_conventions.md §11.2.10)."""
+    return {
+        "ck_assistant_photo_order": f"photo_order BETWEEN 1 AND {ASSISTANT_PHOTOS_MAX}",
+        # The stored size is the size of the stored bytes, never a guess.
+        "ck_assistant_photo_size": "size_bytes > 0 AND size_bytes = octet_length(image)",
     }
 
 
@@ -751,7 +761,7 @@ class DBSchema:
             REFERENCES assistant_conversation(id) ON DELETE CASCADE,
         position INTEGER NOT NULL, -- order inside its conversation, from 1
         role VARCHAR(20) NOT NULL, -- AssistantRole
-        content JSONB NOT NULL, -- content blocks of the API; a photo is replaced by a text marker, never stored
+        content JSONB NOT NULL, -- content blocks of the API; a photo is replaced by a text marker (the image is in assistant_photo)
         input_tokens INTEGER, -- usage of an `assistant` row (one answer of the model); NULL on `user` rows
         cache_creation_input_tokens INTEGER,
         cache_read_input_tokens INTEGER,
@@ -760,6 +770,29 @@ class DBSchema:
         stop_reason VARCHAR(50), -- as the API returned it; open set, not a CHECK
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT uq_assistant_message_conversation_id_position UNIQUE (conversation_id, position),
+{check_lines}
+    );
+    """
+
+    @classmethod
+    def assistant_photo(cls):
+        """A photo the user sent to the assistant, as the model saw it (§11.2.10).
+        Insert-only; it goes with its message."""
+        check_lines = ",\n".join(
+            f"        CONSTRAINT {name} CHECK ({expression})"
+            for name, expression in assistant_photo_check_constraints().items()
+        )
+        return f"""
+    CREATE TABLE IF NOT EXISTS assistant_photo (
+        id SERIAL CONSTRAINT pk_assistant_photo PRIMARY KEY,
+        assistant_message_id INTEGER NOT NULL -- the `user` message that carried it; owner through its conversation
+            CONSTRAINT fk_assistant_photo_assistant_message_id_assistant_message
+            REFERENCES assistant_message(id) ON DELETE CASCADE,
+        photo_order INTEGER NOT NULL, -- order inside its message, from 1
+        image BYTEA NOT NULL, -- JPEG re-encoded by the server, without metadata: the bytes the model received
+        size_bytes INTEGER NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT uq_assistant_photo_assistant_message_id_photo_order UNIQUE (assistant_message_id, photo_order),
 {check_lines}
     );
     """

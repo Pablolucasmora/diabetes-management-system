@@ -1092,10 +1092,10 @@ Con Ciqual y OFF, los macros y lo que traiga la fuente salen de su precarga de s
 - El `system` y las herramientas son fijos y van cacheados. La fecha, la hora y las comidas planificadas van en el mensaje del usuario, nunca en el `system`, para no romper la caché.
 - Una conversación por comida. No se arrastra el historial de otras.
 - Al modelo se le reenvían como mucho los 30 últimos mensajes del usuario de la conversación, con sus respuestas y herramientas (auditoría general H-30). El corte se hace al principio de un mensaje del usuario, para que ninguna llamada a herramienta quede sin su resultado, y por saltos de 10 mensajes, para que el prefijo cacheado no cambie con cada mensaje. La conversación entera se sigue guardando y mostrando.
-- Las imágenes se reducen en el navegador antes de enviarlas.
+- Las imágenes se reducen en el navegador antes de enviarlas. Después, el servidor vuelve a codificar cada una en JPEG de 1568 px como máximo por el lado mayor y sin metadatos, también cuando el navegador no pudo reducirla, y envía al modelo y guarda esos mismos bytes (§11.2.10; decisión del usuario del 2026-11-18).
 - Se registra el uso (tokens de entrada, de caché y de salida, rondas y duración) por mensaje, sin su contenido (§8.3).
 
-**Conversaciones guardadas.** Cada conversación se guarda con sus mensajes, las llamadas a herramientas y lo que acabó en el carrito (`study_conventions.md` §7.1). Contrato de las tablas en §11.2.9.
+**Conversaciones guardadas.** Cada conversación se guarda con sus mensajes, las llamadas a herramientas y lo que acabó en el carrito (`study_conventions.md` §7.1). Contrato de las tablas en §11.2.9. Las fotos se guardan aparte, en `assistant_photo` (§11.2.10).
 
 **Implementación** (decisiones del usuario del 2026-11-12: dos tablas, envío síncrono, selector de comida y alimentos de Ciqual u OFF mediante el formulario precargado).
 
@@ -1502,6 +1502,7 @@ La clasificación de cada tabla se declara en este registro, que es el sitio ún
 | `linked_tags` | **Dependent** de su usuario, su etiqueta y su alimento, plato o receta. Privada. Contrato completo en §11.2.8. | Físico: al quitar la etiqueta, y `CASCADE` desde `users`, `tags`, `catalog`, `manual_intake` y `recipe`. | Decisión del usuario (2026-11-08), `audit/audits/audit_tags.md`. |
 | `assistant_conversation` | **Histórica** y privada: una conversación del asistente con un usuario, ligada a una comida. Non-archivable. Contrato completo en §11.2.9. | Solo `CASCADE` desde `users`; ninguna ruta la borra. Si se borra su comida, `intake_event_id` pasa a `NULL` y la conversación se conserva. | Decisión del usuario (2026-11-12), §8.12. |
 | `assistant_message` | **Dependent** de `assistant_conversation`: sus mensajes, de solo inserción (el rol de ejecución no puede modificar ni borrar filas). Contrato completo en §11.2.9. | `CASCADE` desde su conversación. | Decisión del usuario (2026-11-12), §8.12. |
+| `assistant_photo` | **Dependent** de `assistant_message`: las fotos de un mensaje del usuario, de solo inserción. Privada. Contrato completo en §11.2.10. | `CASCADE` desde su mensaje. | Decisión del usuario (2026-11-18), §8.12. |
 
 #### 11.2.2 Contrato de ciclo de vida de `catalog`
 
@@ -1661,12 +1662,29 @@ Decisión del usuario del 2026-11-12. Guardan cada conversación del asistente (
 - **Conversación sin comida** (2026-11-13, §8.12). `without_meal BOOLEAN NOT NULL DEFAULT FALSE` marca la de `No meal`, que nunca se enlaza a una comida: `ck_assistant_conversation_without_meal` impide `without_meal` con `intake_event_id`. Se fija al crearla y no cambia.
 - **Se crea con su primera respuesta guardada.** Un mensaje cuya primera llamada al modelo falla no deja ninguna fila.
 - **Mensajes.** Cada fila es un mensaje de la API de Claude, tal como se envió o se recibió: `role` (`AssistantRole`), `position` desde 1 (única por conversación) y `content`, la lista de bloques en `JSONB`, nunca vacía. La conversación se reenvía al modelo a partir de estas filas, en orden. Por eso son de **solo inserción**: `init_db` retira al rol de ejecución `UPDATE`, `DELETE` y `TRUNCATE` sobre `assistant_message`, como en `fridge_move` (§11.2.6). Añadir bloquea antes la fila de la conversación, para que dos envíos simultáneos no choquen en la posición (§6.8).
-- **Fotos.** Nunca se guardan. Se envían una vez y en la fila se sustituyen por un marcador de texto (`study_conventions.md` §7.1).
+- **Fotos.** En la fila del mensaje se sustituyen por un marcador de texto, y al modelo nunca se le reenvían. La imagen se guarda en `assistant_photo` (§11.2.10; decisión del usuario del 2026-11-18, que sustituye a la del 2026-11-12, según la cual no se guardaban).
 - **Uso.** Las filas `assistant` llevan el uso de esa respuesta: tokens de entrada, de escritura y lectura de caché, de salida, duración y `stop_reason`. Las filas `user` no llevan ninguno (`ck_assistant_message_usage_role`). `stop_reason` es un conjunto abierto de la API, así que no tiene CHECK.
 - **Qué acabó en el carrito.** Los resultados de las herramientas (`tool_result`) lo dicen: el alimento, los gramos, los hidratos y el `amount_method` de cada añadido, o el borrador de un alimento nuevo. La página los vuelve a leer de ahí al reabrir una conversación.
 - **Borrado.** Solo `CASCADE` desde `users`; los mensajes, desde su conversación. Ninguna ruta borra una conversación.
 - **Timestamps.** La conversación lleva `created_at` y `updated_at`, que cambia con cada mensaje y al enlazarla a su comida. Los mensajes solo llevan `created_at`, porque no cambian.
 - **Auditoría de cambios** (§11.10): no se requiere. Los mensajes son en sí el historial.
+
+#### 11.2.10 Contrato de `assistant_photo`
+
+Decisión del usuario del 2026-11-18, que sustituye a la del 2026-11-12 (las fotos no se guardaban). Guarda las fotos enviadas al asistente para medir el error de la IA por foto (P1, `study_conventions.md` §5.6 y §7.1).
+
+- **Qué se guarda.** Todas las fotos de un mensaje del usuario, de platos y de etiquetas, exactamente con los bytes que recibió el modelo: el JPEG que el servidor vuelve a codificar, con 1568 px como máximo por el lado mayor y sin metadatos (§8.12, **Coste**). Nunca la original. Volver a codificarla quita los datos EXIF, incluida la ubicación GPS, también cuando el navegador no pudo reducirla.
+- **Propietario.** Ninguna columna propia: hereda el de su mensaje y, por él, el de su conversación. Toda lectura hace `JOIN` con `assistant_message` y `assistant_conversation` y filtra por el usuario en el SQL. Es privada.
+- **Enlace.** `assistant_message_id`, `NOT NULL`, al mensaje `user` que la llevaba, y `photo_order` (1–4), su orden dentro del mensaje, únicos juntos. En la fila del mensaje la foto sigue siendo un marcador de texto (§11.2.9), y al modelo nunca se le reenvía.
+- **Contenido.** `image BYTEA NOT NULL`, siempre JPEG, y su tamaño en bytes. Postgres, y no archivos en un volumen ni otro servicio: con el volumen previsto (de 80 a 300 MB en todo el estudio) mantiene la propiedad por SQL, el borrado en cascada y las copias cifradas sin un segundo sistema ni archivos huérfanos.
+- **Cuándo se escribe.** En la misma transacción que guarda el mensaje del usuario. Si el mensaje no se guarda (§11.2.9, **Se crea con su primera respuesta guardada**), tampoco sus fotos.
+- **Solo inserción**, como `assistant_message`: `init_db` retira al rol de ejecución `UPDATE`, `DELETE` y `TRUNCATE`.
+- **Borrado.** Solo `CASCADE` desde su mensaje.
+- **Timestamps.** Solo `created_at`, porque no cambia.
+- **Retención.** Sin límite durante el TFG; se decide con la política de retención de la fase 2.
+- **Copias de seguridad.** Se copian cada 10 días, no cada noche (`infra_conventions.md` §12).
+- **Interfaz.** Por ahora ninguna ruta la lee: el historial sigue mostrando la píldora `Photo` (`frontend_conventions.md` §9.11).
+- **Auditoría de cambios** (§11.10): no se requiere; las filas no cambian.
 
 Una entidad archivable utiliza un campo nullable `deleted_at`.
 
