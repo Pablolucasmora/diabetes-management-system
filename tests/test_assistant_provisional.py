@@ -83,6 +83,17 @@ def test_the_unit_of_a_plus_one_is_one_serving_or_the_grams_of_that_add():
     assert units == {7: 30, 8: 40}
 
 
+def test_counted_pieces_make_the_unit_one_piece_even_in_servings():
+    turns = turn_views(
+        _conversation(
+            # The serving of this food is two croquetas: 2 pieces are 1 serving.
+            {TOOL_RESULT_ADDED: {"name": "Croqueta", "grams": 60, "food_id": 7, "servings": 1, "pieces": 2}},
+            {TOOL_RESULT_ADDED: {"name": "Galleta", "grams": 24, "food_id": 8, "pieces": 3}},
+        )
+    )
+    assert {unit.portion_id: unit.unit_g for unit in plus_one_units(turns)} == {7: 30, 8: 8}
+
+
 def test_the_last_added_row_comes_first_and_keeps_its_latest_unit():
     turns = turn_views(
         _conversation(

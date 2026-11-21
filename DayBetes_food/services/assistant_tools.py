@@ -18,6 +18,7 @@ only chooses the food, the amount and how the amount was obtained (U2).
 """
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -89,6 +90,7 @@ from DayBetes_food.domain.catalog import CatalogItemCreate, parse_barcode, parse
 from DayBetes_food.domain.ciqual_food import parse_ciqual_code
 from DayBetes_food.domain.constants import (
     AmountMethod,
+    ServingMethod,
     AssistantDraftSource,
     ConservationMethod,
     CookingMethod,
@@ -267,6 +269,10 @@ TOOL_DEFINITIONS = [
             "entry_id": {"type": "integer"},
             "grams": _NULLABLE_NUMBER,
             "servings": _NULLABLE_NUMBER,
+            "pieces": {
+                "type": ["integer", "null"],
+                "description": "How many separate pieces the user counted (2 croquetas: 2), so +1 adds one piece.",
+            },
             "amount_method": {"type": "string", "enum": [method.value for method in AmountMethod]},
             "plate_id": _PLATE_ID,
             **_PREPARATION,
@@ -289,6 +295,10 @@ TOOL_DEFINITIONS = [
             "name": {"type": "string"},
             "weight_g": {"type": "number"},
             "carbs_g": {"type": "number"},
+            "pieces": {
+                "type": ["integer", "null"],
+                "description": "How many separate pieces the user counted (2 croquetas: 2), so +1 adds one piece.",
+            },
             "sugars_g": _NULLABLE_NUMBER,
             "fats_g": _NULLABLE_NUMBER,
             "saturated_g": _NULLABLE_NUMBER,
@@ -560,6 +570,10 @@ TOOL_DEFINITIONS = [
             "alcohol_g_100g": _NULLABLE_NUMBER,
             "grams": _NULLABLE_NUMBER,
             "servings": _NULLABLE_NUMBER,
+            "pieces": {
+                "type": ["integer", "null"],
+                "description": "How many separate pieces the user counted (2 croquetas: 2), so +1 adds one piece.",
+            },
             "amount_method": {"type": "string", "enum": [method.value for method in AmountMethod]},
             "plate_id": _PLATE_ID,
             **_PREPARATION,
@@ -589,6 +603,10 @@ TOOL_DEFINITIONS = [
             "macros_source": {"type": "string", "enum": [m.value for m in MANUAL_DRAFT_MACROS_SOURCES]},
             "grams": _NULLABLE_NUMBER,
             "servings": _NULLABLE_NUMBER,
+            "pieces": {
+                "type": ["integer", "null"],
+                "description": "How many separate pieces the user counted (2 croquetas: 2), so +1 adds one piece.",
+            },
             "amount_method": {"type": "string", "enum": [method.value for method in AmountMethod]},
             "plate_id": _PLATE_ID,
             **_PREPARATION,
@@ -747,6 +765,17 @@ def _portion_grams(item, tool_input: dict) -> tuple[float, float | None]:
         raise ToolInputError("The amount must be greater than 0 g and at most 100000 g.") from error
 
 
+def _pieces(tool_input: dict) -> int | None:
+    """The pieces the user counted (§8.12, "Botones +1"): a +1 then adds one piece,
+    whatever the food's serving is."""
+    pieces = tool_input.get("pieces")
+    if pieces is None:
+        return None
+    if not isinstance(pieces, int) or isinstance(pieces, bool) or not 1 <= pieces <= 100:
+        raise ToolInputError("pieces must be a whole number from 1 to 100, or null.")
+    return pieces
+
+
 def _add_portion(ctx: ToolContext, entry_type: FoodEntryType, item, tool_input: dict) -> dict:
     """Add a food or dish already read to the meal: the amount, its U2 and its
     preparation come from the tool input (§8.12)."""
@@ -790,9 +819,10 @@ def _add_portion(ctx: ToolContext, entry_type: FoodEntryType, item, tool_input: 
                 "carbs_g": _round(carbs),
                 "amount_method": amount_method.value,
                 "preparation": _preparation_text(preparation, is_cooked_weight) or None,
-                # The +1 buttons repeat this add (§8.12): its row and, in servings, how many.
+                # The +1 buttons repeat this add (§8.12): its row and how many units it was.
                 "food_id": portion_id,
                 "servings": servings,
+                "pieces": _pieces(tool_input),
             }
         )
     }
@@ -824,13 +854,39 @@ def _provisional_food_values(ctx: ToolContext, tool_input: dict):
     return food_draft_prefill(tool_input), None, None, source
 
 
+_COUNT_IN_NAME = re.compile(r"\s*(\(\s*[x×]?\d+\s*\)|[x×]\s*\d+)\s*$", re.IGNORECASE)
+
+
+def _piece_name(name):
+    """A counted food is named as one piece (§8.12, "Botones +1"): "Croquetas de
+    boletus (2)" loses its count; the count goes in servings."""
+    return _COUNT_IN_NAME.sub("", name).strip() if isinstance(name, str) else name
+
+
+def _per_piece(tool_input: dict, serving_g: float | None) -> tuple[float | None, dict]:
+    """A new food or dish the user counted in pieces gets one piece as its serving
+    and is added as that many servings (§8.12): "2 croquetas" of 60 g is a 30 g
+    serving, ×2. Without pieces, the serving and the amount stay as given."""
+    pieces = _pieces(tool_input)
+    if pieces is None:
+        return serving_g, tool_input
+    grams = tool_number(tool_input.get("grams"), "grams")
+    servings = tool_number(tool_input.get("servings"), "servings")
+    if grams is None and servings is not None and serving_g:
+        grams = servings * serving_g
+    if not grams or grams <= 0:
+        return serving_g, tool_input
+    return grams / pieces, {**tool_input, "grams": None, "servings": pieces}
+
+
 def _add_new_food(ctx: ToolContext, tool_input: dict) -> dict:
     ctx.require_meal_allowed()
     try:
         prefill, prefill_source, prefill_id, source = _provisional_food_values(ctx, tool_input)
         extras = food_draft_extras(tool_input)
         # The model's name and brand win: an Open Food Facts name is often noisy.
-        name = parse_catalog_name(tool_input.get("name") or prefill.name)
+        name = parse_catalog_name(_piece_name(tool_input.get("name") or prefill.name))
+        serving_g, tool_input = _per_piece(tool_input, prefill.default_portion_g)
         brand = tool_text(tool_input.get("brand"), "brand", max_length=255) or prefill.brand
         nutrients = prefill.nutrients
         require_carbs(nutrients)
@@ -860,13 +916,14 @@ def _add_new_food(ctx: ToolContext, tool_input: dict) -> dict:
                 nutriscore=prefill.nutriscore or extras.nutriscore,
                 nova=prefill.nova if prefill.nova is not None else extras.nova,
                 yuka=extras.yuka,
-                default_portion=prefill.default_portion_g,
+                default_portion=serving_g,
                 nutrients=nutrients,
                 barcode=prefill.barcode or extras.barcode,
                 cooking_factor=extras.cooking_factor,
                 macros_source=macros_source,
                 default_amount_method=None,
-                serving_method=None,
+                # One piece is a unit, which `package` covers (ServingMethod).
+                serving_method=ServingMethod.PACKAGE if _pieces(tool_input) else None,
                 macros_confidence=None,
                 prefill_source=prefill_source,
                 prefill_source_id=prefill_id,
@@ -894,9 +951,10 @@ def _add_new_food(ctx: ToolContext, tool_input: dict) -> dict:
 def _add_new_dish(ctx: ToolContext, tool_input: dict) -> dict:
     ctx.require_meal_allowed()
     try:
-        draft = manual_intake_draft(tool_input)
+        draft = manual_intake_draft({**tool_input, "name": _piece_name(tool_input.get("name"))})
     except ValidationError as error:
         raise ToolInputError(str(error)) from error
+    serving_g, tool_input = _per_piece(tool_input, draft.default_portion)
     try:
         manual_intake_id = create_manual_intake(
             ctx.connection,
@@ -907,14 +965,14 @@ def _add_new_dish(ctx: ToolContext, tool_input: dict) -> dict:
                 description=draft.description,
                 subtype=draft.subtype,
                 origin=draft.origin,
-                default_portion=draft.default_portion,
+                default_portion=serving_g,
                 nutrients=draft.nutrients,
                 glycemic_index=draft.glycemic_index,
                 ig_confidence=draft.ig_confidence,
                 macros_confidence=draft.macros_confidence,
                 macros_source=draft.macros_source,
                 default_amount_method=draft.default_amount_method,
-                serving_method=None,
+                serving_method=ServingMethod.PACKAGE if _pieces(tool_input) else None,
                 needs_review=True,
             ),
             commit=False,
@@ -1054,6 +1112,7 @@ def _add_estimate(ctx: ToolContext, tool_input: dict) -> dict:
                 "amount_method": AmountMethod.AI_ESTIMATE.value,
                 "kind": "estimate",
                 "food_id": portion_id,
+                "pieces": _pieces(tool_input),
             }
         )
     }

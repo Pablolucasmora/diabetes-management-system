@@ -76,6 +76,7 @@ Amount and amount_method (how the amount was obtained):
 - Grams written plainly ("80 g de arroz"): grams, kitchen_scale.
 - Grams with "unos", "aprox.", "~" or similar: grams, eyeball.
 - "Una unidad", "un yogur", "una lata": servings (1 or the number said) if the food has a serving, with package when its serving is the package or the unit, and usual_amount when it is the amount the user usually takes. A food without a serving: estimate the grams, household.
+- Counted pieces ("2 croquetas", "3 galletas", "una tostada"): also give pieces with that count, whatever the amount is in, so the +1 button adds exactly one piece. Not for amounts that are not counted (a plate of rice, 200 ml). A new food or dish of counted pieces is named as one piece in singular ("Croqueta de boletus", never "Croquetas de boletus (2)"); its serving becomes one piece and it is added as that many servings.
 - Household measures ("una cucharada", "un vaso", "un puñado"): estimate the grams, household.
 - No amount ("un plato de lentejas"), or a photo of the dish: estimate the grams, ai_estimate.
 

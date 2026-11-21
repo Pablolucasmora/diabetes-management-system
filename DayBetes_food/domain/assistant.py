@@ -784,7 +784,7 @@ class AddedUnit:
     """What one add put in a row of the meal, so a +1 can repeat it (§8.12, "Botones +1")."""
 
     portion_id: int
-    unit_g: float  # one serving if it was added in servings; else the grams of that add
+    unit_g: float  # one counted piece, else one serving, else the grams of that add
 
 
 @dataclass(frozen=True)
@@ -807,10 +807,12 @@ def _added_unit(added) -> AddedUnit | None:
     if not isinstance(added, dict) or not _is_id(added.get("food_id")):
         return None
     grams = _number(added.get("grams"))
-    servings = _number(added.get("servings"))
     if not grams or grams <= 0:
         return None
-    unit = grams / servings if servings and servings > 0 else grams
+    # The pieces the user counted win over the servings: "2 croquetas" +1 is a
+    # third croqueta, even if the serving is two of them (§8.12, "Botones +1").
+    count = _number(added.get("pieces")) or _number(added.get("servings"))
+    unit = grams / count if count and count > 0 else grams
     return AddedUnit(portion_id=added["food_id"], unit_g=unit)
 
 
