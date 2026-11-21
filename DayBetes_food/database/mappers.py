@@ -11,6 +11,7 @@ from DayBetes_food.domain.ciqual_food import CiqualFoodRead
 from DayBetes_food.domain.constants import (
     AmountMethod,
     AssistantRole,
+    AssistantTurnStatus,
     MacrosSource,
     PenCloseReason,
     PenFormat,
@@ -38,7 +39,7 @@ from DayBetes_food.domain.insulin import InsulinInjectionRead
 from DayBetes_food.domain.insulin_pen import InsulinBrandRead, InsulinPenRead
 from DayBetes_food.domain.intake_event import IntakeEventRead
 from DayBetes_food.domain.intake_plate import IntakePlateRead
-from DayBetes_food.domain.assistant import AssistantConversationRead, AssistantMessageRead
+from DayBetes_food.domain.assistant import AssistantConversationRead, AssistantMessageRead, AssistantTurnRead
 from DayBetes_food.domain.manual_intake import ManualIntakeRead
 from DayBetes_food.domain.off_product import OffProductRead
 from DayBetes_food.domain.recipe import RecipeRead
@@ -600,3 +601,27 @@ def assistant_message_read_from_row(row: dict) -> AssistantMessageRead:
         )
     except (KeyError, ValueError) as exc:
         raise InfrastructureError(f"Invalid assistant message row: {exc}") from exc
+
+
+def assistant_turn_read_from_row(row: dict) -> AssistantTurnRead:
+    """Convert a SQL row of `assistant_turn` (queries/assistant.py)."""
+    try:
+        conversation_id = row.get("conversation_id")
+        event_id = row.get("intake_event_id")
+        return AssistantTurnRead(
+            id=int(row["id"]),
+            user_id=int(row["users_id"]),
+            status=AssistantTurnStatus(row["status"]),
+            conversation_id=int(conversation_id) if conversation_id is not None else None,
+            intake_event_id=int(event_id) if event_id is not None else None,
+            meal_created=bool(row["meal_created"]),
+            user_text=str(row["user_text"] or ""),
+            photo_count=int(row["photo_count"]),
+            notices=tuple(str(notice) for notice in (row.get("notices") or [])),
+            error_message=row.get("error_message"),
+            created_at=row["created_at"],
+            finished_at=row.get("finished_at"),
+            seen_at=row.get("seen_at"),
+        )
+    except (KeyError, ValueError) as exc:
+        raise InfrastructureError(f"Invalid assistant turn row: {exc}") from exc

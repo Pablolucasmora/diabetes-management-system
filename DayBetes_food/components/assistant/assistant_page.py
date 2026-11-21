@@ -20,6 +20,7 @@ from DayBetes_food.domain.assistant import (
     ASSISTANT_TEXT_MAX_LENGTH,
     NO_MEAL_CHOICE,
     AddedCard,
+    AssistantTurnRead,
     DraftCard,
     TurnView,
 )
@@ -360,11 +361,62 @@ def TurnBlock(turn: TurnView, conversation_id: int, notices: list[str] | None = 
     )
 
 
-def AssistantThread(turns: list[TurnView], conversation_id: int | None):
-    """The conversation of the chosen meal; the intro while it is empty."""
+def _typing_dots():
+    # Three dots that rise in turn while the answer comes (§9.11, static/css/input.css).
+    return Span(
+        Span(cls="db_typing_dot"),
+        Span(cls="db_typing_dot"),
+        Span(cls="db_typing_dot"),
+        aria_hidden="true",
+        cls="flex items-end gap-1 pb-1 text-gray-500",
+    )
+
+
+def assistant_turn_dom_id(turn_id: int) -> str:
+    return f"assistant_turn_{turn_id}"
+
+
+def PendingTurnBlock(turn: AssistantTurnRead):
+    """A message the assistant is answering in the background (code_conventions.md
+    §8.12): what the user sent and `Thinking`, asked for again every 2 s until the
+    answer replaces it. Also drawn on coming back to the page while it waits."""
     return Div(
-        _intro() if not turns else None,
+        _user_bubble(turn),
+        Div(
+            Span("Thinking", cls="text-sm text-gray-500"),
+            _typing_dots(),
+            role="status",
+            cls="flex items-end gap-1.5 self-start web_container rounded-2xl rounded-bl-md px-3 py-2",
+        ),
+        id=assistant_turn_dom_id(turn.id),
+        hx_get=f"/assistant/turn/{turn.id}",
+        hx_trigger="every 2s",
+        hx_swap="outerHTML",
+        data_skip_page_loading="true",
+        cls="w-full flex flex-col gap-2 scroll-mt-48",
+    )
+
+
+def FailedTurnBlock(turn: AssistantTurnRead):
+    """A message the assistant could not answer: nothing was stored, so the text
+    goes back to an empty composer to send it again (static/js/assistant.js)."""
+    return Div(
+        _user_bubble(turn),
+        _notice(turn.error_message or "The assistant could not answer. Send it again."),
+        id=assistant_turn_dom_id(turn.id),
+        data_assistant_failed_text=turn.user_text,
+        cls="w-full flex flex-col gap-2 scroll-mt-48",
+    )
+
+
+def AssistantThread(turns: list[TurnView], conversation_id: int | None, tail=()):
+    """The conversation of the chosen meal; the intro while it is empty. `tail` is
+    a message still being answered, or one that failed, drawn after it."""
+    tail = tuple(block for block in tail if block is not None)
+    return Div(
+        _intro() if not turns and not tail else None,
         *(TurnBlock(turn, conversation_id) for turn in turns),
+        *tail,
         ConversationIdInput(conversation_id),
         id=THREAD_ID,
         cls="w-full flex flex-col gap-3",
@@ -373,15 +425,8 @@ def AssistantThread(turns: list[TurnView], conversation_id: int | None):
 
 def _thinking():
     return Div(
-        Span("Thinking", cls="text-sm text-gray-500"),
-        # Three dots that rise in turn while the answer comes (§9.11, static/css/input.css).
-        Span(
-            Span(cls="db_typing_dot"),
-            Span(cls="db_typing_dot"),
-            Span(cls="db_typing_dot"),
-            aria_hidden="true",
-            cls="flex items-end gap-1 pb-1 text-gray-500",
-        ),
+        Span("Sending", cls="text-sm text-gray-500"),
+        _typing_dots(),
         id="assistant_thinking",
         role="status",
         cls="hidden [&.htmx-request]:flex items-end gap-1.5 self-start web_container rounded-2xl rounded-bl-md px-3 py-2",
@@ -476,6 +521,7 @@ def AssistantPage(
     turns: list[TurnView],
     *,
     without_meal: bool = False,
+    tail=(),
 ):
     return Div(
         # Fixed at the top, like Food's bar (§9.11): Back, the cart and Add to stay
@@ -485,7 +531,7 @@ def AssistantPage(
             AssistantMealSelect(events, selected_event_id, without_meal=without_meal),
             cls="sticky top-0 z-[600] w-full flex flex-col gap-3 px-5 pt-6 pb-4 web_glass_strong rounded-b-3xl",
         ),
-        Div(AssistantThread(turns, conversation_id), id=THREAD_BOX_ID, cls="w-full"),
+        Div(AssistantThread(turns, conversation_id, tail), id=THREAD_BOX_ID, cls="w-full"),
         _thinking(),
         # At the bottom of the screen, above the island; in the flow (sticky,
         # not fixed) so a phone keyboard scrolls it into view.

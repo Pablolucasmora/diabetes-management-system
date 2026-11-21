@@ -32,6 +32,7 @@ from DayBetes_food.domain.constants import (
     Ripeness,
     AmountMethod,
     AssistantRole,
+    AssistantTurnStatus,
     MacrosSource,
     StorageLocation,
     SystemTag,
@@ -794,6 +795,36 @@ class DBSchema:
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT uq_assistant_photo_assistant_message_id_photo_order UNIQUE (assistant_message_id, photo_order),
 {check_lines}
+    );
+    """
+
+    # Messages answered in the background (code_conventions.md §8.12, §11.2.11):
+    # the page polls the row while the model answers, also after leaving and coming back.
+    assistant_turn = f"""
+    CREATE TABLE IF NOT EXISTS assistant_turn (
+        id SERIAL CONSTRAINT pk_assistant_turn PRIMARY KEY,
+        users_id INTEGER NOT NULL
+            CONSTRAINT fk_assistant_turn_users_id_users
+            REFERENCES users(id) ON DELETE CASCADE,
+        conversation_id INTEGER -- NULL until the answer creates the conversation of a new chat
+            CONSTRAINT fk_assistant_turn_conversation_id_assistant_conversation
+            REFERENCES assistant_conversation(id) ON DELETE CASCADE,
+        intake_event_id INTEGER -- the meal the answer wrote to, for `Add to`; NULL if none or deleted
+            CONSTRAINT fk_assistant_turn_intake_event_id_intake_event
+            REFERENCES intake_event(id) ON DELETE SET NULL,
+        meal_created BOOLEAN NOT NULL DEFAULT FALSE, -- its first add created that meal
+        status VARCHAR(20) NOT NULL
+            CONSTRAINT ck_assistant_turn_status
+            CHECK (status IN ({sql_in_list(AssistantTurnStatus)})),
+        user_text TEXT NOT NULL DEFAULT '', -- what the user wrote, shown while it waits; the stored message is in assistant_message
+        photo_count INTEGER NOT NULL DEFAULT 0
+            CONSTRAINT ck_assistant_turn_photo_count CHECK (photo_count >= 0),
+        notices JSONB NOT NULL DEFAULT '[]'::jsonb, -- notices shown under the answer (frontend §9.11)
+        error_message VARCHAR(200), -- user-facing reason of a failed turn; the internal one is in the log
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        started_at TIMESTAMPTZ,
+        finished_at TIMESTAMPTZ,
+        seen_at TIMESTAMPTZ -- when the page showed its outcome; an unseen one is reopened on coming back
     );
     """
 

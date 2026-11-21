@@ -20,8 +20,10 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 from DayBetes_food.domain.catalog import CATALOG_NAME_MAX_LENGTH, parse_barcode, parse_cooking_factor
 from DayBetes_food.domain.constants import (
+    ASSISTANT_TURN_PENDING,
     AssistantDraftSource,
     AssistantRole,
+    AssistantTurnStatus,
     ConservationMethod,
     CookingMethod,
     FoodCategory,
@@ -156,6 +158,31 @@ class AssistantConversationRead:
     model: str
     created_at: datetime
     without_meal: bool = False  # `No meal`: only drafts, never a meal (§8.12)
+
+
+@dataclass(frozen=True)
+class AssistantTurnRead:
+    """One message answered in the background (code_conventions.md §8.12, §11.2.11).
+    It holds what the page needs while it waits and after: the text and photo
+    count the user sent, and where the answer ended up."""
+
+    id: int
+    user_id: int
+    status: AssistantTurnStatus
+    conversation_id: int | None  # None until the answer creates the conversation
+    intake_event_id: int | None  # the meal it wrote to, for `Add to`
+    meal_created: bool  # its first add created that meal
+    user_text: str
+    photo_count: int
+    notices: tuple[str, ...]  # shown under the answer (§9.11)
+    error_message: str | None  # the user-facing reason of a failed turn
+    created_at: datetime
+    finished_at: datetime | None
+    seen_at: datetime | None  # when the page showed its outcome
+
+    @property
+    def pending(self) -> bool:
+        return self.status in ASSISTANT_TURN_PENDING
 
 
 @dataclass(frozen=True)

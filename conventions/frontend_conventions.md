@@ -560,12 +560,12 @@ Contrato del servidor en `code_conventions.md` §8.12. Solo existe si el asisten
 - `No meal` es un chat solo para crear alimentos y recetas (`code_conventions.md` §8.12, **Conversación sin comida**): nada va al carrito. Viaja como `intake_event_id=none`.
 - El id de la conversación viaja en un campo oculto. Vacío empieza una nueva.
 
-**Enviar** (decisión del usuario, 2026-11-12: síncrono).
+**Enviar** (decisión del usuario, 2026-11-12; en segundo plano desde el 2026-11-21, `code_conventions.md` §8.12).
 
 - Solo envía el botón, y Enter hace un salto de línea. El botón está activo si hay texto, una mención o alguna foto.
-- Mientras el servidor responde, aparece una burbuja `Thinking` con tres puntos que suben uno tras otro (quietos si el sistema pide reducir el movimiento, §10) y el botón se desactiva.
-- Si sale bien, se añade al final el turno: el mensaje del usuario, a la derecha, con la píldora `Photo` si llevaba una foto, o `N photos` si llevaba varias; las respuestas del asistente, a la izquierda y como texto plano (solo las de un mensaje sin llamadas a herramientas: el texto que el modelo escribe junto a una llamada no es una respuesta); y las tarjetas de lo que hizo. Después se vacía el compositor (texto, menciones y fotos) y se desplaza la vista al turno nuevo.
-- Si falla, el toast lo explica (`code_conventions.md` §8.12) y el compositor se queda como estaba.
+- Mientras se sube el mensaje, aparece una burbuja `Sending` y el botón se desactiva. En cuanto el servidor lo acepta, se vacía el compositor y se añade al final el mensaje del usuario con una burbuja `Thinking` con tres puntos que suben uno tras otro (quietos si el sistema pide reducir el movimiento, §10). Ese bloque pregunta cada 2 s si hay respuesta; se puede salir de la página y, al volver, sigue esperando o ya muestra la respuesta.
+- Cuando la respuesta está, sustituye a `Thinking` el turno: el mensaje del usuario, a la derecha, con la píldora `Photo` si llevaba una foto, o `N photos` si llevaba varias; las respuestas del asistente, a la izquierda y como texto plano (solo las de un mensaje sin llamadas a herramientas: el texto que el modelo escribe junto a una llamada no es una respuesta); y las tarjetas de lo que hizo. Después se vacía el compositor (texto, menciones y fotos) y se desplaza la vista al turno nuevo.
+- Si el envío falla (validación, o el asistente aún responde al anterior), el toast lo explica y el compositor se queda como estaba. Si falla la respuesta, el mensaje queda con el motivo debajo y su texto vuelve al compositor si está vacío; las fotos hay que volver a adjuntarlas.
 
 **Fotos** (decisión del usuario, 2026-11-15: hasta 4 por mensaje, con miniaturas). El botón de la cámara adjunta fotos de un plato o de una etiqueta nutricional, por ejemplo la cara delantera y la trasera de un envase.
 
@@ -609,9 +609,10 @@ Las tarjetas se leen de los resultados guardados de las herramientas, así que u
 | `GET /assistant/mentions?q=` (al escribir tras `/`, con un retraso de 150 ms; una respuesta que llega tarde se descarta) | `#assistant_mentions` | `innerHTML` | las filas, o una línea `No foods match` | sin sesión: `401`, por el canal de errores |
 
 | `GET /assistant/thread?intake_event_id=` (al cambiar `Add to`) | `#assistant_thread_box` | `innerHTML` | la conversación de esa comida, o la vacía con la introducción | comida confirmada o borrada: `404` por el canal de errores |
-| `POST /assistant/message` (`multipart/form-data`: `message`, `mentions`, `photo` (repetido, hasta 4), `intake_event_id`, `conversation_id`) | `#assistant_thread` | `beforeend` | el turno, con el id de la conversación y, si creó la comida, `Add to` fuera de banda | validación `422`, comida confirmada o borrada `404`/`409`, proveedor `502`: status, cuerpo vacío y toast |
+| `POST /assistant/message` (`multipart/form-data`: `message`, `mentions`, `photo` (repetido, hasta 4), `intake_event_id`, `conversation_id`) | `#assistant_thread` | `beforeend` | el mensaje con `Thinking`, que pregunta por su respuesta | validación `422`, conversación ajena `404`, otro mensaje respondiéndose `409`: status, cuerpo vacío y toast |
+| `GET /assistant/turn/{id}` (cada 2 s, desde el bloque `Thinking`) | el propio bloque | `outerHTML` | `204` mientras espera; el turno, con el id de la conversación y, si creó la comida, `Add to` fuera de banda; o el bloque de fallo | sin sesión `401` |
 
-Las tres exigen el header `HX-Request` (`403` si falta). Repetir un envío es un mensaje nuevo: el asistente puede volver a añadir lo mismo, y la copia se quita en el carrito.
+Las cuatro exigen el header `HX-Request` (`403` si falta). Repetir un envío es un mensaje nuevo: el asistente puede volver a añadir lo mismo, y la copia se quita en el carrito.
 
 ### 9.12 Guía de criterios (decisión del usuario, 2026-11-21)
 
