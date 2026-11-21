@@ -625,8 +625,10 @@
 
   // Keep the focus in the text box when a row is pressed, so the phone
   // keyboard does not close and reopen.
+  // The same for a +1 chip and its menu: the keyboard closing mid-press moved the
+  // composer under the finger.
   document.addEventListener("mousedown", function (event) {
-    if (event.target.closest && event.target.closest("#assistant_mentions [role='option']")) event.preventDefault();
+    if (event.target.closest && event.target.closest("#assistant_mentions [role='option'], [data-plus-url], #assistant_plus_menu")) event.preventDefault();
   });
 
   // After a query with a space stops matching, the `/` stays as plain text.
@@ -719,12 +721,14 @@
       });
       menu.appendChild(item);
     });
+    // The wrapper is sticky, which already places the menu: setting it relative
+    // unstuck the composer and made it jump up.
     var wrapper = plusRow() && plusRow().parentElement;
     if (!wrapper) return;
-    wrapper.style.position = wrapper.style.position || "relative";
-    var left = chip.getBoundingClientRect().left - wrapper.getBoundingClientRect().left;
-    menu.style.left = Math.max(0, left) + "px";
     wrapper.appendChild(menu);
+    var left = chip.getBoundingClientRect().left - wrapper.getBoundingClientRect().left;
+    var maxLeft = wrapper.clientWidth - menu.offsetWidth;
+    menu.style.left = Math.max(0, Math.min(left, maxLeft)) + "px";
     if (navigator.vibrate) navigator.vibrate(10);
   }
 

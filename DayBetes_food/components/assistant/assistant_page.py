@@ -586,7 +586,8 @@ def PlusRow(buttons: list, conversation_id: int | None, *, oob: bool = False):
             aria_label=f"One more {button.name}, now {_count_text(button.count)}",
             cls="""
                 web_button shrink-0 rounded-full px-3 py-1.5 text-xs
-                flex items-center gap-1.5 select-none
+                flex items-center gap-1.5 select-none touch-manipulation
+                [-webkit-touch-callout:none]
             """,
         )
         for button in buttons
