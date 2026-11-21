@@ -5,6 +5,7 @@ from fasthtml.common import *
 from DayBetes_food.components.cart.cart_shared import CHECKBOX_CLS
 from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.components.navigation import back_js
+from DayBetes_food.components.guide import GuideHelpButton
 from DayBetes_food.components.food.food_actions import COPY_LABEL, COPY_QUESTION, EDIT_LABELS
 from DayBetes_food.components.food.food_shared import (
     AMOUNT_METHOD_LABELS,
@@ -581,7 +582,11 @@ def RecipeIngredientsBlock(recipe_id: int, portions: list, plates: list = (), ca
         sections = [P("No ingredients yet.", cls="text-sm text-gray-500")]
     return Div(
         Div(
-            H2("Ingredients", cls="font-semibold text-gray-900"),
+            Div(
+                H2("Ingredients", cls="font-semibold text-gray-900"),
+                GuideHelpButton("recipe_preparation", "preparation"),
+                cls="flex items-center gap-1.5",
+            ),
             _recipe_add_ingredient_button(recipe_id) if can_edit and not several else "",
             cls="flex items-center justify-between gap-3",
         ),
@@ -624,7 +629,11 @@ def _amount_method_field(root_id: str, value: str | None):
     field_id = f"{root_id}_amount_method"
     return Div(
         Div(
-            Label("Amount from", cls="text-sm font-medium text-gray-800", **{"for": field_id}),
+            Div(
+                Label("Amount from", cls="text-sm font-medium text-gray-800", **{"for": field_id}),
+                GuideHelpButton("amount_method", "Amount from"),
+                cls="flex items-center gap-1.5",
+            ),
             P("How you get the amount this time.", cls="text-xs text-gray-500"),
             cls="flex flex-col min-w-0 flex-1",
         ),
@@ -928,6 +937,7 @@ def FoodDetailPage(
                             cls="text-xs text-gray-600",
                             **{"for": f"is_cooked_weight_{root_id}"},
                         ),
+                        GuideHelpButton("cooked_weight", "Cooked weight"),
                         Input(
                             type="checkbox",
                             name="is_cooked_weight",
@@ -965,7 +975,8 @@ def FoodDetailPage(
                             "}"
                         ),
                     ),
-                    cls="flex justify-end",
+                    GuideHelpButton("preparation", "preparation"),
+                    cls="flex items-center justify-end gap-1.5",
                 ),
                 Div(
                     Div(

@@ -8,6 +8,7 @@ from fasthtml.common import *
 from DayBetes_food.components.food.food_shared import STORAGE_LABELS
 from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.components.modal import ModalLayer, close_modal_js
+from DayBetes_food.components.guide import GuideHelpButton
 from DayBetes_food.domain.constants import ConservationMethod, CookingMethod, FoodPhysicalState, StorageLocation
 from DayBetes_food.domain.intake_plate import derive_plate_name
 
@@ -87,6 +88,14 @@ def RecipeAddForm(recipe, groups: list[tuple], intake_event_id: str, plate_id: s
                 )
             )
         sections.extend(_ingredient_fields(portion, portion.amount * per_serving) for portion in portions)
+    sections.insert(
+        0,
+        Div(
+            P("Preparation", cls="web_section_label"),
+            GuideHelpButton("recipe_preparation", "preparation"),
+            cls="flex items-center gap-1.5",
+        ),
+    )
     return Form(
         P(f"Add {recipe.name}", cls="text-lg font-semibold break-words"),
         P(f"It goes in as {len(groups)} new plates.", cls="text-xs text-gray-600") if several_plates else "",

@@ -342,6 +342,7 @@ def CreateCatalogPage(
                     help_text="Physical state before preparation.",
                     allow_add=False,
                     value=_pv("initial_state"),
+                    guide_topic="final_state",
                 ),
                 _decimal_input("Cooking factor", "cooking_factor", help_text="Cooked/raw weight ratio. Leave empty if unknown.", value=_pv("cooking_factor")),
             ),
@@ -850,7 +851,7 @@ def EditCatalogPage(
             "Classification",
             _searchable_autocomplete_input("Category*", "category", [c.value for c in FoodCategory], allow_add=False, value=_input_value(entry.get("category"))),
             _searchable_autocomplete_input("Subtype*", "subtype", subtype_options or [], allow_add=True, value=_input_value(entry.get("subtype")), maxlength=FOOD_SUBTYPE_MAX_LENGTH),
-            _searchable_autocomplete_input("Initial state", "initial_state", [s.value for s in FoodPhysicalState], allow_add=False, value=_input_value(entry.get("initial_state"))),
+            _searchable_autocomplete_input("Initial state", "initial_state", [s.value for s in FoodPhysicalState], allow_add=False, value=_input_value(entry.get("initial_state")), guide_topic="final_state"),
             _decimal_input("Cooking factor", "cooking_factor", value=_input_value(entry.get("cooking_factor"))),
         ),
         _form_section(

@@ -9,12 +9,12 @@ from fasthtml.common import *
 
 from DayBetes_food.components.food.tags import tag_label, tag_pill_style
 from DayBetes_food.components.modal import ConfirmActionModal, close_modal_js, modal_confirm_button, open_modal_js
-from DayBetes_food.components.navigation import back_js
+from DayBetes_food.components.settings.subpage import SUBPAGE_CLS, SearchField, SubpageHeader
 from DayBetes_food.domain.tag import TAG_NAME_MAX_LENGTH, TagRead
 
 TAGS_LIST_ID = "settings-tags-list"
 _PICKR_VERSION = "1.9.1"
-_ROW_CLS = "web_container food_entry flex items-center justify-between gap-3"
+_ROW_CLS = "web_container food_entry !w-full flex items-center justify-between gap-3"
 
 
 def tag_settings_row(tag: TagRead):
@@ -93,11 +93,18 @@ def tags_settings_list(tags: list[TagRead], searching: bool = False):
 
 def tags_settings_page(tags: list[TagRead]):
     return Div(
-        Div(
-            Button("Back", type="button", cls="web_button self-start px-3 py-1.5 text-sm", onclick=back_js("/settings")),
-            cls="w-full flex justify-start",
+        SubpageHeader(
+            "Tags",
+            SearchField(
+                "settings_tags_search",
+                "Search tag by name",
+                name="q",
+                hx_get="/settings/tags/list",
+                hx_trigger="input changed delay:300ms, search",
+                hx_target=f"#{TAGS_LIST_ID}",
+                hx_swap="innerHTML",
+            ),
         ),
-        H1("Tags", cls="text-xl font-bold"),
         Form(
             Input(
                 name="name",
@@ -118,18 +125,6 @@ def tags_settings_page(tags: list[TagRead]):
             # The list comes back whole; the field is emptied for the next one.
             **{"hx-on::after-request": "if(event.detail.successful){this.reset();}"},
             cls="flex items-center gap-2 w-full",
-        ),
-        Input(
-            type="search",
-            id="settings_tags_search",
-            name="q",
-            placeholder="Search tag by name",
-            autocomplete="off",
-            cls="web_input rounded-2xl bg-gray-200/50 border-[0.6px] border-white p-4 w-full",
-            hx_get="/settings/tags/list",
-            hx_trigger="input changed delay:300ms, search",
-            hx_target=f"#{TAGS_LIST_ID}",
-            hx_swap="innerHTML",
         ),
         Div(tags_settings_list(tags), id=TAGS_LIST_ID, cls="w-full"),
         Link(rel="stylesheet", href=f"https://cdn.jsdelivr.net/npm/@simonwep/pickr@{_PICKR_VERSION}/dist/themes/classic.min.css"),
@@ -239,6 +234,6 @@ def tags_settings_page(tags: list[TagRead]):
             })();
             """
         ),
-        cls="flex flex-col items-center gap-4 md:mt-7 lg:mt-7 mt-2 md:w-md lg:w-md w-xs w-full mx-auto md:mb-28 lg:mb-28 mb-24",
+        cls=SUBPAGE_CLS,
         data_hide_cart="true",
     )

@@ -536,6 +536,8 @@ Modelo en `measurement_conventions.md` §8.4.
 
 Todas exigen el header `HX-Request` (`403` si falta) y los errores van por el canal común (`error_conventions.md` §7.1).
 
+- **Cabecera** (2026-11-21): Tags usa la cabecera de subpágina de Ajustes, igual que la guía (§9.12): barra fija arriba, sin margen, con `Back`, el título y el buscador de etiquetas. El alta de una etiqueta queda debajo, y cada fila ocupa todo el ancho.
+
 ### 9.11 Asistente (decisión del usuario, 2026-11-12)
 
 Contrato del servidor en `code_conventions.md` §8.12. Solo existe si el asistente está configurado.
@@ -610,6 +612,40 @@ Las tarjetas se leen de los resultados guardados de las herramientas, así que u
 | `POST /assistant/message` (`multipart/form-data`: `message`, `mentions`, `photo` (repetido, hasta 4), `intake_event_id`, `conversation_id`) | `#assistant_thread` | `beforeend` | el turno, con el id de la conversación y, si creó la comida, `Add to` fuera de banda | validación `422`, comida confirmada o borrada `404`/`409`, proveedor `502`: status, cuerpo vacío y toast |
 
 Las tres exigen el header `HX-Request` (`403` si falta). Repetir un envío es un mensaje nuevo: el asistente puede volver a añadir lo mismo, y la copia se quita en el carrito.
+
+### 9.12 Guía de criterios (decisión del usuario, 2026-11-21)
+
+Para que los campos de calidad del dato se rellenen siempre con el mismo criterio, la web explica qué significa cada valor que hay que elegir, en Ajustes y junto a cada selector.
+
+**De dónde sale el texto**
+
+- La norma son las convenciones: `study_conventions.md` §6.3 (U1, U2, madurez, fracción comida) y `measurement_conventions.md` (§4.4 lo comido, §5.2 el peso en cocido). La guía es su versión corta, en inglés (§7.12): una línea por valor, sin detalle técnico.
+- Todo el texto está en un solo sitio, `components/guide.py`, y de ahí salen la página de Ajustes y los pop-ups. No se escribe una definición en un componente ni se lee de los `.md`.
+- Cada tema recorre su enum, así que un valor nuevo aparece solo. Si no tiene definición, la guía dice `Definition pending.`. Quien añade o cambia un valor (por ejemplo, en U2) escribe su línea de la guía en el mismo cambio.
+- Un tema cuyas definiciones aún no están acordadas se marca como pendiente (`Pending`) y lista sus valores sin definición. Hoy lo están `Cooking`, `Conservation` y `Final state` (`study_conventions.md` §6.3, **Preparación de una porción**).
+
+**En Ajustes**
+
+- El botón `Guide` abre `/settings/guide`, con `Back` a Ajustes (§5). Rediseño del 2026-11-21 (decisión del usuario):
+  - Arriba, fija y pegada al borde superior (sin margen), la cabecera de subpágina de Ajustes (`components/settings/subpage.py`, la misma que Tags, §9.10): barra de vidrio con `Back`, el título y el buscador. Debajo del buscador, una línea dice cuántos resultados hay y en cuántos apartados.
+  - El índice y cada apartado van en su propio contenedor (`web_container`), como el resto de la app.
+  - Después, el índice (`Contents`): cada tema numerado (`01`, `02`…) con cuántas opciones tiene. Pulsarlo baja a su apartado dentro de la página, sin cambiar la URL ni añadir entradas al historial.
+  - Debajo, un apartado por tema: número, título, qué se elige y una lista de definiciones (opción y significado), separadas por líneas finas, sin tarjetas. Cada apartado acaba en `↑ Contents`, que vuelve al índice.
+  - **Buscar** filtra en la página (`static/js/guide.js`), sin distinguir mayúsculas ni acentos: una opción coincide por su nombre, su definición o el título de su tema. Se ocultan los temas sin resultados, y en el índice aparecen bajo cada tema las opciones que coinciden, con enlace a cada una. Con un solo resultado el índice se oculta, y el resultado sigue bajo el título de su tema. Enter lleva al primero.
+
+**Junto a cada selector**
+
+- Un botón `?` pequeño junto a la etiqueta del campo abre el pop-up `guide_modal` con solo ese tema, o con el grupo de preparación (cocción, estado final, conservación y madurez). No se sale de la página.
+- El pop-up está una sola vez en toda la web, fuera de `#main_content` (`render_page`, `components/ui.py`), así que un repintado de la página no lo borra. Se construye con `ModalLayer` (§8) y su contenido se pide al servidor cada vez, como el de rescate (§9.6). Al abrirse desde otro pop-up (el `Adjust` del carrito) queda encima, y al cerrarlo se vuelve al de debajo, tal como estaba.
+- El botón no envía ningún campo del formulario en el que está (`hx-params="none"`) y no navega.
+- En los formularios de alta y edición, el `?` que ya tenía cada campo (§9.1) abre la guía en los campos que tienen tema, en vez de su aviso de texto.
+- Dónde está hoy: `Amount from` (carrito, ficha de un alimento) y `Amount usually from` (formularios); `Macros from` (formularios); la preparación (pop-up `Adjust` del carrito, `Advanced` de la ficha, ingredientes de una receta, paso previo de una receta, `Ripeness` de la línea de rescate) e `Initial state` (formularios); `Weighed cooked` (carrito, ficha, receta); `Eaten` (confirmar en el carrito). Un selector nuevo de uno de estos campos lleva su `?`.
+
+| Acción | `hx-target` | `hx-swap` | Éxito | Error |
+|---|---|---|---|---|
+| `GET /settings/guide/{topic}` | `#guide_modal_body` | `innerHTML` | el tema; al llegar se abre el pop-up | sin sesión: `401`; tema desconocido: `404`. Por el canal de errores |
+
+Exige el header `HX-Request` (`403` si falta).
 
 ## 10. Movimiento
 

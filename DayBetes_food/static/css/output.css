@@ -606,6 +606,9 @@
   .min-h-screen {
     min-height: 100vh;
   }
+  .\!w-full {
+    width: 100% !important;
+  }
   .w-1 {
     width: var(--spacing);
   }
@@ -787,6 +790,12 @@
   }
   .resize-none {
     resize: none;
+  }
+  .scroll-mt-4 {
+    scroll-margin-top: calc(var(--spacing) * 4);
+  }
+  .scroll-mt-28 {
+    scroll-margin-top: calc(var(--spacing) * 28);
   }
   .scroll-mt-48 {
     scroll-margin-top: calc(var(--spacing) * 48);
@@ -1240,6 +1249,9 @@
   .py-3 {
     padding-block: calc(var(--spacing) * 3);
   }
+  .py-6 {
+    padding-block: calc(var(--spacing) * 6);
+  }
   .pt-1 {
     padding-top: var(--spacing);
   }
@@ -1300,6 +1312,9 @@
   .pl-8 {
     padding-left: calc(var(--spacing) * 8);
   }
+  .pl-9 {
+    padding-left: calc(var(--spacing) * 9);
+  }
   .text-center {
     text-align: center;
   }
@@ -1308,6 +1323,9 @@
   }
   .text-right {
     text-align: right;
+  }
+  .font-mono {
+    font-family: var(--font-mono);
   }
   .text-2xl {
     font-size: var(--text-2xl);
@@ -1477,6 +1495,9 @@
   .uppercase {
     text-transform: uppercase;
   }
+  .italic {
+    font-style: italic;
+  }
   .ordinal {
     --tw-ordinal: ordinal;
     font-variant-numeric: var(--tw-ordinal,) var(--tw-slashed-zero,) var(--tw-numeric-figure,) var(--tw-numeric-spacing,) var(--tw-numeric-fraction,);
@@ -1499,6 +1520,9 @@
   }
   .opacity-70 {
     opacity: 70%;
+  }
+  .opacity-75 {
+    opacity: 75%;
   }
   .opacity-80 {
     opacity: 80%;
@@ -1722,6 +1746,10 @@
   .placeholder\:text-gray-400::placeholder {
     color: var(--color-gray-400);
   }
+  .first\:border-t-0:first-child {
+    border-top-style: var(--tw-border-style);
+    border-top-width: 0px;
+  }
   .last\:border-b-0:last-child {
     border-bottom-style: var(--tw-border-style);
     border-bottom-width: 0px;
@@ -1736,17 +1764,8 @@
     display: none;
   }
   @media (hover: hover) {
-    .hover\:scale-105:hover {
-      --tw-scale-x: 105%;
-      --tw-scale-y: 105%;
-      --tw-scale-z: 105%;
-      scale: var(--tw-scale-x) var(--tw-scale-y);
-    }
     .hover\:scale-\[1\.04\]:hover {
       scale: 1.04;
-    }
-    .hover\:scale-\[101\%\]:hover {
-      scale: 101%;
     }
     .hover\:bg-control:hover {
       background-color: var(--color-control);
@@ -1779,6 +1798,9 @@
     .hover\:text-gray-900:hover {
       color: var(--color-gray-900);
     }
+    .hover\:text-ink:hover {
+      color: var(--color-ink);
+    }
     .hover\:opacity-100:hover {
       opacity: 100%;
     }
@@ -1793,19 +1815,8 @@
     --tw-scale-z: 100%;
     scale: var(--tw-scale-x) var(--tw-scale-y);
   }
-  .focus\:scale-\[101\%\]:focus {
-    scale: 101%;
-  }
-  .focus\:shadow-lg:focus {
-    --tw-shadow: 0 10px 15px -3px var(--tw-shadow-color, rgb(0 0 0 / 0.1)), 0 4px 6px -4px var(--tw-shadow-color, rgb(0 0 0 / 0.1));
-    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
-  }
   .focus\:shadow-none:focus {
     --tw-shadow: 0 0 #0000;
-    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
-  }
-  .focus\:inset-shadow-none:focus {
-    --tw-inset-shadow: inset 0 0 #0000;
     box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
   }
   .focus\:outline-none:focus {
@@ -1937,6 +1948,9 @@
     .md\:grid-cols-4 {
       grid-template-columns: repeat(4, minmax(0, 1fr));
     }
+    .md\:grid-cols-\[9rem_1fr\] {
+      grid-template-columns: 9rem 1fr;
+    }
     .md\:flex-row {
       flex-direction: row;
     }
@@ -1952,14 +1966,14 @@
     .md\:gap-3 {
       gap: calc(var(--spacing) * 3);
     }
+    .md\:gap-4 {
+      gap: calc(var(--spacing) * 4);
+    }
     .md\:rounded-4xl {
       border-radius: var(--radius-4xl);
     }
     .md\:rounded-lg {
       border-radius: var(--radius-lg);
-    }
-    .md\:rounded-xl {
-      border-radius: var(--radius-xl);
     }
     .md\:rounded-b-3xl {
       border-bottom-right-radius: var(--radius-3xl);
@@ -1970,6 +1984,9 @@
     }
     .md\:p-4 {
       padding: calc(var(--spacing) * 4);
+    }
+    .md\:px-0 {
+      padding-inline: 0px;
     }
     .md\:px-2 {
       padding-inline: calc(var(--spacing) * 2);
@@ -2068,9 +2085,6 @@
     }
     .lg\:rounded-4xl {
       border-radius: var(--radius-4xl);
-    }
-    .lg\:rounded-xl {
-      border-radius: var(--radius-xl);
     }
     .lg\:p-4 {
       padding: calc(var(--spacing) * 4);
