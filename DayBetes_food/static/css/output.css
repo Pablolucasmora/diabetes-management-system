@@ -606,6 +606,9 @@
   .min-h-screen {
     min-height: 100vh;
   }
+  .\!w-full {
+    width: 100% !important;
+  }
   .w-1 {
     width: var(--spacing);
   }

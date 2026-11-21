@@ -536,6 +536,8 @@ Modelo en `measurement_conventions.md` §8.4.
 
 Todas exigen el header `HX-Request` (`403` si falta) y los errores van por el canal común (`error_conventions.md` §7.1).
 
+- **Cabecera** (2026-11-21): Tags usa la cabecera de subpágina de Ajustes, igual que la guía (§9.12): barra fija arriba, sin margen, con `Back`, el título y el buscador de etiquetas. El alta de una etiqueta queda debajo, y cada fila ocupa todo el ancho.
+
 ### 9.11 Asistente (decisión del usuario, 2026-11-12)
 
 Contrato del servidor en `code_conventions.md` §8.12. Solo existe si el asistente está configurado.
@@ -625,7 +627,8 @@ Para que los campos de calidad del dato se rellenen siempre con el mismo criteri
 **En Ajustes**
 
 - El botón `Guide` abre `/settings/guide`, con `Back` a Ajustes (§5). Rediseño del 2026-11-21 (decisión del usuario):
-  - Arriba, fija, una barra con `Back`, el título y un buscador. Debajo del buscador, una línea dice cuántos resultados hay y en cuántos apartados.
+  - Arriba, fija y pegada al borde superior (sin margen), la cabecera de subpágina de Ajustes (`components/settings/subpage.py`, la misma que Tags, §9.10): barra de vidrio con `Back`, el título y el buscador. Debajo del buscador, una línea dice cuántos resultados hay y en cuántos apartados.
+  - El índice y cada apartado van en su propio contenedor (`web_container`), como el resto de la app.
   - Después, el índice (`Contents`): cada tema numerado (`01`, `02`…) con cuántas opciones tiene. Pulsarlo baja a su apartado dentro de la página, sin cambiar la URL ni añadir entradas al historial.
   - Debajo, un apartado por tema: número, título, qué se elige y una lista de definiciones (opción y significado), separadas por líneas finas, sin tarjetas. Cada apartado acaba en `↑ Contents`, que vuelve al índice.
   - **Buscar** filtra en la página (`static/js/guide.js`), sin distinguir mayúsculas ni acentos: una opción coincide por su nombre, su definición o el título de su tema. Se ocultan los temas sin resultados, y en el índice aparecen bajo cada tema las opciones que coinciden, con enlace a cada una. Con un solo resultado el índice se oculta, y el resultado sigue bajo el título de su tema. Enter lleva al primero.

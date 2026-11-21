@@ -14,7 +14,7 @@ from fasthtml.common import Button, Dd, Div, Dl, Dt, H1, H2, Input, Label, Li, N
 
 from DayBetes_food.components.food.food_shared import AMOUNT_METHOD_LABELS, MACROS_SOURCE_LABELS
 from DayBetes_food.components.modal import ModalLayer, close_modal_js, modal_icon_button
-from DayBetes_food.components.navigation import back_js
+from DayBetes_food.components.settings.subpage import SUBPAGE_CLS, SearchField, SubpageHeader
 from DayBetes_food.domain.constants import (
     AmountMethod,
     ConservationMethod,
@@ -280,12 +280,6 @@ def _value_id(topic_key: str, index: int) -> str:
 GUIDE_CONTENTS_ID = "guide_contents"
 GUIDE_SEARCH_ID = "guide_search"
 
-_SEARCH_ICON = NotStr(
-    '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true" '
-    'class="h-4 w-4"><circle cx="9" cy="9" r="5.5"/><path d="m13.5 13.5 3.5 3.5" stroke-linecap="round"/></svg>'
-)
-
-
 def _scroll_js(element_id: str) -> str:
     """Scroll inside the page without a hash: the URL and the history stay (§9.12)."""
     return f"document.getElementById('{element_id}').scrollIntoView({{behavior:'smooth',block:'start'}});"
@@ -372,35 +366,19 @@ def GuidePage():
     result keeps the title of its topic."""
     topics = list(GUIDE_TOPICS.values())
     return Div(
-        Div(
-            Div(
-                Button("Back", type="button", cls="web_button px-3 py-1.5 text-sm", onclick=back_js("/settings")),
-                H1("Guide", cls="text-lg font-semibold text-stone-900"),
-                cls="flex items-center justify-between",
-            ),
-            Label(
-                Span(_SEARCH_ICON, cls="text-muted"),
-                Input(
-                    type="search",
-                    id=GUIDE_SEARCH_ID,
-                    placeholder="Search a field or an option",
-                    autocomplete="off",
-                    aria_label="Search the guide",
-                    cls="flex-1 min-w-0 bg-transparent text-sm outline-none placeholder:text-gray-400",
-                ),
-                cls="flex items-center gap-2 rounded-xl border border-line bg-surface px-3 py-2",
-            ),
-            P("", id="guide_status", role="status", cls="text-xs text-muted empty:hidden"),
-            cls="sticky top-0 z-10 w-full flex flex-col gap-3 px-4 pt-4 pb-3 -mt-2 web_glass_strong rounded-b-3xl",
+        SubpageHeader(
+            "Guide",
+            SearchField(GUIDE_SEARCH_ID, "Search a field or an option"),
+            status_id="guide_status",
         ),
         P(
             "What each option means, so every meal is logged the same way. "
             "The ? next to a field opens the same text.",
-            cls="w-full text-sm text-gray-600",
+            cls="w-full text-sm text-gray-600 px-1",
         ),
-        _contents(topics),
-        *[_section(topic, number) for number, topic in enumerate(topics, start=1)],
-        P("Nothing matches. Try another word.", id="guide_empty", hidden=True, cls="w-full text-sm text-gray-500 py-6"),
+        Div(_contents(topics), cls="web_container w-full p-4"),
+        *[Div(_section(topic, number), cls="web_container w-full px-4 pb-2") for number, topic in enumerate(topics, start=1)],
+        P("Nothing matches. Try another word.", id="guide_empty", hidden=True, cls="web_container w-full text-sm text-gray-500 p-4"),
         id="guide_page",
-        cls="flex flex-col items-start gap-4 md:mt-7 lg:mt-7 mt-2 md:w-md lg:w-md w-full px-4 md:px-0 mx-auto md:mb-28 lg:mb-28 mb-24",
+        cls=SUBPAGE_CLS,
     )
