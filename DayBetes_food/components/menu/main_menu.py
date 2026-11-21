@@ -1,5 +1,4 @@
 from fasthtml.common import *
-from DayBetes_food.config import ASSISTANT_ENABLED
 from DayBetes_food.components.menu.layout import IslandLogo
 from DayBetes_food.components.menu.sections import quick_actions
 
@@ -20,7 +19,7 @@ def main_menu(user, latest_event, portions, pens, brands, review_count: int = 0)
                   """), Div(
                       _greeting(user),
                       quick_actions(
-                          latest_event, portions, pens, brands, assistant_enabled=ASSISTANT_ENABLED, review_count=review_count
+                          latest_event, portions, pens, brands, review_count=review_count
                       ),
                       cls="""
                       md:mt-36 lg:mt-36 mt-28 pb-40

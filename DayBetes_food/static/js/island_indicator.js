@@ -4,7 +4,18 @@
     if (path.startsWith("/stats")) return "stats";
     if (path.startsWith("/food")) return "food";
     if (path.startsWith("/settings")) return "settings";
+    if (path.startsWith("/assistant")) return "assistant";
     return null;
+  }
+
+  // The island's height, for the glass cut to the pill plus DiaBot's circle
+  // (input.css, .island_fill). Watched: fonts and labels change it after load.
+  function syncIslandHeight() {
+    var indicator = document.getElementById("island_active_indicator");
+    var island = indicator ? indicator.parentElement : null;
+    var wrapper = island ? island.parentElement : null;
+    if (!wrapper) return;
+    wrapper.style.setProperty("--island-h", island.offsetHeight + "px");
   }
 
   function moveIndicatorTo(item) {
@@ -17,11 +28,13 @@
 
     indicator.style.width = itemRect.width + "px";
     indicator.style.height = itemRect.height + "px";
+    // From the island's padding box, where the indicator is placed: without
+    // its 1px border the indicator sat 1px off the item.
     indicator.style.transform =
       "translate(" +
-      (itemRect.left - islandRect.left) +
+      (itemRect.left - islandRect.left - island.clientLeft) +
       "px," +
-      (itemRect.top - islandRect.top) +
+      (itemRect.top - islandRect.top - island.clientTop) +
       "px)";
     indicator.classList.remove("opacity-0");
     indicator.classList.add("opacity-100");
@@ -47,6 +60,7 @@
     });
 
     function syncIndicator() {
+      syncIslandHeight();
       var checkedInput = document.querySelector(
         "label[data-nav-item] input[type='radio']:checked"
       );
@@ -56,6 +70,13 @@
 
     syncIndicator();
     window.setTimeout(syncIndicator, 120);
+
+    var islandIndicator = document.getElementById("island_active_indicator");
+    if (islandIndicator && window.ResizeObserver) {
+      new ResizeObserver(function () {
+        syncIndicator();
+      }).observe(islandIndicator.parentElement);
+    }
 
     window.addEventListener("resize", function () {
       window.requestAnimationFrame(syncIndicator);

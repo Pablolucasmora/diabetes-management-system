@@ -1,4 +1,5 @@
 from fasthtml.common import *
+from DayBetes_food.config import ASSISTANT_ENABLED
 
 def BlockIsland(text, icon="/images/ui/menu.svg", name="nav", value="home", **hx):
     # Put network-triggering htmx attrs on the radio input to avoid
@@ -38,7 +39,7 @@ def BlockIsland(text, icon="/images/ui/menu.svg", name="nav", value="home", **hx
             rounded-full
             cursor-pointer
             transition-all duration-300 ease-in-out
-            w-16 md:w-24
+            w-14 md:w-24
             border-none
             group
 
@@ -48,6 +49,49 @@ def BlockIsland(text, icon="/images/ui/menu.svg", name="nav", value="home", **hx
         data_nav_item=value,
         **hx
     )
+
+def DiaBotIsland():
+    """DiaBot in the middle of the island, reachable from every page (frontend
+    §9.11, decisions 2026-11-21): an item like the others, larger, with its face
+    centred (diabot_island.svg is cropped to the drop) and, at rest, nothing
+    under it, as the others. Chosen, the island's indicator slides under it as under any
+    other item, round because the item is square. Negative vertical margins:
+    it sticks out of the island a little instead of making it taller."""
+    return Div(_diabot_item(), cls="relative flex items-center mx-1 -my-6 md:-my-7")
+
+
+def _diabot_item():
+    return Label(
+        Input(
+            type="radio",
+            name="nav",
+            value="assistant",
+            cls="hidden peer",
+            hx_get="/assistant",
+            hx_target="#main_content",
+            hx_push_url="true",
+            hx_trigger="click",
+            hx_params="none",
+        ),
+        Img(
+            src="/images/diabot/diabot_island.svg",
+            alt="",
+            cls="relative z-10 w-11 h-11 md:w-13 md:h-13 transition-all duration-300 group-has-[:checked]:scale-110",
+        ),
+        aria_label="DiaBot",
+        cls="""
+            relative z-10 group
+            flex items-center justify-center
+            w-[4.5rem] h-[4.5rem] md:w-[5.5rem] md:h-[5.5rem]
+            rounded-full cursor-pointer
+            bg-transparent
+            transition-all duration-300 ease-in-out
+            hover:shadow-md
+        """,
+        data_nav_item="assistant",
+        **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
+    )
+
 
 def ReviewDot(count: int):
     """The dot over Food while there are provisional foods (frontend §9.3)."""
@@ -72,6 +116,22 @@ def FloatingIsland():
     scroll_top_js = "window.scrollTo({ top: 0, behavior: 'auto' });"
 
     return Div(
+        # With DiaBot the island bulges around it, in one glass with no seam
+        # (frontend_conventions.md §9.11; .island_* in input.css): its shadow,
+        # then a single glass layer cut to the island plus a circle, then the
+        # caps' rim, and the island on top with only its own rim (holed there).
+        # One layer and not two: two glasses never look the same. DiaBot is
+        # always the middle item, so the circle is centred by CSS alone;
+        # island_indicator.js only gives the island's height (--island-h).
+        *(
+            (
+                Span(aria_hidden="true", cls="island_shadow"),
+                Span(aria_hidden="true", cls="island_fill"),
+                Span(aria_hidden="true", cls="island_bump_rim"),
+            )
+            if ASSISTANT_ENABLED
+            else ()
+        ),
         Div(
             Div(
                 id="island_active_indicator",
@@ -86,6 +146,7 @@ def FloatingIsland():
             ),
             BlockIsland("Menu", icon="/images/ui/menu.svg", value="menu", hx_get="/menu", hx_target="#main_content", hx_swap="innerHTML", hx_push_url="true", **{"hx-on:click": show_cart_js}),
             BlockIsland("Stats", icon="/images/ui/stats.svg", value="stats", hx_get="/stats", hx_target="#main_content", hx_push_url="true", **{"hx-on:click": scroll_top_js}),
+            DiaBotIsland() if ASSISTANT_ENABLED else "",
             Div(
                 BlockIsland("Food", icon="/images/ui/food.svg", value="food", hx_get="/food", hx_target="#main_content", hx_push_url="true", **{"hx-on:click": show_cart_js}),
                 # Asked for apart: render_page never reads the database (§1.4).
@@ -105,14 +166,13 @@ def FloatingIsland():
                 flex items-center justify-center
                 gap-2 md:gap-3
                 p-2
-                overflow-hidden
-                web_glass
                 rounded-full
-            """
+            """ + (" island_glass" if ASSISTANT_ENABLED else " web_glass overflow-hidden")
         ),
         cls="""
             fixed bottom-6 left-1/2 -translate-x-1/2
             z-50
+            [--bump-d:88px] md:[--bump-d:112px]
         """,
         id="floating_island",
     )

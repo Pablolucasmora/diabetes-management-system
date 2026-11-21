@@ -142,7 +142,7 @@ def _section_title(text: str):
 
 
 def quick_actions(
-    latest_event, portions, pens=(), brands=(), assistant_enabled: bool = False, review_count: int = 0
+    latest_event, portions, pens=(), brands=(), review_count: int = 0
 ):
     now = local_now()
     modal_id = "menu_injection_modal"
@@ -210,18 +210,6 @@ def quick_actions(
                 ),
                 cls="flex gap-3",
             ),
-            # The assistant, only when configured (frontend_conventions.md §9.11).
-            Button(
-                Img(src="/images/ui/Logo_DiaBot.png", alt="", cls="h-8 w-auto"),
-                Span("describe it, it fills the cart", cls="text-[11px] text-gray-500 font-normal"),
-                type="button",
-                aria_label="Tell the assistant",
-                cls=create_button_cls,
-                hx_get="/assistant",
-                hx_target="#main_content",
-                hx_push_url="true",
-                **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
-            ) if assistant_enabled else "",
             Div(
                 Button(
                     Span("Quick add"),

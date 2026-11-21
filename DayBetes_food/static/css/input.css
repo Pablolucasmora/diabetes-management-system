@@ -80,6 +80,85 @@
 }
 
 
+/* The island with DiaBot (components/menu/layout.py, frontend_conventions.md
+   §9.11): it bulges around DiaBot in ONE glass, so there is no seam. Layers,
+   bottom to top: the shadow of the pill; .island_fill, the glass of web_glass
+   on a box as wide as the island and as tall as the circle, masked to the pill
+   plus the circle; .island_bump_rim, the raised circle itself; and the
+   island itself, transparent, with only its rim, holed where the circle is.
+   --bump-d (circle) is set on #floating_island; --island-h (pill height) by
+   island_indicator.js. DiaBot is the middle item: everything is centred. */
+.island_glass {
+    background: transparent;
+    border: 1px solid transparent;
+}
+.island_glass::after {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    border: 1px solid rgb(255 255 255 / 0.7);
+    box-shadow:
+        inset 0 1px 0 rgb(255 255 255 / 0.95),
+        inset 0 -1px 0 rgb(255 255 255 / 0.3);
+    pointer-events: none;
+    -webkit-mask: radial-gradient(circle calc(var(--bump-d) / 2) at 50% 50%, transparent 99%, #000 100%);
+    mask: radial-gradient(circle calc(var(--bump-d) / 2) at 50% 50%, transparent 99%, #000 100%);
+}
+.island_shadow {
+    position: absolute;
+    inset: 0;
+    z-index: -3;
+    border-radius: 9999px;
+    box-shadow:
+        0 10px 30px rgb(80 60 40 / 0.14),
+        0 1px 3px rgb(80 60 40 / 0.08);
+    pointer-events: none;
+}
+.island_fill {
+    --pill-h: var(--island-h, 64px);
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: max(var(--bump-d), var(--pill-h));
+    transform: translateY(-50%);
+    z-index: -2;
+    pointer-events: none;
+    background:
+        linear-gradient(135deg, rgb(255 255 255 / 0.6) 0%, rgb(255 255 255 / 0) 38%, rgb(255 255 255 / 0) 70%, rgb(255 255 255 / 0.28) 100%),
+        rgb(255 255 255 / 0.4);
+    -webkit-backdrop-filter: blur(18px) saturate(180%);
+    backdrop-filter: blur(18px) saturate(180%);
+    /* The circle, the pill's straight middle and its two round ends. */
+    -webkit-mask:
+        radial-gradient(circle closest-side, #000 99%, transparent 100%) center / var(--bump-d) var(--bump-d) no-repeat,
+        linear-gradient(#000, #000) center / calc(100% - var(--pill-h)) var(--pill-h) no-repeat,
+        radial-gradient(circle closest-side, #000 99%, transparent 100%) left center / var(--pill-h) var(--pill-h) no-repeat,
+        radial-gradient(circle closest-side, #000 99%, transparent 100%) right center / var(--pill-h) var(--pill-h) no-repeat;
+    mask:
+        radial-gradient(circle closest-side, #000 99%, transparent 100%) center / var(--bump-d) var(--bump-d) no-repeat,
+        linear-gradient(#000, #000) center / calc(100% - var(--pill-h)) var(--pill-h) no-repeat,
+        radial-gradient(circle closest-side, #000 99%, transparent 100%) left center / var(--pill-h) var(--pill-h) no-repeat,
+        radial-gradient(circle closest-side, #000 99%, transparent 100%) right center / var(--pill-h) var(--pill-h) no-repeat;
+}
+.island_bump_rim {
+    /* Raised (chosen by the user, 2026-11-21): the whole circle, whiter than
+       the island and with its own small shadow, as a button resting on it. */
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: var(--bump-d);
+    height: var(--bump-d);
+    transform: translate(-50%, -50%);
+    z-index: -1;
+    border-radius: 9999px;
+    background: rgb(255 255 255 / 0.55);
+    border: 1px solid rgb(255 255 255 / 0.9);
+    box-shadow: 0 4px 12px rgb(80 60 40 / 0.16);
+    pointer-events: none;
+}
+
 /* Stronger glass for bars with controls on top of scrolling content: more
    blur and more white, so what passes underneath does not compete with the
    fields. */
@@ -217,6 +296,13 @@
 }
 .food_filter_fridge.bg-black {
     background-image: none;
+}
+
+/* The To review banner of the Food header (frontend_conventions.md §9.3), while
+   its list is the one shown: an amber rim instead of a selected pill. */
+#food_review_banner.food_review_active {
+    border-color: rgb(251 191 36);
+    box-shadow: 0 0 0 1px rgb(251 191 36);
 }
 
 /* Success tone of the single notice container #app_toast (components/ui.py,
