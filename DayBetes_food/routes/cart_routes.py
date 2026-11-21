@@ -79,6 +79,7 @@ from DayBetes_food.domain.intake_plate import (
     INTAKE_PLATE_NAME_MAX_LENGTH,
     IntakePlateCreate,
     PlateEaten,
+    parse_eaten_method,
 )
 from DayBetes_food.domain.fridge import (
     LeftoverPlan,
@@ -335,7 +336,8 @@ def _parse_eaten(form) -> tuple[PlateEaten, ...]:
     after the plate so the browser draft keeps each one, frontend §7.14). An empty
     value is the whole plate; anything else must be a finite number >= 0 (findings
     32 and 33); the range is checked against the plate in the service. A missing
-    unit is a 422, never grams by default (finding 47)."""
+    unit is a 422, never grams by default (finding 47). `eaten_method_<plate_id>`
+    is `weighed` when the user marked it; absent, by eye."""
     eaten = []
     for raw_id in form.getlist("plate_id"):
         plate_id = parse_optional_id(str(raw_id), "plate")
@@ -351,7 +353,9 @@ def _parse_eaten(form) -> tuple[PlateEaten, ...]:
                 raise ValidationError("eaten_value_not_valid") from exc
             if not math.isfinite(value) or value < 0:
                 raise ValidationError("eaten_value_not_valid")
-        eaten.append(PlateEaten(plate_id=plate_id, value=value, unit=unit))
+        # `Weighed` next to `Eaten`: unmarked is by eye (study §6.3).
+        method = parse_eaten_method(form.get(f"eaten_method_{plate_id}"))
+        eaten.append(PlateEaten(plate_id=plate_id, value=value, unit=unit, method=method))
     return tuple(eaten)
 
 

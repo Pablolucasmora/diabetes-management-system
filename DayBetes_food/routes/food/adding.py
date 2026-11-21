@@ -36,6 +36,7 @@ from DayBetes_food.database.queries import (
 from DayBetes_food.domain.constants import (
     PathId,
     AmountInputUnit,
+    FractionMethod,
     AmountMethod,
     ConservationMethod,
     CookingMethod,
@@ -53,6 +54,7 @@ from DayBetes_food.domain.portion_detail import (
     PortionDetailCreate,
     amount_to_grams,
     parse_amount_grams,
+    one_click_portion_defaults,
     portion_defaults,
 )
 from DayBetes_food.components.food.fridge import FridgeListOob
@@ -397,6 +399,17 @@ def setup_adding_routes(rt):
                     target_plate_id = resolve_event_plate(
                         connection, int(user_id), event_id, parse_optional_id(plate_id, "plate"), offset_minutes
                     )
+                    # What was cooked and not plated goes into a new container in the
+                    # fridge, as the page says (measurement §4.8.5). The split is
+                    # weighed when the plate was given in grams, by eye in % (study §6.3).
+                    leftover_grams = total_grams - plated_grams
+                    split_method = (
+                        None
+                        if leftover_grams <= _PLATE_DISPLAY_TOLERANCE_G
+                        else FractionMethod.EYEBALL
+                        if plated_unit is AmountInputUnit.PERCENT
+                        else FractionMethod.WEIGHED
+                    )
                     create_portion_detail(
                         connection,
                         int(user_id),
@@ -407,6 +420,7 @@ def setup_adding_routes(rt):
                             destination_id=event_id,
                             plate_id=target_plate_id,
                             amount=plated_grams,
+                            split_method=split_method,
                             cooking=parsed_cooking,
                             final_state=parsed_final_state,
                             conservation=parsed_conservation,
@@ -417,10 +431,7 @@ def setup_adding_routes(rt):
                         ),
                         commit=False,
                     )
-                    # What was cooked and not plated goes into a new container in the
-                    # fridge, as the page says (measurement §4.8.5).
-                    leftover_grams = total_grams - plated_grams
-                    if leftover_grams > _PLATE_DISPLAY_TOLERANCE_G:
+                    if split_method is not None:
                         create_fridge_container(
                             connection,
                             FridgeStoreCommand(
@@ -434,6 +445,7 @@ def setup_adding_routes(rt):
                                         cooking=parsed_cooking,
                                         final_state=parsed_final_state,
                                         amount_method=log_defaults["amount_method"],
+                                        split_method=split_method,
                                         is_cooked_weight=(cooked_weight if kind is FoodEntryType.CATALOG else False),
                                     ),
                                 ),
@@ -573,7 +585,7 @@ def setup_adding_routes(rt):
                             destination_id=event_id,
                             plate_id=target_plate_id,
                             amount=portion_amount,
-                            **portion_defaults(catalog_item),  # measurement §6.11
+                            **one_click_portion_defaults(catalog_item),  # measurement §6.11
                         ),
                         commit=False,
                     )
@@ -624,7 +636,7 @@ def setup_adding_routes(rt):
                             destination_id=event_id,
                             plate_id=target_plate_id,
                             amount=portion_amount,
-                            **portion_defaults(manual_intake),
+                            **one_click_portion_defaults(manual_intake),
                         ),
                         commit=False,
                     )

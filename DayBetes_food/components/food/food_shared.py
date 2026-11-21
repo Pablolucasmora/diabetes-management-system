@@ -4,7 +4,7 @@ fridge.py), kept apart so that none of them has to import another just for these
 
 from fasthtml.common import Div, Input, Label, Select
 
-from DayBetes_food.domain.constants import AmountMethod, MacrosSource, StorageLocation
+from DayBetes_food.domain.constants import AmountMethod, MacrosSource, ServingMethod, StorageLocation
 
 # The look of every field of the forms: a comfortable touch height and text-sm
 # (frontend_conventions.md §2, §8). FORM_FIELD_CLS adds the full width.
@@ -30,10 +30,13 @@ AMOUNT_METHOD_LABELS = {
     AmountMethod.KITCHEN_SCALE: "Kitchen scale",
     AmountMethod.POCKET_SCALE: "Pocket scale",
     AmountMethod.PACKAGE: "Package weight",
+    AmountMethod.USUAL_AMOUNT: "Usual amount",
     AmountMethod.HOUSEHOLD: "Household measure",
     AmountMethod.EYEBALL: "By eye",
     AmountMethod.AI_ESTIMATE: "AI estimate",
 }
+# What a food's serving is (study §6.3): the same words as its U2 value.
+SERVING_METHOD_LABELS = {method: AMOUNT_METHOD_LABELS[AmountMethod(method.value)] for method in ServingMethod}
 # Empty option of a U1/U2 selector of a portion: "not given", a state of its own.
 NOT_GIVEN_LABEL = "- Not given"
 

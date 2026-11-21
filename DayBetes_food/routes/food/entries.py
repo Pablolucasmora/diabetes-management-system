@@ -293,6 +293,7 @@ def setup_entries_routes(rt):
                             cooking_factor=source.cooking_factor,
                             macros_source=source.macros_source,
                             default_amount_method=source.default_amount_method,
+                            serving_method=source.serving_method,
                             macros_confidence=source.macros_confidence,
                         ),
                         commit=False,
@@ -342,6 +343,7 @@ def setup_entries_routes(rt):
                             macros_confidence=source.macros_confidence,
                             macros_source=source.macros_source,
                             default_amount_method=source.default_amount_method,
+                            serving_method=source.serving_method,
                         ),
                         commit=False,
                     )
@@ -575,6 +577,7 @@ def setup_entries_routes(rt):
         cooking_factor: str = "",
         macros_source: str = "",
         default_amount_method: str = "",
+        serving_method: str = "",
         macros_confidence: str = "",
     ):
         if request.headers.get("HX-Request") != "true":
@@ -602,6 +605,7 @@ def setup_entries_routes(rt):
                 cooking_factor=cooking_factor,
                 macros_source=macros_source,
                 default_amount_method=default_amount_method,
+                serving_method=serving_method,
                 macros_confidence=macros_confidence,
                 calories_100g=calories_100g,
                 carbs_100g=carbs_100g,
@@ -658,6 +662,7 @@ def setup_entries_routes(rt):
         macros_confidence: str = "",
         macros_source: str = "",
         default_amount_method: str = "",
+        serving_method: str = "",
     ):
         """Full replacement of a reusable dish (H1): an empty optional field is
         stored as NULL. Publishing is the detail page's action, not a field here."""
@@ -680,6 +685,7 @@ def setup_entries_routes(rt):
                 macros_confidence=macros_confidence,
                 macros_source=macros_source,
                 default_amount_method=default_amount_method,
+                serving_method=serving_method,
                 calories_100g=calories_100g,
                 carbs_100g=carbs_100g,
                 sugars_100g=sugars_100g,
@@ -732,6 +738,7 @@ def setup_entries_routes(rt):
         cooking_factor: str = "",
         macros_source: str = "",
         default_amount_method: str = "",
+        serving_method: str = "",
         macros_confidence: str = "",
         favorite: str = "",
         catalog_smart_macros_raw: str = "",
@@ -766,6 +773,7 @@ def setup_entries_routes(rt):
                 cooking_factor=cooking_factor,
                 macros_source=macros_source,
                 default_amount_method=default_amount_method,
+                serving_method=serving_method,
                 macros_confidence=macros_confidence,
                 favorite=favorite,
                 smart_raw=catalog_smart_macros_raw,
@@ -840,6 +848,7 @@ def setup_entries_routes(rt):
         macros_confidence: str = "",
         macros_source: str = "",
         default_amount_method: str = "",
+        serving_method: str = "",
         favorite: str = "",
         manual_smart_macros_raw: str = "",
         return_to_assistant: str = "",
@@ -864,6 +873,7 @@ def setup_entries_routes(rt):
                 macros_confidence=macros_confidence,
                 macros_source=macros_source,
                 default_amount_method=default_amount_method,
+                serving_method=serving_method,
                 favorite=favorite,
                 smart_raw=manual_smart_macros_raw,
                 caffeine=caffeine,

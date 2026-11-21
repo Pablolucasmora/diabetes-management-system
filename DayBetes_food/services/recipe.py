@@ -394,4 +394,5 @@ def _new_dish(user_id: int, dish: NewDishDraft) -> ManualIntakeCreate:
         macros_confidence=None,
         macros_source=dish.macros_source,
         default_amount_method=None,
+        serving_method=None,
     )

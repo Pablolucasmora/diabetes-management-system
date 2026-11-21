@@ -72,7 +72,7 @@ Never invent or copy the macros of a food that is in a database: the server read
 Amount and amount_method (how the amount was obtained):
 - Grams written plainly ("80 g de arroz"): grams, kitchen_scale.
 - Grams with "unos", "aprox.", "~" or similar: grams, eyeball.
-- "Una unidad", "un yogur", "una lata": servings (1 or the number said) if the food has a serving, with package when its serving is the package or the unit, and household when it is a typical serving. A food without a serving: estimate the grams, household.
+- "Una unidad", "un yogur", "una lata": servings (1 or the number said) if the food has a serving, with package when its serving is the package or the unit, and usual_amount when it is the amount the user usually takes. A food without a serving: estimate the grams, household.
 - Household measures ("una cucharada", "un vaso", "un puñado"): estimate the grams, household.
 - No amount ("un plato de lentejas"), or a photo of the dish: estimate the grams, ai_estimate.
 
@@ -236,7 +236,12 @@ def _mention_lines(connection, user_id: int, mentions: tuple[Mention, ...]) -> t
             parts.append(f"({brand})")
         if item.carbs_100g is not None:
             parts.append(f"carbs {item.carbs_100g:g} g/100 g")
-        parts.append(f"serving {item.default_portion:g} g" if item.default_portion else "no serving")
+        if item.default_portion:
+            # What the serving is, so the model picks its amount_method (study §6.3).
+            serving = getattr(item, "serving_method", None)
+            parts.append(f"serving {item.default_portion:g} g ({serving.value if serving else 'usual_amount'})")
+        else:
+            parts.append("no serving")
         lines.append(" ".join(parts))
     return lines, notices
 
