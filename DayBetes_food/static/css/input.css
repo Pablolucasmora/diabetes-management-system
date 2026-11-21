@@ -88,6 +88,37 @@
    island itself, transparent, with only its rim, holed where the circle is.
    --bump-d (circle) is set on #floating_island; --island-h (pill height) by
    island_indicator.js. DiaBot is the middle item: everything is centred. */
+/* DiaBot's circle: smaller at rest, it grows when DiaBot is chosen. A registered
+   property so the size animates; the item, the masks and the rim all follow it. */
+@property --bump-d {
+    syntax: "<length>";
+    inherits: true;
+    initial-value: 88px;
+}
+@property --bump-on {
+    syntax: "<length>";
+    inherits: true;
+    initial-value: 56px;
+}
+.island_bump {
+    /* Rest and chosen sizes, also read by island_indicator.js. Chosen, DiaBot
+       shrinks into the island, 4px inside the pill on phones (a bit larger
+       than the other items' indicator) and as tall as that indicator on
+       desktop (the pill minus its 1px border and 8px inset on each side): the island is
+       then a plain pill and whatever sits on it (the chat's composer) has an
+       even margin (decision of the user, 2026-11-21). */
+    --bump-rest: 88px;
+    --bump-on: calc(var(--island-h, 64px) - 10px);
+    --bump-d: var(--bump-rest);
+    transition: --bump-d 300ms ease-in-out;
+}
+.island_bump:has(input[value="assistant"]:checked) {
+    --bump-d: var(--bump-on);
+}
+@media (min-width: 48rem) {
+    .island_bump { --bump-rest: 112px; --bump-on: calc(var(--island-h, 64px) - 18px); }
+    .island_bump:has(input[value="assistant"]:checked) { --bump-d: var(--bump-on); }
+}
 .island_glass {
     background: transparent;
     border: 1px solid transparent;
@@ -121,7 +152,11 @@
     left: 0;
     right: 0;
     top: 50%;
-    height: max(var(--bump-d), var(--pill-h));
+    /* The largest the circle gets (at rest or chosen) and not --bump-d: only
+       the mask changes while DiaBot changes size, not the box, so phones
+       repaint less of the glass per frame. Never smaller than the circle at
+       rest, or its caps lose the glass and look more transparent. */
+    height: max(var(--bump-rest), var(--bump-on), var(--pill-h));
     transform: translateY(-50%);
     z-index: -2;
     pointer-events: none;

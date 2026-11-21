@@ -704,12 +704,14 @@ def AssistantPage(
         ),
         Div(AssistantThread(turns, conversation_id, pending), id=THREAD_BOX_ID, cls="w-full"),
         _thinking(),
-        # At the bottom of the screen, above the island; in the flow (sticky,
-        # not fixed) so a phone keyboard scrolls it into view.
+        # At the bottom of the screen, flush on the island's highest point
+        # (--island-reach, measured by island_indicator.js); on desktop 12px
+        # above it. In the flow (sticky, not fixed) so a phone
+        # keyboard scrolls it into view.
         Div(
             PlusRow(plus_buttons or [], conversation_id),
             _composer(),
-            cls="sticky bottom-28 w-full mt-auto flex flex-col gap-2",
+            cls="sticky bottom-[var(--island-reach,119px)] md:bottom-[calc(var(--island-reach,147px)+12px)] w-full mt-auto flex flex-col gap-2",
         ),
         data_hide_cart="true",
         # Asked for again on coming back, with the conversation of its URL

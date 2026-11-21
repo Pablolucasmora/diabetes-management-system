@@ -55,9 +55,11 @@ def DiaBotIsland():
     §9.11, decisions 2026-11-21): an item like the others, larger, with its face
     centred (diabot_island.svg is cropped to the drop) and, at rest, nothing
     under it, as the others. Chosen, the island's indicator slides under it as under any
-    other item, round because the item is square. Negative vertical margins:
+    other item, round because the item is square, as big as the circle at rest:
+    chosen, the circle and the face shrink into the island, which keeps its width, while the indicator slides in and
+    fills the whole circle (.island_bump in input.css). Negative vertical margins:
     it sticks out of the island a little instead of making it taller."""
-    return Div(_diabot_item(), cls="relative flex items-center mx-1 -my-6 md:-my-7")
+    return Div(_diabot_item(), cls="relative flex items-center md:mx-1 -my-[calc(var(--bump-rest)/2-12px)] md:-my-[calc(var(--bump-rest)/2-16px)]")
 
 
 def _diabot_item():
@@ -76,17 +78,16 @@ def _diabot_item():
         Img(
             src="/images/diabot/diabot_island.svg",
             alt="",
-            cls="relative z-10 w-11 h-11 md:w-13 md:h-13 transition-all duration-300 group-has-[:checked]:scale-110",
+            cls="relative z-10 w-11 h-11 md:w-14 md:h-14 transition-transform duration-300 group-has-[:checked]:scale-[0.7]",
         ),
         aria_label="DiaBot",
         cls="""
             relative z-10 group
             flex items-center justify-center
-            w-[4.5rem] h-[4.5rem] md:w-[5.5rem] md:h-[5.5rem]
+            w-[var(--bump-rest)] h-[var(--bump-rest)]
             rounded-full cursor-pointer
             bg-transparent
-            transition-all duration-300 ease-in-out
-            hover:shadow-md
+            transition-shadow duration-300 ease-in-out
         """,
         data_nav_item="assistant",
         **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
@@ -139,7 +140,7 @@ def FloatingIsland():
                     absolute left-0 top-0 z-0
                     rounded-full bg-line-soft
                     ring-1 ring-white/50 shadow-inner
-                    transition-all duration-300 ease-in-out
+                    transition-[left,top,width,height,opacity] duration-300 ease-in-out
                     pointer-events-none
                     opacity-0
                 """,
@@ -170,9 +171,9 @@ def FloatingIsland():
             """ + (" island_glass" if ASSISTANT_ENABLED else " web_glass overflow-hidden")
         ),
         cls="""
-            fixed bottom-6 left-1/2 -translate-x-1/2
+            fixed bottom-10 left-1/2 -translate-x-1/2
             z-50
-            [--bump-d:88px] md:[--bump-d:112px]
+            island_bump
         """,
         id="floating_island",
     )
@@ -196,7 +197,7 @@ def IslandLogo():
 
 def Cart(display=True):
     base_classes="""
-        fixed md:bottom-31 lg:bottom-31 bottom-24
+        fixed md:bottom-35 lg:bottom-35 bottom-32
         left-1/2 -translate-x-1/2 md:translate-x-29
         lg:translate-x-29 translate-x-20
         transition-opacity duration-[100ms] ease-out

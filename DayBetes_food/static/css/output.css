@@ -330,14 +330,17 @@
   .right-3 {
     right: calc(var(--spacing) * 3);
   }
-  .bottom-6 {
-    bottom: calc(var(--spacing) * 6);
+  .bottom-10 {
+    bottom: calc(var(--spacing) * 10);
   }
   .bottom-24 {
     bottom: calc(var(--spacing) * 24);
   }
-  .bottom-28 {
-    bottom: calc(var(--spacing) * 28);
+  .bottom-32 {
+    bottom: calc(var(--spacing) * 32);
+  }
+  .bottom-\[var\(--island-reach\,119px\)\] {
+    bottom: var(--island-reach,119px);
   }
   .bottom-full {
     bottom: 100%;
@@ -417,14 +420,11 @@
   .m-6 {
     margin: calc(var(--spacing) * 6);
   }
-  .mx-1 {
-    margin-inline: var(--spacing);
-  }
   .mx-auto {
     margin-inline: auto;
   }
-  .-my-6 {
-    margin-block: calc(var(--spacing) * -6);
+  .-my-\[calc\(var\(--bump-rest\)\/2-12px\)\] {
+    margin-block: calc(calc(var(--bump-rest) / 2 - 12px) * -1);
   }
   .-mt-1 {
     margin-top: calc(var(--spacing) * -1);
@@ -564,8 +564,8 @@
   .h-14 {
     height: calc(var(--spacing) * 14);
   }
-  .h-\[4\.5rem\] {
-    height: 4.5rem;
+  .h-\[var\(--bump-rest\)\] {
+    height: var(--bump-rest);
   }
   .h-full {
     height: 100%;
@@ -678,9 +678,6 @@
   .w-52 {
     width: calc(var(--spacing) * 52);
   }
-  .w-\[4\.5rem\] {
-    width: 4.5rem;
-  }
   .w-\[90vw\] {
     width: 90vw;
   }
@@ -689,6 +686,9 @@
   }
   .w-\[min\(52vw\,calc\(100vw-1\.5rem\)\)\] {
     width: min(52vw, calc(100vw - 1.5rem));
+  }
+  .w-\[var\(--bump-rest\)\] {
+    width: var(--bump-rest);
   }
   .w-auto {
     width: auto;
@@ -743,6 +743,9 @@
   }
   .flex-1 {
     flex: 1;
+  }
+  .shrink {
+    flex-shrink: 1;
   }
   .shrink-0 {
     flex-shrink: 0;
@@ -1616,6 +1619,11 @@
     transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
     transition-duration: var(--tw-duration, var(--default-transition-duration));
   }
+  .transition-\[left\,top\,width\,height\,opacity\] {
+    transition-property: left,top,width,height,opacity;
+    transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+    transition-duration: var(--tw-duration, var(--default-transition-duration));
+  }
   .transition-\[width\,margin\,padding\] {
     transition-property: width,margin,padding;
     transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
@@ -1633,6 +1641,11 @@
   }
   .transition-opacity {
     transition-property: opacity;
+    transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+    transition-duration: var(--tw-duration, var(--default-transition-duration));
+  }
+  .transition-shadow {
+    transition-property: box-shadow;
     transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
     transition-duration: var(--tw-duration, var(--default-transition-duration));
   }
@@ -1677,9 +1690,6 @@
     -webkit-user-select: none;
     user-select: none;
   }
-  .\[--bump-d\:88px\] {
-    --bump-d: 88px;
-  }
   .\[-webkit-touch-callout\:none\] {
     -webkit-touch-callout: none;
   }
@@ -1691,6 +1701,9 @@
     --tw-scale-y: 110%;
     --tw-scale-z: 110%;
     scale: var(--tw-scale-x) var(--tw-scale-y);
+  }
+  .group-has-\[\:checked\]\:scale-\[0\.7\]:is(:where(.group):has(:is(:checked)) *) {
+    scale: 0.7;
   }
   .group-has-\[\[data-keep-weighed\]\:checked\]\/keep\:grid:is(:where(.group\/keep):has(:is([data-keep-weighed]:checked)) *) {
     display: grid;
@@ -1831,14 +1844,20 @@
     .md\:right-5 {
       right: calc(var(--spacing) * 5);
     }
-    .md\:bottom-31 {
-      bottom: calc(var(--spacing) * 31);
+    .md\:bottom-35 {
+      bottom: calc(var(--spacing) * 35);
+    }
+    .md\:bottom-\[calc\(var\(--island-reach\,147px\)\+12px\)\] {
+      bottom: calc(var(--island-reach,147px) + 12px);
     }
     .md\:col-span-2 {
       grid-column: span 2 / span 2;
     }
-    .md\:-my-7 {
-      margin-block: calc(var(--spacing) * -7);
+    .md\:mx-1 {
+      margin-inline: var(--spacing);
+    }
+    .md\:-my-\[calc\(var\(--bump-rest\)\/2-16px\)\] {
+      margin-block: calc(calc(var(--bump-rest) / 2 - 16px) * -1);
     }
     .md\:mt-2 {
       margin-top: calc(var(--spacing) * 2);
@@ -1867,14 +1886,8 @@
     .md\:h-5 {
       height: calc(var(--spacing) * 5);
     }
-    .md\:h-13 {
-      height: calc(var(--spacing) * 13);
-    }
     .md\:h-14 {
       height: calc(var(--spacing) * 14);
-    }
-    .md\:h-\[5\.5rem\] {
-      height: 5.5rem;
     }
     .md\:max-h-\[46vh\] {
       max-height: 46vh;
@@ -1884,9 +1897,6 @@
     }
     .md\:w-5 {
       width: calc(var(--spacing) * 5);
-    }
-    .md\:w-13 {
-      width: calc(var(--spacing) * 13);
     }
     .md\:w-14 {
       width: calc(var(--spacing) * 14);
@@ -1905,9 +1915,6 @@
     }
     .md\:w-52 {
       width: calc(var(--spacing) * 52);
-    }
-    .md\:w-\[5\.5rem\] {
-      width: 5.5rem;
     }
     .md\:w-auto {
       width: auto;
@@ -2008,13 +2015,10 @@
       font-size: var(--text-xs);
       line-height: var(--tw-leading, var(--text-xs--line-height));
     }
-    .md\:\[--bump-d\:112px\] {
-      --bump-d: 112px;
-    }
   }
   @media (width >= 64rem) {
-    .lg\:bottom-31 {
-      bottom: calc(var(--spacing) * 31);
+    .lg\:bottom-35 {
+      bottom: calc(var(--spacing) * 35);
     }
     .lg\:mt-2 {
       margin-top: calc(var(--spacing) * 2);
@@ -2127,6 +2131,34 @@
     opacity: 0.6;
   }
 }
+@property --bump-d {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 88px;
+}
+@property --bump-on {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 56px;
+}
+.island_bump {
+  --bump-rest: 88px;
+  --bump-on: calc(var(--island-h, 64px) - 10px);
+  --bump-d: var(--bump-rest);
+  transition: --bump-d 300ms ease-in-out;
+}
+.island_bump:has(input[value="assistant"]:checked) {
+  --bump-d: var(--bump-on);
+}
+@media (min-width: 48rem) {
+  .island_bump {
+    --bump-rest: 112px;
+    --bump-on: calc(var(--island-h, 64px) - 18px);
+  }
+  .island_bump:has(input[value="assistant"]:checked) {
+    --bump-d: var(--bump-on);
+  }
+}
 .island_glass {
   background: transparent;
   border: 1px solid transparent;
@@ -2156,7 +2188,7 @@
   left: 0;
   right: 0;
   top: 50%;
-  height: max(var(--bump-d), var(--pill-h));
+  height: max(var(--bump-rest), var(--bump-on), var(--pill-h));
   transform: translateY(-50%);
   z-index: -2;
   pointer-events: none;
@@ -2795,6 +2827,10 @@
 }
 @layer properties {
   @supports ((-webkit-hyphens: none) and (not (margin-trim: inline))) or ((-moz-orient: inline) and (not (color:rgb(from red r g b)))) {
+    :root, :host {
+      --bump-d: 88px;
+      --bump-on: 56px;
+    }
     *, ::before, ::after, ::backdrop {
       --tw-translate-x: 0;
       --tw-translate-y: 0;
