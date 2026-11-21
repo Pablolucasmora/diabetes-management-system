@@ -18,6 +18,7 @@ from DayBetes_food.components.modal import (
     modal_secondary_button,
 )
 from DayBetes_food.components.food.tags import SYSTEM_TAG_LABELS
+from DayBetes_food.components.guide import GuideHelpButton
 from DayBetes_food.components.stats.stats_shared import MEAL_TYPE_LABELS
 from DayBetes_food.domain.constants import AmountInputUnit, MealType, Ripeness, SystemTag
 from DayBetes_food.domain.tag import SYSTEM_TAG_MEAL_TYPE
@@ -307,12 +308,16 @@ def RescueLine(entry_type: str, entry_id: int, name: str, serving_g: float | Non
             cls="grid grid-cols-[1fr_6.5rem] gap-2",
         ),
         (
-            Select(
-                Option("Ripeness not set", value="", selected=True),
-                *[Option(ripeness.value, value=ripeness.value) for ripeness in Ripeness],
-                name="ripeness",
-                aria_label="Ripeness",
-                cls=_FIELD_CLS,
+            Div(
+                Select(
+                    Option("Ripeness not set", value="", selected=True),
+                    *[Option(ripeness.value, value=ripeness.value) for ripeness in Ripeness],
+                    name="ripeness",
+                    aria_label="Ripeness",
+                    cls=f"{_FIELD_CLS} flex-1 min-w-0",
+                ),
+                GuideHelpButton("ripeness", "Ripeness"),
+                cls="flex items-center gap-2",
             )
             if is_fruit
             else Input(type="hidden", name="ripeness", value="")
