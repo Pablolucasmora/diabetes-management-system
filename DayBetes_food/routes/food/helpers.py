@@ -89,6 +89,7 @@ from DayBetes_food.domain.catalog import (
     parse_catalog_name,
     parse_cooking_factor,
 )
+from DayBetes_food.domain.food_entry import EDIT_RETURN_ASSISTANT_PREFIX, EDIT_RETURN_REVIEW, edit_return_path, parse_edit_return
 from DayBetes_food.domain.food_entry import FoodEntrySummary
 from DayBetes_food.domain.food import (
     INITIAL_AMOUNT_WITHOUT_SERVING_G,
@@ -1656,29 +1657,3 @@ def _food_view(filter, search_mode, food_mode, favs_mode, recipes_mode, meal_typ
         recipes_mode=_view_value("recipes_mode", recipes_mode, FOOD_RECIPES_TABS),
         meal_type=",".join(meal.value for meal in meal_types),
     )
-
-
-# Where saving the edit form of a provisional food goes back to (frontend §9.3,
-# §9.11): the To review list, or the conversation whose card opened it.
-EDIT_RETURN_REVIEW = "review"
-EDIT_RETURN_ASSISTANT_PREFIX = "assistant:"
-
-
-def parse_edit_return(raw: str | None) -> str | None:
-    """A known return target, or None: anything else is ignored, never followed."""
-    value = (raw or "").strip()
-    if value == EDIT_RETURN_REVIEW:
-        return value
-    if value.startswith(EDIT_RETURN_ASSISTANT_PREFIX):
-        conversation = value[len(EDIT_RETURN_ASSISTANT_PREFIX):]
-        if conversation.isdigit() and int(conversation) > 0:
-            return f"{EDIT_RETURN_ASSISTANT_PREFIX}{int(conversation)}"
-    return None
-
-
-def edit_return_path(target: str | None) -> str | None:
-    if target == EDIT_RETURN_REVIEW:
-        return "/food?filter=review"
-    if target and target.startswith(EDIT_RETURN_ASSISTANT_PREFIX):
-        return f"/assistant?conversation_id={target[len(EDIT_RETURN_ASSISTANT_PREFIX):]}"
-    return None

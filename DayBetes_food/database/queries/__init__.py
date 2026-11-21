@@ -106,6 +106,9 @@ from DayBetes_food.database.queries.entries import (
     get_mention_suggestions,
     get_consumed_food_usage_rankings,
     list_needs_review,
+    count_cooked_weight_portions,
+    move_entry_references,
+    delete_provisional_entry,
     count_needs_review,
 )
 from DayBetes_food.database.queries.intake_event import (
@@ -286,6 +289,9 @@ __all__ = [
     "get_mention_suggestions",
     "get_consumed_food_usage_rankings",
     "list_needs_review",
+    "count_cooked_weight_portions",
+    "move_entry_references",
+    "delete_provisional_entry",
     "count_needs_review",
     "create_intake_event",
     "get_intake_event",

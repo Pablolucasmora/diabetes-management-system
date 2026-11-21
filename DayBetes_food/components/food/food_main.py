@@ -3,10 +3,10 @@ from urllib.parse import urlencode
 
 from fasthtml.common import *
 from DayBetes_food.components.injection_zone import asset_busted
-from DayBetes_food.config import ASSISTANT_ENABLED
 from DayBetes_food.components.food.food_actions import FoodActionsModal
 from DayBetes_food.components.food.food_list import (
     Filters,
+    ReviewBanner,
     FoodView,
     FoodFiltersModal,
     MealSelector,
@@ -44,9 +44,10 @@ def food_main(
             id="food_menu_scrim",
             cls="fixed inset-0 z-[1] backdrop-blur-[1px] opacity-0 invisible transition-opacity duration-200",
         ),
-        QuickCreateButtons(assistant_enabled=ASSISTANT_ENABLED),
+        QuickCreateButtons(),
         SearchInput(view),
-        Filters(view, review_count),
+        ReviewBanner(view, review_count),
+        Filters(view),
         MealSelector(
             events,
             selected_id=selected_event_id,

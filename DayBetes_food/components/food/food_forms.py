@@ -1,5 +1,9 @@
 """Create and edit pages of a food, a dish, a recipe and a quick add (frontend_conventions.md §9.1)."""
 
+import json
+
+from DayBetes_food.domain.food_entry import edit_return_path
+
 from dataclasses import dataclass
 from fasthtml.common import *
 from DayBetes_food.components.data_sources import ciqual_attribution, off_attribution
@@ -793,8 +797,9 @@ def _edit_header(kind: str, name: str, back_path: str, maxlength: int):
     return _form_header(f"Edit {kind}", _name_title_input(name, "Name", maxlength), back_path)
 
 
-def _review_notice(entry: dict):
-    """The note of a provisional food or dish (code_conventions.md §8.12)."""
+def _review_notice(entry: dict, return_to: str | None = None):
+    """The note of a provisional food or dish (code_conventions.md §8.12), with the
+    switch to the other kind in case DiaBot picked the wrong one (frontend §9.3)."""
     if not entry.get("needs_review"):
         return None
     source = MACROS_SOURCE_LABELS.get(_enum_or_none(MacrosSource, entry.get("macros_source")))
@@ -802,7 +807,53 @@ def _review_notice(entry: dict):
     if source:
         parts.append(f"Macros from: {source}.")
     parts.append("Check every value and save it.")
-    return P(" ".join(parts), cls="web_container rounded-2xl px-4 py-3 text-xs text-amber-800")
+    return Div(
+        P(" ".join(parts), cls="text-xs text-amber-800"),
+        _convert_control(entry, return_to),
+        cls="web_container rounded-2xl px-4 py-3 flex flex-col gap-2",
+    )
+
+
+def _convert_control(entry: dict, return_to: str | None):
+    """Turn it into the other kind: a new entry, still to review, takes its place
+    in every meal (services/provisional.py). A food needs a category, so a dish
+    asks for it under the button, with the same field as the food forms. Its
+    own fields only, and its own message box: it sits inside the edit form."""
+    is_food = entry["entry_type"] == "catalog"
+    block_id = f"convert_block_{entry['id']}"
+    result_id = f"convert_result_{entry['id']}"
+    button = Button(
+        "Make it a dish" if is_food else "Make it a food",
+        type="button",
+        cls="web_button rounded-xl px-3 py-1.5 text-xs self-start",
+        hx_post=f"/food/convert/{entry['entry_type']}/{entry['id']}",
+        hx_vals=json.dumps({"return_to": return_to or ""}),
+        hx_params="category,return_to",
+        hx_include=f"#{block_id}",
+        hx_target=f"#{result_id}",
+        hx_swap="innerHTML",
+        data_skip_page_loading="true",
+    )
+    hint = "Made by someone else, not a packaged food?" if is_food else "A packaged or basic food, not a dish?"
+    category = (
+        _searchable_autocomplete_input(
+            "Category*",
+            "category",
+            [category.value for category in FoodCategory],
+            help_text="Main category of the food. Required to make it a food.",
+            allow_add=False,
+        )
+        if not is_food
+        else None
+    )
+    return Div(
+        Span(hint, cls="text-xs text-gray-600"),
+        button,
+        category,
+        Div(id=result_id),
+        id=block_id,
+        cls="flex flex-col gap-2",
+    )
 
 
 def _edit_return_input(return_to: str | None):
@@ -846,14 +897,15 @@ def EditCatalogPage(
     return_to: str | None = None,
 ):
     result_id = f"edit_catalog_result_{entry['id']}"
-    back_path = f"/food/item/catalog/{entry['id']}"
+    # Opened from To review or the chat, Back goes there, as Save does (§9.3).
+    back_path = edit_return_path(return_to) or f"/food/item/catalog/{entry['id']}"
 
     def _num(label, name):
         return _decimal_input(label, name, value=_input_value(entry.get(name)))
 
     form = Form(
         _edit_header("food", _input_value(entry.get("name")), back_path, CATALOG_NAME_MAX_LENGTH),
-        _review_notice(entry),
+        _review_notice(entry, return_to),
         _edit_return_input(return_to),
         _form_section(
             "Basics",
@@ -927,7 +979,7 @@ def EditManualPage(
     action (decision 2026-10-09), and favorite is not part of the edit, as in
     catalog."""
     result_id = f"edit_manual_result_{entry['id']}"
-    back_path = f"/food/item/manual_intake/{entry['id']}"
+    back_path = edit_return_path(return_to) or f"/food/item/manual_intake/{entry['id']}"
     nutrient_specs = (
         ("Calories/100g", "Calories (total)", "calories_100g"),
         ("Carbs/100g*", "Carbs (total)*", "carbs_100g"),
@@ -939,7 +991,7 @@ def EditManualPage(
     )
     form = Form(
         _edit_header("dish", _input_value(entry.get("name")), back_path, MANUAL_INTAKE_NAME_MAX_LENGTH),
-        _review_notice(entry),
+        _review_notice(entry, return_to),
         _edit_return_input(return_to),
         _form_section(
             "Basics",

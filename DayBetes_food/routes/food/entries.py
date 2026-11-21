@@ -1,5 +1,7 @@
 """Foods and dishes of the user (`catalog`, `manual_intake`): create, edit, copy, archive, publish and quick add (code_conventions.md §11.2.2, §11.2.3)."""
 
+from urllib.parse import urlencode
+
 from fasthtml.common import *
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.services.plate_selector import plate_selector_options
@@ -36,6 +38,7 @@ from DayBetes_food.database.queries import (
 from DayBetes_food.domain.constants import (
     PathId,
     PrefillSource,
+    FoodCategory,
     FoodEntryType,
     PortionOrigin,
     parse_optional_id,
@@ -65,6 +68,7 @@ from DayBetes_food.components.food.food_forms import (
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.domain.constants import AssistantDraftSource
 from DayBetes_food.services.recipe import copy_recipe
+from DayBetes_food.services.provisional import convert_provisional
 from DayBetes_food.errors import (
     AuthenticationError,
     AuthorizationError,
@@ -381,6 +385,35 @@ def setup_entries_routes(rt):
                 # name between next_recipe_copy_name and the insert.
                 return app_error_response(request, error, str(error))
         return HTMLResponse("", headers={"HX-Redirect": f"/food/edit/recipe/{created_id}/form"})
+
+    @rt("/food/convert/{entry_type}/{entry_id}")
+    def post(request: Request, entry_type: str, entry_id: PathId, category: str = "", return_to: str = ""):
+        """A provisional food becomes a dish, or the other way round (code_conventions.md
+        §8.12): the form of the new one opens, still to review."""
+        kind = _parse_food_entry_type(entry_type)
+        if kind not in (FoodEntryType.CATALOG, FoodEntryType.MANUAL_INTAKE):
+            raise ValidationError(_UNKNOWN_ENTRY_TYPE, fields={"entry_type": "invalid"})
+        user_id = get_current_user_id()
+        if not user_id:
+            raise AuthenticationError("Your session has expired.")
+        food_category = None
+        if kind is FoodEntryType.MANUAL_INTAKE:
+            try:
+                food_category = FoodCategory((category or "").strip())
+            except ValueError:
+                return app_error_response(request, ValidationError, "Choose the category of the food.")
+        try:
+            with get_connection() as connection:
+                new_type, new_id = convert_provisional(connection, int(user_id), kind, entry_id, food_category)
+        except (ConflictError, NotFoundError, ValidationError) as error:
+            # Their own text says what to do (services/provisional.py).
+            return app_error_response(request, type(error), str(error))
+        target = parse_edit_return(return_to)
+        query = f"?{urlencode({'return_to': target})}" if target else ""
+        return HTMLResponse(
+            "",
+            headers={"HX-Redirect": f"/food/edit/{new_type.value}/{new_id}/form{query}", "HX-Trigger": "dbReviewChanged"},
+        )
 
     @rt("/food/edit/{entry_type}/{entry_id}/form")
     def get(request: Request, entry_type: str, entry_id: PathId, return_to: str = ""):

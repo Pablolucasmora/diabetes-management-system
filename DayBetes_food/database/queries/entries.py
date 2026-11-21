@@ -433,11 +433,14 @@ def get_mention_suggestions(
 # Provisional foods and dishes of their owner (§8.12, §11.2.2): active only.
 _NEEDS_REVIEW_SQL = """
     SELECT 'catalog' AS entry_type, c.id AS entry_id, c.name, COALESCE(fb.label, '') AS subtitle,
-           c.carbs_100g, c.macros_source, c.created_at
+           c.carbs_100g, c.macros_source, c.created_at,
+           EXISTS (SELECT 1 FROM user_favorites uf WHERE uf.user_id = %(user_id)s AND uf.catalog_id = c.id)
+               AS is_favorite
     FROM catalog c LEFT JOIN food_brands fb ON fb.id = c.brand_id
     WHERE c.created_by = %(user_id)s AND c.needs_review AND c.deleted_at IS NULL
     UNION ALL
-    SELECT 'manual_intake', m.id, m.name, COALESCE(m.origin, ''), m.carbs_100g, m.macros_source, m.created_at
+    SELECT 'manual_intake', m.id, m.name, COALESCE(m.origin, ''), m.carbs_100g, m.macros_source, m.created_at,
+           EXISTS (SELECT 1 FROM user_favorites uf WHERE uf.user_id = %(user_id)s AND uf.manual_intake_id = m.id)
     FROM manual_intake m
     WHERE m.created_by = %(user_id)s AND m.needs_review AND m.deleted_at IS NULL
 """
@@ -459,6 +462,7 @@ def list_needs_review(connection, user_id: int) -> list[ReviewEntry]:
             subtitle=row["subtitle"] or "",
             carbs_100g=row.get("carbs_100g"),
             macros_source=row.get("macros_source"),
+            is_favorite=bool(row.get("is_favorite")),
         )
         for row in rows
     ]
@@ -473,3 +477,51 @@ def count_needs_review(connection, user_id: int) -> int:
         commit=False,
     )
     return int(row["pending"]) if row else 0
+
+
+# The columns that point at a food or a dish, by entry type: the arc of each table.
+_ENTRY_COLUMN = {FoodEntryType.CATALOG: "catalog_id", FoodEntryType.MANUAL_INTAKE: "manual_intake_id"}
+
+
+def count_cooked_weight_portions(connection, entry_type: FoodEntryType, entry_id: int) -> int:
+    """Portions of this food weighed cooked: only a catalog food has a cooking factor."""
+    column = _ENTRY_COLUMN[entry_type]
+    row = _execute_query(
+        connection,
+        f"SELECT count(*) AS cooked FROM portion_detail WHERE {column} = %(entry_id)s AND is_cooked_weight;",
+        {"entry_id": entry_id},
+        commit=False,
+    )
+    return int(row["cooked"]) if row else 0
+
+
+def move_entry_references(
+    connection, user_id: int, source: tuple[FoodEntryType, int], target: tuple[FoodEntryType, int]
+) -> None:
+    """Point the portions, favorites and tags of one provisional entry at another
+    (code_conventions.md §8.12, "Alimentos provisionales"), inside the caller's
+    transaction. A provisional entry is personal: only its owner's rows point at it."""
+    source_column, target_column = _ENTRY_COLUMN[source[0]], _ENTRY_COLUMN[target[0]]
+    params = {"source_id": source[1], "target_id": target[1], "user_id": user_id}
+    for table, owner in (("portion_detail", None), ("user_favorites", "user_id"), ("linked_tags", "users_id")):
+        owned = f" AND {owner} = %(user_id)s" if owner else ""
+        _execute_query(
+            connection,
+            f"UPDATE {table} SET {source_column} = NULL, {target_column} = %(target_id)s "
+            f"WHERE {source_column} = %(source_id)s{owned} RETURNING 1;",
+            params,
+            commit=False,
+        )
+
+
+def delete_provisional_entry(connection, user_id: int, entry_type: FoodEntryType, entry_id: int) -> bool:
+    """Delete a provisional entry of the user once nothing points at it. False if
+    it is not theirs or no longer provisional."""
+    table = "catalog" if entry_type is FoodEntryType.CATALOG else "manual_intake"
+    row = _execute_query(
+        connection,
+        f"DELETE FROM {table} WHERE id = %(entry_id)s AND created_by = %(user_id)s AND needs_review RETURNING id;",
+        {"entry_id": entry_id, "user_id": user_id},
+        commit=False,
+    )
+    return row is not None

@@ -55,3 +55,30 @@ class ReviewEntry:
     subtitle: str  # brand of a food, origin of a dish; "" if none
     carbs_100g: float | None
     macros_source: str | None  # MacrosSource value
+    is_favorite: bool = False
+
+
+# Where saving the edit form of a provisional food goes back to (frontend §9.3,
+# §9.11): the To review list, or the conversation whose card opened it.
+EDIT_RETURN_REVIEW = "review"
+EDIT_RETURN_ASSISTANT_PREFIX = "assistant:"
+
+
+def parse_edit_return(raw: str | None) -> str | None:
+    """A known return target, or None: anything else is ignored, never followed."""
+    value = (raw or "").strip()
+    if value == EDIT_RETURN_REVIEW:
+        return value
+    if value.startswith(EDIT_RETURN_ASSISTANT_PREFIX):
+        conversation = value[len(EDIT_RETURN_ASSISTANT_PREFIX):]
+        if conversation.isdigit() and int(conversation) > 0:
+            return f"{EDIT_RETURN_ASSISTANT_PREFIX}{int(conversation)}"
+    return None
+
+
+def edit_return_path(target: str | None) -> str | None:
+    if target == EDIT_RETURN_REVIEW:
+        return "/food?filter=review"
+    if target and target.startswith(EDIT_RETURN_ASSISTANT_PREFIX):
+        return f"/assistant?conversation_id={target[len(EDIT_RETURN_ASSISTANT_PREFIX):]}"
+    return None
