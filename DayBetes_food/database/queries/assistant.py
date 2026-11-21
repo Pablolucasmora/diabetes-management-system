@@ -1,11 +1,12 @@
-"""Queries for `assistant_conversation` and `assistant_message`
-(code_conventions.md §8.12, §11.2.9).
+"""Queries for `assistant_conversation`, `assistant_message` and `assistant_photo`
+(code_conventions.md §8.12, §11.2.9, §11.2.10).
 
 Both are private: the owner travels in the SQL of every statement (§5.3), so
 another user's conversation and one that does not exist give the same result
 (§5.4). A conversation is linked only to a planned meal of its owner, checked
 in the same statement that writes it. Messages are insert-only: a
-conversation is replayed to the model from them, in order.
+conversation is replayed to the model from them, in order. Photos are
+insert-only too, and their owner is the one of their message's conversation.
 """
 
 from psycopg.types.json import Jsonb
@@ -17,10 +18,11 @@ from DayBetes_food.database.mappers import (
 from DayBetes_food.database.queries.crud import _execute_query, _execute_query_many
 from DayBetes_food.domain.assistant import (
     AssistantConversationRead,
+    AssistantPhoto,
     AssistantMessageCreate,
     AssistantMessageRead,
 )
-from DayBetes_food.domain.constants import IntakeEventState
+from DayBetes_food.domain.constants import AssistantRole, IntakeEventState
 from DayBetes_food.errors import NotFoundError
 
 _CONVERSATION_COLUMNS = "c.id, c.users_id, c.intake_event_id, c.model, c.without_meal, c.created_at"
@@ -248,3 +250,42 @@ def append_assistant_messages(
         )
         ids.append(int(row["id"]))
     return ids
+
+
+def insert_assistant_photos(
+    connection, user_id: int, message_id: int, photos: tuple[AssistantPhoto, ...]
+) -> None:
+    """Store the photos of one `user` message of the user's, in order (§11.2.10).
+    Runs inside the caller's transaction (§2.3) and never commits.
+
+    The owner is checked in the same statement that writes: the message must be
+    a `user` row of one of the user's conversations.
+
+    Raises:
+        NotFoundError: the message is not a `user` message of the user's.
+    """
+    for order, photo in enumerate(photos, start=1):
+        row = _execute_query(
+            connection,
+            """
+            INSERT INTO assistant_photo (assistant_message_id, photo_order, image, size_bytes)
+            SELECT m.id, %(photo_order)s, %(image)s, %(size_bytes)s
+            FROM assistant_message m
+            JOIN assistant_conversation c ON c.id = m.conversation_id
+            WHERE m.id = %(message_id)s
+              AND m.role = %(user_role)s
+              AND c.users_id = %(user_id)s
+            RETURNING id;
+            """,
+            {
+                "message_id": message_id,
+                "photo_order": order,
+                "image": photo.data,
+                "size_bytes": len(photo.data),
+                "user_role": AssistantRole.USER.value,
+                "user_id": user_id,
+            },
+            commit=False,
+        )
+        if row is None:
+            raise NotFoundError("Message not found.")

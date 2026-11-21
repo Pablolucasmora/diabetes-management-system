@@ -570,8 +570,8 @@ Contrato del servidor en `code_conventions.md` §8.12. Solo existe si el asisten
 - Se pueden elegir varias a la vez o añadirlas de una en una, hasta 4. Las que pasan de 4 no se añaden, y un toast lo dice.
 - Encima del texto aparece una miniatura de cada una, con una × para quitarla. Mientras una se prepara, su miniatura sale atenuada y el botón de enviar espera.
 - Antes de enviarlas, el navegador reduce cada una a 1568 px por el lado mayor y la convierte en JPEG (`code_conventions.md` §8.12, coste).
-- Si el navegador no puede, envía la original, y el servidor rechaza el mensaje si lleva más de 4 fotos, o una de más de 3,75 MB o que no sea JPEG, PNG o WebP según sus bytes.
-- No se guardan: el historial muestra la píldora `Photo` o `N photos`, sin las imágenes.
+- Si el navegador no puede, envía la original, y el servidor rechaza el mensaje si lleva más de 4 fotos, o una de más de 3,75 MB o que no sea JPEG, PNG o WebP según sus bytes. Las que acepta las vuelve a codificar sin metadatos antes de enviarlas al modelo (`code_conventions.md` §8.12).
+- Se guardan desde el 2026-11-18 (`code_conventions.md` §11.2.10), pero el historial sigue mostrando la píldora `Photo` o `N photos`, sin las imágenes.
 
 **Tarjetas.**
 

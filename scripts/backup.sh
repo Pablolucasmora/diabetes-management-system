@@ -5,6 +5,10 @@
 # server can encrypt but not decrypt), keeps the latest copies locally and
 # uploads them to R2, which deletes them after 90 days.
 #
+# The assistant's photos (assistant_photo) are left out of the nightly dump and
+# copied on their own every PHOTO_EVERY_DAYS days: each copy is complete and
+# the photos take far more room than the rest of the data.
+#
 # It is not run from the repository: it is installed as root in
 # /usr/local/sbin/daybetes-backup and started by the systemd timer with the
 # configuration in /etc/daybetes/backup.env.
@@ -17,6 +21,8 @@ set -euo pipefail
 : "${BACKUP_REMOTE:?BACKUP_REMOTE is not set}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/daybetes}"
 KEEP_LOCAL_DAYS="${KEEP_LOCAL_DAYS:-7}"
+PHOTO_EVERY_DAYS=10
+KEEP_LOCAL_PHOTO_COPIES=2
 
 # Must match docker-compose.prod.yml and the owner role (§6).
 DB_CONTAINER="${DB_CONTAINER:-deploy_db}"
@@ -47,7 +53,9 @@ roles="$BACKUP_DIR/daybetes_roles_${stamp}.sql.age"
 # name of a valid backup.
 # off_product and ciqual_food keep their structure but not their rows: they are public and can be
 # loaded again from scripts/off and scripts/ciqual (measurement_conventions.md §12).
-docker exec "$DB_CONTAINER" pg_dump -U "$DB_SUPERUSER" -Fc --exclude-table-data=off_product --exclude-table-data=ciqual_food "$DB_NAME" \
+# assistant_photo keeps its structure too: its rows go in the photo copy below.
+docker exec "$DB_CONTAINER" pg_dump -U "$DB_SUPERUSER" -Fc \
+  --exclude-table-data=off_product --exclude-table-data=ciqual_food --exclude-table-data=assistant_photo "$DB_NAME" \
   | age -r "$AGE_RECIPIENT" > "$data.tmp"
 docker exec "$DB_CONTAINER" pg_dumpall -U "$DB_SUPERUSER" --roles-only \
   | age -r "$AGE_RECIPIENT" > "$roles.tmp"
@@ -58,5 +66,20 @@ rclone copy "$data" "$BACKUP_REMOTE"
 rclone copy "$roles" "$BACKUP_REMOTE"
 
 find "$BACKUP_DIR" -name 'daybetes_*.age' -mtime +"$KEEP_LOCAL_DAYS" -delete
+
+# Photo copy: when the latest one here is PHOTO_EVERY_DAYS days old, or there is
+# none. Going by its age and not by the date, a night the server was off only
+# delays it to the next run. One hour of slack, so the run of day 10 counts.
+photo_minutes=$(( PHOTO_EVERY_DAYS * 24 * 60 - 60 ))
+if [ -z "$(find "$BACKUP_DIR" -name 'daybetes-photos_*.dump.age' -mmin -"$photo_minutes" -print -quit)" ]; then
+  photos="$BACKUP_DIR/daybetes-photos_${stamp}.dump.age"
+  docker exec "$DB_CONTAINER" pg_dump -U "$DB_SUPERUSER" -Fc --data-only --table=assistant_photo "$DB_NAME" \
+    | age -r "$AGE_RECIPIENT" > "$photos.tmp"
+  mv "$photos.tmp" "$photos"
+  rclone copy "$photos" "$BACKUP_REMOTE/photos"
+  # Keep the latest copies here, oldest removed first.
+  ls -1t "$BACKUP_DIR"/daybetes-photos_*.dump.age | tail -n +"$((KEEP_LOCAL_PHOTO_COPIES + 1))" | xargs -r rm --
+  echo "Photo backup completed: $(basename "$photos") ($(du -h "$photos" | cut -f1)), uploaded to $BACKUP_REMOTE/photos"
+fi
 
 echo "Backup completed: $(basename "$data") ($(du -h "$data" | cut -f1)), uploaded to $BACKUP_REMOTE"

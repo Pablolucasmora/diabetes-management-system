@@ -9,11 +9,14 @@ psycopg, routes or components; the SQL-row-to-dataclass conversion lives in
 DayBetes_food/database/mappers.py.
 """
 
+import io
 import json
 import math
 import re
 from dataclasses import dataclass
 from datetime import datetime
+
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from DayBetes_food.domain.catalog import CATALOG_NAME_MAX_LENGTH, parse_barcode, parse_cooking_factor
 from DayBetes_food.domain.constants import (
@@ -76,6 +79,15 @@ ASSISTANT_MENTIONS_MAX = 10
 ASSISTANT_PHOTOS_MAX = 4
 ASSISTANT_PHOTO_MAX_BYTES = 3_750_000
 ASSISTANT_PHOTO_MEDIA_TYPES = ("image/jpeg", "image/png", "image/webp")
+# What the server sends and stores (§8.12, cost; §11.2.10): the same reduction
+# as the browser, done again so a photo the browser could not reduce gets it
+# too, and so no metadata (GPS position included) survives.
+ASSISTANT_PHOTO_MAX_SIDE_PX = 1568
+ASSISTANT_PHOTO_JPEG_QUALITY = 85
+ASSISTANT_PHOTO_STORED_TYPE = "image/jpeg"
+# A larger image is refused before it is decoded: a small file can declare
+# huge dimensions (decompression bomb). A 48 MP phone photo fits.
+ASSISTANT_PHOTO_MAX_PIXELS = 60_000_000
 
 # Rows a search tool returns to the model (§8.12, cost): compact and few.
 ASSISTANT_SEARCH_RESULTS_MAX = 5
@@ -83,8 +95,12 @@ ASSISTANT_SEARCH_RESULTS_MAX = 5
 # Marks the block of a user row that the server writes (date, meal, mentions):
 # the page shows the user's own text only.
 ASSISTANT_CONTEXT_TAG = "<daybetes_context>"
-# What each stored photo becomes: photos are never kept (§11.2.9, study §7.1).
-ASSISTANT_PHOTO_PLACEHOLDER = "[The user attached a photo here. Photos are not kept.]"
+# What each photo becomes in its stored message (§11.2.9): the model never
+# gets it again. The image itself is kept in assistant_photo (§11.2.10).
+ASSISTANT_PHOTO_PLACEHOLDER = "[The user attached a photo here. It is sent only once.]"
+# The marker of the rows stored before 2026-11-18, when photos were not kept.
+_LEGACY_PHOTO_PLACEHOLDER = "[The user attached a photo here. Photos are not kept.]"
+_PHOTO_PLACEHOLDERS = (ASSISTANT_PHOTO_PLACEHOLDER, _LEGACY_PHOTO_PLACEHOLDER)
 
 # Keys of a tool result that the page shows as a card (frontend §9.11): what
 # went into the cart and the draft of a new food. The page reads them back from
@@ -249,8 +265,44 @@ def parse_assistant_photos(uploads: list[tuple[str, bytes]]) -> tuple[AssistantP
             valid = data.startswith(_PHOTO_SIGNATURES[media_type])
         if not valid:
             raise ValidationError(f"{which} could not be read.", fields={"photo": "invalid"})
-        photos.append(AssistantPhoto(media_type, data))
+        photos.append(AssistantPhoto(ASSISTANT_PHOTO_STORED_TYPE, reencode_assistant_photo(data, which)))
     return tuple(photos)
+
+
+def reencode_assistant_photo(data: bytes, which: str = "The photo") -> bytes:
+    """The photo as the model gets it and as it is stored (§8.12, §11.2.10): a
+    JPEG of at most ASSISTANT_PHOTO_MAX_SIDE_PX on its longer side, upright and
+    without metadata. Writing a new JPEG from the pixels drops EXIF, and with
+    it any GPS position; the orientation it held is applied first.
+
+    Raises:
+        ValidationError: the bytes are not an image Pillow can read, or the
+            image declares more than ASSISTANT_PHOTO_MAX_PIXELS.
+    """
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            width, height = image.size
+            if width * height > ASSISTANT_PHOTO_MAX_PIXELS:
+                raise ValidationError(f"{which} is too large.", fields={"photo": "too_large"})
+            # A JPEG can be decoded at a fraction of its size: far less memory
+            # for a full-size phone photo. No-op for other formats.
+            image.draft("RGB", (ASSISTANT_PHOTO_MAX_SIDE_PX, ASSISTANT_PHOTO_MAX_SIDE_PX))
+            upright = ImageOps.exif_transpose(image)
+            if upright.mode in ("RGBA", "LA", "P"):
+                # Transparent parts of a screenshot become white, not black.
+                upright = upright.convert("RGBA")
+                background = Image.new("RGB", upright.size, (255, 255, 255))
+                background.paste(upright, mask=upright.getchannel("A"))
+                upright = background
+            elif upright.mode != "RGB":
+                upright = upright.convert("RGB")
+            upright.thumbnail((ASSISTANT_PHOTO_MAX_SIDE_PX, ASSISTANT_PHOTO_MAX_SIDE_PX), Image.Resampling.LANCZOS)
+            output = io.BytesIO()
+            # No exif, icc_profile or comment argument: nothing but the pixels is written.
+            upright.save(output, format="JPEG", quality=ASSISTANT_PHOTO_JPEG_QUALITY, optimize=True)
+            return output.getvalue()
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+        raise ValidationError(f"{which} could not be read.", fields={"photo": "invalid"}) from None
 
 
 def require_turn_content(request: AssistantTurnRequest) -> None:
@@ -792,10 +844,10 @@ def turn_views(messages: list[AssistantMessageRead]) -> list[TurnView]:
                 str(block.get("text", ""))
                 for block in message.content
                 if block.get("type") == "text" and not is_context_block(block)
-                and block.get("text") != ASSISTANT_PHOTO_PLACEHOLDER
+                and block.get("text") not in _PHOTO_PLACEHOLDERS
             ]
             photo_count = sum(
-                block.get("type") == "image" or block.get("text") == ASSISTANT_PHOTO_PLACEHOLDER
+                block.get("type") == "image" or block.get("text") in _PHOTO_PLACEHOLDERS
                 for block in message.content
             )
             turns.append(TurnView("\n".join(texts).strip(), photo_count, [], [], [], []))
