@@ -10,11 +10,13 @@ from DayBetes_food.components.food.food_shared import (
     AMOUNT_METHOD_LABELS,
     FORM_FIELD_CLS,
     MACROS_SOURCE_LABELS,
+    SERVING_METHOD_LABELS,
 )
 from DayBetes_food.domain.constants import (
     AmountMethod,
     GlycemicIndex,
     MacrosSource,
+    ServingMethod,
     NutrientEntryMode,
 )
 from DayBetes_food.domain.nutrition import SMART_MACROS_MAX_LENGTH
@@ -370,6 +372,21 @@ def _amount_method_default_select(selected: str | None):
         help_text="Copied to every new portion: how you usually get its amount (e.g. the 60 g of a can).",
         selected_value=selected or "",
         labels={member.value: text for member, text in AMOUNT_METHOD_LABELS.items()},
+        guide_topic="amount_method",
+    )
+
+
+def _serving_method_select(selected: str | None):
+    """What the serving is (study §6.3, decision 2026-11-21): the amount method the
+    + of the food's row gives its portion. Empty is `Usual amount`
+    (measurement §6.11)."""
+    return _labeled_select(
+        "Serving is",
+        "serving_method",
+        [member.value for member in ServingMethod],
+        help_text="Package weight: printed on the pack or the unit. Usual amount: what you usually take, known but not weighed.",
+        selected_value=selected or "",
+        labels={member.value: text for member, text in SERVING_METHOD_LABELS.items()},
         guide_topic="amount_method",
     )
 

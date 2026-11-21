@@ -60,8 +60,12 @@ def _enum_values(enum_cls: type[Enum], definitions: dict, labels: dict | None = 
 _AMOUNT_METHOD = {
     AmountMethod.KITCHEN_SCALE: "Weighed on the kitchen scale.",
     AmountMethod.POCKET_SCALE: "Weighed on a small portable scale.",
-    AmountMethod.PACKAGE: "The weight printed on the pack or the unit: a 125 g yogurt, a 60 g can.",
-    AmountMethod.HOUSEHOLD: "A spoon, a glass, a handful, or a unit with no printed weight.",
+    AmountMethod.PACKAGE: "The weight printed on the pack or the unit, eaten whole: a 125 g yogurt, a 60 g can.",
+    AmountMethod.USUAL_AMOUNT: (
+        "An amount you always take about the same and whose weight you know from weighing it before, "
+        "not weighed this time: your usual glass of milk, one medium tomato, half your usual jar."
+    ),
+    AmountMethod.HOUSEHOLD: "A rough household measure: a spoon, a handful, a splash, any glass.",
     AmountMethod.EYEBALL: "Your own guess, without a scale.",
     AmountMethod.AI_ESTIMATE: "The assistant estimated it, from a photo or a description.",
 }

@@ -32,6 +32,7 @@ from DayBetes_food.domain.constants import (
     Ripeness,
     StorageLocation,
     SystemTag,
+    ServingMethod,
 )
 from DayBetes_food.domain.food_entry import MentionSuggestion
 from DayBetes_food.domain.fridge import FridgeMoveRead, FridgeRead
@@ -184,6 +185,7 @@ def catalog_item_read_from_row(row: dict) -> CatalogItemRead:
             cooking_factor=row.get("cooking_factor"),
             macros_source=_enum_from_row(row, "macros_source", MacrosSource),
             default_amount_method=_enum_from_row(row, "default_amount_method", AmountMethod),
+            serving_method=_enum_from_row(row, "serving_method", ServingMethod),
             macros_confidence=row.get("macros_confidence"),
             is_published=bool(row["is_published"]),
             created_at=row["created_at"],
@@ -231,6 +233,7 @@ def manual_intake_read_from_row(row: dict) -> ManualIntakeRead:
             macros_confidence=row.get("macros_confidence"),
             macros_source=_enum_from_row(row, "macros_source", MacrosSource),
             default_amount_method=_enum_from_row(row, "default_amount_method", AmountMethod),
+            serving_method=_enum_from_row(row, "serving_method", ServingMethod),
             is_quick_add=bool(row["is_quick_add"]),
             is_published=bool(row["is_published"]),
             created_at=row["created_at"],

@@ -320,6 +320,18 @@ def portion_defaults(item) -> dict:
     return {"amount_method": item.default_amount_method, "final_state": default_final_state(item)}
 
 
+def one_click_portion_defaults(item) -> dict:
+    """`portion_defaults` for the + of a food's row (measurement_conventions.md
+    §6.11, decision 2026-11-21). With a serving the portion is one serving, so its
+    amount method is what the serving is (`serving_method`; not said is
+    `usual_amount`). Without one it is 100 g and the food's default applies."""
+    defaults = portion_defaults(item)
+    if item.default_portion is not None:
+        serving = item.serving_method
+        defaults["amount_method"] = AmountMethod(serving.value) if serving is not None else AmountMethod.USUAL_AMOUNT
+    return defaults
+
+
 def combine_split_methods(*methods: FractionMethod | None) -> FractionMethod | None:
     """The split method of an amount that went through several splits, or that
     joins amounts from several (study_conventions.md §6.3): the least precise

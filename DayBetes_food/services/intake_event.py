@@ -434,6 +434,7 @@ def add_quick_add_to_meal(
             macros_confidence=None,
             macros_source=request.macros_source,
             default_amount_method=request.amount_method,
+            serving_method=None,
             is_quick_add=True,
         ),
         commit=False,

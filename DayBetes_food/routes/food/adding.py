@@ -54,6 +54,7 @@ from DayBetes_food.domain.portion_detail import (
     PortionDetailCreate,
     amount_to_grams,
     parse_amount_grams,
+    one_click_portion_defaults,
     portion_defaults,
 )
 from DayBetes_food.components.food.fridge import FridgeListOob
@@ -584,7 +585,7 @@ def setup_adding_routes(rt):
                             destination_id=event_id,
                             plate_id=target_plate_id,
                             amount=portion_amount,
-                            **portion_defaults(catalog_item),  # measurement §6.11
+                            **one_click_portion_defaults(catalog_item),  # measurement §6.11
                         ),
                         commit=False,
                     )
@@ -635,7 +636,7 @@ def setup_adding_routes(rt):
                             destination_id=event_id,
                             plate_id=target_plate_id,
                             amount=portion_amount,
-                            **portion_defaults(manual_intake),
+                            **one_click_portion_defaults(manual_intake),
                         ),
                         commit=False,
                     )

@@ -37,7 +37,7 @@ _MANUAL_INTAKE_COLUMNS = """
     entity.calories_100g, entity.carbs_100g, entity.sugars_100g, entity.fats_100g,
     entity.saturated_100g, entity.proteins_100g, entity.fiber_100g,
     entity.caffeine, entity.alcohol, entity.glycemic_index, entity.ig_confidence,
-    entity.macros_confidence, entity.macros_source, entity.default_amount_method,
+    entity.macros_confidence, entity.macros_source, entity.default_amount_method, entity.serving_method,
     entity.is_quick_add, entity.is_published, entity.created_at, entity.updated_at, entity.deleted_at,
     EXISTS (SELECT 1 FROM user_favorites uf
             WHERE uf.user_id = %(visibility_user_id)s AND uf.manual_intake_id = entity.id) AS is_favorite,
@@ -68,6 +68,7 @@ _MANUAL_INTAKE_CREATE_COLUMNS = (
     "macros_confidence",
     "macros_source",
     "default_amount_method",
+    "serving_method",
     "is_quick_add",
 )
 
@@ -118,6 +119,7 @@ def _editable_fields(payload: ManualIntakeCreate | ManualIntakeUpdate) -> dict:
         "default_amount_method": (
             payload.default_amount_method.value if payload.default_amount_method is not None else None
         ),
+        "serving_method": payload.serving_method.value if payload.serving_method is not None else None,
         **_nutrient_params(payload.nutrients),
     }
 
