@@ -10,6 +10,7 @@ from DayBetes_food.domain.constants import (
     CookingMethod,
     FoodPhysicalState,
     AmountMethod,
+    FractionMethod,
     FridgeCloseReason,
     Ripeness,
     sql_in_list,
@@ -687,6 +688,20 @@ def _ensure_portion_detail_schema(cursor):
         cursor.execute(
             "ALTER TABLE intake_plate ADD CONSTRAINT ck_intake_plate_eaten_fraction "
             "CHECK (eaten_fraction IS NULL OR (eaten_fraction > 0 AND eaten_fraction <= 1));"
+        )
+    # ---- How a fraction was obtained (study §6.3, decision 2026-11-21) ----
+    # NULL in every existing row: how past fractions were obtained is unknown.
+    cursor.execute("ALTER TABLE intake_plate ADD COLUMN IF NOT EXISTS eaten_fraction_method VARCHAR(50);")
+    if not _constraint_exists(cursor, "intake_plate", "ck_intake_plate_eaten_fraction_method"):
+        cursor.execute(
+            "ALTER TABLE intake_plate ADD CONSTRAINT ck_intake_plate_eaten_fraction_method "
+            "CHECK (eaten_fraction_method IS NULL OR eaten_fraction_method IN (" + sql_in_list(FractionMethod) + "));"
+        )
+    cursor.execute("ALTER TABLE portion_detail ADD COLUMN IF NOT EXISTS split_method VARCHAR(50);")
+    if not _constraint_exists(cursor, "portion_detail", "ck_portion_detail_split_method"):
+        cursor.execute(
+            "ALTER TABLE portion_detail ADD CONSTRAINT ck_portion_detail_split_method "
+            "CHECK (split_method IS NULL OR split_method IN (" + sql_in_list(FractionMethod) + "));"
         )
     cursor.execute("ALTER TABLE portion_detail ADD COLUMN IF NOT EXISTS eaten_at TIMESTAMPTZ;")
     if not _constraint_exists(cursor, "portion_detail", "ck_portion_detail_eaten_at_only_for_event"):

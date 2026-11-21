@@ -13,6 +13,7 @@ from DayBetes_food.database.queries.crud import (
     _execute_query,
     _execute_query_many,
 )
+from DayBetes_food.domain.constants import FractionMethod
 from DayBetes_food.domain.intake_plate import IntakePlateCreate, IntakePlateRead
 from DayBetes_food.errors import ConflictError, InfrastructureError, NotFoundError, ValidationError
 
@@ -26,6 +27,7 @@ _INTAKE_PLATE_COLUMNS = """
     ip.offset_minutes,
     ip.eaten_at,
     ip.eaten_fraction,
+    ip.eaten_fraction_method,
     ip.created_at,
     ip.updated_at
 """
@@ -289,10 +291,17 @@ def apply_plate_offset_to_portions(
 
 
 def set_intake_plate_eaten_fraction(
-    connection, user_id: int, plate_id: int, fraction: float, *, commit: bool = True
+    connection,
+    user_id: int,
+    plate_id: int,
+    fraction: float,
+    method: FractionMethod | None = None,
+    *,
+    commit: bool = True,
 ) -> None:
-    """Store what was eaten of a plate, in (0, 1], when its meal is confirmed
-    (study_conventions.md §6.3). Ownership is checked in the SQL (§5.3).
+    """Store what was eaten of a plate, in (0, 1], and how that was obtained, when
+    its meal is confirmed (study_conventions.md §6.3). `method` is None for a plate
+    eaten whole. Ownership is checked in the SQL (§5.3).
 
     Raises:
         ValidationError: fraction out of (0, 1].
@@ -305,6 +314,7 @@ def set_intake_plate_eaten_fraction(
         """
         UPDATE intake_plate ip
         SET eaten_fraction = %(fraction)s,
+            eaten_fraction_method = %(method)s,
             updated_at = NOW()
         FROM intake_event ie
         WHERE ip.id = %(plate_id)s
@@ -312,7 +322,12 @@ def set_intake_plate_eaten_fraction(
           AND ie.users_id = %(user_id)s
         RETURNING ip.id;
         """,
-        {"fraction": fraction, "plate_id": plate_id, "user_id": user_id},
+        {
+            "fraction": fraction,
+            "method": method.value if method is not None else None,
+            "plate_id": plate_id,
+            "user_id": user_id,
+        },
         commit=commit,
     )
     if row is None:

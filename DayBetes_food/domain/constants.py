@@ -267,15 +267,36 @@ class AmountMethod(str, Enum):
     KITCHEN_SCALE = "kitchen_scale"
     POCKET_SCALE = "pocket_scale"
     PACKAGE = "package"
+    USUAL_AMOUNT = "usual_amount"
     HOUSEHOLD = "household"
     EYEBALL = "eyeball"
     AI_ESTIMATE = "ai_estimate"
+
+
+@unique
+class ServingMethod(str, Enum):
+    """What a food's serving (`default_portion`) is, as U2 codes (study_conventions.md
+    §6.3, decision 2026-11-21): the `amount_method` that the + of its row gives
+    the portion (measurement_conventions.md §6.11). None = not said: `usual_amount`."""
+
+    PACKAGE = AmountMethod.PACKAGE.value
+    USUAL_AMOUNT = AmountMethod.USUAL_AMOUNT.value
 
 
 # Measured amounts: the ones amount_confidence counts (measurement_conventions.md §6.4).
 WEIGHED_AMOUNT_METHODS = frozenset(
     {AmountMethod.KITCHEN_SCALE, AmountMethod.POCKET_SCALE, AmountMethod.PACKAGE}
 )
+
+
+@unique
+class FractionMethod(str, Enum):
+    """How a fraction that split an amount was obtained (study_conventions.md
+    §6.3, decision 2026-11-21): what was eaten of a plate, and the splits between
+    a plate and the fridge. The amount it splits keeps its own `amount_method`."""
+
+    EYEBALL = "eyeball"   # estimated by eye, even when typed from a weighed total
+    WEIGHED = "weighed"   # both sides of the split weighed
 
 
 @unique

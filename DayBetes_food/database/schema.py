@@ -30,6 +30,8 @@ from DayBetes_food.domain.constants import (
     PrefillSource,
     Ripeness,
     AmountMethod,
+    FractionMethod,
+    ServingMethod,
     AssistantRole,
     MacrosSource,
     StorageLocation,
@@ -105,6 +107,9 @@ def catalog_check_constraints() -> dict[str, str]:
         "ck_catalog_default_amount_method": (
             f"default_amount_method IS NULL OR default_amount_method IN ({sql_in_list(AmountMethod)})"
         ),
+        "ck_catalog_serving_method": (
+            f"serving_method IS NULL OR serving_method IN ({sql_in_list(ServingMethod)})"
+        ),
         "ck_catalog_macros_confidence_range": (
             f"macros_confidence IS NULL OR macros_confidence BETWEEN {FOOD_CONFIDENCE_MIN} AND {FOOD_CONFIDENCE_MAX}"
         ),
@@ -142,6 +147,9 @@ def manual_intake_check_constraints() -> dict[str, str]:
         "ck_manual_intake_macros_source": f"macros_source IS NULL OR macros_source IN ({sql_in_list(MacrosSource)})",
         "ck_manual_intake_default_amount_method": (
             f"default_amount_method IS NULL OR default_amount_method IN ({sql_in_list(AmountMethod)})"
+        ),
+        "ck_manual_intake_serving_method": (
+            f"serving_method IS NULL OR serving_method IN ({sql_in_list(ServingMethod)})"
         ),
     }
     for field, limits in NUTRIENT_LIMITS.items():
@@ -480,6 +488,7 @@ class DBSchema:
         cooking_factor REAL,
         macros_source VARCHAR(50), -- U1: where the macros come from; the food's data, read live by portions (measurement §6.11)
         default_amount_method VARCHAR(50), -- U2: copied to each new portion (measurement §6.11)
+        serving_method VARCHAR(50), -- what its serving is, as a U2 code; the + of a row copies it to the portion (measurement §6.11)
         macros_confidence INTEGER, -- declared 0-2 (measurement §6.10)
         prefill_source VARCHAR(20), -- where the form's first values came from; the saved values are the user's (measurement §12.1)
         prefill_source_id VARCHAR(64),
@@ -540,6 +549,7 @@ class DBSchema:
         macros_confidence INTEGER, -- declared 0-2 (measurement §6.10)
         macros_source VARCHAR(50), -- U1: the dish's data, read live by portions (measurement §6.11)
         default_amount_method VARCHAR(50), -- U2: copied to each new portion (measurement §6.11)
+        serving_method VARCHAR(50), -- what its serving is, as a U2 code; the + of a row copies it to the portion (measurement §6.11)
         is_quick_add BOOLEAN NOT NULL DEFAULT FALSE,
         is_published BOOLEAN NOT NULL DEFAULT FALSE,
         deleted_at TIMESTAMPTZ,
@@ -911,7 +921,7 @@ class DBSchema:
     );
     """
 
-    intake_plate = """
+    intake_plate = f"""
     CREATE TABLE IF NOT EXISTS intake_plate (
         id SERIAL CONSTRAINT pk_intake_plate PRIMARY KEY,
         intake_event_id INTEGER NOT NULL
@@ -926,6 +936,9 @@ class DBSchema:
         eaten_fraction REAL
             CONSTRAINT ck_intake_plate_eaten_fraction
             CHECK (eaten_fraction IS NULL OR (eaten_fraction > 0 AND eaten_fraction <= 1)), -- Share of the plate eaten, stored at confirm; NULL = not recorded (planned, or confirmed before 2026-11-17). What was served is amount / eaten_fraction (study_conventions.md 6.3)
+        eaten_fraction_method VARCHAR(50)
+            CONSTRAINT ck_intake_plate_eaten_fraction_method
+            CHECK (eaten_fraction_method IS NULL OR eaten_fraction_method IN ({sql_in_list(FractionMethod)})), -- How eaten_fraction was obtained, marked by the user; NULL = eaten whole or not recorded (study_conventions.md 6.3)
 
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -1015,6 +1028,9 @@ class DBSchema:
         amount_method VARCHAR(50)
             CONSTRAINT ck_portion_detail_amount_method
             CHECK (amount_method IS NULL OR amount_method IN ({sql_in_list(AmountMethod)})), -- U2: how the amount was obtained (study_conventions.md 6.3). NULL = not given
+        split_method VARCHAR(50)
+            CONSTRAINT ck_portion_detail_split_method
+            CHECK (split_method IS NULL OR split_method IN ({sql_in_list(FractionMethod)})), -- How the fraction that split this amount between a plate and the fridge was obtained; the least precise of its splits. NULL = never split (study_conventions.md 6.3)
         macros_quality BOOLEAN, -- UNUSED since 2026-10-09: the origin of the macros is the food's (catalog/manual_intake.macros_source, read live, measurement §6.11). Kept with its values until versioning (portion_detail H1)
         
         is_cooked_weight BOOLEAN DEFAULT FALSE, -- If the food was weighed already cooked, catalog.cooking_factor back-calculates the raw weight ONLY inside the macro calculation; `amount` always keeps what the user weighed and is never overwritten (measurement_conventions.md 5.2, decision 2026-09-18). Only for catalog origins.

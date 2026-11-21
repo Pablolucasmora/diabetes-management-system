@@ -31,6 +31,7 @@ from DayBetes_food.domain.constants import (
 )
 from DayBetes_food.components.food.food_widgets import (
     _amount_method_default_select,
+    _serving_method_select,
     _brand_autocomplete_input,
     _confidence_select,
     _decimal_input,
@@ -221,7 +222,7 @@ def CreateCatalogPage(
         _pv(k, "").strip()
         for k in (
             "initial_state", "nutriscore", "nova", "yuka", "caffeine", "alcohol", "barcode", "cooking_factor",
-            "macros_source", "macros_confidence", "default_amount_method",
+            "macros_source", "macros_confidence", "default_amount_method", "serving_method",
         )
     )
     notices = Div(
@@ -317,6 +318,7 @@ def CreateCatalogPage(
                 help_text="Default serving size in g. Leave empty if the food has no serving.",
                 value=_pv("default_portion"),
             ),
+            _serving_method_select(_pv("serving_method") or None),
             step=2,
         ),
         _optional_section(
@@ -467,7 +469,7 @@ def CreateManualPage(
     details_open = any(
         _pv(key) for key in (
             "description", "glycemic_index", "ig_confidence", "caffeine", "alcohol",
-            "macros_source", "macros_confidence", "default_amount_method",
+            "macros_source", "macros_confidence", "default_amount_method", "serving_method",
         )
     )
     note = data.get("assistant_note")
@@ -498,6 +500,7 @@ def CreateManualPage(
             "Nutrition",
             _nutrient_mode_select("manual"),
             _manual_portion_input(_pv("default_portion") or None),
+            _serving_method_select(_pv("serving_method") or None),
             _smart_macros_block(
                 "manual",
                 prefill=data,
@@ -833,6 +836,7 @@ def EditCatalogPage(
                 input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
             ),
             _decimal_input("Default serving (g)", "default_portion", value=_input_value(entry.get("default_portion"))),
+            _serving_method_select(entry.get("serving_method")),
         ),
         _form_section(
             "Nutrition per 100 g",
@@ -924,6 +928,7 @@ def EditManualPage(
             "Nutrition",
             _nutrient_mode_select(f"edit_manual_{entry['id']}"),
             _manual_portion_input(value=_input_value(entry.get("default_portion"))),
+            _serving_method_select(entry.get("serving_method")),
         ),
         _form_section(
             "Macros",

@@ -10,7 +10,7 @@ normalization, subtype limit, default serving) in domain/food.py.
 from dataclasses import dataclass
 from datetime import datetime
 
-from DayBetes_food.domain.constants import AmountMethod, GlycemicIndex, MacrosSource
+from DayBetes_food.domain.constants import AmountMethod, GlycemicIndex, MacrosSource, ServingMethod
 from DayBetes_food.domain.food import FOOD_DEFAULT_PORTION_RANGE, normalize_food_text
 from DayBetes_food.domain.nutrition import NutrientValues, parse_number
 from DayBetes_food.errors import ValidationError
@@ -125,6 +125,7 @@ class ManualIntakeRead:
     macros_confidence: int | None
     macros_source: MacrosSource | None  # U1: the dish's data, read live by portions (measurement §6.11)
     default_amount_method: AmountMethod | None  # U2: copied to each new portion
+    serving_method: ServingMethod | None  # what its serving is; the + of a row copies it (§6.11)
     is_quick_add: bool
     is_published: bool
     created_at: datetime
@@ -156,6 +157,7 @@ class ManualIntakeCreate:
     macros_confidence: int | None
     macros_source: MacrosSource | None
     default_amount_method: AmountMethod | None  # U2: copied to each new portion
+    serving_method: ServingMethod | None  # what its serving is; the + of a row copies it (§6.11)
     is_quick_add: bool = False
 
 
@@ -178,6 +180,7 @@ class ManualIntakeUpdate:
     macros_confidence: int | None
     macros_source: MacrosSource | None
     default_amount_method: AmountMethod | None  # U2: copied to each new portion
+    serving_method: ServingMethod | None  # what its serving is; the + of a row copies it (§6.11)
 
 
 @dataclass(frozen=True)
@@ -197,6 +200,7 @@ class ManualIntakeRequest:
     macros_confidence: int | None
     macros_source: MacrosSource | None
     default_amount_method: AmountMethod | None  # U2: copied to each new portion
+    serving_method: ServingMethod | None  # what its serving is; the + of a row copies it (§6.11)
     favorite: bool | None  # None = field absent (edit form)
 
 

@@ -29,6 +29,7 @@ from DayBetes_food.components.injection_zone import (
 from DayBetes_food.domain.constants import (
     AmountInputUnit,
     ConservationMethod,
+    FractionMethod,
     CookingMethod,
     FoodPhysicalState,
     InjectionZone,
@@ -311,15 +312,50 @@ def EventHeader(event):
     )
 
 
+def _portion_calories(portion) -> float:
+    calories_100 = parse_source_macro(portion, "calories")
+    if calories_100 is None:
+        return 0.0
+    return portion_macro_amount(portion) * float(calories_100) / 100.0
+
+
+def _portion_macro(portion, macro_key: str) -> float:
+    macro_100 = parse_source_macro(portion, macro_key)
+    if macro_100 is None:
+        return 0.0
+    return portion_macro_amount(portion) * float(macro_100) / 100.0
+
+
+def _eaten_plate_totals(portions) -> dict:
+    """Served totals of each plate, for the `Eating` figures that
+    static/js/cart_eaten.js scales by what is typed in `Eaten`
+    (frontend_conventions.md §7.14). `amount` is the plate total that grams
+    in `Eaten` are compared with, the same one confirm uses."""
+    plates: dict[str, dict] = {}
+    for portion in portions:
+        if portion.plate_id is None:
+            continue
+        plate = plates.setdefault(
+            str(int(portion.plate_id)), {"amount": 0.0, "kcal": 0.0, **{key: 0.0 for key, _, _ in MACRO_KEYS}}
+        )
+        plate["amount"] += portion_intake_amount(portion)
+        plate["kcal"] += _portion_calories(portion)
+        for macro_key, _, _ in MACRO_KEYS:
+            plate[macro_key] += _portion_macro(portion, macro_key)
+    return {
+        plate_id: {key: round(value, 4) for key, value in totals.items()} for plate_id, totals in plates.items()
+    }
+
+
 def MacrosSummary(event, portions, compact: bool = False):
+    """The meal's macros. The full summary shows what was served and, under it,
+    what is going to be eaten: the served totals of each plate scaled in the
+    browser by its `Eaten` field, before confirming (frontend_conventions.md
+    §7.14). Nothing of it is stored; coverage and the colours stay on the
+    served amounts."""
     total_amount = sum(portion_intake_amount(p) for p in portions)
     inferred_metrics = calculate_macro_summary_metrics(portions)
-    total_calories = 0.0
-    for portion in portions:
-        calories_100 = parse_source_macro(portion, "calories")
-        if calories_100 is None:
-            continue
-        total_calories += portion_macro_amount(portion) * float(calories_100) / 100.0
+    total_calories = sum(_portion_calories(portion) for portion in portions)
 
     amount_confidence = event.amount_confidence
     if amount_confidence is None:
@@ -337,13 +373,7 @@ def MacrosSummary(event, portions, compact: bool = False):
     for macro_key, label, coverage_key in MACRO_KEYS:
         if compact and macro_key not in compact_keys:
             continue
-        total = 0.0
-        for portion in portions:
-            amount = portion_macro_amount(portion)
-            macro_100 = parse_source_macro(portion, macro_key)
-            if macro_100 is None:
-                continue
-            total += amount * float(macro_100) / 100.0
+        total = sum(_portion_macro(portion, macro_key) for portion in portions)
 
         coverage = inferred_metrics[coverage_key]
 
@@ -370,7 +400,14 @@ def MacrosSummary(event, portions, compact: bool = False):
         pills.append(
             Div(
                 label_block,
-                Span(f"{total:.1f} g"),
+                Span(f"{total:.1f} g")
+                if compact
+                else Span(
+                    Span(f"{total:.1f} g", data_eaten_value=macro_key),
+                    # Shown only while something is left on a plate.
+                    Span(f"of {total:.1f}", data_served_note="", cls="hidden text-[10px] md:text-xs opacity-75"),
+                    cls="flex flex-col items-end leading-tight",
+                ),
                 style=(
                     f"background-color: {macro_color(coverage, amount_confidence, quality_confidence)}; "
                     f"color: {macro_text_color(coverage, amount_confidence, quality_confidence)};"
@@ -389,16 +426,37 @@ def MacrosSummary(event, portions, compact: bool = False):
         Span(f"Total: {total_amount:.1f} g | {total_calories:.0f} kcal", cls="text-[10px] text-gray-700 md:text-xs")
         if compact
         else Div(
-            H3("Meal macros", cls="font-semibold text-sm md:text-base"),
-            Span(f"Total: {total_amount:.1f} g | {total_calories:.0f} kcal", cls="text-xs md:text-sm text-gray-700"),
-            cls="flex items-center justify-between gap-2"
+            Div(
+                H3("Meal macros", cls="font-semibold text-sm md:text-base"),
+                Span(
+                    f"Served: {total_amount:.1f} g | {total_calories:.0f} kcal",
+                    cls="text-xs md:text-sm text-gray-700",
+                ),
+                cls="flex items-center justify-between gap-2",
+            ),
+            Span(
+                Span("Eating: ", cls="font-semibold"),
+                Span("", data_eaten_total=""),
+                data_eaten_line="",
+                cls="hidden self-end text-xs md:text-sm text-gray-900",
+            ),
+            cls="flex flex-col gap-0.5",
         )
     )
 
+    eaten_attrs = (
+        {}
+        if compact
+        else {
+            "data_eaten_summary": str(event.id),
+            "data_eaten_plates": json.dumps(_eaten_plate_totals(portions), separators=(",", ":")),
+        }
+    )
     return Div(
         header,
         Div(*pills, cls="grid grid-cols-2 md:grid-cols-2 gap-1" if compact else "grid grid-cols-2 gap-1 md:gap-2"),
-        cls="flex flex-col gap-2"
+        cls="flex flex-col gap-2",
+        **eaten_attrs,
     )
 
 
@@ -864,19 +922,19 @@ def _settings_group(title: str, *content, guide_topic: str | None = None):
     )
 
 
+_PILL_CHOICE_CLS = (
+    "rounded-full border border-line cursor-pointer bg-control text-stone-900 "
+    "peer-checked:bg-ink peer-checked:text-white peer-checked:border-ink"
+)
+
+
 def PillRadio(name: str, value: str, label: str, checked: bool, *, compact: bool = False, **attrs):
     """One option of a small set, as a pill; the checked one is ink. `compact` for
     a pill that shares a row with a field. Also used by the leftovers pop-up."""
     size = "px-2 py-1 text-xs" if compact else "px-3 py-1.5 text-sm"
     return Label(
         Input(type="radio", name=name, value=value, checked=checked, cls="peer sr-only", **attrs),
-        Span(
-            label,
-            cls=f"""
-                inline-flex {size} rounded-full border border-line cursor-pointer
-                bg-control text-stone-900 peer-checked:bg-ink peer-checked:text-white peer-checked:border-ink
-            """,
-        ),
+        Span(label, cls=f"inline-flex {size} {_PILL_CHOICE_CLS}"),
         cls="cursor-pointer",
     )
 
@@ -1250,6 +1308,19 @@ def _EatenRow(plate_id: int, label: str, with_help: bool = False):
             role="radiogroup",
             aria_label=f"Unit of what was eaten of {label}",
             cls="flex items-center gap-1 shrink-0",
+        ),
+        # How the part eaten was obtained: by eye unless marked (study §6.3).
+        Label(
+            Input(
+                type="checkbox",
+                name=f"eaten_method_{plate_id}",
+                value=FractionMethod.WEIGHED.value,
+                aria_label=f"What was eaten of {label} was weighed",
+                cls="peer sr-only",
+            ),
+            Span("Weighed", cls=f"inline-flex px-2 py-1 text-xs {_PILL_CHOICE_CLS}"),
+            title="Both the plate and what you ate were weighed. Unmarked: by eye.",
+            cls="cursor-pointer shrink-0",
         ),
         cls="flex items-center gap-2",
     )
