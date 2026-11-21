@@ -156,8 +156,17 @@ GUIDE_TOPICS: dict[str, GuideTopic] = {
             intro="How much of each plate you ate, when you confirm the meal.",
             values=(
                 GuideValue("Empty", "You ate all of it."),
-                GuideValue("%", "The part of the plate you ate. Usually a guess by eye."),
+                GuideValue("%", "The part of the plate you ate."),
                 GuideValue("g", "The grams you ate, out of the plate's total."),
+                GuideValue(
+                    "Weighed",
+                    "Mark it only if you weighed the plate and what you ate. Unmarked, the part "
+                    "is by eye, whether you wrote % or g.",
+                ),
+            ),
+            note=(
+                "Splits with the fridge are recorded on their own: % is by eye, grams or "
+                "Weighed are weighed."
             ),
         ),
     )

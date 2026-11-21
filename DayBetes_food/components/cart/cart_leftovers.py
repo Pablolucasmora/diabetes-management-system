@@ -49,6 +49,7 @@ def _eaten_fields(eaten: list[PlateEaten]):
                     value="" if entry.value is None else repr(entry.value),
                 ),
                 Input(type="hidden", name=f"ingested_unit_{entry.plate_id}", value=entry.unit.value),
+                Input(type="hidden", name=f"eaten_method_{entry.plate_id}", value=entry.method.value),
             )
         )
     return fields

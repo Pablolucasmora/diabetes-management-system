@@ -10,6 +10,7 @@ from DayBetes_food.domain.catalog import CatalogItemRead
 from DayBetes_food.domain.ciqual_food import CiqualFoodRead
 from DayBetes_food.domain.constants import (
     AmountMethod,
+    FractionMethod,
     AssistantRole,
     MacrosSource,
     PenCloseReason,
@@ -373,6 +374,7 @@ def intake_plate_read_from_row(row: dict) -> IntakePlateRead:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             eaten_fraction=row.get("eaten_fraction"),
+            eaten_fraction_method=_enum_from_row(row, "eaten_fraction_method", FractionMethod),
         )
     except KeyError as exc:
         raise InfrastructureError(f"Missing required field {exc} in intake plate row") from exc
@@ -478,6 +480,7 @@ def portion_detail_read_from_row(row: dict) -> PortionDetailRead:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             source=source,
+            split_method=_enum_from_row(row, "split_method", FractionMethod),
         )
     except KeyError as exc:
         raise InfrastructureError(f"Missing required field {exc} in portion_detail row") from exc

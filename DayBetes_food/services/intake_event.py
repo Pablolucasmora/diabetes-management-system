@@ -28,7 +28,7 @@ from DayBetes_food.database.queries import (
     set_exact_time,
     update_intake_event,
 )
-from DayBetes_food.domain.constants import IntakeEventState, MealType, PortionDestination, PortionOrigin
+from DayBetes_food.domain.constants import FractionMethod, IntakeEventState, MealType, PortionDestination, PortionOrigin
 from DayBetes_food.domain.fridge import LeftoverPlan
 from DayBetes_food.domain.intake_event import (
     INTAKE_EVENT_INGESTED_AMOUNT_MAX_G,
@@ -147,6 +147,7 @@ def confirm_planned_event(
 
     by_plate = _portions_by_plate(portions)
     fractions = _plate_fractions(by_plate, eaten)
+    methods = {entry.plate_id: entry.method for entry in eaten}
     plans: dict[int, LeftoverPlan] = {}
     for plan in leftovers:
         if fractions.get(plan.plate_id, 1.0) >= 1.0 or plan.plate_id in plans:
@@ -168,9 +169,14 @@ def confirm_planned_event(
     for plate_id, plate_portions in by_plate.items():
         # Kept so that what was served (amount / fraction) and the share left
         # can be known after the portions are scaled (study §6.3).
-        set_intake_plate_eaten_fraction(connection, user_id, plate_id, fractions[plate_id], commit=False)
+        # How the fraction was obtained, as the user marked it; none for a plate
+        # eaten whole (study §6.3).
+        method = methods.get(plate_id, FractionMethod.EYEBALL) if fractions[plate_id] < 1.0 else None
+        set_intake_plate_eaten_fraction(connection, user_id, plate_id, fractions[plate_id], method, commit=False)
         if plate_id in plans:
-            store_plate_leftovers(connection, user_id, plate_portions, fractions[plate_id], plans[plate_id])
+            store_plate_leftovers(
+                connection, user_id, plate_portions, fractions[plate_id], plans[plate_id], method
+            )
         if fractions[plate_id] < 1.0:
             # amount = amount * fraction for the whole plate, in one statement (§6.9.1).
             scale_plate_portion_amounts(connection, user_id, plate_id, fractions[plate_id], commit=False)

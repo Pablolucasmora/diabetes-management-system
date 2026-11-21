@@ -18,6 +18,7 @@ from DayBetes_food.domain.constants import (
     WEIGHED_AMOUNT_METHODS,
     AmountInputUnit,
     AmountMethod,
+    FractionMethod,
     ConservationMethod,
     CookingMethod,
     FoodCategory,
@@ -165,6 +166,8 @@ class PortionDetailRead:
     created_at: datetime
     updated_at: datetime
     source: PortionSourceRead
+    # How the fraction that split its amount was obtained (study §6.3); None = never split.
+    split_method: FractionMethod | None = None
 
 
 def check_cooked_weight(origin: PortionOrigin, cooking_factor: float | None, value: bool, *, current: bool = False) -> None:
@@ -208,6 +211,7 @@ class PortionDetailCreate:
     # offset given: minutes. Both None: inherited from the plate.
     eaten_at: datetime | None = None
     source_fridge_id: int | None = None
+    split_method: FractionMethod | None = None
 
 
 @dataclass(frozen=True)
@@ -314,3 +318,16 @@ def portion_defaults(item) -> dict:
     that creates a portion from a food without a `Final state` control uses it;
     a copy of another portion keeps that portion's values instead."""
     return {"amount_method": item.default_amount_method, "final_state": default_final_state(item)}
+
+
+def combine_split_methods(*methods: FractionMethod | None) -> FractionMethod | None:
+    """The split method of an amount that went through several splits, or that
+    joins amounts from several (study_conventions.md §6.3): the least precise
+    one. Any split by eye makes it `eyeball`; otherwise any weighed one makes it
+    `weighed`; never split is None."""
+    present = {method for method in methods if method is not None}
+    if FractionMethod.EYEBALL in present:
+        return FractionMethod.EYEBALL
+    if FractionMethod.WEIGHED in present:
+        return FractionMethod.WEIGHED
+    return None

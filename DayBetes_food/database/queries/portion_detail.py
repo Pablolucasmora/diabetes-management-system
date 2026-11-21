@@ -20,7 +20,7 @@ from DayBetes_food.database.queries.crud import (
     _execute_query,
     _execute_query_many,
 )
-from DayBetes_food.domain.constants import CLEAR, PortionDestination, PortionOrigin
+from DayBetes_food.domain.constants import CLEAR, FractionMethod, PortionDestination, PortionOrigin
 from DayBetes_food.domain.portion_detail import (
     PORTION_DETAIL_AMOUNT_MAX_G,
     PORTION_DETAIL_OFFSET_MAX_MINUTES,
@@ -40,6 +40,13 @@ _PREPARATION_FIELDS = ("cooking", "conservation", "final_state", "ripeness")
 # food's (measurement §6.11). portion_detail.macros_quality is kept unused.
 # amount_method (U2, study §6.3) travels as its code, or None for "not given".
 _FLAG_FIELDS = ("amount_method", "is_cooked_weight")
+
+# The split method of two amounts joined into one row, in SQL: the least precise
+# (combine_split_methods, study §6.3). `{a}` and `{b}` are column expressions.
+_COMBINED_SPLIT_SQL = (
+    "CASE WHEN {a} = 'eyeball' OR {b} = 'eyeball' THEN 'eyeball' "
+    "ELSE COALESCE({a}, {b}) END"
+)
 
 _DESTINATION_TABLE = {
     PortionDestination.INTAKE_EVENT: "intake_event",
@@ -64,6 +71,7 @@ _PORTION_COLUMNS = """
     pd.final_state,
     pd.ripeness,
     pd.amount_method,
+    pd.split_method,
     pd.is_cooked_weight,
     pd.offset_minutes,
     pd.eaten_at,
@@ -264,6 +272,7 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
         "final_state": final_state.value if final_state is not None else None,
         "ripeness": ripeness.value if ripeness is not None else None,
         "amount_method": payload.amount_method.value if payload.amount_method is not None else None,
+        "split_method": payload.split_method.value if payload.split_method is not None else None,
         "is_cooked_weight": bool(payload.is_cooked_weight),
         "offset_minutes": offset_minutes,
         "eaten_at": eaten_at,
@@ -280,21 +289,23 @@ def create_portion_detail(connection, user_id: int, payload: PortionDetailCreate
     conflict = (
         f"ON CONFLICT ({key_columns}) "
         f"WHERE {plate_column} IS NOT NULL "
-        "DO UPDATE SET amount = portion_detail.amount + EXCLUDED.amount, updated_at = NOW()"
+        "DO UPDATE SET amount = portion_detail.amount + EXCLUDED.amount, "
+        f"split_method = {_COMBINED_SPLIT_SQL.format(a='portion_detail.split_method', b='EXCLUDED.split_method')}, "
+        "updated_at = NOW()"
     )
     query = f"""
         INSERT INTO portion_detail (
             amount, catalog_id, manual_intake_id,
             intake_event_id, recipe_id, fridge_id, plate_id, recipe_plate_id,
             cooking, conservation, final_state, ripeness,
-            amount_method,
+            amount_method, split_method,
             is_cooked_weight, offset_minutes, eaten_at, source_fridge_id
         )
         VALUES (
             %(amount)s, %(catalog_id)s, %(manual_intake_id)s,
             %(intake_event_id)s, %(recipe_id)s, %(fridge_id)s, %(plate_id)s, %(recipe_plate_id)s,
             %(cooking)s, %(conservation)s, %(final_state)s, %(ripeness)s,
-            %(amount_method)s,
+            %(amount_method)s, %(split_method)s,
             %(is_cooked_weight)s, %(offset_minutes)s, %(eaten_at)s, %(source_fridge_id)s
         )
         {conflict}
@@ -396,11 +407,23 @@ def list_viewable_recipe_portions(connection, user_id: int, recipe_id: int) -> l
     return _rows_to_reads(rows)
 
 
-def update_portion_amount(connection, user_id: int, portion_id: int, amount: float, commit: bool = True) -> None:
+def update_portion_amount(
+    connection,
+    user_id: int,
+    portion_id: int,
+    amount: float,
+    commit: bool = True,
+    *,
+    split_method: FractionMethod | None = None,
+) -> None:
+    """Write the amount of a portion. With `split_method`, the new amount is what
+    stayed after a split (keep part in the fridge, measurement §4.8.5), and the
+    portion's split method takes it in (study §6.3)."""
     grams = parse_amount_grams(amount)
+    split_sql = _COMBINED_SPLIT_SQL.format(a="pd.split_method", b="%(split_method)s")
     query = f"""
         UPDATE portion_detail pd
-        SET amount = %(amount)s, updated_at = NOW()
+        SET amount = %(amount)s, split_method = {split_sql}, updated_at = NOW()
         WHERE pd.id = %(portion_id)s
         {_PORTION_OWNED_BY_USER}
         RETURNING pd.id;
@@ -408,7 +431,12 @@ def update_portion_amount(connection, user_id: int, portion_id: int, amount: flo
     result = _execute_query(
         connection,
         query,
-        {"amount": grams, "portion_id": portion_id, "user_id": user_id},
+        {
+            "amount": grams,
+            "split_method": split_method.value if split_method is not None else None,
+            "portion_id": portion_id,
+            "user_id": user_id,
+        },
         commit=commit,
     )
     if not result:
@@ -550,6 +578,7 @@ def _merge_into_sibling(connection, user_id: int, portion_id: int, sibling_id: i
                 f"""
                 UPDATE portion_detail pd
                 SET amount = pd.amount + a.amount,
+                    split_method = {_COMBINED_SPLIT_SQL.format(a="pd.split_method", b="a.split_method")},
                     updated_at = NOW()
                 FROM portion_detail a
                 WHERE pd.id = %(sibling_id)s AND a.id = %(portion_id)s
@@ -765,21 +794,28 @@ def delete_portion_detail(connection, user_id: int, portion_id: int, commit: boo
         raise NotFoundError("portion_not_found")
 
 
-def scale_fridge_portion_amounts(connection, user_id: int, fridge_id: int, factor: float, commit: bool = True) -> None:
+def scale_fridge_portion_amounts(
+    connection, user_id: int, fridge_id: int, factor: float, split_method: FractionMethod, commit: bool = True
+) -> None:
     """Multiply the content of a container by `factor`, in (0, 1): what stays after
-    taking a part of it (measurement §4.8.3). One statement, ownership in the SQL."""
+    taking a part of it (measurement §4.8.3), split as `split_method` says (study
+    §6.3). One statement, ownership in the SQL."""
     if not (0.0 < factor < 1.0):
         raise ValidationError("invalid_factor")
+    split_sql = _COMBINED_SPLIT_SQL.format(a="pd.split_method", b="%(split_method)s")
     query = f"""
         UPDATE portion_detail pd
-        SET amount = pd.amount * %(factor)s, updated_at = NOW()
+        SET amount = pd.amount * %(factor)s, split_method = {split_sql}, updated_at = NOW()
         WHERE pd.fridge_id = %(fridge_id)s
         {_PORTION_OWNED_BY_USER}
         RETURNING pd.id;
     """
     try:
         _execute_query_many(
-            connection, query, {"factor": factor, "fridge_id": fridge_id, "user_id": user_id}, commit=commit
+            connection,
+            query,
+            {"factor": factor, "split_method": split_method.value, "fridge_id": fridge_id, "user_id": user_id},
+            commit=commit,
         )
     except (CheckViolation, NumericValueOutOfRange) as exc:
         raise _amount_limit_error(exc) from exc

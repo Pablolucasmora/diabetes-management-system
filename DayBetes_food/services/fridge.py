@@ -29,7 +29,13 @@ from DayBetes_food.database.queries import (
     update_fridge_content_weight,
     update_portion_amount,
 )
-from DayBetes_food.domain.constants import AmountInputUnit, FridgeCloseReason, PortionDestination, StorageLocation
+from DayBetes_food.domain.constants import (
+    AmountInputUnit,
+    FractionMethod,
+    FridgeCloseReason,
+    PortionDestination,
+    StorageLocation,
+)
 from DayBetes_food.domain.fridge import (
     FridgeCreate,
     FridgeItem,
@@ -42,8 +48,9 @@ from DayBetes_food.domain.fridge import (
     merge_contents,
     default_expires_at,
     parse_take_fraction,
+    take_split_method,
 )
-from DayBetes_food.domain.portion_detail import PortionDetailCreate, PortionDetailRead
+from DayBetes_food.domain.portion_detail import PortionDetailCreate, PortionDetailRead, combine_split_methods
 from DayBetes_food.domain.recipe import RecipeAddRequest, scaled_recipe_amount
 from DayBetes_food.errors import ConflictError, NotFoundError, ValidationError
 from DayBetes_food.time_utils import utc_now
@@ -106,6 +113,7 @@ def create_fridge_container(connection, command: FridgeStoreCommand) -> int:
                 cooking=content.cooking,
                 final_state=content.final_state,
                 amount_method=content.amount_method,
+                split_method=content.split_method,
                 is_cooked_weight=content.is_cooked_weight,
             ),
             commit=False,
@@ -190,6 +198,7 @@ def keep_part_in_fridge(
             cooking=portion.cooking,
             final_state=portion.final_state,
             amount_method=portion.amount_method,
+            split_method=combine_split_methods(portion.split_method, keep.split_method),
             is_cooked_weight=portion.is_cooked_weight,
         ),
     )
@@ -199,15 +208,23 @@ def keep_part_in_fridge(
             connection,
             FridgeStoreCommand(user_id=user_id, location=location, contents=contents, content_weight=weight),
         )
-    update_portion_amount(connection, user_id, portion.id, portion.amount * keep.fraction, commit=False)
+    update_portion_amount(
+        connection, user_id, portion.id, portion.amount * keep.fraction, commit=False, split_method=keep.split_method
+    )
 
 
 def store_plate_leftovers(
-    connection, user_id: int, plate_portions: list[PortionDetailRead], fraction: float, plan: LeftoverPlan
+    connection,
+    user_id: int,
+    plate_portions: list[PortionDetailRead],
+    fraction: float,
+    plan: LeftoverPlan,
+    method: FractionMethod,
 ) -> None:
     """What was not eaten of a plate, `1 - fraction` of each ingredient, into
-    `plan.containers` equal new containers (§4.8.5). Called by the confirm of the
-    meal before its portions are scaled, inside its transaction."""
+    `plan.containers` equal new containers (§4.8.5), split as the user marked what
+    was eaten (`method`, study §6.3). Called by the confirm of the meal before its
+    portions are scaled, inside its transaction."""
     if plan.location is None:
         return
     share = (1.0 - fraction) / plan.containers
@@ -219,6 +236,7 @@ def store_plate_leftovers(
             cooking=portion.cooking,
             final_state=portion.final_state,
             amount_method=portion.amount_method,
+            split_method=combine_split_methods(portion.split_method, method),
             is_cooked_weight=portion.is_cooked_weight,
         )
         for portion in plate_portions
@@ -290,6 +308,8 @@ def take_from_fridge(
     if fridge is None or fridge.closed_at is not None:
         raise NotFoundError("Container not found.")
     fraction = parse_take_fraction(raw_amount, unit, fridge.content_weight)
+    # A whole container is not split: its content keeps its own split method.
+    split = take_split_method(unit) if fraction < 1.0 else None
     conservation = conservation_when_taken(fridge, list_fridge_moves(connection, user_id, fridge_id), utc_now())
     for portion in list_portions_by_fridges(connection, user_id, [fridge_id]):
         create_portion_detail(
@@ -306,6 +326,7 @@ def take_from_fridge(
                 conservation=conservation,
                 final_state=portion.final_state,
                 amount_method=portion.amount_method,
+                split_method=combine_split_methods(portion.split_method, split),
                 is_cooked_weight=portion.is_cooked_weight,
                 source_fridge_id=fridge_id,
             ),
@@ -315,7 +336,7 @@ def take_from_fridge(
         close_fridge(connection, user_id, fridge_id, FridgeCloseReason.EMPTIED, commit=False)
         return
     remaining = 1.0 - fraction
-    scale_fridge_portion_amounts(connection, user_id, fridge_id, remaining, commit=False)
+    scale_fridge_portion_amounts(connection, user_id, fridge_id, remaining, split, commit=False)
     if fridge.content_weight is not None:
         update_fridge_content_weight(connection, user_id, fridge_id, fridge.content_weight * remaining, commit=False)
 
@@ -371,8 +392,14 @@ def _add_to_fridge_content(
         if key in by_key:
             existing = by_key[key]
             new_amount = existing.amount + portion.amount
-            update_portion_amount(connection, user_id, existing.id, new_amount, commit=False)
-            by_key[key] = replace(existing, amount=new_amount)
+            update_portion_amount(
+                connection, user_id, existing.id, new_amount, commit=False, split_method=portion.split_method
+            )
+            by_key[key] = replace(
+                existing,
+                amount=new_amount,
+                split_method=combine_split_methods(existing.split_method, portion.split_method),
+            )
             continue
         portion_id = create_portion_detail(
             connection,
@@ -386,6 +413,7 @@ def _add_to_fridge_content(
                 cooking=portion.cooking,
                 final_state=portion.final_state,
                 amount_method=portion.amount_method,
+                split_method=portion.split_method,
                 is_cooked_weight=portion.is_cooked_weight,
             ),
             commit=False,

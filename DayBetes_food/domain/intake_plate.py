@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from DayBetes_food.domain.constants import AmountInputUnit
+from DayBetes_food.domain.constants import AmountInputUnit, FractionMethod
 from DayBetes_food.domain.portion_detail import (
     PORTION_DETAIL_OFFSET_MAX_MINUTES,
     PORTION_DETAIL_OFFSET_MIN_MINUTES,
@@ -102,6 +102,8 @@ class IntakePlateRead:
     updated_at: datetime
     # Share eaten, (0, 1], stored at confirm; None = not recorded (study §6.3).
     eaten_fraction: float | None = None
+    # How that fraction was obtained; None = eaten whole or not recorded (study §6.3).
+    eaten_fraction_method: FractionMethod | None = None
 
 
 @dataclass(frozen=True)
@@ -224,6 +226,8 @@ class PlateEaten:
     plate_id: int
     value: float | None
     unit: AmountInputUnit
+    # Marked by the user next to `Eaten`; by eye unless it says weighed (study §6.3).
+    method: FractionMethod = FractionMethod.EYEBALL
 
 
 def eaten_fraction(eaten: PlateEaten | None, plate_total: float) -> float:

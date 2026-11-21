@@ -30,6 +30,7 @@ from DayBetes_food.domain.constants import (
     PrefillSource,
     Ripeness,
     AmountMethod,
+    FractionMethod,
     AssistantRole,
     MacrosSource,
     StorageLocation,
@@ -911,7 +912,7 @@ class DBSchema:
     );
     """
 
-    intake_plate = """
+    intake_plate = f"""
     CREATE TABLE IF NOT EXISTS intake_plate (
         id SERIAL CONSTRAINT pk_intake_plate PRIMARY KEY,
         intake_event_id INTEGER NOT NULL
@@ -926,6 +927,9 @@ class DBSchema:
         eaten_fraction REAL
             CONSTRAINT ck_intake_plate_eaten_fraction
             CHECK (eaten_fraction IS NULL OR (eaten_fraction > 0 AND eaten_fraction <= 1)), -- Share of the plate eaten, stored at confirm; NULL = not recorded (planned, or confirmed before 2026-11-17). What was served is amount / eaten_fraction (study_conventions.md 6.3)
+        eaten_fraction_method VARCHAR(50)
+            CONSTRAINT ck_intake_plate_eaten_fraction_method
+            CHECK (eaten_fraction_method IS NULL OR eaten_fraction_method IN ({sql_in_list(FractionMethod)})), -- How eaten_fraction was obtained, marked by the user; NULL = eaten whole or not recorded (study_conventions.md 6.3)
 
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -1015,6 +1019,9 @@ class DBSchema:
         amount_method VARCHAR(50)
             CONSTRAINT ck_portion_detail_amount_method
             CHECK (amount_method IS NULL OR amount_method IN ({sql_in_list(AmountMethod)})), -- U2: how the amount was obtained (study_conventions.md 6.3). NULL = not given
+        split_method VARCHAR(50)
+            CONSTRAINT ck_portion_detail_split_method
+            CHECK (split_method IS NULL OR split_method IN ({sql_in_list(FractionMethod)})), -- How the fraction that split this amount between a plate and the fridge was obtained; the least precise of its splits. NULL = never split (study_conventions.md 6.3)
         macros_quality BOOLEAN, -- UNUSED since 2026-10-09: the origin of the macros is the food's (catalog/manual_intake.macros_source, read live, measurement §6.11). Kept with its values until versioning (portion_detail H1)
         
         is_cooked_weight BOOLEAN DEFAULT FALSE, -- If the food was weighed already cooked, catalog.cooking_factor back-calculates the raw weight ONLY inside the macro calculation; `amount` always keeps what the user weighed and is never overwritten (measurement_conventions.md 5.2, decision 2026-09-18). Only for catalog origins.

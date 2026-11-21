@@ -29,6 +29,7 @@ from DayBetes_food.components.injection_zone import (
 from DayBetes_food.domain.constants import (
     AmountInputUnit,
     ConservationMethod,
+    FractionMethod,
     CookingMethod,
     FoodPhysicalState,
     InjectionZone,
@@ -921,19 +922,19 @@ def _settings_group(title: str, *content, guide_topic: str | None = None):
     )
 
 
+_PILL_CHOICE_CLS = (
+    "rounded-full border border-line cursor-pointer bg-control text-stone-900 "
+    "peer-checked:bg-ink peer-checked:text-white peer-checked:border-ink"
+)
+
+
 def PillRadio(name: str, value: str, label: str, checked: bool, *, compact: bool = False, **attrs):
     """One option of a small set, as a pill; the checked one is ink. `compact` for
     a pill that shares a row with a field. Also used by the leftovers pop-up."""
     size = "px-2 py-1 text-xs" if compact else "px-3 py-1.5 text-sm"
     return Label(
         Input(type="radio", name=name, value=value, checked=checked, cls="peer sr-only", **attrs),
-        Span(
-            label,
-            cls=f"""
-                inline-flex {size} rounded-full border border-line cursor-pointer
-                bg-control text-stone-900 peer-checked:bg-ink peer-checked:text-white peer-checked:border-ink
-            """,
-        ),
+        Span(label, cls=f"inline-flex {size} {_PILL_CHOICE_CLS}"),
         cls="cursor-pointer",
     )
 
@@ -1307,6 +1308,19 @@ def _EatenRow(plate_id: int, label: str, with_help: bool = False):
             role="radiogroup",
             aria_label=f"Unit of what was eaten of {label}",
             cls="flex items-center gap-1 shrink-0",
+        ),
+        # How the part eaten was obtained: by eye unless marked (study §6.3).
+        Label(
+            Input(
+                type="checkbox",
+                name=f"eaten_method_{plate_id}",
+                value=FractionMethod.WEIGHED.value,
+                aria_label=f"What was eaten of {label} was weighed",
+                cls="peer sr-only",
+            ),
+            Span("Weighed", cls=f"inline-flex px-2 py-1 text-xs {_PILL_CHOICE_CLS}"),
+            title="Both the plate and what you ate were weighed. Unmarked: by eye.",
+            cls="cursor-pointer shrink-0",
         ),
         cls="flex items-center gap-2",
     )

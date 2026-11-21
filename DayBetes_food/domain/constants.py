@@ -279,6 +279,16 @@ WEIGHED_AMOUNT_METHODS = frozenset(
 
 
 @unique
+class FractionMethod(str, Enum):
+    """How a fraction that split an amount was obtained (study_conventions.md
+    §6.3, decision 2026-11-21): what was eaten of a plate, and the splits between
+    a plate and the fridge. The amount it splits keeps its own `amount_method`."""
+
+    EYEBALL = "eyeball"   # estimated by eye, even when typed from a weighed total
+    WEIGHED = "weighed"   # both sides of the split weighed
+
+
+@unique
 class StorageLocation(str, Enum):
     """Where a container (`fridge`) is kept (measurement_conventions.md 4.8).
 
