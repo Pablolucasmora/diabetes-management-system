@@ -4,6 +4,7 @@ from starlette.responses import HTMLResponse
 from DayBetes_food.components.menu.layout import FloatingIsland, Cart
 from DayBetes_food.config import CSRF_COOKIE_NAME
 from DayBetes_food.components.injection_zone import asset_busted
+from DayBetes_food.components.guide import GuideModal
 
 # ============================================
 # BASE COMPONENTS
@@ -162,5 +163,7 @@ def render_page(request, content, show_cart=True):
         Cart(display=show_cart),
         PageLoadingOverlay(),
         AppToast(),
+        # Outside #main_content, so a page swap never removes it (frontend §9.12).
+        GuideModal(),
     )
     return HTMLResponse(_base_html_shell(_safe_fragment_to_html(page_fragment)))

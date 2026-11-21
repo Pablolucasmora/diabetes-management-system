@@ -17,6 +17,7 @@ from DayBetes_food.components.cart.cart_shared import (
     unit_amount,
 )
 from DayBetes_food.components.food.food_shared import AMOUNT_METHOD_LABELS, NOT_GIVEN_LABEL, STORAGE_LABELS
+from DayBetes_food.components.guide import GuideHelpButton
 from DayBetes_food.components.insulin_pen import PenSelect, units_text
 from DayBetes_food.components.injection_zone import (
     BASE_INJECTION_ZONE_IMAGE,
@@ -850,9 +851,14 @@ def _preparation_select(label: str, name: str, enum_cls, current, item_key: str)
     )
 
 
-def _settings_group(title: str, *content):
+def _settings_group(title: str, *content, guide_topic: str | None = None):
+    """A titled group of the `Adjust` pop-up; `guide_topic` adds its `?` (frontend §9.12)."""
     return Div(
-        P(title, cls="web_section_label"),
+        Div(
+            P(title, cls="web_section_label"),
+            GuideHelpButton(guide_topic, title.lower()) if guide_topic else None,
+            cls="flex items-center gap-1.5",
+        ),
         *content,
         cls="flex flex-col gap-2 pt-3 border-t border-line-soft",
     )
@@ -994,6 +1000,7 @@ def IngredientSettingsModal(event, plate, sample, item_key, ingredient_name, pla
                 ),
                 cls="flex flex-col gap-2",
             ),
+            guide_topic="preparation",
         ),
         _settings_group(
             "Weighing",
@@ -1014,6 +1021,7 @@ def IngredientSettingsModal(event, plate, sample, item_key, ingredient_name, pla
                 ),
                 cls="flex items-center justify-between gap-2",
             ),
+            guide_topic="cooked_weight",
         ) if shows_cooked_weight else None,
         # Folded: it is needed only after cooking, and open it fills the pop-up.
         Details(
@@ -1148,6 +1156,7 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, diff
         ),
         Div(
             Label("Amount from", cls="text-xs text-gray-600 shrink-0", **{"for": amount_method_select_id(portion_id)}),
+            GuideHelpButton("amount_method", "Amount from"),
             PortionAmountMethodSelect(event.id, sample, ingredient_name),
             cls="flex items-center gap-2",
         ),
@@ -1209,7 +1218,7 @@ def eaten_draft_key(event_id: int) -> str:
     return f"cart_eaten_{event_id}"
 
 
-def _EatenRow(plate_id: int, label: str):
+def _EatenRow(plate_id: int, label: str, with_help: bool = False):
     """How much of one plate was eaten: empty is all of it, in % by default
     (measurement_conventions.md §4.4, decision 2026-11-07). The value and the unit
     (a pair of radios) are named after the plate: a draft is kept by field name
@@ -1218,6 +1227,8 @@ def _EatenRow(plate_id: int, label: str):
     return Div(
         Input(type="hidden", name="plate_id", value=str(plate_id)),
         Label(label, cls="text-xs text-gray-600 shrink-0 max-w-[40%] truncate", **{"for": value_id}),
+        # One `?` for the whole section, on its first row (frontend §9.12).
+        GuideHelpButton("eaten", "Eaten") if with_help else None,
         Input(
             type="text",
             id=value_id,
@@ -1251,7 +1262,10 @@ def ConfirmSection(event, eaten_plates: list[tuple[int, str]]):
     typed is a draft kept in this browser until the meal is confirmed."""
     single = len(eaten_plates) == 1
     return Form(
-        *[_EatenRow(plate_id, "Eaten" if single else f"Eaten · {label}") for plate_id, label in eaten_plates],
+        *[
+            _EatenRow(plate_id, "Eaten" if single else f"Eaten · {label}", with_help=index == 0)
+            for index, (plate_id, label) in enumerate(eaten_plates)
+        ],
         Button(
             "Confirm meal",
             type="button",

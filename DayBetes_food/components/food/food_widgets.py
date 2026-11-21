@@ -5,6 +5,7 @@ from fasthtml.common import *
 from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.components.cart.cart_shared import CHECKBOX_CLS
 from DayBetes_food.components.navigation import back_js
+from DayBetes_food.components.guide import GuideHelpButton
 from DayBetes_food.components.food.food_shared import (
     AMOUNT_METHOD_LABELS,
     FORM_FIELD_CLS,
@@ -58,7 +59,11 @@ def _help_icon(help_text: str):
     )
 
 
-def _label_with_help(text: str, help_text: str, for_id: str = "", label_attrs: dict | None = None):
+def _label_with_help(
+    text: str, help_text: str, for_id: str = "", label_attrs: dict | None = None, guide_topic: str | None = None
+):
+    """With `guide_topic`, the `?` opens the guide on that field instead of its
+    help text (frontend_conventions.md §9.12)."""
     return Div(
         Label(
             text,
@@ -66,7 +71,7 @@ def _label_with_help(text: str, help_text: str, for_id: str = "", label_attrs: d
             **({"for": for_id} if for_id else {}),
             **(label_attrs or {}),
         ),
-        _help_icon(help_text),
+        GuideHelpButton(guide_topic, text) if guide_topic else _help_icon(help_text),
         cls="flex items-center gap-1",
     )
 
@@ -185,6 +190,7 @@ def _searchable_autocomplete_input(
     case_mode: str = "lower",
     maxlength=None,
     added: bool = False,
+    guide_topic: str | None = None,
 ):
     normalized_options = sorted({(opt or "").strip() for opt in (options or []) if (opt or "").strip()})
     options_json = json.dumps(normalized_options)
@@ -192,7 +198,7 @@ def _searchable_autocomplete_input(
     help_value = help_text or f"Search and select {label.lower()}."
     input_id = f"field_{name}"
     return Div(
-        _label_with_help(label, help_value, for_id=input_id),
+        _label_with_help(label, help_value, for_id=input_id, guide_topic=guide_topic),
         Div(
             (Input(type="hidden", name=f"{name}__added", value="1" if added else "0", data_searchable_added_flag="true") if allow_add else None),
             Input(
@@ -305,6 +311,7 @@ def _labeled_select(
     help_text: str = "",
     selected_value: str = "",
     labels: dict | None = None,
+    guide_topic: str | None = None,
 ):
     """With `labels`, the visible text comes from the map and the `value` stays
     the code. The first option "-" is selected when nothing is chosen (§7.14:
@@ -312,7 +319,7 @@ def _labeled_select(
     help_value = help_text or f"What to select in {label}"
     select_id = f"field_{name}"
     return Div(
-        _label_with_help(label, help_value, for_id=select_id),
+        _label_with_help(label, help_value, for_id=select_id, guide_topic=guide_topic),
         Select(
             Option("-", value="", selected=(selected_value == "")),
             *[
@@ -349,6 +356,7 @@ def _macros_source_select(selected: str | None):
         help_text="Where these macros come from: the label, the menu, a table, an estimate...",
         selected_value=selected or "",
         labels={member.value: text for member, text in MACROS_SOURCE_LABELS.items()},
+        guide_topic="macros_source",
     )
 
 
@@ -362,6 +370,7 @@ def _amount_method_default_select(selected: str | None):
         help_text="Copied to every new portion: how you usually get its amount (e.g. the 60 g of a can).",
         selected_value=selected or "",
         labels={member.value: text for member, text in AMOUNT_METHOD_LABELS.items()},
+        guide_topic="amount_method",
     )
 
 

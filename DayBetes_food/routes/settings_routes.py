@@ -11,6 +11,7 @@ from DayBetes_food.components.settings.settings_main import (
     meal_type_schedule_row,
 )
 from DayBetes_food.components.food.tags import system_tag_for_label
+from DayBetes_food.components.guide import GuideModalBody, GuidePage, guide_topics_for
 from DayBetes_food.components.settings.tags_settings import tag_settings_row, tags_settings_list, tags_settings_page
 from DayBetes_food.components.ui import render_page, render_fragment
 from DayBetes_food.database.connection import get_connection
@@ -78,6 +79,23 @@ def setup_settings_routes(rt):
     @rt("/settings")
     def get(req):
         return render_page(req, settings_main(current_user=req.state.user), show_cart=True)
+
+    # Guide of the data-quality fields (frontend_conventions.md §9.12).
+
+    @rt("/settings/guide")
+    def get(req):
+        return render_page(req, GuidePage(), show_cart=False)
+
+    @rt("/settings/guide/{topic}")
+    def get(request: Request, topic: str):
+        if request.headers.get("HX-Request") != "true":
+            return app_error_response(request, AuthorizationError, _NOT_HTMX)
+        if not get_current_user_id():
+            return app_error_response(request, AuthenticationError, _NO_SESSION)
+        topics = guide_topics_for(topic)
+        if topics is None:
+            return app_error_response(request, NotFoundError, "That guide topic does not exist.")
+        return render_fragment(GuideModalBody(topics))
 
     # Settings Tags (frontend_conventions.md §9.10).
 

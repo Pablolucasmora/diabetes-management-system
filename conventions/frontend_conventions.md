@@ -611,6 +611,35 @@ Las tarjetas se leen de los resultados guardados de las herramientas, así que u
 
 Las tres exigen el header `HX-Request` (`403` si falta). Repetir un envío es un mensaje nuevo: el asistente puede volver a añadir lo mismo, y la copia se quita en el carrito.
 
+### 9.12 Guía de criterios (decisión del usuario, 2026-11-21)
+
+Para que los campos de calidad del dato se rellenen siempre con el mismo criterio, la web explica qué significa cada valor que hay que elegir, en Ajustes y junto a cada selector.
+
+**De dónde sale el texto**
+
+- La norma son las convenciones: `study_conventions.md` §6.3 (U1, U2, madurez, fracción comida) y `measurement_conventions.md` (§4.4 lo comido, §5.2 el peso en cocido). La guía es su versión corta, en inglés (§7.12): una línea por valor, sin detalle técnico.
+- Todo el texto está en un solo sitio, `components/guide.py`, y de ahí salen la página de Ajustes y los pop-ups. No se escribe una definición en un componente ni se lee de los `.md`.
+- Cada tema recorre su enum, así que un valor nuevo aparece solo. Si no tiene definición, la guía dice `Definition pending.`. Quien añade o cambia un valor (por ejemplo, en U2) escribe su línea de la guía en el mismo cambio.
+- Un tema cuyas definiciones aún no están acordadas se marca como pendiente (`Pending`) y lista sus valores sin definición. Hoy lo están `Cooking`, `Conservation` y `Final state` (`study_conventions.md` §6.3, **Preparación de una porción**).
+
+**En Ajustes**
+
+- El botón `Guide` abre `/settings/guide`, con `Back` a Ajustes (§5). Arriba, un índice de temas en píldoras que lleva a cada uno dentro de la página, sin cambiar la URL ni añadir entradas al historial. Debajo, una tarjeta por tema: su título, una frase de qué se elige y la lista de valores con su definición.
+
+**Junto a cada selector**
+
+- Un botón `?` pequeño junto a la etiqueta del campo abre el pop-up `guide_modal` con solo ese tema, o con el grupo de preparación (cocción, estado final, conservación y madurez). No se sale de la página.
+- El pop-up está una sola vez en toda la web, fuera de `#main_content` (`render_page`, `components/ui.py`), así que un repintado de la página no lo borra. Se construye con `ModalLayer` (§8) y su contenido se pide al servidor cada vez, como el de rescate (§9.6). Al abrirse desde otro pop-up (el `Adjust` del carrito) queda encima, y al cerrarlo se vuelve al de debajo, tal como estaba.
+- El botón no envía ningún campo del formulario en el que está (`hx-params="none"`) y no navega.
+- En los formularios de alta y edición, el `?` que ya tenía cada campo (§9.1) abre la guía en los campos que tienen tema, en vez de su aviso de texto.
+- Dónde está hoy: `Amount from` (carrito, ficha de un alimento) y `Amount usually from` (formularios); `Macros from` (formularios); la preparación (pop-up `Adjust` del carrito, `Advanced` de la ficha, ingredientes de una receta, paso previo de una receta, `Ripeness` de la línea de rescate) e `Initial state` (formularios); `Weighed cooked` (carrito, ficha, receta); `Eaten` (confirmar en el carrito). Un selector nuevo de uno de estos campos lleva su `?`.
+
+| Acción | `hx-target` | `hx-swap` | Éxito | Error |
+|---|---|---|---|---|
+| `GET /settings/guide/{topic}` | `#guide_modal_body` | `innerHTML` | el tema; al llegar se abre el pop-up | sin sesión: `401`; tema desconocido: `404`. Por el canal de errores |
+
+Exige el header `HX-Request` (`403` si falta).
+
 ## 10. Movimiento
 
 Decisión 2026-10-10. Animaciones pequeñas para que los cambios se perciban continuos y no a saltos. Están todas en `static/css/input.css`, al final.
