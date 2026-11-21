@@ -318,7 +318,7 @@ def _meal_lines(connection, user_id: int, event_id: int | None, without_meal: bo
     if without_meal:
         return ["This chat has no meal: only drafts of new foods and recipes; nothing can go to the cart."]
     if event_id is None:
-        return ["Meal of this conversation: none yet. The first add creates a new planned meal."]
+        return ["Meal of this conversation: new; it is created with this message."]
     event = get_intake_event(connection, user_id, event_id)
     when = to_local(event.meal_time)
     head = "Meal of this conversation: " + (event.meal_type.value if event.meal_type else "no type")
@@ -390,12 +390,16 @@ def _user_message(context: dict, request: AssistantTurnRequest) -> tuple[dict, A
 
 def _ensure_conversation(ctx: ToolContext) -> int:
     """The conversation of this message, created with its first stored answer: a
-    message whose first call fails leaves nothing behind. Runs inside the
+    message whose first call fails leaves nothing behind. With `New meal`, its
+    planned meal is created with it, even if nothing is added yet, so leaving
+    the page never loses the chat (§8.12, decision 2026-11-21). Runs inside the
     caller's transaction."""
     if ctx.conversation_id is None:
         ctx.conversation_id = create_assistant_conversation(
             ctx.connection, ctx.user_id, ASSISTANT_MODEL, ctx.event_id, without_meal=ctx.without_meal, commit=False
         )
+    if ctx.event_id is None and not ctx.without_meal:
+        ctx.target_event()
     return ctx.conversation_id
 
 
