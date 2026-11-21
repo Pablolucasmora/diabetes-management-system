@@ -86,6 +86,7 @@ def init_db():
             DBSchema.assistant_conversation,
             DBSchema.assistant_message(),
             DBSchema.assistant_photo(),
+            DBSchema.assistant_turn,
         ]
 
         for table_sql in tables:

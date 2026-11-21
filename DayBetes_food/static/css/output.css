@@ -788,6 +788,9 @@
   .resize-none {
     resize: none;
   }
+  .scroll-mt-4 {
+    scroll-margin-top: calc(var(--spacing) * 4);
+  }
   .scroll-mt-48 {
     scroll-margin-top: calc(var(--spacing) * 48);
   }
@@ -1477,6 +1480,9 @@
   .uppercase {
     text-transform: uppercase;
   }
+  .italic {
+    font-style: italic;
+  }
   .ordinal {
     --tw-ordinal: ordinal;
     font-variant-numeric: var(--tw-ordinal,) var(--tw-slashed-zero,) var(--tw-numeric-figure,) var(--tw-numeric-spacing,) var(--tw-numeric-fraction,);
@@ -1499,6 +1505,9 @@
   }
   .opacity-70 {
     opacity: 70%;
+  }
+  .opacity-75 {
+    opacity: 75%;
   }
   .opacity-80 {
     opacity: 80%;
@@ -1736,17 +1745,8 @@
     display: none;
   }
   @media (hover: hover) {
-    .hover\:scale-105:hover {
-      --tw-scale-x: 105%;
-      --tw-scale-y: 105%;
-      --tw-scale-z: 105%;
-      scale: var(--tw-scale-x) var(--tw-scale-y);
-    }
     .hover\:scale-\[1\.04\]:hover {
       scale: 1.04;
-    }
-    .hover\:scale-\[101\%\]:hover {
-      scale: 101%;
     }
     .hover\:bg-control:hover {
       background-color: var(--color-control);
@@ -1793,19 +1793,8 @@
     --tw-scale-z: 100%;
     scale: var(--tw-scale-x) var(--tw-scale-y);
   }
-  .focus\:scale-\[101\%\]:focus {
-    scale: 101%;
-  }
-  .focus\:shadow-lg:focus {
-    --tw-shadow: 0 10px 15px -3px var(--tw-shadow-color, rgb(0 0 0 / 0.1)), 0 4px 6px -4px var(--tw-shadow-color, rgb(0 0 0 / 0.1));
-    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
-  }
   .focus\:shadow-none:focus {
     --tw-shadow: 0 0 #0000;
-    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
-  }
-  .focus\:inset-shadow-none:focus {
-    --tw-inset-shadow: inset 0 0 #0000;
     box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
   }
   .focus\:outline-none:focus {
@@ -1958,9 +1947,6 @@
     .md\:rounded-lg {
       border-radius: var(--radius-lg);
     }
-    .md\:rounded-xl {
-      border-radius: var(--radius-xl);
-    }
     .md\:rounded-b-3xl {
       border-bottom-right-radius: var(--radius-3xl);
       border-bottom-left-radius: var(--radius-3xl);
@@ -1970,6 +1956,9 @@
     }
     .md\:p-4 {
       padding: calc(var(--spacing) * 4);
+    }
+    .md\:px-0 {
+      padding-inline: 0px;
     }
     .md\:px-2 {
       padding-inline: calc(var(--spacing) * 2);
@@ -2068,9 +2057,6 @@
     }
     .lg\:rounded-4xl {
       border-radius: var(--radius-4xl);
-    }
-    .lg\:rounded-xl {
-      border-radius: var(--radius-xl);
     }
     .lg\:p-4 {
       padding: calc(var(--spacing) * 4);

@@ -21,6 +21,7 @@ from DayBetes_food.config import (
     SESSION_REFRESH_SECONDS,
 )
 from DayBetes_food.database.db_init import init_db
+from DayBetes_food.services.assistant_turns import fail_interrupted_turns, shutdown_assistant_turns
 from DayBetes_food.database.connection import close_pool, get_connection
 from DayBetes_food.errors import (
     AppError,
@@ -62,7 +63,12 @@ async def lifespan(app):
     # @asynccontextmanager: it wraps it itself.
     if DB_INIT_ON_STARTUP:
         init_db()
+    if ASSISTANT_ENABLED:
+        # Turns a restart cut are failed before serving (code_conventions.md §8.12).
+        fail_interrupted_turns()
     yield
+    if ASSISTANT_ENABLED:
+        shutdown_assistant_turns()
     close_pool()
 
 
