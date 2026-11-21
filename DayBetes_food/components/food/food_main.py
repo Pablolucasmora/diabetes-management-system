@@ -18,7 +18,9 @@ from DayBetes_food.components.food.food_list import (
 from DayBetes_food.components.food.recipe_add import RecipeAddModal
 
 
-def food_main(view: FoodView, events: list, plate_options: list, last_used_plate: int | None):
+def food_main(
+    view: FoodView, events: list, plate_options: list, last_used_plate: int | None, review_count: int = 0
+):
     """The Food page, opened on `view`: its pill, tabs and filters (frontend §5, §9.3).
 
     `events` are the planned meals and `plate_options` the plates of the first
@@ -44,7 +46,7 @@ def food_main(view: FoodView, events: list, plate_options: list, last_used_plate
         ),
         QuickCreateButtons(assistant_enabled=ASSISTANT_ENABLED),
         SearchInput(view),
-        Filters(view),
+        Filters(view, review_count),
         MealSelector(
             events,
             selected_id=selected_event_id,

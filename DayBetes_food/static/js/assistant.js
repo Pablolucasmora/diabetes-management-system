@@ -411,6 +411,7 @@
     }
     close();
     syncHidden();
+    setThinkingFailed(false);
   });
 
   // The photos travel as repeated `photo` parts of the multipart body.
@@ -430,14 +431,41 @@
     if (!form || event.detail.elt !== form) return;
     if (event.detail.successful) {
       resetComposer();
+      arriveNormal();
       scrollToLatest();
       return;
     }
+    setThinkingFailed(true);
     // A failed send may have done part of its work before failing (the rounds
     // already stored, code_conventions.md §8.12): reload the conversation so
     // what reached the cart shows before the message is sent again.
     reloadThread();
   });
+
+  // ---- DiaBot's avatar (§9.11) ----
+
+  // A failed send keeps the thinking row with the confused face until the next send.
+  function setThinkingFailed(failed) {
+    var row = byId("assistant_thinking");
+    if (!row) return;
+    row.classList.toggle("db_failed", failed);
+    var avatar = row.querySelector("[data-avatar]");
+    if (avatar) avatar.setAttribute("data-avatar", failed ? "confused" : "thinking");
+  }
+
+  // The new turn's avatar starts on the thinking face and turns normal, so the
+  // face changes in place of the thinking row instead of jumping.
+  function arriveNormal() {
+    var thread = byId("assistant_thread");
+    var avatars = thread ? thread.querySelectorAll("[data-avatar]") : [];
+    var avatar = avatars[avatars.length - 1];
+    if (!avatar) return;
+    avatar.setAttribute("data-avatar", "thinking");
+    void avatar.offsetWidth;
+    requestAnimationFrame(function () {
+      avatar.setAttribute("data-avatar", "normal");
+    });
+  }
 
   function reloadThread() {
     var conversation = byId("assistant_conversation_id");
@@ -568,6 +596,19 @@
       if (el) el.focus();
       return;
     }
+    // A card that asks the assistant something on a tap (Save as recipe, §9.11).
+    var promptButton = event.target.closest && event.target.closest("[data-assistant-prompt]");
+    if (promptButton) {
+      var field = input();
+      var form = byId("assistant_composer");
+      if (!field || !form) return;
+      field.value = promptButton.getAttribute("data-assistant-prompt");
+      autoGrow();
+      updateSend();
+      promptButton.disabled = true;
+      form.requestSubmit();
+      return;
+    }
     var removePhotoButton = event.target.closest && event.target.closest("[data-assistant-remove-photo]");
     if (removePhotoButton) {
       removePhoto(parseInt(removePhotoButton.getAttribute("data-assistant-remove-photo"), 10));
@@ -625,5 +666,101 @@
       scrollToLatest();
       restoreChoice();
     }
+  });
+
+  // ---- +1 buttons (§9.11) ----
+  // A tap adds one more at once, without the assistant. Held 500 ms (as a Food
+  // row, §9.3.1), a small menu offers +½, +2 and −1 (−1 only with more than one).
+
+  var PLUS_HOLD_MS = 500;
+  var plusTimer = null;
+  var plusHeld = false;
+
+  function plusRow() {
+    return byId("assistant_plus_row");
+  }
+
+  function sendPlus(chip, step) {
+    var row = plusRow();
+    if (!chip || !row || !window.htmx) return;
+    closePlusMenu();
+    chip.disabled = true;
+    window.htmx.ajax("POST", chip.getAttribute("data-plus-url"), {
+      target: "#assistant_plus_row",
+      swap: "outerHTML",
+      values: { step: String(step), conversation_id: row.getAttribute("data-conversation-id") || "" },
+    }).then(function () {
+      chip.disabled = false;
+    });
+  }
+
+  function closePlusMenu() {
+    var menu = byId("assistant_plus_menu");
+    if (menu) menu.remove();
+  }
+
+  function openPlusMenu(chip) {
+    closePlusMenu();
+    var count = parseFloat(chip.getAttribute("data-plus-count") || "0");
+    var menu = document.createElement("div");
+    menu.id = "assistant_plus_menu";
+    menu.setAttribute("role", "menu");
+    menu.className = "absolute bottom-full mb-2 z-50 flex gap-1 rounded-2xl bg-white border border-line shadow-lg p-1";
+    [["+½", 0.5], ["+2", 2], ["−1", -1]].forEach(function (pair) {
+      if (pair[1] < 0 && count <= 1) return;
+      var item = document.createElement("button");
+      item.type = "button";
+      item.setAttribute("role", "menuitem");
+      item.className = "web_button rounded-full px-3 py-1.5 text-xs";
+      item.textContent = pair[0];
+      item.addEventListener("click", function (event) {
+        event.stopPropagation();
+        sendPlus(chip, pair[1]);
+      });
+      menu.appendChild(item);
+    });
+    var wrapper = plusRow() && plusRow().parentElement;
+    if (!wrapper) return;
+    wrapper.style.position = wrapper.style.position || "relative";
+    var left = chip.getBoundingClientRect().left - wrapper.getBoundingClientRect().left;
+    menu.style.left = Math.max(0, left) + "px";
+    wrapper.appendChild(menu);
+    if (navigator.vibrate) navigator.vibrate(10);
+  }
+
+  document.addEventListener("pointerdown", function (event) {
+    var chip = event.target.closest && event.target.closest("[data-plus-url]");
+    if (!chip) return;
+    plusHeld = false;
+    clearTimeout(plusTimer);
+    plusTimer = setTimeout(function () {
+      plusHeld = true;
+      openPlusMenu(chip);
+    }, PLUS_HOLD_MS);
+  });
+
+  ["pointerup", "pointercancel", "pointerleave"].forEach(function (name) {
+    document.addEventListener(name, function () {
+      clearTimeout(plusTimer);
+    }, true);
+  });
+
+  document.addEventListener("click", function (event) {
+    var chip = event.target.closest && event.target.closest("[data-plus-url]");
+    if (!chip) {
+      if (!(event.target.closest && event.target.closest("#assistant_plus_menu"))) closePlusMenu();
+      return;
+    }
+    event.preventDefault();
+    if (plusHeld) {
+      plusHeld = false;
+      return;
+    }
+    sendPlus(chip, 1);
+  });
+
+  // Holding a chip selects no text and opens no iOS callout.
+  document.addEventListener("contextmenu", function (event) {
+    if (event.target.closest && event.target.closest("[data-plus-url]")) event.preventDefault();
   });
 })();

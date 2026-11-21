@@ -49,6 +49,16 @@ def BlockIsland(text, icon="/images/ui/menu.svg", name="nav", value="home", **hx
         **hx
     )
 
+def ReviewDot(count: int):
+    """The dot over Food while there are provisional foods (frontend §9.3)."""
+    if not count:
+        return Span(aria_hidden="true", cls="hidden")
+    return Span(
+        Span(f"{count} foods to review", cls="sr-only"),
+        cls="block h-2.5 w-2.5 rounded-full bg-amber-500 ring-2 ring-white",
+    )
+
+
 def FloatingIsland():
     show_cart_js = """
         var b = document.querySelector('#cart_button');
@@ -76,7 +86,19 @@ def FloatingIsland():
             ),
             BlockIsland("Menu", icon="/images/ui/menu.svg", value="menu", hx_get="/menu", hx_target="#main_content", hx_swap="innerHTML", hx_push_url="true", **{"hx-on:click": show_cart_js}),
             BlockIsland("Stats", icon="/images/ui/stats.svg", value="stats", hx_get="/stats", hx_target="#main_content", hx_push_url="true", **{"hx-on:click": scroll_top_js}),
-            BlockIsland("Food", icon="/images/ui/food.svg", value="food", hx_get="/food", hx_target="#main_content", hx_push_url="true", **{"hx-on:click": show_cart_js}),
+            Div(
+                BlockIsland("Food", icon="/images/ui/food.svg", value="food", hx_get="/food", hx_target="#main_content", hx_push_url="true", **{"hx-on:click": show_cart_js}),
+                # Asked for apart: render_page never reads the database (§1.4).
+                Div(
+                    id="island_review_dot",
+                    hx_get="/menu/review_dot",
+                    hx_trigger="load, dbReviewChanged from:body",
+                    hx_swap="innerHTML",
+                    data_skip_page_loading="true",
+                    cls="absolute top-1.5 right-3 md:right-5 z-20 pointer-events-none",
+                ),
+                cls="relative",
+            ),
             BlockIsland("Settings", icon="/images/ui/settings.svg", value="settings", hx_get="/settings", hx_target="#main_content", hx_push_url="true", **{"hx-on:click": scroll_top_js}),
             cls="""
                 relative

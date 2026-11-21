@@ -22,11 +22,13 @@ from DayBetes_food.components.assistant.assistant_page import (
     AssistantThread,
     ConversationIdInput,
     MentionOptions,
+    PlusRow,
+    RepeatSavedCard,
     TurnBlock,
 )
 from DayBetes_food.components.ui import render_fragment, render_page
 from DayBetes_food.database.connection import get_connection
-from DayBetes_food.database.queries import get_mention_suggestions, list_planned_intake_events
+from DayBetes_food.database.queries import get_mention_suggestions, list_needs_review, list_planned_intake_events
 from DayBetes_food.domain.assistant import (
     parse_meal_choice,
     ASSISTANT_PHOTO_MAX_BYTES,
@@ -37,7 +39,7 @@ from DayBetes_food.domain.assistant import (
     parse_mentions,
     require_turn_content,
 )
-from DayBetes_food.domain.constants import parse_optional_id
+from DayBetes_food.domain.constants import PathId, parse_optional_id
 from DayBetes_food.errors import (
     AuthenticationError,
     ConflictError,
@@ -46,7 +48,16 @@ from DayBetes_food.errors import (
     ValidationError,
 )
 from DayBetes_food.http_errors import app_error_response, request_id
-from DayBetes_food.services.assistant import conversation_turns, resolve_conversation, send_assistant_message
+from DayBetes_food.domain.assistant import parse_plus_step
+from DayBetes_food.services.assistant import (
+    apply_plus,
+    conversation_plus_buttons,
+    conversation_turns,
+    plus_buttons,
+    resolve_conversation,
+    send_assistant_message,
+)
+from DayBetes_food.services.intake_event import save_quick_add_as_dish
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +86,11 @@ def _assistant_url(conversation_id: int | None, intake_event_id: str) -> str:
     if intake_event_id:
         return f"/assistant?{urlencode({'intake_event_id': intake_event_id})}"
     return "/assistant"
+
+
+def _pending_review(connection, user_id: int) -> frozenset:
+    """(entry_type, id) of the provisional entries still to review: their cards show Review."""
+    return frozenset((entry.entry_type.value, entry.entry_id) for entry in list_needs_review(connection, user_id))
 
 
 def setup_assistant_routes(rt):
@@ -107,7 +123,17 @@ def setup_assistant_routes(rt):
             else:
                 without = without_meal
             turns = conversation_turns(connection, int(user_id), conversation.id) if conversation else []
-        content = AssistantPage(events, selected, conversation.id if conversation else None, turns, without_meal=without)
+            pending = _pending_review(connection, int(user_id))
+            buttons = plus_buttons(connection, int(user_id), conversation)
+        content = AssistantPage(
+            events,
+            selected,
+            conversation.id if conversation else None,
+            turns,
+            without_meal=without,
+            pending=pending,
+            plus_buttons=buttons,
+        )
         return render_page(request, content, show_cart=False)
 
     @rt("/assistant/thread")
@@ -138,7 +164,15 @@ def setup_assistant_routes(rt):
             except (NotFoundError, ConflictError):
                 return app_error_response(request, NotFoundError, _MEAL_GONE)
             turns = conversation_turns(connection, int(user_id), conversation.id) if conversation else []
-        response = render_fragment(AssistantThread(turns, conversation.id if conversation else None))
+            pending = _pending_review(connection, int(user_id))
+            buttons = plus_buttons(connection, int(user_id), conversation)
+        conversation_id_shown = conversation.id if conversation else None
+        response = render_fragment(
+            (
+                AssistantThread(turns, conversation_id_shown, pending),
+                PlusRow(buttons, conversation_id_shown, oob=True),
+            )
+        )
         response.headers["HX-Replace-Url"] = _assistant_url(conversation.id if conversation else None, intake_event_id)
         return response
 
@@ -196,16 +230,78 @@ def setup_assistant_routes(rt):
                 )
                 return app_error_response(request, ExternalServiceError, _UNAVAILABLE)
             events = list_planned_intake_events(connection, int(user_id)) if result.meal_created else []
+            pending = _pending_review(connection, int(user_id))
+            buttons = conversation_plus_buttons(connection, int(user_id), result.conversation_id)
 
-        fragments = [ConversationIdInput(result.conversation_id, oob=True)]
+        fragments = [
+            ConversationIdInput(result.conversation_id, oob=True),
+            PlusRow(buttons, result.conversation_id, oob=True),
+        ]
         if result.turn is not None:
-            fragments.insert(0, TurnBlock(result.turn, result.conversation_id, result.notices))
+            fragments.insert(0, TurnBlock(result.turn, result.conversation_id, result.notices, pending))
         if result.meal_created:
             # The new meal is chosen in `Add to`, so the next message continues it.
             fragments.append(AssistantMealSelect(events, result.event_id, oob=True))
         response = render_fragment(tuple(fragments))
         response.headers["HX-Replace-Url"] = _assistant_url(result.conversation_id, intake_event_id)
+        # The bar's dot of foods to review (frontend §9.3) asks again.
+        response.headers["HX-Trigger"] = "dbReviewChanged"
         return response
+
+    @rt("/assistant/repeat/{quick_add_id}/dish")
+    def post(request: Request, quick_add_id: PathId, conversation_id: str = ""):
+        """Save a repeated quick add as a provisional dish (§8.12, "Repeticiones"):
+        the user's tap on its card. Repeating it -> 409, the dish already exists (§9.6)."""
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        try:
+            chosen_conversation_id = parse_optional_id(conversation_id, "conversation")
+        except ValidationError as error:
+            return app_error_response(request, ValidationError, str(error))
+        with get_connection() as connection:
+            try:
+                with connection.transaction():
+                    dish_id, name = save_quick_add_as_dish(connection, int(user_id), quick_add_id)
+            except NotFoundError as error:
+                return app_error_response(request, NotFoundError, str(error))
+            except ConflictError as error:
+                return app_error_response(request, ConflictError, str(error))
+        response = render_fragment(RepeatSavedCard(name, dish_id, chosen_conversation_id or 0))
+        response.headers["HX-Trigger"] = "dbReviewChanged"
+        return response
+
+    @rt("/assistant/plus/{portion_id}")
+    def post(request: Request, portion_id: PathId, step: str = "1", conversation_id: str = ""):
+        """A +1 button (§8.12, "Botones +1"): one more unit of a row of the
+        conversation's meal, without the model. Answers the row of buttons.
+        Repeating it adds another unit: each tap is one more (§9.6)."""
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        try:
+            parsed_step = parse_plus_step(step)
+            chosen_conversation_id = parse_optional_id(conversation_id, "conversation")
+            if chosen_conversation_id is None:
+                raise ValidationError("Conversation not found.")
+        except ValidationError as error:
+            return app_error_response(request, ValidationError, str(error))
+        with get_connection() as connection:
+            try:
+                with connection.transaction():
+                    apply_plus(connection, int(user_id), chosen_conversation_id, portion_id, parsed_step)
+            except NotFoundError as error:
+                return app_error_response(request, NotFoundError, str(error))
+            except ConflictError:
+                return app_error_response(request, ConflictError, _MEAL_GONE)
+            except ValidationError as error:
+                return app_error_response(request, ValidationError, str(error))
+            buttons = conversation_plus_buttons(connection, int(user_id), chosen_conversation_id)
+        return render_fragment(PlusRow(buttons, chosen_conversation_id))
 
     @rt("/assistant/mentions")
     def get(request: Request, q: str = ""):

@@ -2,7 +2,8 @@
 
 What the model can do is exactly this list: search, add to the planned meal of
 its conversation, read that meal, change the fields of that meal the user edits
-in its cart card (its insulin draft included), and prepare a draft of a new
+in its cart card (its insulin draft included), create a provisional food or
+dish marked to review and add it to that meal, and prepare a draft of a new
 food, dish or recipe, which the user reviews and saves in its create form.
 There is no tool that deletes anything, archives or edits a food, dish or
 recipe, confirms a meal, touches a consumed meal or the fridge, logs an
@@ -23,6 +24,12 @@ from enum import Enum
 
 from DayBetes_food.database.queries import (
     apply_plate_offset_to_portions,
+    count_similar_quick_adds,
+    create_catalog_item,
+    create_food_brand,
+    create_manual_intake,
+    get_food_brand_id_by_label,
+    get_subtype_label,
     create_intake_plate,
     create_portion_detail,
     get_catalog_item,
@@ -62,6 +69,12 @@ from DayBetes_food.domain.assistant import (
     TOOL_RESULT_ADDED,
     TOOL_RESULT_CHANGED,
     TOOL_RESULT_DRAFT,
+    TOOL_RESULT_PROVISIONAL,
+    TOOL_RESULT_REPEAT,
+    DRAFT_MACROS_SOURCE,
+    REPEAT_MIN_COUNT,
+    REPEAT_WINDOW_DAYS,
+    RepeatSaveAs,
     food_draft_extras,
     food_draft_prefill,
     manual_intake_draft,
@@ -72,7 +85,7 @@ from DayBetes_food.domain.assistant import (
     tool_number,
     tool_text,
 )
-from DayBetes_food.domain.catalog import parse_barcode
+from DayBetes_food.domain.catalog import CatalogItemCreate, parse_barcode, parse_catalog_name
 from DayBetes_food.domain.ciqual_food import parse_ciqual_code
 from DayBetes_food.domain.constants import (
     AmountMethod,
@@ -90,6 +103,8 @@ from DayBetes_food.domain.constants import (
     Nutriscore,
     PortionDestination,
     PortionOrigin,
+    PREFILL_MACROS_SOURCE,
+    PrefillSource,
     Ripeness,
 )
 from DayBetes_food.domain.insulin import parse_insulin_units
@@ -106,9 +121,11 @@ from DayBetes_food.domain.intake_plate import (
     check_offset_minutes,
 )
 from DayBetes_food.domain.manual_intake import (
+    ManualIntakeCreate,
     QuickAddRequest,
     parse_manual_intake_description,
     parse_manual_intake_name,
+    parse_manual_intake_origin,
     parse_quick_add_weight,
     require_carbs,
 )
@@ -124,6 +141,8 @@ from DayBetes_food.domain.portion_detail import (
 )
 from DayBetes_food.domain.recipe import RecipeAddRequest, parse_recipe_add_servings
 from DayBetes_food.errors import ConflictError, NotFoundError, ValidationError
+from DayBetes_food.integrations.ciqual import prefill_from_ciqual_food
+from DayBetes_food.integrations.open_food_facts import prefill_from_off_product
 from DayBetes_food.services.intake_event import (
     OFFSET_MODE_TIME,
     add_quick_add_to_meal,
@@ -277,6 +296,8 @@ TOOL_DEFINITIONS = [
             "fiber_g": _NULLABLE_NUMBER,
             "calories_kcal": _NULLABLE_NUMBER,
             "note": {"type": ["string", "null"], "description": "How you estimated it, in a few words."},
+            "origin": {"type": ["string", "null"], "description": "Who or where made it, when the user says it (a bar, mum)."},
+            "homemade": {"type": ["boolean", "null"], "description": "True when the user cooked it; false when someone else did."},
             "plate_id": _PLATE_ID,
         },
         strict=False,
@@ -291,7 +312,8 @@ TOOL_DEFINITIONS = [
     ),
     _tool(
         "draft_new_food",
-        "Prepare a new catalog food for the user to review and save; you never create foods. "
+        "Prepare a new catalog food for the user to review and save before it exists: only in a "
+        "chat without a meal, or when the user asks to review it first (otherwise add_new_food). "
         "source ciqual or open_food_facts: give the code from search_reference_foods; the "
         "form takes the macros from there, so null them. source label: transcribe a "
         "nutrition label from a photo, per 100 g as printed. source estimate: your own "
@@ -333,7 +355,8 @@ TOOL_DEFINITIONS = [
     ),
     _tool(
         "draft_manual_intake",
-        "Prepare a new dish for the user to review and save; you never create dishes. A "
+        "Prepare a new dish for the user to review and save before it exists: only in a chat "
+        "without a meal, or when the user asks to review it first (otherwise add_new_dish). A "
         "dish is food someone else prepared (a bar, a restaurant, grandma) or anything the "
         "user calls \"manual\" and wants to keep for next time. Macros per 100 g; name and "
         "carbs_100g required, an unknown nutrient null, never 0. macros_source: ai_estimate "
@@ -505,6 +528,73 @@ TOOL_DEFINITIONS = [
         },
         strict=False,
     ),
+    _tool(
+        "add_new_food",
+        "Create a provisional food the user does not have yet and add it to the meal of this "
+        "conversation in one step: a packaged product or a generic ingredient. Use it instead "
+        "of draft_new_food whenever there is a meal; the user reviews the food later. source "
+        "ciqual or open_food_facts: the code from search_reference_foods, and the macros come "
+        "from there (null them). source label: transcribe the label of a photo, per 100 g. "
+        "source estimate: your own estimate per 100 g, when it is in no database. Always "
+        "give category and subtype; an unknown nutrient is null, never 0. The amount, "
+        "amount_method, plate and preparation work as in add_food.",
+        {
+            "source": {"type": "string", "enum": [source.value for source in AssistantDraftSource]},
+            "code": _NULLABLE_TEXT,
+            "name": _NULLABLE_TEXT,
+            "brand": _NULLABLE_TEXT,
+            "category": _nullable_enum(FoodCategory),
+            "subtype": {"type": ["string", "null"], "description": "Specific kind, e.g. oats, yogurt, bread."},
+            "initial_state": _nullable_enum(FoodPhysicalState, "Physical state before preparation."),
+            "cooking_factor": _NULLABLE_NUMBER,
+            "serving_g": _NULLABLE_NUMBER,
+            "barcode": _NULLABLE_TEXT,
+            "calories_100g": _NULLABLE_NUMBER,
+            "carbs_100g": _NULLABLE_NUMBER,
+            "sugars_100g": _NULLABLE_NUMBER,
+            "fats_100g": _NULLABLE_NUMBER,
+            "saturated_100g": _NULLABLE_NUMBER,
+            "proteins_100g": _NULLABLE_NUMBER,
+            "fiber_100g": _NULLABLE_NUMBER,
+            "caffeine_mg_100g": _NULLABLE_NUMBER,
+            "alcohol_g_100g": _NULLABLE_NUMBER,
+            "grams": _NULLABLE_NUMBER,
+            "servings": _NULLABLE_NUMBER,
+            "amount_method": {"type": "string", "enum": [method.value for method in AmountMethod]},
+            "plate_id": _PLATE_ID,
+            **_PREPARATION,
+        },
+        strict=False,
+    ),
+    _tool(
+        "add_new_dish",
+        "Create a provisional dish and add it to the meal of this conversation in one step: "
+        "food someone else prepared (a bar, a restaurant, a relative) that the user wants to "
+        "keep, or that repeat_count says they eat often. The user reviews it later. Macros "
+        "per 100 g, as in draft_manual_intake; origin: who or where made it. The amount, "
+        "amount_method, plate and preparation work as in add_food.",
+        {
+            "name": {"type": "string"},
+            "description": _NULLABLE_TEXT,
+            "subtype": {"type": ["string", "null"], "description": "Specific kind, e.g. tapa, pizza, stew."},
+            "origin": _NULLABLE_TEXT,
+            "serving_g": _NULLABLE_NUMBER,
+            "calories_100g": _NULLABLE_NUMBER,
+            "carbs_100g": {"type": "number"},
+            "sugars_100g": _NULLABLE_NUMBER,
+            "fats_100g": _NULLABLE_NUMBER,
+            "saturated_100g": _NULLABLE_NUMBER,
+            "proteins_100g": _NULLABLE_NUMBER,
+            "fiber_100g": _NULLABLE_NUMBER,
+            "macros_source": {"type": "string", "enum": [m.value for m in MANUAL_DRAFT_MACROS_SOURCES]},
+            "grams": _NULLABLE_NUMBER,
+            "servings": _NULLABLE_NUMBER,
+            "amount_method": {"type": "string", "enum": [method.value for method in AmountMethod]},
+            "plate_id": _PLATE_ID,
+            **_PREPARATION,
+        },
+        strict=False,
+    ),
 ]
 
 
@@ -638,6 +728,11 @@ def _add_food(ctx: ToolContext, tool_input: dict) -> dict:
     item = _read_food(ctx, entry_type, entry_id)
     if item is None:
         raise ToolInputError(f"There is no {_ENTRY_TYPE_NAMES[entry_type]} with id {entry_id} for this user.")
+    return _add_portion(ctx, entry_type, item, tool_input)
+
+
+def _portion_grams(item, tool_input: dict) -> tuple[float, float | None]:
+    """The grams of an add and, when it was given in servings, how many."""
     grams = tool_number(tool_input.get("grams"), "grams")
     servings = tool_number(tool_input.get("servings"), "servings")
     if (grams is None) == (servings is None):
@@ -647,9 +742,15 @@ def _add_food(ctx: ToolContext, tool_input: dict) -> dict:
             raise ToolInputError(f"{item.name} has no serving: give grams.")
         grams = servings * item.default_portion
     try:
-        grams = parse_amount_grams(grams)
+        return parse_amount_grams(grams), servings
     except ValidationError as error:
         raise ToolInputError("The amount must be greater than 0 g and at most 100000 g.") from error
+
+
+def _add_portion(ctx: ToolContext, entry_type: FoodEntryType, item, tool_input: dict) -> dict:
+    """Add a food or dish already read to the meal: the amount, its U2 and its
+    preparation come from the tool input (§8.12)."""
+    grams, servings = _portion_grams(item, tool_input)
     # The rules of U2 decide it, whatever the food's default (§8.12, study §6.3).
     amount_method = AmountMethod(tool_input.get("amount_method"))
     preparation = _preparation(tool_input)
@@ -662,12 +763,12 @@ def _add_food(ctx: ToolContext, tool_input: dict) -> dict:
 
     event_id = ctx.target_event()
     plate_id = _target_plate(ctx, event_id, tool_input.get("plate_id"))
-    create_portion_detail(
+    portion_id = create_portion_detail(
         ctx.connection,
         ctx.user_id,
         PortionDetailCreate(
             origin=origin,
-            origin_id=entry_id,
+            origin_id=item.id,
             destination=PortionDestination.INTAKE_EVENT,
             destination_id=event_id,
             plate_id=plate_id,
@@ -689,9 +790,150 @@ def _add_food(ctx: ToolContext, tool_input: dict) -> dict:
                 "carbs_g": _round(carbs),
                 "amount_method": amount_method.value,
                 "preparation": _preparation_text(preparation, is_cooked_weight) or None,
+                # The +1 buttons repeat this add (§8.12): its row and, in servings, how many.
+                "food_id": portion_id,
+                "servings": servings,
             }
         )
     }
+
+
+# Provisional foods and dishes (§8.12, "Alimentos provisionales"): created with
+# needs_review and added at once, without the user's confirmation; the meal still
+# goes through the cart, and the user reviews them later in their edit form.
+_EXISTING_FOOD = (
+    "The user already has a {kind} with that name{rest}: find it with search_my_foods and use add_food."
+)
+
+
+def _provisional_food_values(ctx: ToolContext, tool_input: dict):
+    """The prefill, its reference and its U1 of a provisional food, from its source."""
+    source = AssistantDraftSource(tool_input.get("source"))
+    if source is AssistantDraftSource.CIQUAL:
+        code = parse_ciqual_code(tool_input.get("code"))
+        food = get_ciqual_food(ctx.connection, code) if code is not None else None
+        if food is None:
+            raise ToolInputError("Give the code of a Ciqual food from search_reference_foods.")
+        return prefill_from_ciqual_food(food), PrefillSource.CIQUAL, str(food.code), source
+    if source is AssistantDraftSource.OPEN_FOOD_FACTS:
+        code = parse_barcode(tool_input.get("code") or "")
+        product = get_off_product_by_code(ctx.connection, code) if code else None
+        if product is None:
+            raise ToolInputError("Give the code of an Open Food Facts product from search_reference_foods.")
+        return prefill_from_off_product(product.code, product), PrefillSource.OPEN_FOOD_FACTS, product.code, source
+    return food_draft_prefill(tool_input), None, None, source
+
+
+def _add_new_food(ctx: ToolContext, tool_input: dict) -> dict:
+    ctx.require_meal_allowed()
+    try:
+        prefill, prefill_source, prefill_id, source = _provisional_food_values(ctx, tool_input)
+        extras = food_draft_extras(tool_input)
+        # The model's name and brand win: an Open Food Facts name is often noisy.
+        name = parse_catalog_name(tool_input.get("name") or prefill.name)
+        brand = tool_text(tool_input.get("brand"), "brand", max_length=255) or prefill.brand
+        nutrients = prefill.nutrients
+        require_carbs(nutrients)
+    except ValidationError as error:
+        raise ToolInputError(str(error)) from error
+    category = prefill.category or extras.category
+    subtype = prefill.subtype or extras.subtype
+    if category is None or not subtype:
+        raise ToolInputError("Give category and subtype: every food needs them.")
+    brand_id = None
+    if brand:
+        brand_id = get_food_brand_id_by_label(ctx.connection, brand) or create_food_brand(
+            ctx.connection, brand, commit=False
+        )
+    macros_source = PREFILL_MACROS_SOURCE[prefill_source] if prefill_source else DRAFT_MACROS_SOURCE[source]
+    try:
+        catalog_id = create_catalog_item(
+            ctx.connection,
+            CatalogItemCreate(
+                created_by=ctx.user_id,
+                origin_root_id=None,
+                name=name,
+                brand_id=brand_id,
+                category=category,
+                subtype=get_subtype_label(ctx.connection, subtype) or subtype,
+                initial_state=prefill.initial_state or extras.initial_state,
+                nutriscore=prefill.nutriscore or extras.nutriscore,
+                nova=prefill.nova if prefill.nova is not None else extras.nova,
+                yuka=extras.yuka,
+                default_portion=prefill.default_portion_g,
+                nutrients=nutrients,
+                barcode=prefill.barcode or extras.barcode,
+                cooking_factor=extras.cooking_factor,
+                macros_source=macros_source,
+                default_amount_method=None,
+                serving_method=None,
+                macros_confidence=None,
+                prefill_source=prefill_source,
+                prefill_source_id=prefill_id,
+                needs_review=True,
+            ),
+            commit=False,
+        )
+    except ConflictError as error:
+        rest = f" and brand {brand}" if brand else ""
+        raise ToolInputError(_EXISTING_FOOD.format(kind="food", rest=rest) + f" ({error})") from error
+    item = get_catalog_item(ctx.connection, ctx.user_id, catalog_id)
+    result = _add_portion(ctx, FoodEntryType.CATALOG, item, tool_input)
+    result[TOOL_RESULT_PROVISIONAL] = _compact(
+        {
+            "entry_type": FoodEntryType.CATALOG.value,
+            "id": catalog_id,
+            "brand_or_origin": brand,
+            "carbs_100g": _round(nutrients.carbs_100g),
+            "macros_source": macros_source.value,
+        }
+    )
+    return result
+
+
+def _add_new_dish(ctx: ToolContext, tool_input: dict) -> dict:
+    ctx.require_meal_allowed()
+    try:
+        draft = manual_intake_draft(tool_input)
+    except ValidationError as error:
+        raise ToolInputError(str(error)) from error
+    try:
+        manual_intake_id = create_manual_intake(
+            ctx.connection,
+            ManualIntakeCreate(
+                created_by=ctx.user_id,
+                origin_root_id=None,
+                name=parse_manual_intake_name(draft.name),
+                description=draft.description,
+                subtype=draft.subtype,
+                origin=draft.origin,
+                default_portion=draft.default_portion,
+                nutrients=draft.nutrients,
+                glycemic_index=draft.glycemic_index,
+                ig_confidence=draft.ig_confidence,
+                macros_confidence=draft.macros_confidence,
+                macros_source=draft.macros_source,
+                default_amount_method=draft.default_amount_method,
+                serving_method=None,
+                needs_review=True,
+            ),
+            commit=False,
+        )
+    except ConflictError as error:
+        rest = f" and origin {draft.origin}" if draft.origin else ""
+        raise ToolInputError(_EXISTING_FOOD.format(kind="dish", rest=rest)) from error
+    item = get_manual_intake(ctx.connection, ctx.user_id, manual_intake_id)
+    result = _add_portion(ctx, FoodEntryType.MANUAL_INTAKE, item, tool_input)
+    result[TOOL_RESULT_PROVISIONAL] = _compact(
+        {
+            "entry_type": FoodEntryType.MANUAL_INTAKE.value,
+            "id": manual_intake_id,
+            "brand_or_origin": draft.origin,
+            "carbs_100g": _round(draft.nutrients.carbs_100g),
+            "macros_source": draft.macros_source.value,
+        }
+    )
+    return result
 
 
 _PREPARATION_ENUMS = {
@@ -795,13 +1037,15 @@ def _add_estimate(ctx: ToolContext, tool_input: dict) -> dict:
             # Both are the assistant's estimate (§8.12, study §6.3).
             macros_source=MacrosSource.AI_ESTIMATE,
             amount_method=AmountMethod.AI_ESTIMATE,
+            origin=parse_manual_intake_origin(tool_input.get("origin")),
         )
+        homemade = tool_bool(tool_input.get("homemade"), "homemade")
     except ValidationError as error:
         raise ToolInputError(str(error)) from error
     event_id = ctx.target_event()
     plate_id = _target_plate(ctx, event_id, tool_input.get("plate_id"))
-    add_quick_add_to_meal(ctx.connection, ctx.user_id, request, event_id, plate_id)
-    return {
+    quick_add_id, portion_id = add_quick_add_to_meal(ctx.connection, ctx.user_id, request, event_id, plate_id)
+    result = {
         TOOL_RESULT_ADDED: _compact(
             {
                 "name": request.name,
@@ -809,9 +1053,27 @@ def _add_estimate(ctx: ToolContext, tool_input: dict) -> dict:
                 "carbs_g": _round(totals["carbs_100g"]),
                 "amount_method": AmountMethod.AI_ESTIMATE.value,
                 "kind": "estimate",
+                "food_id": portion_id,
             }
         )
     }
+    # Repetitions (§8.12): the third similar quick add in 90 days is offered to be
+    # saved, never saved here.
+    repeats = count_similar_quick_adds(
+        ctx.connection, ctx.user_id, request.name, request.origin, REPEAT_WINDOW_DAYS
+    )
+    if repeats >= REPEAT_MIN_COUNT:
+        save_as = RepeatSaveAs.RECIPE if homemade else RepeatSaveAs.DISH
+        result[TOOL_RESULT_REPEAT] = {
+            "quick_add_id": quick_add_id,
+            "count": repeats,
+            "save_as": save_as.value,
+        }
+        result["note"] = (
+            f"The user has logged something like this {repeats} times in {REPEAT_WINDOW_DAYS} days. "
+            f"The page shows a button to save it as a {save_as.value}: mention it in one line."
+        )
+    return result
 
 
 def _show_meal(ctx: ToolContext, tool_input: dict) -> dict:
@@ -1206,6 +1468,8 @@ _HANDLERS = {
     "update_plate": _update_plate,
     "update_food": _update_food,
     "draft_recipe": _draft_recipe,
+    "add_new_food": _add_new_food,
+    "add_new_dish": _add_new_dish,
 }
 
 

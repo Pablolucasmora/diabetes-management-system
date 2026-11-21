@@ -37,7 +37,7 @@ _CATALOG_COLUMNS = """
     entity.saturated_100g, entity.proteins_100g, entity.fiber_100g,
     entity.caffeine, entity.alcohol, entity.barcode, entity.cooking_factor,
     entity.macros_source, entity.default_amount_method, entity.serving_method, entity.macros_confidence,
-    entity.is_published, entity.created_at, entity.updated_at, entity.deleted_at,
+    entity.needs_review, entity.is_published, entity.created_at, entity.updated_at, entity.deleted_at,
     EXISTS (SELECT 1 FROM user_favorites uf
             WHERE uf.user_id = %(visibility_user_id)s AND uf.catalog_id = entity.id) AS is_favorite,
     COALESCE(entity.created_by = %(visibility_user_id)s AND entity.deleted_at IS NULL, FALSE) AS can_edit,
@@ -74,7 +74,10 @@ _CATALOG_CREATE_COLUMNS = (
     "macros_confidence",
     "prefill_source",
     "prefill_source_id",
+    "needs_review",
 )
+
+NEEDS_REVIEW_PUBLISH_MESSAGE = "Review this food and save it before publishing it."
 
 # §6.2: never reveals another user's personal data.
 _CATALOG_UNIQUE_MESSAGES = {
@@ -127,6 +130,7 @@ def _create_params(payload: CatalogItemCreate) -> dict:
         "macros_confidence": payload.macros_confidence,
         "prefill_source": payload.prefill_source.value if payload.prefill_source else None,
         "prefill_source_id": payload.prefill_source_id,
+        "needs_review": payload.needs_review,
         **_nutrient_params(payload.nutrients),
     }
 
@@ -284,7 +288,8 @@ def update_catalog_item(
     query = _build_update_query(
         "catalog",
         build_params,
-        raw_fields={"updated_at": RawSQL.NOW},
+        # Saving the owner's edit form is the review of a provisional food (§11.2.2).
+        raw_fields={"updated_at": RawSQL.NOW, "needs_review": RawSQL.FALSE},
         null_fields=null_fields,
         extra_where=sql.SQL("catalog.created_by = %(user_id)s AND catalog.deleted_at IS NULL"),
     )
@@ -345,6 +350,7 @@ def _set_catalog_published(
           AND catalog.created_by = %(user_id)s
           AND catalog.deleted_at IS NULL
           AND catalog.is_published = %(current)s
+          AND NOT (%(published)s AND catalog.needs_review)
         RETURNING catalog.id;
     """
     params = {
@@ -361,13 +367,15 @@ def _set_catalog_published(
         return True
     exists = _execute_query(
         connection,
-        "SELECT 1 FROM catalog entity "
+        "SELECT entity.needs_review FROM catalog entity "
         "WHERE entity.id = %(catalog_id)s AND entity.created_by = %(user_id)s "
         "AND entity.deleted_at IS NULL;",
         {"catalog_id": catalog_id, "user_id": user_id},
         commit=False,
     )
     if exists is not None:
+        if published and exists["needs_review"]:
+            raise ConflictError(NEEDS_REVIEW_PUBLISH_MESSAGE)
         return False
     raise NotFoundError("Food not found.")
 

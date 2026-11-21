@@ -13,6 +13,7 @@ from DayBetes_food.database.queries import (
     create_intake_event,
     create_intake_plate,
     create_manual_intake,
+    get_owned_quick_add,
     create_portion_detail,
     delete_intake_event,
     delete_portion_detail,
@@ -47,6 +48,7 @@ from DayBetes_food.domain.intake_plate import (
     resolve_eaten_at,
 )
 from DayBetes_food.domain.manual_intake import ManualIntakeCreate, QuickAddRequest
+from DayBetes_food.domain.nutrition import NutrientValues
 from DayBetes_food.domain.meal_type_schedule import resolve_meal_type_for_time
 from DayBetes_food.domain.portion_detail import (
     PortionDetailCreate,
@@ -409,12 +411,12 @@ def add_quick_add_to_meal(
     §11.2.3), inside the caller's transaction: row + portion, all or nothing (§2.3).
 
     A quick add stores only what its form asks: the weight becomes
-    default_portion, its U1 and U2 (study §6.3) are the ones given, or NULL, and
-    everything else stays NULL. The portion is born with the quick add's own U2
+    default_portion, its U1 and U2 (study §6.3) and its origin are the ones
+    given, or NULL, and everything else stays NULL. The portion is born with the quick add's own U2
     (measurement §6.11). Repeating it creates another quick add (§9.6).
 
     Returns:
-        The id of the new `manual_intake` row.
+        The ids of the new `manual_intake` row and of its portion.
     """
     offset_minutes = new_plate_offset_minutes(get_intake_event(connection, user_id, event_id))
     plate_id = resolve_event_plate(connection, user_id, event_id, plate_choice, offset_minutes)
@@ -426,7 +428,7 @@ def add_quick_add_to_meal(
             name=request.name,
             description=request.description,
             subtype=None,
-            origin=None,
+            origin=request.origin,
             default_portion=request.weight_g,
             nutrients=request.nutrients,
             glycemic_index=None,
@@ -439,7 +441,7 @@ def add_quick_add_to_meal(
         ),
         commit=False,
     )
-    create_portion_detail(
+    portion_id = create_portion_detail(
         connection,
         user_id,
         PortionDetailCreate(
@@ -453,4 +455,54 @@ def add_quick_add_to_meal(
         ),
         commit=False,
     )
-    return manual_intake_id
+    return manual_intake_id, portion_id
+
+
+def save_quick_add_as_dish(connection, user_id: int, quick_add_id: int) -> tuple[int, str]:
+    """A repeated quick add saved as a provisional dish (code_conventions.md §8.12,
+    "Repeticiones"), inside the caller's transaction. The quick add stays as it
+    is; the new dish copies its name, origin, serving and macros, and waits for
+    the user's review.
+
+    Raises:
+        NotFoundError: not one of the user's quick adds.
+        ConflictError: the user already has a dish with that name and origin.
+
+    Returns:
+        The id and the name of the new dish.
+    """
+    quick_add = get_owned_quick_add(connection, user_id, quick_add_id)
+    if quick_add is None:
+        raise NotFoundError("That food no longer exists.")
+    dish_id = create_manual_intake(
+        connection,
+        ManualIntakeCreate(
+            created_by=user_id,
+            origin_root_id=None,
+            name=quick_add.name,
+            description=quick_add.description,
+            subtype=None,
+            origin=quick_add.origin,
+            default_portion=quick_add.default_portion,
+            nutrients=NutrientValues(
+                calories_100g=quick_add.calories_100g,
+                carbs_100g=quick_add.carbs_100g,
+                sugars_100g=quick_add.sugars_100g,
+                fats_100g=quick_add.fats_100g,
+                saturated_100g=quick_add.saturated_100g,
+                proteins_100g=quick_add.proteins_100g,
+                fiber_100g=quick_add.fiber_100g,
+                caffeine=quick_add.caffeine,
+                alcohol=quick_add.alcohol,
+            ),
+            glycemic_index=None,
+            ig_confidence=None,
+            macros_confidence=None,
+            macros_source=quick_add.macros_source,
+            default_amount_method=None,
+            serving_method=None,
+            needs_review=True,
+        ),
+        commit=False,
+    )
+    return dish_id, quick_add.name

@@ -1001,7 +1001,8 @@ Acordado con el usuario el 2026-11-12. Un chat en el que el usuario cuenta lo qu
 **Principio: propone y el usuario confirma.** Es la excepción acordada a "no se adivina" (decisión 2026-09-25 y §7.15): el asistente interpreta texto libre, pero nada de lo que hace queda como dato confirmado sin un paso del usuario.
 
 - Solo escribe en la comida `planned` de su conversación: porciones en el carrito, añadidos rápidos estimados con su porción, platos nuevos, los campos de esa comida que el usuario edita en el carrito (ampliación del 2026-11-12, ver **Edición de la comida**) y el borrador de su insulina (ampliación del 2026-11-15, ver **Insulina**). El usuario lo revisa, lo cambia o lo borra, y confirma la comida como siempre.
-- Un alimento, un plato manual o una receta nuevos nunca se crean desde el asistente. Este prepara un borrador y abre el formulario de alta relleno; el usuario lo revisa y lo guarda, y el formulario vuelve al chat (ampliación del 2026-11-13, ver **Alimentos nuevos**, **Platos manuales** y **Recetas**). El borrador puede rellenar todos los campos del formulario (ampliación del 2026-11-15).
+- **Excepción: alimentos y platos provisionales** (decisión del usuario del 2026-11-21, ver **Alimentos provisionales**). En una conversación con comida, un alimento o un plato que el usuario no tiene se crea al momento, con datos aproximados y marcado `needs_review`, y se añade a la comida. La garantía pasa a ser doble: queda marcado hasta que el usuario lo revisa, y la comida sigue pasando por su confirmación en el carrito. Las recetas no tienen excepción.
+- Fuera de esa excepción, un alimento, un plato manual o una receta nuevos nunca se crean desde el asistente. Este prepara un borrador y abre el formulario de alta relleno; el usuario lo revisa y lo guarda, y el formulario vuelve al chat (ampliación del 2026-11-13, ver **Alimentos nuevos**, **Platos manuales** y **Recetas**). El borrador puede rellenar todos los campos del formulario (ampliación del 2026-11-15).
 - No existe ninguna herramienta que borre (comidas, platos o porciones), archive, edite un alimento, plato o receta del catálogo, confirme una comida, toque una comida consumida, toque la nevera de una comida, registre una inyección por su cuenta (fuera del borrador de la comida) o cambie ajustes. La garantía es que esas herramientas no existen, no una instrucción del prompt.
 
 **Capas**
@@ -1021,7 +1022,15 @@ Acordado con el usuario el 2026-11-12. Un chat en el que el usuario cuenta lo qu
 **Datos**
 
 - Los macros de un alimento de la base nunca los calcula ni los copia el modelo: el servidor los lee del alimento, como en cualquier porción. El modelo solo elige el alimento, la cantidad y su `amount_method`.
-- Cuando no encuentra el alimento, por este orden de preferencia: lo fijado con `/`, los alimentos y platos del usuario (favoritos y usados primero), sus recetas, Ciqual y OFF. Solo al final estima un añadido rápido.
+- Cuando no encuentra el alimento, por este orden de preferencia: lo fijado con `/`, los alimentos y platos del usuario (favoritos y usados primero), sus recetas, Ciqual y OFF. Lo que no tiene se resuelve con el **Tipo de entrada**: un alimento provisional, un plato provisional o un añadido rápido.
+- **Tipo de entrada** (decisión del usuario del 2026-11-21). Aplica el criterio de §11.2.3 (quién lo ha preparado, no si se conocen los macros) en este orden:
+  1. Lo fijado con `/`: eso, sin buscar.
+  2. **Nadie o la industria** (un producto envasado o un ingrediente genérico): `catalog`. Uno suyo si lo tiene; si no, un alimento provisional (**Alimentos provisionales**).
+  3. **El propio usuario, en casa**: **ingredientes sueltos** de `catalog`, en un plato con el nombre del guiso, siempre que dé las cantidades, aunque sea a ojo. Una receta suya que encaje se añade como receta. Solo si no sabe los ingredientes ni sus cantidades, un añadido rápido del plato entero.
+  4. **Otro, sea un sitio o una persona** (bar, restaurante, un familiar): `manual_intake`. Un plato suyo que encaje; si no, un añadido rápido con su `origin`. Si el usuario pide guardarlo, o si se cumple la regla de **Repeticiones**, se convierte en plato provisional.
+  5. **Picoteo**: una línea por cada cosa que se pueda separar (el pan, las aceitunas, las bravas), cada una por su rama. Nunca un único añadido rápido para todo.
+
+  Cuando la elección no es obvia, el asistente la dice en su respuesta ("como añadido rápido, porque es de un bar").
 - Un añadido rápido estimado lleva `macros_source = ai_estimate` y la porción `amount_method = ai_estimate`. Los hidratos y el peso son obligatorios; un macro que no estima queda vacío, nunca a cero (§8.9).
 - Las porciones de alimentos de la base llevan el `amount_method` de las reglas de U2, aunque el alimento tenga otro por defecto.
 - **Preparación** (decisiones del usuario del 2026-11-12, solo lo que dice, y del 2026-11-13). Al añadir un alimento a una comida o a un borrador de receta, o al corregirlo, el asistente rellena `cooking`, `final_state`, `conservation`, `ripeness` (solo fruta, solo en comidas) y `is_cooked_weight` únicamente cuando el texto lo dice ("hervido", "a la plancha", "crudo", "pesado cocinado", "de la nevera"). Lo que no se dice queda vacío, como en "no se adivina" (§7.15), y si lo dicho no encaja con ningún valor de la lista, también. Tres reglas lo concretan:
@@ -1070,6 +1079,26 @@ Lo hace solo cuando el usuario lo pide o lo dice al contar la comida ("a las 16:
 
 Con Ciqual y OFF, los macros y lo que traiga la fuente salen de su precarga de siempre (measurement_conventions.md §12.1), y el asistente solo completa lo que la fuente no trae: categoría, subtipo, estado inicial y factor de cocción. Lo que el borrador guarda se vuelve a leer y a validar al abrir el formulario (§7.13), nunca se pasa por la URL.
 
+**Alimentos provisionales** (decisión del usuario del 2026-11-21). Para que registrar fuera de casa, o con un envase en la mano, no obligue a dar de alta un alimento mientras se come.
+
+- En una conversación con comida, un alimento (`catalog`) o un plato (`manual_intake`) que el usuario no tiene se crea **automáticamente, sin pedir confirmación**, con `needs_review = TRUE` (§11.2.2), y se añade a la comida en el mismo paso (`add_new_food`, `add_new_dish`). Si el usuario ya tiene uno con ese nombre (y marca u origen), la herramienta lo rechaza y el asistente usa el suyo.
+- Sus datos salen, por este orden, de la foto de una etiqueta (`label`), de Ciqual (`reference_db`), de OFF (`open_food_facts`) o de la estimación del asistente (`ai_estimate`). `macros_source` dice siempre de cuál.
+- Un plato provisional nace de una petición de guardarlo o de **Repeticiones**, nunca de un añadido rápido sin más.
+- El chat lo muestra en una tarjeta con un resumen de lo que ha rellenado y `Review` (frontend_conventions.md §9.11). Mientras quede alguno sin revisar, el aviso de Inicio, la píldora `To review` y el punto de la barra inferior lo recuerdan (frontend §9.2 y §9.3).
+- Revisarlo es abrir su formulario de edición y guardarlo, lo que quita la marca. Corregir sus valores cambia los hidratos de todas las comidas en que está, también las confirmadas, porque las porciones leen los macros en vivo y el versionado (§11.2.2) aún no existe. Es lo que se busca: la comida queda con los datos buenos.
+- Con `No meal` (solo borradores), o cuando el usuario pide expresamente revisar el alimento antes de usarlo, se sigue usando el borrador (`draft_new_food`, `draft_manual_intake`). Guardar un borrador abierto desde una comida o desde una receta lo añade también a esa comida o receta.
+
+**Repeticiones** (decisión del usuario del 2026-11-21). Al hacer un añadido rápido, el asistente cuenta los añadidos rápidos del usuario de los últimos 90 días con un nombre o un `origin` parecidos. Si este es el tercero o más, sugiere guardarlo con un botón: como plato si lo preparó otro, o como receta si es casero (`add_estimate` lleva `origin` y `homemade`). No lo guarda por su cuenta. Aceptar el plato lo crea provisional a partir del añadido rápido, sin pasar por el modelo (`POST /assistant/repeat/{id}/dish`); el añadido rápido se queda como está. Aceptar la receta envía al asistente "Save <nombre> as a recipe.", porque una receta necesita sus ingredientes.
+
+**Botones `+1`** (decisión del usuario del 2026-11-21). Repetir algo ya añadido no pasa por el modelo: es una acción en línea de la página (frontend_conventions.md §9.11), con su propia ruta, que escribe en la comida igual que editar la cantidad en el carrito, con la misma validación (§7) y la propiedad en SQL (§5.3).
+
+- Hay botón para cada fila que el asistente añadió en esta conversación y sigue en su comida: el resultado de `add_food`, `add_new_food`, `add_new_dish` y `add_estimate` guarda la fila (`food_id`) y, si se añadió en raciones, cuántas. Una fila añadida a mano en Food o en el carrito no tiene botón.
+- Suma a la porción que ya existe la cantidad de la última vez que se añadió: una ración si se añadió en raciones; si no, los gramos de esa vez. La unidad se vuelve a leer de la conversación guardada, nunca del navegador. No crea una línea nueva y no cambia `amount_method` ni la preparación.
+- Los ajustes de la pulsación larga (`+½`, `+2`, `−1`) usan la misma unidad. `−1` nunca deja la porción en cero ni la borra: quitarla se hace en el carrito.
+- Valen para alimentos, platos y añadidos rápidos (un añadido rápido escala sus macros, como en el carrito). Las recetas no tienen `+1`.
+- Solo en una comida `planned`: si se confirmó o se borró, `409` o `404` con el mismo texto que el envío de un mensaje.
+- No se guarda como mensaje de la conversación. El modelo lo ve en el siguiente mensaje, porque el bloque de contexto lleva lo que ya tiene la comida.
+
 **Platos manuales** (decisión del usuario del 2026-11-15). `draft_manual_intake` abre el formulario de alta de un plato manual (§11.2.3) relleno con todos sus campos: nombre, descripción, subtipo, origen, ración, macros por 100 g, cafeína y alcohol, índice glucémico y su confianza, `macros_source`, la confianza de los macros, el método de cantidad por defecto y el favorito. Es lo que el usuario quiere conservar de algo preparado por otro (un bar, un restaurante, un familiar), o lo que pide guardar como "manual". Para registrarlo solo en esta comida sigue estando el añadido rápido (`add_estimate`).
 
 - `macros_source` lo da el modelo: `ai_estimate` si los estima, `own_estimate` si los dice el usuario, `official` si salen de la carta o la web del sitio, `label` si los lee de una etiqueta.
@@ -1114,6 +1143,7 @@ Con Ciqual y OFF, los macros y lo que traiga la fuente salen de su precarga de s
   - `show_meal`: la comida con sus platos y alimentos, con sus ids y los campos que se pueden cambiar, el borrador de su insulina y las plumas rápidas abiertas;
   - `draft_new_food`: `ciqual`, `open_food_facts`, `label` o `estimate`, con los campos de **Alimentos nuevos**;
   - `draft_manual_intake`: el borrador de **Platos manuales**;
+  - `add_new_food` y `add_new_dish`: crean un alimento o un plato provisional y lo añaden a la comida (**Alimentos provisionales**), con la cantidad, `amount_method`, el plato y la preparación de `add_food`;
   - `add_plate`: un plato vacío, con nombre y offset opcionales;
   - `update_meal`, `update_plate` y `update_food`: los cambios de **Edición de la comida**;
   - `update_insulin`: el borrador de **Insulina**;
@@ -1521,6 +1551,7 @@ Decisión 2026-09-24 (`conventions/decisions.md`). Cuando un contrato no cabe en
   - El texto del modal describe lo que ocurre de verdad: se retira del catálogo, y quien ya lo usa puede seguir usándolo. No se llama "borrar".
   - Al archivarlo, se quita de los favoritos de su propietario en la misma transacción (decisión 2026-09-24).
 - **Origen de los macros, método de la cantidad y confianza declarados** (decisión 2026-10-09, extensión a `catalog`; listas cerradas U1/U2 desde el 2026-11-12, `study_conventions.md` §6.3): `macros_source` (dato del alimento, leído en vivo por la porción), `default_amount_method` (se copia a la porción al crearla) y `macros_confidence` (escala `0–2`), los tres opcionales (`NULL` = sin dato), con el mismo significado que en `manual_intake` (`measurement_conventions.md` §6.10 y §6.11). Los alimentos existentes el 2026-10-09 empiezan en `NULL`. `glycemic_index` e `ig_confidence` no existen en `catalog` (sin decidir).
+- **Provisional (`needs_review`)** (decisión del usuario del 2026-11-21, `BOOLEAN NOT NULL DEFAULT FALSE`). Un alimento creado por el asistente con datos aproximados (§8.12, **Alimentos provisionales**). Es personal, aparece en búsquedas y se usa como cualquier otro, pero **no se puede publicar** mientras lo esté (`CHECK (NOT (needs_review AND is_published))`). Solo el asistente lo pone a `TRUE`; guardar el formulario de edición del propietario lo pone a `FALSE`, y no vuelve atrás. Copiarlo da una copia sin la marca, porque la copia se abre ya en edición. Lo mismo vale para `manual_intake` (§11.2.3).
 - **Corregir no es archivar**: si los valores de un alimento son incorrectos, se corrigen editándolos (con el versionado, creando una versión nueva). Archivar queda para "ya no lo mantengo" o "está duplicado".
 - **Copiar**:
   - Crea una **fila nueva** con su propio `id`, `created_by` = quien copia y `origin_root_id` = el alimento raíz de la familia. Una copia de una copia también apunta a la raíz.
@@ -1550,14 +1581,15 @@ Decisiones 2026-10-09 (`conventions/decisions.md`). Las unidades, la entrada de 
 - **Añadido rápido**:
   - Se abre desde el botón "Quick add" de la página principal y desde la opción equivalente del `+` de la página de Food.
   - El formulario lleva arriba el selector de comida y tanda (el mismo que hay bajo el buscador de Food y en la ficha de un alimento). Debajo: nombre, peso estimado, macros del total (smart macros), de dónde salen los macros (`Macros from`, U1) y cómo se obtuvo el peso (`Weight from`, U2), los dos opcionales y vacíos al abrir (decisión 2026-11-12, `study_conventions.md` §6.3), y notas, que se guardan en `description`. Son obligatorios el nombre, el peso y los hidratos.
-  - No pide `subtype`, `origin`, índice glucémico ni confianzas: se quedan en `NULL`.
+  - Pide `origin` (dónde o quién lo preparó), opcional y con el mismo autocompletado que el del plato (decisión del usuario del 2026-11-21): con él se reconocen las **Repeticiones** (§8.12). No pide `subtype`, índice glucémico ni confianzas, que se quedan en `NULL`.
+  - No puede ser provisional: `CHECK (NOT (is_quick_add AND needs_review))`.
   - Al guardar, en una sola transacción, se crea la fila (`default_portion` = peso, nutrientes convertidos a 100 g según §5.4, `macros_source` y `default_amount_method` los elegidos, o `NULL`) y su porción en la tanda elegida, con `amount` = peso.
   - Solo existe a través de su porción. No aparece en búsquedas, listados, favoritos, etiquetas, sugerencias de origen ni en el selector de ingredientes de receta.
   - No se puede publicar: `CHECK (NOT (is_quick_add AND is_published))`.
   - No entra en los índices únicos: puede haber varios "Menú del día".
   - No se puede editar por ahora. Solo se puede cambiar la cantidad de su porción en el carrito, que escala los macros como en cualquier porción. Corregir sus valores queda para el futuro historial de comidas en estadísticas (`audit/deuda_pendiente.md`, sección `manual_intake`).
   - Si se borra su porción, la fila se queda en la base, invisible. Es un comportamiento interino: qué conviene hacer con ella está pendiente en la deuda.
-  - Pendiente (`audit/deuda_pendiente.md`, sección `manual_intake`): convertirlo después en plato reutilizable.
+  - Pendiente (`audit/deuda_pendiente.md`, sección `manual_intake`): convertirlo después en plato reutilizable. La sugerencia de **Repeticiones** (§8.12) cubre el caso del asistente creando un plato nuevo; el añadido rápido original se queda como está.
 - **Visibilidad y publicación**: regla común de §11.4.1, en SQL. Solo se publican platos reutilizables.
   - Se publica y despublica con la acción Publish/Unpublish de la ficha, como en `catalog`. Sustituye a la casilla "Published" de la edición, que la decisión 2026-09-25 solo admitía de forma provisional.
   - Concepto de duplicado: nombre normalizado + origen normalizado, con un origen `NULL` equivalente a la cadena vacía. Es la "marca" de §11.4.1 para esta tabla. El `409` de publicar dice que ya existe un plato publicado con ese nombre y ese origen.

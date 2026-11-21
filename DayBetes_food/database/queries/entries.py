@@ -19,7 +19,8 @@ from DayBetes_food.database.queries.crud import (
     _execute_query_many,
 )
 from DayBetes_food.domain.constants import IntakeEventState, PortionOrigin, SystemTag
-from DayBetes_food.domain.food_entry import MENTION_SUGGESTIONS_MAX, MENTION_USAGE_DAYS, MentionSuggestion
+from DayBetes_food.domain.constants import FoodEntryType
+from DayBetes_food.domain.food_entry import MENTION_SUGGESTIONS_MAX, MENTION_USAGE_DAYS, MentionSuggestion, ReviewEntry
 from DayBetes_food.domain.search_text import normalize_search_text, search_text_sql
 from DayBetes_food.domain.tag import SYSTEM_TAG_MEAL_TYPE
 from DayBetes_food.time_utils import current_timezone
@@ -427,3 +428,48 @@ def get_mention_suggestions(
     """
     rows = _execute_query_many(connection, query, params, commit=False)
     return [mention_suggestion_from_row(row) for row in rows if row]
+
+
+# Provisional foods and dishes of their owner (§8.12, §11.2.2): active only.
+_NEEDS_REVIEW_SQL = """
+    SELECT 'catalog' AS entry_type, c.id AS entry_id, c.name, COALESCE(fb.label, '') AS subtitle,
+           c.carbs_100g, c.macros_source, c.created_at
+    FROM catalog c LEFT JOIN food_brands fb ON fb.id = c.brand_id
+    WHERE c.created_by = %(user_id)s AND c.needs_review AND c.deleted_at IS NULL
+    UNION ALL
+    SELECT 'manual_intake', m.id, m.name, COALESCE(m.origin, ''), m.carbs_100g, m.macros_source, m.created_at
+    FROM manual_intake m
+    WHERE m.created_by = %(user_id)s AND m.needs_review AND m.deleted_at IS NULL
+"""
+
+
+def list_needs_review(connection, user_id: int) -> list[ReviewEntry]:
+    """The user's provisional foods and dishes, the newest first."""
+    rows = _execute_query_many(
+        connection,
+        f"SELECT * FROM ({_NEEDS_REVIEW_SQL}) entry ORDER BY entry.created_at DESC, entry.entry_id DESC;",
+        {"user_id": user_id},
+        commit=False,
+    )
+    return [
+        ReviewEntry(
+            entry_type=FoodEntryType(row["entry_type"]),
+            entry_id=int(row["entry_id"]),
+            name=row["name"],
+            subtitle=row["subtitle"] or "",
+            carbs_100g=row.get("carbs_100g"),
+            macros_source=row.get("macros_source"),
+        )
+        for row in rows
+    ]
+
+
+def count_needs_review(connection, user_id: int) -> int:
+    """How many provisional foods and dishes the user has (Home, Food, island)."""
+    row = _execute_query(
+        connection,
+        f"SELECT count(*) AS pending FROM ({_NEEDS_REVIEW_SQL}) entry;",
+        {"user_id": user_id},
+        commit=False,
+    )
+    return int(row["pending"]) if row else 0

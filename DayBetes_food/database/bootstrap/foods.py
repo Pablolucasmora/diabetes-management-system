@@ -170,6 +170,8 @@ def _ensure_catalog_schema(cursor):
         ("macros_confidence", "INTEGER"),
         # What the serving is (study §6.3, decision 2026-11-21); NULL = not said.
         ("serving_method", "VARCHAR(50)"),
+        # Provisional foods (§11.2.2, decision 2026-11-21): existing rows were reviewed by hand.
+        ("needs_review", "BOOLEAN NOT NULL DEFAULT FALSE"),
     ):
         if not _has_column(cursor, "catalog", column):
             cursor.execute(
@@ -422,6 +424,8 @@ def _ensure_manual_intake_schema(cursor):
         # Existing rows are reusable dishes: FALSE is a technical backfill.
         ("is_quick_add", "BOOLEAN NOT NULL DEFAULT FALSE"),
         ("macros_confidence", "INTEGER"),
+        # Provisional dishes (§11.2.3, decision 2026-11-21): existing rows were reviewed by hand.
+        ("needs_review", "BOOLEAN NOT NULL DEFAULT FALSE"),
     ):
         if not _has_column(cursor, "manual_intake", column):
             cursor.execute(

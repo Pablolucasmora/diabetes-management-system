@@ -12,7 +12,8 @@ DayBetes_food/database/mappers.py.
 import json
 import math
 import re
-from dataclasses import dataclass
+from enum import Enum
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from DayBetes_food.domain.catalog import CATALOG_NAME_MAX_LENGTH, parse_barcode, parse_cooking_factor
@@ -91,6 +92,19 @@ ASSISTANT_PHOTO_PLACEHOLDER = "[The user attached a photo here. Photos are not k
 # the stored results, so a reopened conversation shows the same cards.
 TOOL_RESULT_ADDED = "added"
 TOOL_RESULT_DRAFT = "draft"
+# A provisional food or dish created and added (§8.12, "Alimentos provisionales").
+TOOL_RESULT_PROVISIONAL = "provisional"
+# A quick add eaten often enough to offer saving it (§8.12, "Repeticiones").
+TOOL_RESULT_REPEAT = "repeat"
+REPEAT_WINDOW_DAYS = 90
+REPEAT_MIN_COUNT = 3  # this one included: the third time in the window
+
+
+class RepeatSaveAs(str, Enum):
+    """What a repeated quick add is offered to become (§8.12)."""
+
+    DISH = "dish"  # prepared by someone else
+    RECIPE = "recipe"  # homemade
 # `source` of the draft cards that are not a catalog food (frontend §9.11).
 RECIPE_DRAFT_SOURCE = "recipe"
 MANUAL_INTAKE_DRAFT_SOURCE = "manual_intake"
@@ -742,6 +756,38 @@ class DraftCard:
 
 
 @dataclass(frozen=True)
+class ProvisionalCard:
+    """A provisional food or dish the assistant created and added (§8.12)."""
+
+    entry_type: str  # FoodEntryType value: catalog or manual_intake
+    entry_id: int
+    name: str
+    brand_or_origin: str | None
+    carbs_100g: float | None
+    macros_source: str | None
+    grams: float | None
+    carbs_g: float | None
+
+
+@dataclass(frozen=True)
+class RepeatCard:
+    """A quick add eaten often, offered to be saved (§8.12, "Repeticiones")."""
+
+    quick_add_id: int
+    name: str
+    count: int
+    save_as: str  # RepeatSaveAs value
+
+
+@dataclass(frozen=True)
+class AddedUnit:
+    """What one add put in a row of the meal, so a +1 can repeat it (§8.12, "Botones +1")."""
+
+    portion_id: int
+    unit_g: float  # one serving if it was added in servings; else the grams of that add
+
+
+@dataclass(frozen=True)
 class TurnView:
     """One message of the user and everything the assistant did for it."""
 
@@ -751,6 +797,50 @@ class TurnView:
     added: list[AddedCard]
     drafts: list[DraftCard]
     changed: list[str]
+    provisional: list[ProvisionalCard] = field(default_factory=list)
+    repeats: list[RepeatCard] = field(default_factory=list)
+    units: list[AddedUnit] = field(default_factory=list)
+
+
+def _added_unit(added) -> AddedUnit | None:
+    """The unit of an add with its row id; None for a recipe or an old result."""
+    if not isinstance(added, dict) or not _is_id(added.get("food_id")):
+        return None
+    grams = _number(added.get("grams"))
+    servings = _number(added.get("servings"))
+    if not grams or grams <= 0:
+        return None
+    unit = grams / servings if servings and servings > 0 else grams
+    return AddedUnit(portion_id=added["food_id"], unit_g=unit)
+
+
+def plus_one_units(turns: list["TurnView"]) -> list[AddedUnit]:
+    """The rows a +1 can repeat, the last added first, each with the unit of its
+    latest add (§8.12, "Botones +1")."""
+    latest: dict[int, AddedUnit] = {}
+    for turn in turns:
+        for unit in turn.units:
+            latest.pop(unit.portion_id, None)
+            latest[unit.portion_id] = unit
+    return list(reversed(latest.values()))
+
+
+# Steps of a +1 button and of its long-press menu, in units (frontend §9.11).
+PLUS_STEPS = (1.0, 0.5, 2.0, -1.0)
+
+
+def parse_plus_step(raw) -> float:
+    try:
+        step = float(str(raw).strip())
+    except (TypeError, ValueError) as error:
+        raise ValidationError("Unknown step.") from error
+    if step not in PLUS_STEPS:
+        raise ValidationError("Unknown step.")
+    return step
+
+
+def _is_id(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 def _number(value) -> float | None:
@@ -827,6 +917,35 @@ def _read_tool_result(turn: TurnView, block: dict, tool_message: dict[str, int])
     if not isinstance(result, dict):
         return
     added = result.get(TOOL_RESULT_ADDED)
+    unit = _added_unit(added)
+    if unit is not None:
+        turn.units.append(unit)
+    provisional = result.get(TOOL_RESULT_PROVISIONAL)
+    if isinstance(added, dict) and isinstance(provisional, dict) and _is_id(provisional.get("id")):
+        # Shown on its own card, with Review, instead of in Added to the cart.
+        turn.provisional.append(
+            ProvisionalCard(
+                entry_type=str(provisional.get("entry_type")),
+                entry_id=provisional["id"],
+                name=str(added.get("name") or ""),
+                brand_or_origin=provisional.get("brand_or_origin"),
+                carbs_100g=_number(provisional.get("carbs_100g")),
+                macros_source=provisional.get("macros_source"),
+                grams=_number(added.get("grams")),
+                carbs_g=_number(added.get("carbs_g")),
+            )
+        )
+        added = None
+    repeat = result.get(TOOL_RESULT_REPEAT)
+    if isinstance(repeat, dict) and isinstance(added, dict) and _is_id(repeat.get("quick_add_id")):
+        turn.repeats.append(
+            RepeatCard(
+                quick_add_id=repeat["quick_add_id"],
+                name=str(added.get("name") or ""),
+                count=int(_number(repeat.get("count")) or 0),
+                save_as=str(repeat.get("save_as")),
+            )
+        )
     if isinstance(added, dict) and added.get("name"):
         turn.added.append(
             AddedCard(

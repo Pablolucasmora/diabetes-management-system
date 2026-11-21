@@ -74,6 +74,8 @@ from DayBetes_food.errors import (
     ValidationError,
 )
 from DayBetes_food.routes.food.helpers import (
+    edit_return_path,
+    parse_edit_return,
     _ASSISTANT_DRAFT_NOTES,
     _UNKNOWN_ENTRY_TYPE,
     _add_ingredient,
@@ -381,7 +383,7 @@ def setup_entries_routes(rt):
         return HTMLResponse("", headers={"HX-Redirect": f"/food/edit/recipe/{created_id}/form"})
 
     @rt("/food/edit/{entry_type}/{entry_id}/form")
-    def get(request: Request, entry_type: str, entry_id: PathId):
+    def get(request: Request, entry_type: str, entry_id: PathId, return_to: str = ""):
         kind = _parse_food_entry_type(entry_type)
         if kind is None:
             raise ValidationError(_UNKNOWN_ENTRY_TYPE, fields={"entry_type": "invalid"})
@@ -404,6 +406,7 @@ def setup_entries_routes(rt):
                         entry=catalog_entry_view(item),
                         brand_options=brands,
                         subtype_options=subtypes,
+                        return_to=parse_edit_return(return_to),
                     ),
                     show_cart=False,
                 )
@@ -424,6 +427,7 @@ def setup_entries_routes(rt):
                         entry=manual_intake_entry_view(manual_item),
                         subtype_options=subtypes,
                         origin_options=origins,
+                        return_to=parse_edit_return(return_to),
                     ),
                     show_cart=False,
                 )
@@ -579,6 +583,7 @@ def setup_entries_routes(rt):
         default_amount_method: str = "",
         serving_method: str = "",
         macros_confidence: str = "",
+        return_to: str = "",
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -635,7 +640,8 @@ def setup_entries_routes(rt):
                 return app_error_response(request, NotFoundError, "Food not found or no longer editable.")
             except ConflictError as error:
                 return app_error_response(request, error, str(error))
-        return HTMLResponse("", headers={"HX-Redirect": f"/food/item/catalog/{entry_id}"})
+        redirect = edit_return_path(parse_edit_return(return_to)) or f"/food/item/catalog/{entry_id}"
+        return HTMLResponse("", headers={"HX-Redirect": redirect})
 
     @rt("/food/edit/manual_intake/{manual_intake_id}")
     def post(
@@ -663,6 +669,7 @@ def setup_entries_routes(rt):
         macros_source: str = "",
         default_amount_method: str = "",
         serving_method: str = "",
+        return_to: str = "",
     ):
         """Full replacement of a reusable dish (H1): an empty optional field is
         stored as NULL. Publishing is the detail page's action, not a field here."""
@@ -716,7 +723,8 @@ def setup_entries_routes(rt):
                 return app_error_response(request, NotFoundError, "Dish not found or no longer editable.")
             except ConflictError as error:
                 return app_error_response(request, error, str(error))
-        return HTMLResponse("", headers={"HX-Redirect": f"/food/item/manual_intake/{manual_intake_id}"})
+        redirect = edit_return_path(parse_edit_return(return_to)) or f"/food/item/manual_intake/{manual_intake_id}"
+        return HTMLResponse("", headers={"HX-Redirect": redirect})
 
     @rt("/food/create/catalog")
     def post(
@@ -921,9 +929,10 @@ def setup_entries_routes(rt):
             plate_options, selected_plate_id = (
                 plate_selector_options(connection, int(user_id), events[0].id) if events else ([], None)
             )
+            origins = get_manual_origin_suggestions(connection, int(user_id), limit=500)
         return render_page(
             request,
-            QuickAddPage(events, plate_options, selected_plate_id),
+            QuickAddPage(events, plate_options, selected_plate_id, origins),
             show_cart=False,
         )
 
@@ -936,6 +945,7 @@ def setup_entries_routes(rt):
         description: str = "",
         macros_source: str = "",
         amount_method: str = "",
+        source_origin: str = "",
         intake_event_id: str = "",
         plate_id: str = "",
     ):
@@ -957,6 +967,7 @@ def setup_entries_routes(rt):
                 notes=description,
                 macros_source=macros_source,
                 amount_method=amount_method,
+                origin=source_origin,
             )
         except ValidationError as error:
             return _error_msg(str(error))

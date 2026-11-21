@@ -62,6 +62,8 @@ from DayBetes_food.database.queries.manual_intake import (
     publish_manual_intake,
     unpublish_manual_intake,
     next_manual_intake_copy_name,
+    count_similar_quick_adds,
+    get_owned_quick_add,
 )
 from DayBetes_food.database.queries.recipe import (
     create_recipe,
@@ -103,6 +105,8 @@ from DayBetes_food.database.queries.entries import (
     get_rescue_entries_suggestions,
     get_mention_suggestions,
     get_consumed_food_usage_rankings,
+    list_needs_review,
+    count_needs_review,
 )
 from DayBetes_food.database.queries.intake_event import (
     create_intake_event,
@@ -250,6 +254,8 @@ __all__ = [
     "publish_manual_intake",
     "unpublish_manual_intake",
     "next_manual_intake_copy_name",
+    "count_similar_quick_adds",
+    "get_owned_quick_add",
     "create_recipe",
     "get_recipe",
     "list_recipes",
@@ -279,6 +285,8 @@ __all__ = [
     "get_rescue_entries_suggestions",
     "get_mention_suggestions",
     "get_consumed_food_usage_rankings",
+    "list_needs_review",
+    "count_needs_review",
     "create_intake_event",
     "get_intake_event",
     "list_planned_intake_events",

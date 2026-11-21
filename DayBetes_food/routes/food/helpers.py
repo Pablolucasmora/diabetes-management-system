@@ -580,7 +580,9 @@ def _manual_intake_update(req: ManualIntakeRequest, subtype) -> ManualIntakeUpda
     )
 
 
-def _parse_quick_add_request(*, name, weight_g, smart_raw, notes, macros_source="", amount_method="") -> QuickAddRequest:
+def _parse_quick_add_request(
+    *, name, weight_g, smart_raw, notes, macros_source="", amount_method="", origin=""
+) -> QuickAddRequest:
     """Quick-add form (§11.2.3): the smart-macros text is always the total of
     what was eaten (measurement §5.4); name, estimated weight and carbs are
     required."""
@@ -596,6 +598,7 @@ def _parse_quick_add_request(*, name, weight_g, smart_raw, notes, macros_source=
         description=parse_manual_intake_description(notes),
         macros_source=parse_enum(MacrosSource, macros_source, field="macros_source"),
         amount_method=parse_enum(AmountMethod, amount_method, field="amount_method"),
+        origin=parse_manual_intake_origin(origin),
     )
 
 
@@ -1653,3 +1656,29 @@ def _food_view(filter, search_mode, food_mode, favs_mode, recipes_mode, meal_typ
         recipes_mode=_view_value("recipes_mode", recipes_mode, FOOD_RECIPES_TABS),
         meal_type=",".join(meal.value for meal in meal_types),
     )
+
+
+# Where saving the edit form of a provisional food goes back to (frontend §9.3,
+# §9.11): the To review list, or the conversation whose card opened it.
+EDIT_RETURN_REVIEW = "review"
+EDIT_RETURN_ASSISTANT_PREFIX = "assistant:"
+
+
+def parse_edit_return(raw: str | None) -> str | None:
+    """A known return target, or None: anything else is ignored, never followed."""
+    value = (raw or "").strip()
+    if value == EDIT_RETURN_REVIEW:
+        return value
+    if value.startswith(EDIT_RETURN_ASSISTANT_PREFIX):
+        conversation = value[len(EDIT_RETURN_ASSISTANT_PREFIX):]
+        if conversation.isdigit() and int(conversation) > 0:
+            return f"{EDIT_RETURN_ASSISTANT_PREFIX}{int(conversation)}"
+    return None
+
+
+def edit_return_path(target: str | None) -> str | None:
+    if target == EDIT_RETURN_REVIEW:
+        return "/food?filter=review"
+    if target and target.startswith(EDIT_RETURN_ASSISTANT_PREFIX):
+        return f"/assistant?conversation_id={target[len(EDIT_RETURN_ASSISTANT_PREFIX):]}"
+    return None

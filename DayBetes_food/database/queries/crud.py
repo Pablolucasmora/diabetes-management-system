@@ -49,10 +49,12 @@ _ALLOWED_UPDATE_TABLES = {
 
 class RawSQL(Enum):
     NOW = "NOW()"
+    FALSE = "FALSE"
 
 
 _RAW_SQL_EXPRESSIONS = {
     RawSQL.NOW: sql.SQL("NOW()"),
+    RawSQL.FALSE: sql.SQL("FALSE"),
 }
 
 

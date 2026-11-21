@@ -21,6 +21,8 @@ from DayBetes_food.database.queries import (
     create_intake_event,
     get_planned_intake_event,
     list_planned_intake_events,
+    count_needs_review,
+    list_needs_review,
 )
 from DayBetes_food.domain.constants import PathId, PrefillSource, FoodEntryType, parse_optional_id
 from DayBetes_food.components.data_sources import ciqual_attribution, off_attribution
@@ -29,6 +31,7 @@ from DayBetes_food.components.food.food_list import (
     FoodSectionsContent,
     FoodCard,
     FavoriteButton,
+    ReviewListContent,
 )
 from DayBetes_food.components.food.food_actions import (
     FOOD_ACTIONS_BODY_ID,
@@ -101,15 +104,16 @@ def setup_browse_routes(rt):
         to. An unknown value is a 422 (code_conventions §7.7)."""
         view = _food_view(filter, search_mode, food_mode, favs_mode, recipes_mode, meal_type)
         user_id = get_current_user_id()
-        events, plate_options, last_used_plate = [], [], None
+        events, plate_options, last_used_plate, review_count = [], [], None, 0
         if user_id:
             with get_connection() as connection:
                 events = list_planned_intake_events(connection, int(user_id))
+                review_count = count_needs_review(connection, int(user_id))
                 # The selector shows the first meal chosen, so its plates are the
                 # ones listed (frontend_conventions.md §6).
                 if events:
                     plate_options, last_used_plate = plate_selector_options(connection, int(user_id), events[0].id)
-        return render_page(request, food_main(view, events, plate_options, last_used_plate))
+        return render_page(request, food_main(view, events, plate_options, last_used_plate, review_count))
 
     # Tags of a food, dish or recipe on its detail page (frontend_conventions.md §9.4.1).
 
@@ -401,6 +405,14 @@ def setup_browse_routes(rt):
         food_mode_norm = (food_mode or "catalog").strip().lower()
         if food_mode_norm not in ("catalog", "manual"):
             food_mode_norm = "catalog"
+        if filter == "review":
+            # The provisional foods and dishes, without search or pages (§9.3).
+            user_id = get_current_user_id()
+            if not user_id:
+                return app_error_response(request, AuthenticationError, "Your session has expired.")
+            with get_connection() as connection:
+                review_entries = list_needs_review(connection, int(user_id))
+            return render_fragment(ReviewListContent(review_entries))
         if filter == "fridge":
             # The user's containers, without search or pages: there are never
             # many (frontend_conventions.md §9.8).

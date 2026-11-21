@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import dataclass
+from urllib.parse import urlencode
 from fasthtml.common import *
 from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.components.food.food_actions import (
@@ -19,7 +20,8 @@ from DayBetes_food.components.modal import (
 from DayBetes_food.components.food.recipe_add import recipe_add_open_attrs
 from DayBetes_food.components.stats.stats_shared import MEAL_TYPE_LABELS
 from DayBetes_food.domain.recipe import RECIPE_MEAL_TYPES
-from DayBetes_food.domain.constants import FoodEntryType
+from DayBetes_food.components.food.food_shared import MACROS_SOURCE_LABELS
+from DayBetes_food.domain.constants import FoodEntryType, MacrosSource
 from DayBetes_food.time_utils import to_local
 from DayBetes_food.components.food.food_widgets import (
     FILTER_ITEM_CLS,
@@ -261,7 +263,16 @@ def _mode_tabs(group: str, tabs: tuple[tuple[str, str], ...], *, selected_value:
 
 
 # The pills of the Food header (frontend_conventions.md §9.3), as `(label, filter)`.
-FOOD_FILTERS = (("Search", "all"), ("Food", "food"), ("Recipes", "recipes"), ("Favs", "favs"), ("Fridge", "fridge"))
+FOOD_FILTERS = (
+    ("Search", "all"),
+    ("Food", "food"),
+    ("Recipes", "recipes"),
+    ("Favs", "favs"),
+    ("Fridge", "fridge"),
+    # Only while there are provisional foods (§9.3, decision 2026-11-21).
+    ("To review", "review"),
+)
+FOOD_FILTER_REVIEW = "review"
 
 # The tabs of each pill, as `(label, value)`; the first is the default.
 FOOD_SEARCH_TABS = (("Recommended", "recommended"), ("Global", "global"))
@@ -283,17 +294,32 @@ class FoodView:
     meal_type: str = ""
 
 
-def Filters(view: FoodView = FoodView()):
+def Filters(view: FoodView = FoodView(), review_count: int = 0):
     """`view` is the state the page opens on (frontend_conventions.md §5): the pill,
-    its tab and the filters, as the URL of /food gives them."""
+    its tab and the filters, as the URL of /food gives them. `review_count`: the
+    provisional foods, whose pill only shows while there are some."""
     selected = view.filter
     buttons = []
+    # Six pills on a phone: less padding and gap so they fit (§9.3).
+    six = bool(review_count) or selected == FOOD_FILTER_REVIEW
     for text, value in FOOD_FILTERS:
+        label, extra_cls, extra_attrs = (text,), " max-md:px-2" if six else "", {}
+        if value == FOOD_FILTER_REVIEW:
+            if not review_count and selected != value:
+                continue
+            # Six pills do not fit on a phone: there it is only the count (§9.3).
+            label = (
+                Span(f"!{review_count}", cls="md:hidden"),
+                Span(f"{text} ({review_count})", cls="hidden md:inline"),
+            )
+            extra_cls += " whitespace-nowrap !w-auto shrink-0" + ("" if value == selected else " !text-amber-800")
+            extra_attrs = {"aria_label": f"{text} ({review_count})"}
         buttons.append(
             Button(
-                text,
+                *label,
+                **extra_attrs,
                 cls=(
-                    f"{FILTER_ITEM_CLS} {'bg-black text-white shadow-md' if value == selected else 'bg-transparent text-gray-700'}"
+                    f"{FILTER_ITEM_CLS}{extra_cls} {'bg-black text-white shadow-md' if value == selected else 'bg-transparent text-gray-700'}"
                     # The Fridge pill looks frosted (frontend_conventions.md §9.8).
                     f"{' food_filter_fridge' if value == 'fridge' else ''}"
                 ),
@@ -370,7 +396,7 @@ def Filters(view: FoodView = FoodView()):
                 md:gap-3 lg:gap-3 gap-1.5
                 w-full
                 rounded-full
-            """,
+            """ + (" max-md:gap-1" if six else ""),
         ),
         _mode_tabs("search", FOOD_SEARCH_TABS, selected_value=view.search_mode, hidden=selected != "all"),
         _mode_tabs("food", FOOD_FOOD_TABS, selected_value=view.food_mode, hidden=selected != "food"),
@@ -749,6 +775,11 @@ def FoodCard(food):
         if food.get("is_owned")
         else ""
     )
+    if food.get("needs_review"):
+        # A provisional food of the assistant (code_conventions.md §8.12).
+        archived_badge = Span(
+            "To review", cls="text-[10px] font-semibold text-amber-800 bg-amber-50 rounded-full px-1.5 py-0.5"
+        )
     subtitle = ""
     if food.get("entry_type") == "catalog":
         subtitle = (food.get("brand") or "").strip()
@@ -871,3 +902,49 @@ def FoodSectionsContent(foods):
         sections.append(H2(title, cls="web_section_label md:w-md lg:w-md w-xs mt-2"))
         sections.extend(FoodCard(item) for item in items)
     return sections
+
+
+def ReviewListContent(entries: list):
+    """The To review pill (frontend_conventions.md §9.3): the provisional foods and
+    dishes, each opening its edit form, which comes back here on save."""
+    if not entries:
+        return P("Nothing to review.", cls="text-sm text-gray-600 text-center py-8 md:w-md lg:w-md w-xs")
+    rows = []
+    for entry in entries:
+        try:
+            source = MACROS_SOURCE_LABELS.get(MacrosSource(entry.macros_source)) if entry.macros_source else None
+        except ValueError:
+            source = None
+        meta = " · ".join(
+            part
+            for part in (
+                entry.subtitle or None,
+                f"{entry.carbs_100g:g} g carbs / 100 g" if entry.carbs_100g is not None else None,
+                source,
+            )
+            if part
+        )
+        url = f"/food/edit/{entry.entry_type.value}/{entry.entry_id}/form?{urlencode({'return_to': 'review'})}"
+        rows.append(
+            Button(
+                Div(
+                    Span(entry.name, cls="text-[15px] font-semibold leading-snug text-left"),
+                    Span(
+                        "To review",
+                        cls="text-[10px] font-semibold text-amber-800 bg-amber-50 rounded-full px-1.5 py-0.5",
+                    ),
+                    cls="flex flex-wrap items-center gap-1.5",
+                ),
+                P(meta, cls="text-xs text-gray-500 text-left") if meta else None,
+                type="button",
+                hx_get=url,
+                hx_target="#main_content",
+                hx_push_url="true",
+                cls="web_container w-full rounded-2xl px-4 py-3 flex flex-col gap-1 items-start",
+            )
+        )
+    return Div(
+        Span("Added by DiaBot while you ate", cls="web_section_label px-1 mt-2"),
+        *rows,
+        cls="md:w-md lg:w-md w-xs flex flex-col gap-2",
+    )

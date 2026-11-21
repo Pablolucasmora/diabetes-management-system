@@ -127,6 +127,7 @@ class ManualIntakeRead:
     default_amount_method: AmountMethod | None  # U2: copied to each new portion
     serving_method: ServingMethod | None  # what its serving is; the + of a row copies it (§6.11)
     is_quick_add: bool
+    needs_review: bool  # provisional, made by the assistant (§11.2.2, §11.2.3)
     is_published: bool
     created_at: datetime
     updated_at: datetime
@@ -159,6 +160,8 @@ class ManualIntakeCreate:
     default_amount_method: AmountMethod | None  # U2: copied to each new portion
     serving_method: ServingMethod | None  # what its serving is; the + of a row copies it (§6.11)
     is_quick_add: bool = False
+    # Provisional: only the assistant creates it so (§8.12, §11.2.3).
+    needs_review: bool = False
 
 
 @dataclass(frozen=True)
@@ -214,4 +217,5 @@ class QuickAddRequest:
     nutrients: NutrientValues  # already per 100 g (measurement §5.4)
     description: str | None  # the notes
     macros_source: MacrosSource | None = None  # U1, optional (study §6.3)
+    origin: str | None = None  # who or where made it; finds repetitions (§8.12)
     amount_method: AmountMethod | None = None  # U2 of the weight, optional

@@ -14,6 +14,7 @@ from psycopg.errors import UniqueViolation
 
 from DayBetes_food.database.mappers import manual_intake_read_from_row
 from DayBetes_food.database.queries.crud import (
+    _pg_trgm_enabled,
     RawSQL,
     _build_fuzzy_search,
     _build_update_query,
@@ -38,7 +39,7 @@ _MANUAL_INTAKE_COLUMNS = """
     entity.saturated_100g, entity.proteins_100g, entity.fiber_100g,
     entity.caffeine, entity.alcohol, entity.glycemic_index, entity.ig_confidence,
     entity.macros_confidence, entity.macros_source, entity.default_amount_method, entity.serving_method,
-    entity.is_quick_add, entity.is_published, entity.created_at, entity.updated_at, entity.deleted_at,
+    entity.is_quick_add, entity.needs_review, entity.is_published, entity.created_at, entity.updated_at, entity.deleted_at,
     EXISTS (SELECT 1 FROM user_favorites uf
             WHERE uf.user_id = %(visibility_user_id)s AND uf.manual_intake_id = entity.id) AS is_favorite,
     (entity.created_by = %(visibility_user_id)s AND entity.deleted_at IS NULL) AS can_edit,
@@ -70,6 +71,7 @@ _MANUAL_INTAKE_CREATE_COLUMNS = (
     "default_amount_method",
     "serving_method",
     "is_quick_add",
+    "needs_review",
 )
 
 # §6.2: never reveals another user's personal data.
@@ -134,6 +136,7 @@ def create_manual_intake(connection, payload: ManualIntakeCreate, commit: bool =
         "created_by": payload.created_by,
         "origin_root_id": payload.origin_root_id,
         "is_quick_add": payload.is_quick_add,
+        "needs_review": payload.needs_review,
         **_editable_fields(payload),
     }
     query = (
@@ -234,7 +237,8 @@ def update_manual_intake(
     query = _build_update_query(
         "manual_intake",
         {**set_fields, "id": manual_intake_id},
-        raw_fields={"updated_at": RawSQL.NOW},
+        # Saving the owner's edit form is the review of a provisional dish (§11.2.3).
+        raw_fields={"updated_at": RawSQL.NOW, "needs_review": RawSQL.FALSE},
         null_fields=null_fields,
         extra_where=sql.SQL(_OWNER_WRITABLE),
     )
@@ -299,6 +303,7 @@ def _set_manual_intake_published(
         WHERE manual_intake.id = %(manual_intake_id)s
           AND {_OWNER_WRITABLE}
           AND manual_intake.is_published = %(current)s
+          AND NOT (%(published)s AND manual_intake.needs_review)
         RETURNING manual_intake.id;
     """
     params = {
@@ -313,9 +318,22 @@ def _set_manual_intake_published(
         raise _conflict_from(exc) from exc
     if result is not None:
         return True
+    if published and _needs_review(connection, user_id, manual_intake_id):
+        raise ConflictError("Review this dish and save it before publishing it.")
     if _owned_reusable_exists(connection, user_id, manual_intake_id, active_only=True):
         return False
     raise NotFoundError("Dish not found.")
+
+
+def _needs_review(connection, user_id: int, manual_intake_id: int) -> bool:
+    row = _execute_query(
+        connection,
+        "SELECT 1 FROM manual_intake entity WHERE entity.id = %(manual_intake_id)s "
+        "AND entity.created_by = %(user_id)s AND entity.deleted_at IS NULL AND entity.needs_review;",
+        {"manual_intake_id": manual_intake_id, "user_id": user_id},
+        commit=False,
+    )
+    return row is not None
 
 
 def publish_manual_intake(connection, user_id: int, manual_intake_id: int, commit: bool = True) -> bool:
@@ -409,3 +427,48 @@ def get_manual_origin_suggestions(
     """
     rows = _execute_query_many(connection, query, params, commit=False)
     return [str(row["name"]) for row in rows if row and row.get("name")]
+
+
+# Repetitions (§8.12, decision 2026-11-21): how close a name must be to count.
+_REPEAT_NAME_SIMILARITY = 0.5
+
+
+def count_similar_quick_adds(
+    connection, user_id: int, name: str, origin: str | None, days: int
+) -> int:
+    """The user's quick adds of the last `days` days with a similar name or the
+    same origin (§8.12, "Repeticiones"), the new one included. Without pg_trgm
+    the name must match ignoring case."""
+    if _pg_trgm_enabled(connection):
+        name_sql = "similarity(lower(entity.name), lower(%(name)s)) >= %(similarity)s"
+    else:
+        name_sql = "lower(entity.name) = lower(%(name)s)"
+    row = _execute_query(
+        connection,
+        f"""
+        SELECT count(*) AS repeats
+        FROM manual_intake entity
+        WHERE entity.created_by = %(user_id)s
+          AND entity.is_quick_add
+          AND entity.created_at >= NOW() - make_interval(days => %(days)s)
+          AND ({name_sql}
+               OR (%(origin)s::text IS NOT NULL AND lower(entity.origin) = lower(%(origin)s::text)));
+        """,
+        {"user_id": user_id, "name": name, "origin": origin, "days": days, "similarity": _REPEAT_NAME_SIMILARITY},
+        commit=False,
+    )
+    return int(row["repeats"]) if row else 0
+
+
+def get_owned_quick_add(connection, user_id: int, manual_intake_id: int) -> ManualIntakeRead | None:
+    """One of the user's own quick adds, or None (§11.2.3: it only exists for its owner)."""
+    params = {"manual_intake_id": manual_intake_id, "visibility_user_id": user_id}
+    row = _execute_query(
+        connection,
+        f"SELECT {_MANUAL_INTAKE_COLUMNS} {_MANUAL_INTAKE_FROM} "
+        "WHERE entity.id = %(manual_intake_id)s AND entity.created_by = %(visibility_user_id)s "
+        "AND entity.is_quick_add;",
+        params,
+        commit=False,
+    )
+    return manual_intake_read_from_row(row) if row else None

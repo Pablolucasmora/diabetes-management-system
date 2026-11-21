@@ -113,6 +113,8 @@ def catalog_check_constraints() -> dict[str, str]:
         "ck_catalog_macros_confidence_range": (
             f"macros_confidence IS NULL OR macros_confidence BETWEEN {FOOD_CONFIDENCE_MIN} AND {FOOD_CONFIDENCE_MAX}"
         ),
+        # A provisional food is not published until it is reviewed (§11.2.2).
+        "ck_catalog_needs_review_not_published": "NOT (needs_review AND is_published)",
     }
     for field, limits in NUTRIENT_LIMITS.items():
         checks[f"ck_catalog_{field}_range"] = _range_check(field, limits)
@@ -144,6 +146,9 @@ def manual_intake_check_constraints() -> dict[str, str]:
             r"origin IS NULL OR (origin <> '' AND origin = regexp_replace(btrim(origin), '\s+', ' ', 'g'))"
         ),
         "ck_manual_intake_quick_add_not_published": "NOT (is_quick_add AND is_published)",
+        # Provisional dishes (§11.2.2, §11.2.3): never published, never a quick add.
+        "ck_manual_intake_needs_review_not_published": "NOT (needs_review AND is_published)",
+        "ck_manual_intake_needs_review_not_quick_add": "NOT (needs_review AND is_quick_add)",
         "ck_manual_intake_macros_source": f"macros_source IS NULL OR macros_source IN ({sql_in_list(MacrosSource)})",
         "ck_manual_intake_default_amount_method": (
             f"default_amount_method IS NULL OR default_amount_method IN ({sql_in_list(AmountMethod)})"
@@ -492,6 +497,7 @@ class DBSchema:
         macros_confidence INTEGER, -- declared 0-2 (measurement §6.10)
         prefill_source VARCHAR(20), -- where the form's first values came from; the saved values are the user's (measurement §12.1)
         prefill_source_id VARCHAR(64),
+        needs_review BOOLEAN NOT NULL DEFAULT FALSE, -- provisional, made by the assistant until the owner reviews it (§11.2.2)
         search_name TEXT GENERATED ALWAYS AS ({search_text_sql("name")}) STORED, -- what the search compares with (§11.7)
         is_published BOOLEAN NOT NULL DEFAULT FALSE,
         deleted_at TIMESTAMPTZ,
@@ -551,6 +557,7 @@ class DBSchema:
         default_amount_method VARCHAR(50), -- U2: copied to each new portion (measurement §6.11)
         serving_method VARCHAR(50), -- what its serving is, as a U2 code; the + of a row copies it to the portion (measurement §6.11)
         is_quick_add BOOLEAN NOT NULL DEFAULT FALSE,
+        needs_review BOOLEAN NOT NULL DEFAULT FALSE, -- provisional, made by the assistant until the owner reviews it (§11.2.2)
         is_published BOOLEAN NOT NULL DEFAULT FALSE,
         deleted_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,

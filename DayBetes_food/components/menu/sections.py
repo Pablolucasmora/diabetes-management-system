@@ -121,11 +121,29 @@ def _current_meal_card(latest_event, portions):
     )
 
 
+def _review_reminder(review_count: int):
+    """Provisional foods still to review (frontend §9.2): opens Food on To review."""
+    if not review_count:
+        return None
+    text = "1 food to review" if review_count == 1 else f"{review_count} foods to review"
+    return Button(
+        Span(text, cls="text-sm font-semibold text-amber-800"),
+        Span("Review ›", cls="text-xs font-semibold text-gray-700"),
+        type="button",
+        hx_get="/food?filter=review",
+        hx_target="#main_content",
+        hx_push_url="true",
+        cls="web_container w-full px-5 py-3 flex items-center justify-between",
+    )
+
+
 def _section_title(text: str):
     return P(text, cls="web_section_label px-1")
 
 
-def quick_actions(latest_event, portions, pens=(), brands=(), assistant_enabled: bool = False):
+def quick_actions(
+    latest_event, portions, pens=(), brands=(), assistant_enabled: bool = False, review_count: int = 0
+):
     now = local_now()
     modal_id = "menu_injection_modal"
     open_js = open_modal_js(modal_id)
@@ -170,6 +188,7 @@ def quick_actions(latest_event, portions, pens=(), brands=(), assistant_enabled:
     create_button_cls = "web_button w-full py-3 text-sm font-medium flex flex-col items-center gap-1"
     quick_grid = Div(
         _current_meal_card(latest_event, portions),
+        _review_reminder(review_count),
         Div(
             _section_title("Add to your meal"),
             Div(

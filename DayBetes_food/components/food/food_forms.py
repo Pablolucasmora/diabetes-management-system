@@ -5,7 +5,7 @@ from fasthtml.common import *
 from DayBetes_food.components.data_sources import ciqual_attribution, off_attribution
 from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.components.navigation import back_js
-from DayBetes_food.components.food.food_shared import AMOUNT_METHOD_LABELS, FORM_FIELD_CLS
+from DayBetes_food.components.food.food_shared import AMOUNT_METHOD_LABELS, FORM_FIELD_CLS, MACROS_SOURCE_LABELS
 from DayBetes_food.domain.catalog import CATALOG_BARCODE_MAX_LENGTH, CATALOG_NAME_MAX_LENGTH
 from DayBetes_food.domain.food import FOOD_SUBTYPE_MAX_LENGTH
 from DayBetes_food.components.stats.stats_shared import MEAL_TYPE_LABELS
@@ -27,6 +27,7 @@ from DayBetes_food.domain.constants import (
     FoodCategory,
     FoodPhysicalState,
     AmountMethod,
+    MacrosSource,
     Nutriscore,
 )
 from DayBetes_food.components.food.food_widgets import (
@@ -550,7 +551,9 @@ def CreateManualPage(
     return _form_page_shell(form, result_id, Script(src=asset_busted("/js/smart_macros.js"), defer="defer"))
 
 
-def QuickAddPage(events: list, plate_options: list, selected_plate_id: int | None):
+def QuickAddPage(
+    events: list, plate_options: list, selected_plate_id: int | None, origin_options: list[str] | None = None
+):
     """Quick add (code_conventions.md §11.2.3): a one-off meal logged into a
     plate and never offered again. Name, estimated weight and carbs are
     required; the smart-macros text is always the total eaten (measurement §5.4).
@@ -568,6 +571,8 @@ def QuickAddPage(events: list, plate_options: list, selected_plate_id: int | Non
                 help_text="e.g. Menu of the day. Required.",
                 maxlength=MANUAL_INTAKE_NAME_MAX_LENGTH,
             ),
+            # Optional (§11.2.3, decision 2026-11-21): it finds repetitions (§8.12).
+            _manual_origin_input(origin_options),
             _decimal_input(
                 "Estimated weight (g)*",
                 "default_portion",
@@ -788,6 +793,31 @@ def _edit_header(kind: str, name: str, back_path: str, maxlength: int):
     return _form_header(f"Edit {kind}", _name_title_input(name, "Name", maxlength), back_path)
 
 
+def _review_notice(entry: dict):
+    """The note of a provisional food or dish (code_conventions.md §8.12)."""
+    if not entry.get("needs_review"):
+        return None
+    source = MACROS_SOURCE_LABELS.get(_enum_or_none(MacrosSource, entry.get("macros_source")))
+    parts = ["To review: DiaBot added it while you ate."]
+    if source:
+        parts.append(f"Macros from: {source}.")
+    parts.append("Check every value and save it.")
+    return P(" ".join(parts), cls="web_container rounded-2xl px-4 py-3 text-xs text-amber-800")
+
+
+def _edit_return_input(return_to: str | None):
+    return Input(type="hidden", name="return_to", value=return_to) if return_to else None
+
+
+def _enum_or_none(enum_cls, value):
+    if value is None or isinstance(value, enum_cls):
+        return value
+    try:
+        return enum_cls(value)
+    except ValueError:
+        return None
+
+
 def _edit_actions(back_path: str):
     return Div(
         Button(
@@ -813,6 +843,7 @@ def EditCatalogPage(
     entry: dict,
     brand_options: list[str] | None = None,
     subtype_options: list[str] | None = None,
+    return_to: str | None = None,
 ):
     result_id = f"edit_catalog_result_{entry['id']}"
     back_path = f"/food/item/catalog/{entry['id']}"
@@ -822,6 +853,8 @@ def EditCatalogPage(
 
     form = Form(
         _edit_header("food", _input_value(entry.get("name")), back_path, CATALOG_NAME_MAX_LENGTH),
+        _review_notice(entry),
+        _edit_return_input(return_to),
         _form_section(
             "Basics",
             _brand_autocomplete_input(brand_options=brand_options, value=_input_value(entry.get("brand"))),
@@ -887,6 +920,7 @@ def EditManualPage(
     entry: dict,
     subtype_options: list[str] | None = None,
     origin_options: list[str] | None = None,
+    return_to: str | None = None,
 ):
     """Full replacement of a reusable dish (H1). It opens in "per 100 g" mode
     with the stored values (measurement §5.4). Publishing is the detail page's
@@ -905,6 +939,8 @@ def EditManualPage(
     )
     form = Form(
         _edit_header("dish", _input_value(entry.get("name")), back_path, MANUAL_INTAKE_NAME_MAX_LENGTH),
+        _review_notice(entry),
+        _edit_return_input(return_to),
         _form_section(
             "Basics",
             _manual_origin_input(origin_options, value=_input_value(entry.get("origin"))),

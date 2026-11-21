@@ -128,6 +128,7 @@ class CatalogItemRead:
     default_amount_method: AmountMethod | None  # U2: copied to each new portion
     serving_method: ServingMethod | None  # what its serving is; the + of a row copies it (§6.11)
     macros_confidence: int | None  # declared, ordinal 0-2
+    needs_review: bool  # provisional, made by the assistant (§11.2.2)
     is_published: bool
     created_at: datetime
     updated_at: datetime
@@ -172,6 +173,8 @@ class CatalogItemCreate:
     # Where the form's first values came from (measurement §12.1). None = typed.
     prefill_source: PrefillSource | None = None
     prefill_source_id: str | None = None
+    # Provisional: only the assistant creates it so (§8.12, §11.2.2).
+    needs_review: bool = False
 
 
 @dataclass(frozen=True)

@@ -42,3 +42,16 @@ class MentionSuggestion:
     serving_g: float | None
     carbs_100g: float | None
     is_favorite: bool
+
+
+@dataclass(frozen=True)
+class ReviewEntry:
+    """A provisional food or dish still to review (code_conventions.md §8.12,
+    "Alimentos provisionales"): what the To review list shows of it."""
+
+    entry_type: FoodEntryType
+    entry_id: int
+    name: str
+    subtitle: str  # brand of a food, origin of a dish; "" if none
+    carbs_100g: float | None
+    macros_source: str | None  # MacrosSource value
