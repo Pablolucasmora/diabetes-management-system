@@ -52,7 +52,6 @@ from DayBetes_food.domain.constants import (
     CLEAR,
     PathId,
     AmountInputUnit,
-    FractionMethod,
     AmountMethod,
     ConservationMethod,
     CookingMethod,
@@ -80,6 +79,7 @@ from DayBetes_food.domain.intake_plate import (
     INTAKE_PLATE_NAME_MAX_LENGTH,
     IntakePlateCreate,
     PlateEaten,
+    parse_eaten_method,
 )
 from DayBetes_food.domain.fridge import (
     LeftoverPlan,
@@ -354,10 +354,8 @@ def _parse_eaten(form) -> tuple[PlateEaten, ...]:
             if not math.isfinite(value) or value < 0:
                 raise ValidationError("eaten_value_not_valid")
         # `Weighed` next to `Eaten`: unmarked is by eye (study §6.3).
-        method = parse_enum(FractionMethod, str(form.get(f"eaten_method_{plate_id}") or ""), field="eaten_method")
-        eaten.append(
-            PlateEaten(plate_id=plate_id, value=value, unit=unit, method=method or FractionMethod.EYEBALL)
-        )
+        method = parse_eaten_method(form.get(f"eaten_method_{plate_id}"))
+        eaten.append(PlateEaten(plate_id=plate_id, value=value, unit=unit, method=method))
     return tuple(eaten)
 
 

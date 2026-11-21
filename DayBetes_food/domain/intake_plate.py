@@ -230,6 +230,18 @@ class PlateEaten:
     method: FractionMethod = FractionMethod.EYEBALL
 
 
+def parse_eaten_method(raw) -> FractionMethod:
+    """`Weighed` next to `Eaten` (study §6.3): `weighed` when marked, by eye when
+    absent. Anything else is a ValidationError (422)."""
+    text = str(raw or "").strip()
+    if not text:
+        return FractionMethod.EYEBALL
+    try:
+        return FractionMethod(text)
+    except ValueError as exc:
+        raise ValidationError("Invalid eaten method.", fields={"eaten_method": "invalid"}) from exc
+
+
 def eaten_fraction(eaten: PlateEaten | None, plate_total: float) -> float:
     """Fraction of a plate that was eaten, in (0, 1] (decision 2026-09-22). Grams
     are against the plate's live total; no entry means all of it (§4.4)."""

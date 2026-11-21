@@ -1,13 +1,12 @@
 """How a fraction that split an amount was obtained (study_conventions.md §6.3)."""
 
 import pytest
-from starlette.datastructures import FormData
 
 from DayBetes_food.domain.constants import AmountInputUnit, FractionMethod
 from DayBetes_food.domain.fridge import KeepPart, take_split_method
 from DayBetes_food.domain.portion_detail import combine_split_methods
 from DayBetes_food.errors import ValidationError
-from DayBetes_food.routes.cart_routes import _parse_eaten
+from DayBetes_food.domain.intake_plate import parse_eaten_method
 
 EYEBALL, WEIGHED = FractionMethod.EYEBALL, FractionMethod.WEIGHED
 
@@ -37,15 +36,12 @@ def test_keep_part_is_weighed_only_with_both_weights():
     assert KeepPart(fraction=0.5, rest_weight=120.0).split_method is WEIGHED
 
 
-def _form(**fields):
-    return FormData([("plate_id", "4"), ("ingested_unit_4", "%"), *fields.items()])
-
-
 def test_eaten_is_by_eye_unless_marked_weighed():
-    assert _parse_eaten(_form(ingested_value_4="50"))[0].method is EYEBALL
-    assert _parse_eaten(_form(ingested_value_4="50", eaten_method_4="weighed"))[0].method is WEIGHED
+    assert parse_eaten_method(None) is EYEBALL
+    assert parse_eaten_method("") is EYEBALL
+    assert parse_eaten_method("weighed") is WEIGHED
 
 
 def test_an_unknown_eaten_method_is_rejected():
     with pytest.raises(ValidationError):
-        _parse_eaten(_form(ingested_value_4="50", eaten_method_4="guess"))
+        parse_eaten_method("guess")
