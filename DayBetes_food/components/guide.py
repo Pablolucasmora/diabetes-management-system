@@ -10,7 +10,7 @@ shows up on its own, as "Definition pending." until its line is written here.
 from dataclasses import dataclass
 from enum import Enum
 
-from fasthtml.common import Button, Div, H1, H2, Li, P, Span, Ul
+from fasthtml.common import Button, Dd, Div, Dl, Dt, H1, H2, Input, Label, Li, Nav, NotStr, Ol, P, Section, Span, Ul
 
 from DayBetes_food.components.food.food_shared import AMOUNT_METHOD_LABELS, MACROS_SOURCE_LABELS
 from DayBetes_food.components.modal import ModalLayer, close_modal_js, modal_icon_button
@@ -273,39 +273,134 @@ def _section_id(key: str) -> str:
     return f"guide_{key}"
 
 
+def _value_id(topic_key: str, index: int) -> str:
+    return f"guide_{topic_key}_{index}"
+
+
+GUIDE_CONTENTS_ID = "guide_contents"
+GUIDE_SEARCH_ID = "guide_search"
+
+_SEARCH_ICON = NotStr(
+    '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true" '
+    'class="h-4 w-4"><circle cx="9" cy="9" r="5.5"/><path d="m13.5 13.5 3.5 3.5" stroke-linecap="round"/></svg>'
+)
+
+
+def _scroll_js(element_id: str) -> str:
+    """Scroll inside the page without a hash: the URL and the history stay (§9.12)."""
+    return f"document.getElementById('{element_id}').scrollIntoView({{behavior:'smooth',block:'start'}});"
+
+
+def _contents(topics: list[GuideTopic]):
+    """The index: one row per topic, with its number and how many values it has.
+    While searching, static/js/guide.js lists under each topic the values that
+    match, and hides the topics without any."""
+    return Nav(
+        P("Contents", cls="web_section_label"),
+        Ol(
+            *[
+                Li(
+                    Button(
+                        Span(f"{number:02d}", cls="font-mono text-xs text-muted w-6 shrink-0"),
+                        Span(topic.title, cls="flex-1 text-left"),
+                        Span(str(len(topic.values)), data_guide_count="", cls="text-xs text-muted tabular-nums"),
+                        type="button",
+                        onclick=_scroll_js(_section_id(topic.key)),
+                        cls="w-full flex items-baseline gap-3 py-2 text-sm text-stone-900 cursor-pointer hover:text-ink",
+                    ),
+                    # Filled by guide.js with the values that match the search.
+                    Ol(data_guide_matches="", cls="hidden pl-9 pb-2 flex-col gap-1"),
+                    data_guide_entry=topic.key,
+                    cls="border-t border-line-soft first:border-t-0",
+                )
+                for number, topic in enumerate(topics, start=1)
+            ],
+            cls="flex flex-col",
+        ),
+        id=GUIDE_CONTENTS_ID,
+        aria_label="Contents",
+        cls="w-full flex flex-col gap-1 scroll-mt-28",
+    )
+
+
+def _section(topic: GuideTopic, number: int):
+    """One topic: number, title, what is chosen, and each value with its meaning."""
+    return Section(
+        Div(
+            Span(f"{number:02d}", cls="font-mono text-xs text-muted"),
+            H2(topic.title, cls="text-lg font-semibold text-stone-900"),
+            _pending_badge() if topic.pending else None,
+            cls="flex items-baseline gap-3",
+        ),
+        P(topic.intro, cls="text-sm text-gray-600"),
+        P(topic.note, cls="text-xs text-gray-500") if topic.note else None,
+        Dl(
+            *[
+                Div(
+                    Dt(value.label, data_guide_label="", cls="text-sm font-medium text-stone-900"),
+                    Dd(
+                        value.definition or PENDING_DEFINITION,
+                        data_guide_text="",
+                        cls="text-sm text-gray-700" if value.definition else "text-sm text-gray-400 italic",
+                    ),
+                    id=_value_id(topic.key, index),
+                    data_guide_value="",
+                    cls="grid gap-0.5 md:grid-cols-[9rem_1fr] md:gap-4 py-2.5 border-t border-line-soft scroll-mt-28",
+                )
+                for index, value in enumerate(topic.values)
+            ],
+            cls="flex flex-col",
+        ),
+        Button(
+            "↑ Contents",
+            type="button",
+            data_guide_to_contents="",
+            onclick=_scroll_js(GUIDE_CONTENTS_ID),
+            cls="self-start text-xs text-muted hover:text-ink cursor-pointer py-1",
+        ),
+        id=_section_id(topic.key),
+        data_guide_topic=topic.key,
+        data_guide_title=topic.title,
+        cls="w-full flex flex-col gap-2 pt-6 scroll-mt-28",
+    )
+
+
 def GuidePage():
-    """Settings > Guide: every topic, with an index that scrolls to each one
-    inside the page (no hash: the URL and the history stay as they are)."""
+    """Settings > Guide (frontend_conventions.md §9.12): a search box, the contents
+    and every topic below. Searching filters the topics and their values in the
+    page (static/js/guide.js); with a single result the contents hide and the
+    result keeps the title of its topic."""
+    topics = list(GUIDE_TOPICS.values())
     return Div(
         Div(
-            Button("Back", type="button", cls="web_button self-start px-3 py-1.5 text-sm", onclick=back_js("/settings")),
-            cls="w-full flex justify-start",
+            Div(
+                Button("Back", type="button", cls="web_button px-3 py-1.5 text-sm", onclick=back_js("/settings")),
+                H1("Guide", cls="text-lg font-semibold text-stone-900"),
+                cls="flex items-center justify-between",
+            ),
+            Label(
+                Span(_SEARCH_ICON, cls="text-muted"),
+                Input(
+                    type="search",
+                    id=GUIDE_SEARCH_ID,
+                    placeholder="Search a field or an option",
+                    autocomplete="off",
+                    aria_label="Search the guide",
+                    cls="flex-1 min-w-0 bg-transparent text-sm outline-none placeholder:text-gray-400",
+                ),
+                cls="flex items-center gap-2 rounded-xl border border-line bg-surface px-3 py-2",
+            ),
+            P("", id="guide_status", role="status", cls="text-xs text-muted empty:hidden"),
+            cls="sticky top-0 z-10 w-full flex flex-col gap-3 px-4 pt-4 pb-3 -mt-2 web_glass_strong rounded-b-3xl",
         ),
-        H1("Guide", cls="text-xl font-bold"),
         P(
             "What each option means, so every meal is logged the same way. "
-            "The ? next to these fields opens the same text.",
-            cls="text-sm text-gray-600 text-center",
+            "The ? next to a field opens the same text.",
+            cls="w-full text-sm text-gray-600",
         ),
-        Div(
-            *[
-                Button(
-                    topic.title,
-                    type="button",
-                    cls="px-3 py-1.5 rounded-full text-xs bg-surface border border-line text-stone-900 cursor-pointer",
-                    onclick=f"document.getElementById('{_section_id(topic.key)}').scrollIntoView({{behavior:'smooth',block:'start'}});",
-                )
-                for topic in GUIDE_TOPICS.values()
-            ],
-            cls="flex flex-wrap justify-center gap-1.5",
-        ),
-        *[
-            Div(
-                _topic_block(topic, H2(topic.title, cls="text-lg font-semibold")),
-                id=_section_id(topic.key),
-                cls="web_container w-full p-4 scroll-mt-4",
-            )
-            for topic in GUIDE_TOPICS.values()
-        ],
-        cls="flex flex-col items-center gap-4 md:mt-7 lg:mt-7 mt-2 md:w-md lg:w-md w-full px-4 md:px-0 mx-auto md:mb-28 lg:mb-28 mb-24",
+        _contents(topics),
+        *[_section(topic, number) for number, topic in enumerate(topics, start=1)],
+        P("Nothing matches. Try another word.", id="guide_empty", hidden=True, cls="w-full text-sm text-gray-500 py-6"),
+        id="guide_page",
+        cls="flex flex-col items-start gap-4 md:mt-7 lg:mt-7 mt-2 md:w-md lg:w-md w-full px-4 md:px-0 mx-auto md:mb-28 lg:mb-28 mb-24",
     )

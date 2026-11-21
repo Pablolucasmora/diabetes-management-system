@@ -624,7 +624,11 @@ Para que los campos de calidad del dato se rellenen siempre con el mismo criteri
 
 **En Ajustes**
 
-- El botón `Guide` abre `/settings/guide`, con `Back` a Ajustes (§5). Arriba, un índice de temas en píldoras que lleva a cada uno dentro de la página, sin cambiar la URL ni añadir entradas al historial. Debajo, una tarjeta por tema: su título, una frase de qué se elige y la lista de valores con su definición.
+- El botón `Guide` abre `/settings/guide`, con `Back` a Ajustes (§5). Rediseño del 2026-11-21 (decisión del usuario):
+  - Arriba, fija, una barra con `Back`, el título y un buscador. Debajo del buscador, una línea dice cuántos resultados hay y en cuántos apartados.
+  - Después, el índice (`Contents`): cada tema numerado (`01`, `02`…) con cuántas opciones tiene. Pulsarlo baja a su apartado dentro de la página, sin cambiar la URL ni añadir entradas al historial.
+  - Debajo, un apartado por tema: número, título, qué se elige y una lista de definiciones (opción y significado), separadas por líneas finas, sin tarjetas. Cada apartado acaba en `↑ Contents`, que vuelve al índice.
+  - **Buscar** filtra en la página (`static/js/guide.js`), sin distinguir mayúsculas ni acentos: una opción coincide por su nombre, su definición o el título de su tema. Se ocultan los temas sin resultados, y en el índice aparecen bajo cada tema las opciones que coinciden, con enlace a cada una. Con un solo resultado el índice se oculta, y el resultado sigue bajo el título de su tema. Enter lleva al primero.
 
 **Junto a cada selector**
 
