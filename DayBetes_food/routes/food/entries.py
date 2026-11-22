@@ -1,5 +1,6 @@
 """Foods and dishes of the user (`catalog`, `manual_intake`): create, edit, copy, archive, publish and quick add (code_conventions.md §11.2.2, §11.2.3)."""
 
+import json
 from urllib.parse import urlencode
 
 from fasthtml.common import *
@@ -9,6 +10,7 @@ from DayBetes_food.components.ui import render_page
 from DayBetes_food.http_errors import app_error_response, request_id
 from DayBetes_food.config import ASSISTANT_ENABLED
 from DayBetes_food.domain.assistant import DRAFT_MACROS_SOURCE
+from DayBetes_food.domain.food_entry import EDIT_RETURN_REVIEW
 from DayBetes_food.services.intake_event import add_quick_add_to_meal, resolve_target_event
 from DayBetes_food.database.queries import (
     create_catalog_item,
@@ -68,7 +70,7 @@ from DayBetes_food.components.food.food_forms import (
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.domain.constants import AssistantDraftSource
 from DayBetes_food.services.recipe import copy_recipe
-from DayBetes_food.services.provisional import convert_provisional
+from DayBetes_food.services.provisional import convert_provisional, make_quick_add
 from DayBetes_food.errors import (
     AuthenticationError,
     AuthorizationError,
@@ -413,6 +415,30 @@ def setup_entries_routes(rt):
         return HTMLResponse(
             "",
             headers={"HX-Redirect": f"/food/edit/{new_type.value}/{new_id}/form{query}", "HX-Trigger": "dbReviewChanged"},
+        )
+
+    @rt("/food/quick_add_from/{entry_type}/{entry_id}")
+    def post(request: Request, entry_type: str, entry_id: PathId, return_to: str = ""):
+        """A provisional food or dish the user does not want to keep becomes a quick
+        add in each meal that has it, and is deleted (code_conventions.md §8.12)."""
+        kind = _parse_food_entry_type(entry_type)
+        if kind not in (FoodEntryType.CATALOG, FoodEntryType.MANUAL_INTAKE):
+            raise ValidationError(_UNKNOWN_ENTRY_TYPE, fields={"entry_type": "invalid"})
+        user_id = get_current_user_id()
+        if not user_id:
+            raise AuthenticationError("Your session has expired.")
+        try:
+            with get_connection() as connection:
+                make_quick_add(connection, int(user_id), kind, entry_id)
+        except (ConflictError, NotFoundError) as error:
+            # Their own text says what to do (services/provisional.py).
+            return app_error_response(request, type(error), str(error))
+        # The entry is gone: back to where the user came from, by default the To
+        # review list, never its own pages (a 404 now).
+        path = edit_return_path(parse_edit_return(return_to)) or edit_return_path(EDIT_RETURN_REVIEW)
+        location = {"path": path, "target": "#main_content", "swap": "innerHTML", "push": True}
+        return HTMLResponse(
+            "", headers={"HX-Location": json.dumps(location), "HX-Trigger": "dbReviewChanged"}
         )
 
     @rt("/food/edit/{entry_type}/{entry_id}/form")

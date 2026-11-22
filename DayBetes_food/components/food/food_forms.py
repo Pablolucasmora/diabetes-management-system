@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from fasthtml.common import *
 from DayBetes_food.components.data_sources import ciqual_attribution, off_attribution
 from DayBetes_food.components.injection_zone import asset_busted
+from DayBetes_food.components.modal import ConfirmActionModal, close_modal_js, modal_confirm_button, open_modal_js
 from DayBetes_food.components.navigation import back_js
 from DayBetes_food.components.food.food_shared import AMOUNT_METHOD_LABELS, FORM_FIELD_CLS, MACROS_SOURCE_LABELS
 from DayBetes_food.domain.catalog import CATALOG_BARCODE_MAX_LENGTH, CATALOG_NAME_MAX_LENGTH
@@ -810,7 +811,50 @@ def _review_notice(entry: dict, return_to: str | None = None):
     return Div(
         P(" ".join(parts), cls="text-xs text-amber-800"),
         _convert_control(entry, return_to),
+        _quick_add_control(entry, return_to),
         cls="web_container rounded-2xl px-4 py-3 flex flex-col gap-2",
+    )
+
+
+def _quick_add_control(entry: dict, return_to: str | None):
+    """Not worth keeping: it becomes a quick add in each meal that has it and is
+    deleted (services/provisional.py). Asks first in a pop-up: it cannot be undone."""
+    result_id = f"quick_add_result_{entry['id']}"
+    modal_id = f"quick_add_confirm_{entry['id']}"
+    kind = "food" if entry["entry_type"] == "catalog" else "dish"
+    return Div(
+        Span("Only for this meal, not worth keeping?", cls="text-xs text-gray-600"),
+        Button(
+            "Make it a quick add",
+            type="button",
+            cls="web_button rounded-xl px-3 py-1.5 text-xs self-start",
+            onclick=open_modal_js(modal_id),
+        ),
+        Div(id=result_id),
+        ConfirmActionModal(
+            modal_id=modal_id,
+            title="Make it a quick add",
+            question=(
+                f"It stays in your meals as a quick add, with the same grams and macros, and this {kind} "
+                "leaves your foods, with its favorites and tags. This cannot be undone. Continue?"
+            ),
+            yes_button=modal_confirm_button(
+                "Yes",
+                danger=True,
+                hx_post=f"/food/quick_add_from/{entry['entry_type']}/{entry['id']}",
+                hx_vals=json.dumps({"return_to": return_to or ""}),
+                hx_params="return_to",
+                hx_target=f"#{result_id}",
+                hx_swap="innerHTML",
+                hx_on__after_request=(
+                    close_modal_js(modal_id)
+                    + ";if(event.detail.successful&&window.dbShowAppNotice)"
+                    + "window.dbShowAppNotice('Now a quick add in your meals');"
+                ),
+                data_skip_page_loading="true",
+            ),
+        ),
+        cls="flex flex-col gap-2",
     )
 
 
