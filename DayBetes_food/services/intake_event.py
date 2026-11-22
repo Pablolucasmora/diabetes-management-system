@@ -13,6 +13,7 @@ from DayBetes_food.database.queries import (
     create_intake_event,
     create_intake_plate,
     create_manual_intake,
+    get_owned_quick_add,
     create_portion_detail,
     delete_intake_event,
     delete_portion_detail,
@@ -22,13 +23,14 @@ from DayBetes_food.database.queries import (
     get_meal_type_schedule,
     get_planned_intake_event,
     list_event_exact_times,
+    list_intake_plates,
     list_portions_by_event,
     scale_plate_portion_amounts,
     set_intake_plate_eaten_fraction,
     set_exact_time,
     update_intake_event,
 )
-from DayBetes_food.domain.constants import IntakeEventState, MealType, PortionDestination, PortionOrigin
+from DayBetes_food.domain.constants import FractionMethod, IntakeEventState, MealType, PortionDestination, PortionOrigin
 from DayBetes_food.domain.fridge import LeftoverPlan
 from DayBetes_food.domain.intake_event import (
     INTAKE_EVENT_INGESTED_AMOUNT_MAX_G,
@@ -47,6 +49,7 @@ from DayBetes_food.domain.intake_plate import (
     resolve_eaten_at,
 )
 from DayBetes_food.domain.manual_intake import ManualIntakeCreate, QuickAddRequest
+from DayBetes_food.domain.nutrition import NutrientValues
 from DayBetes_food.domain.meal_type_schedule import resolve_meal_type_for_time
 from DayBetes_food.domain.portion_detail import (
     PortionDetailCreate,
@@ -147,6 +150,7 @@ def confirm_planned_event(
 
     by_plate = _portions_by_plate(portions)
     fractions = _plate_fractions(by_plate, eaten)
+    methods = {entry.plate_id: entry.method for entry in eaten}
     plans: dict[int, LeftoverPlan] = {}
     for plan in leftovers:
         if fractions.get(plan.plate_id, 1.0) >= 1.0 or plan.plate_id in plans:
@@ -168,9 +172,14 @@ def confirm_planned_event(
     for plate_id, plate_portions in by_plate.items():
         # Kept so that what was served (amount / fraction) and the share left
         # can be known after the portions are scaled (study §6.3).
-        set_intake_plate_eaten_fraction(connection, user_id, plate_id, fractions[plate_id], commit=False)
+        # How the fraction was obtained, as the user marked it; none for a plate
+        # eaten whole (study §6.3).
+        method = methods.get(plate_id, FractionMethod.EYEBALL) if fractions[plate_id] < 1.0 else None
+        set_intake_plate_eaten_fraction(connection, user_id, plate_id, fractions[plate_id], method, commit=False)
         if plate_id in plans:
-            store_plate_leftovers(connection, user_id, plate_portions, fractions[plate_id], plans[plate_id])
+            store_plate_leftovers(
+                connection, user_id, plate_portions, fractions[plate_id], plans[plate_id], method
+            )
         if fractions[plate_id] < 1.0:
             # amount = amount * fraction for the whole plate, in one statement (§6.9.1).
             scale_plate_portion_amounts(connection, user_id, plate_id, fractions[plate_id], commit=False)
@@ -403,12 +412,12 @@ def add_quick_add_to_meal(
     §11.2.3), inside the caller's transaction: row + portion, all or nothing (§2.3).
 
     A quick add stores only what its form asks: the weight becomes
-    default_portion, its U1 and U2 (study §6.3) are the ones given, or NULL, and
-    everything else stays NULL. The portion is born with the quick add's own U2
+    default_portion, its U1 and U2 (study §6.3) and its origin are the ones
+    given, or NULL, and everything else stays NULL. The portion is born with the quick add's own U2
     (measurement §6.11). Repeating it creates another quick add (§9.6).
 
     Returns:
-        The id of the new `manual_intake` row.
+        The ids of the new `manual_intake` row and of its portion.
     """
     offset_minutes = new_plate_offset_minutes(get_intake_event(connection, user_id, event_id))
     plate_id = resolve_event_plate(connection, user_id, event_id, plate_choice, offset_minutes)
@@ -420,7 +429,7 @@ def add_quick_add_to_meal(
             name=request.name,
             description=request.description,
             subtype=None,
-            origin=None,
+            origin=request.origin,
             default_portion=request.weight_g,
             nutrients=request.nutrients,
             glycemic_index=None,
@@ -428,11 +437,12 @@ def add_quick_add_to_meal(
             macros_confidence=None,
             macros_source=request.macros_source,
             default_amount_method=request.amount_method,
+            serving_method=None,
             is_quick_add=True,
         ),
         commit=False,
     )
-    create_portion_detail(
+    portion_id = create_portion_detail(
         connection,
         user_id,
         PortionDetailCreate(
@@ -446,4 +456,114 @@ def add_quick_add_to_meal(
         ),
         commit=False,
     )
-    return manual_intake_id
+    return manual_intake_id, portion_id
+
+
+def save_quick_add_as_dish(connection, user_id: int, quick_add_id: int) -> tuple[int, str]:
+    """A repeated quick add saved as a provisional dish (code_conventions.md §8.12,
+    "Repeticiones"), inside the caller's transaction. The quick add stays as it
+    is; the new dish copies its name, origin, serving and macros, and waits for
+    the user's review.
+
+    Raises:
+        NotFoundError: not one of the user's quick adds.
+        ConflictError: the user already has a dish with that name and origin.
+
+    Returns:
+        The id and the name of the new dish.
+    """
+    quick_add = get_owned_quick_add(connection, user_id, quick_add_id)
+    if quick_add is None:
+        raise NotFoundError("That food no longer exists.")
+    dish_id = create_manual_intake(
+        connection,
+        ManualIntakeCreate(
+            created_by=user_id,
+            origin_root_id=None,
+            name=quick_add.name,
+            description=quick_add.description,
+            subtype=None,
+            origin=quick_add.origin,
+            default_portion=quick_add.default_portion,
+            nutrients=NutrientValues(
+                calories_100g=quick_add.calories_100g,
+                carbs_100g=quick_add.carbs_100g,
+                sugars_100g=quick_add.sugars_100g,
+                fats_100g=quick_add.fats_100g,
+                saturated_100g=quick_add.saturated_100g,
+                proteins_100g=quick_add.proteins_100g,
+                fiber_100g=quick_add.fiber_100g,
+                caffeine=quick_add.caffeine,
+                alcohol=quick_add.alcohol,
+            ),
+            glycemic_index=None,
+            ig_confidence=None,
+            macros_confidence=None,
+            macros_source=quick_add.macros_source,
+            default_amount_method=None,
+            serving_method=None,
+            needs_review=True,
+        ),
+        commit=False,
+    )
+    return dish_id, quick_add.name
+
+
+def repeat_meal(connection, user_id: int, source_event_id: int) -> int:
+    """`Repeat today` of a past chat (frontend_conventions.md §9.11, decision of the
+    user of 2026-11-22): a new planned meal for now with what the confirmed meal
+    served, inside the caller's transaction. Its name, its plates with their name
+    and offset in minutes, and each food with its preparation and its U2; the
+    amount is the one served, before what was left (measurement_conventions.md
+    §4.4: `amount / eaten_fraction` of its plate, the stored amount when the
+    fraction was not recorded). Exact times and fridge links are not copied: they
+    belonged to that day. Returns the new meal's id.
+
+    Raises:
+        NotFoundError: not a consumed meal of the user.
+    """
+    source = get_intake_event(connection, user_id, source_event_id)
+    if source is None or source.state is IntakeEventState.PLANNED:
+        raise NotFoundError("Meal not found.")
+    event_id = create_intake_event(
+        connection,
+        IntakeEventCreate(
+            user_id=user_id,
+            state=IntakeEventState.PLANNED,
+            meal_type=default_meal_type_now(connection, user_id),
+            name=source.name,
+        ),
+        commit=False,
+    )
+    portions = _portions_by_plate(list_portions_by_event(connection, user_id, source_event_id))
+    for plate in list_intake_plates(connection, user_id, source_event_id):
+        plate_portions = portions.get(plate.id, [])
+        if not plate_portions:
+            continue
+        new_plate_id = create_intake_plate(
+            connection,
+            IntakePlateCreate(intake_event_id=event_id, name=plate.name, offset_minutes=plate.offset_minutes),
+            commit=False,
+        )
+        fraction = plate.eaten_fraction if plate.eaten_fraction else 1.0
+        for portion in plate_portions:
+            create_portion_detail(
+                connection,
+                user_id,
+                PortionDetailCreate(
+                    origin=portion.origin,
+                    origin_id=portion.origin_id,
+                    destination=PortionDestination.INTAKE_EVENT,
+                    destination_id=event_id,
+                    plate_id=new_plate_id,
+                    amount=portion.amount / fraction,
+                    cooking=portion.cooking,
+                    conservation=portion.conservation,
+                    final_state=portion.final_state,
+                    ripeness=portion.ripeness,
+                    amount_method=portion.amount_method,
+                    is_cooked_weight=portion.is_cooked_weight,
+                ),
+                commit=False,
+            )
+    return event_id

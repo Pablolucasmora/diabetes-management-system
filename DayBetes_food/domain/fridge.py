@@ -12,6 +12,7 @@ from DayBetes_food.domain.constants import (
     MASS_SANITY_MAX_G,
     AmountInputUnit,
     AmountMethod,
+    FractionMethod,
     ConservationMethod,
     CookingMethod,
     FoodPhysicalState,
@@ -23,7 +24,7 @@ from DayBetes_food.domain.constants import (
 from DayBetes_food.domain.food import normalize_food_text
 from DayBetes_food.domain.intake_plate import derive_plate_name
 from DayBetes_food.domain.nutrition import NumericRange, parse_number
-from DayBetes_food.domain.portion_detail import PortionDetailRead
+from DayBetes_food.domain.portion_detail import PortionDetailRead, combine_split_methods
 from DayBetes_food.errors import ValidationError
 
 FRIDGE_NAME_MAX_LENGTH = 255  # = VARCHAR(255)
@@ -97,6 +98,12 @@ def parse_take_fraction(raw_value, unit: AmountInputUnit, content_weight: float 
     if grams is None:
         raise ValidationError("Say how much to take.", fields={"amount": "required"})
     return min(grams / content_weight, 1.0)
+
+
+def take_split_method(unit: AmountInputUnit) -> FractionMethod:
+    """How a take from a container was split (study §6.3): grams are against the
+    container's real weight, so both sides were weighed; a percentage is by eye."""
+    return FractionMethod.WEIGHED if unit is AmountInputUnit.GRAMS else FractionMethod.EYEBALL
 
 
 def conservation_when_taken(
@@ -211,6 +218,7 @@ class FridgeContent:
     final_state: FoodPhysicalState | None = None
     amount_method: AmountMethod | None = None  # U2 (study §6.3)
     is_cooked_weight: bool = False
+    split_method: FractionMethod | None = None  # how the split that produced it was obtained (study §6.3)
 
 
 @dataclass(frozen=True)
@@ -247,6 +255,12 @@ class KeepPart:
 
     fraction: float
     rest_weight: float | None
+
+    @property
+    def split_method(self) -> FractionMethod:
+        """Weighed only when the cooked total and the plate were both weighed
+        (study §6.3): a percentage is taken as by eye."""
+        return FractionMethod.WEIGHED if self.rest_weight is not None else FractionMethod.EYEBALL
 
 
 _KEEP_PERCENT_RANGE = NumericRange(0, 100, minimum_exclusive=True)
@@ -297,7 +311,15 @@ def merge_contents(contents) -> tuple[FridgeContent, ...]:
     for content in contents:
         key = (content.origin, content.origin_id, content.cooking, content.final_state, content.is_cooked_weight)
         existing = merged.get(key)
-        merged[key] = replace(existing, amount=existing.amount + content.amount) if existing else content
+        merged[key] = (
+            replace(
+                existing,
+                amount=existing.amount + content.amount,
+                split_method=combine_split_methods(existing.split_method, content.split_method),
+            )
+            if existing
+            else content
+        )
     return tuple(merged.values())
 
 

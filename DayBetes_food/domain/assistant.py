@@ -13,7 +13,8 @@ import io
 import json
 import math
 import re
-from dataclasses import dataclass
+from enum import Enum, unique
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -109,11 +110,40 @@ _PHOTO_PLACEHOLDERS = (ASSISTANT_PHOTO_PLACEHOLDER, _LEGACY_PHOTO_PLACEHOLDER)
 # the stored results, so a reopened conversation shows the same cards.
 TOOL_RESULT_ADDED = "added"
 TOOL_RESULT_DRAFT = "draft"
+# A provisional food or dish created and added (§8.12, "Alimentos provisionales").
+TOOL_RESULT_PROVISIONAL = "provisional"
+# A quick add eaten often enough to offer saving it (§8.12, "Repeticiones").
+TOOL_RESULT_REPEAT = "repeat"
+REPEAT_WINDOW_DAYS = 90
+REPEAT_MIN_COUNT = 3  # this one included: the third time in the window
+
+
+class RepeatSaveAs(str, Enum):
+    """What a repeated quick add is offered to become (§8.12)."""
+
+    DISH = "dish"  # prepared by someone else
+    RECIPE = "recipe"  # homemade
 # `source` of the draft cards that are not a catalog food (frontend §9.11).
 RECIPE_DRAFT_SOURCE = "recipe"
 MANUAL_INTAKE_DRAFT_SOURCE = "manual_intake"
 # Lines of what a tool changed in the meal (§8.12, "Edición de la comida").
 TOOL_RESULT_CHANGED = "changed"
+# A topic of the guide the assistant read to answer a question about it (§8.12,
+# "Dudas sobre la guía"): the page folds that turn and the model never sees it again.
+TOOL_RESULT_GUIDE = "guide"
+# The answer buttons the assistant offers under its question (§8.12, "Respuestas rápidas").
+TOOL_RESULT_REPLIES = "replies"
+QUICK_REPLIES_MIN = 2
+QUICK_REPLIES_MAX = 4
+QUICK_REPLY_MAX_LENGTH = 40
+# The preparation values offered as buttons under a food, per field (§8.12,
+# "Preparación con un toque"): the likeliest first, at most this many.
+PREPARATION_OPTIONS_MAX = 3
+PREPARATION_OPTION_FIELDS = {
+    "cooking": CookingMethod,
+    "final_state": FoodPhysicalState,
+    "conservation": ConservationMethod,
+}
 
 # A tool_use id as the API writes it (`toolu_...`); it travels in the URL of a
 # draft (frontend §9.11), so it is checked before reaching the SQL.
@@ -795,6 +825,144 @@ def is_context_block(block: dict) -> bool:
     return block.get("type") == "text" and str(block.get("text", "")).startswith(ASSISTANT_CONTEXT_TAG)
 
 
+# Length of the first line of a chat in the list of chats (frontend §9.11).
+CHAT_PREVIEW_LENGTH = 60
+
+
+def chat_preview(content: list | None) -> str:
+    """What the user wrote first in a chat, on one line, for the list of chats
+    (frontend §9.11): `Photo` when it was only photos, `Empty chat` when nothing."""
+    blocks = content or []
+    texts = [
+        str(block.get("text", ""))
+        for block in blocks
+        if block.get("type") == "text" and not is_context_block(block)
+        and block.get("text") not in _PHOTO_PLACEHOLDERS
+    ]
+    text = " ".join(" ".join(texts).split())
+    if not text:
+        has_photo = any(
+            block.get("type") == "image" or block.get("text") in _PHOTO_PLACEHOLDERS for block in blocks
+        )
+        return "Photo" if has_photo else "Empty chat"
+    if len(text) <= CHAT_PREVIEW_LENGTH:
+        return text
+    return text[: CHAT_PREVIEW_LENGTH - 1].rstrip() + "…"
+
+
+# "Usual now" in an empty chat (decision of the user of 2026-11-22, frontend §9.11):
+# the foods eaten most around this time of day.
+USUAL_FOODS_SHOWN = 5
+USUAL_FOODS_DAYS = 60
+# Each past meal counts exp(-(distance to now / spread)²): 1 at this time, 0.64 an
+# hour away, 0.17 two hours away (frontend §9.11, decision of the user 2026-11-22).
+USUAL_FOODS_SPREAD_MINUTES = 90
+USUAL_FOODS_MIN_SCORE = 0.35  # at least one meal within about 90 minutes of now
+
+
+@dataclass(frozen=True)
+class UsualFood:
+    """A food the user eats often at this time, offered in an empty chat (§9.11)."""
+
+    entry_type: str  # FoodEntryType value: catalog or manual_intake
+    entry_id: int
+    name: str
+    grams: float  # the median amount eaten
+
+
+# "Lo de siempre" (decision of the user of 2026-11-22, §8.12): a meal eaten at
+# least this many times in this many days, around this time of day, with the
+# same foods.
+USUAL_MEAL_DAYS = 30
+USUAL_MEAL_MIN_COUNT = 3
+USUAL_MEAL_MINUTES = 120  # ±2 h of now (decision of the user 2026-11-22)
+USUAL_MEALS_SHOWN = 3
+
+
+@dataclass(frozen=True)
+class UsualMealFood:
+    entry_type: str
+    entry_id: int
+    name: str
+    grams: float  # the median amount eaten
+    cooking: str | None
+    final_state: str | None
+    conservation: str | None
+
+
+@dataclass(frozen=True)
+class UsualMeal:
+    times: int
+    foods: tuple[UsualMealFood, ...]
+
+
+def _minutes_apart(a: int, b: int) -> int:
+    distance = abs(a - b) % 1440
+    return min(distance, 1440 - distance)
+
+
+def usual_meals(meals: list[tuple[int, list]], now_minute: int) -> list[UsualMeal]:
+    """The meals eaten again and again around this time (§8.12, "Lo de siempre").
+
+    `meals`: (local minute of the day, its portions) of the confirmed meals of the
+    window. Two meals are the same when they have the same foods, whatever the
+    amounts; each food takes the median of what was eaten and its latest
+    preparation. The most repeated first, at most USUAL_MEALS_SHOWN.
+    """
+    groups: dict[frozenset, list[list]] = {}
+    for minute, portions in meals:
+        if not portions or _minutes_apart(minute, now_minute) > USUAL_MEAL_MINUTES:
+            continue
+        key = frozenset((p.origin.value, p.origin_id) for p in portions)
+        groups.setdefault(key, []).append(portions)
+    found = []
+    for key, occurrences in groups.items():
+        if len(occurrences) < USUAL_MEAL_MIN_COUNT:
+            continue
+        foods = []
+        for entry_type, entry_id in sorted(key):
+            rows = [p for portions in occurrences for p in portions if (p.origin.value, p.origin_id) == (entry_type, entry_id)]
+            amounts = sorted(p.amount for p in rows)
+            middle = len(amounts) // 2
+            median = amounts[middle] if len(amounts) % 2 else (amounts[middle - 1] + amounts[middle]) / 2
+            latest = rows[0]
+            foods.append(
+                UsualMealFood(
+                    entry_type,
+                    entry_id,
+                    latest.source.name or "",
+                    round(median),
+                    latest.cooking.value if latest.cooking else None,
+                    latest.final_state.value if latest.final_state else None,
+                    latest.conservation.value if latest.conservation else None,
+                )
+            )
+        found.append(UsualMeal(len(occurrences), tuple(foods)))
+    found.sort(key=lambda meal: -meal.times)
+    return found[:USUAL_MEALS_SHOWN]
+
+
+@dataclass(frozen=True)
+class ChatSummary:
+    """A chat without a meal in the list of chats (frontend §9.11)."""
+
+    conversation_id: int
+    updated_at: datetime
+    preview: str
+
+
+@dataclass(frozen=True)
+class PastChat:
+    """A chat in the past chats (frontend §9.11): the conversation of a confirmed
+    meal, or a `No meal` chat, hidden or not."""
+
+    conversation_id: int
+    event_id: int | None  # None: a `No meal` chat
+    updated_at: datetime
+    preview: str
+    hidden: bool
+
+
 @dataclass(frozen=True)
 class AddedCard:
     """Something the assistant put in the cart, as its tool reported it."""
@@ -821,6 +989,48 @@ class DraftCard:
 
 
 @dataclass(frozen=True)
+class ProvisionalCard:
+    """A provisional food or dish the assistant created and added (§8.12)."""
+
+    entry_type: str  # FoodEntryType value: catalog or manual_intake
+    entry_id: int
+    name: str
+    brand_or_origin: str | None
+    carbs_100g: float | None
+    macros_source: str | None
+    grams: float | None
+    carbs_g: float | None
+
+
+@dataclass(frozen=True)
+class RepeatCard:
+    """A quick add eaten often, offered to be saved (§8.12, "Repeticiones")."""
+
+    quick_add_id: int
+    name: str
+    count: int
+    save_as: str  # RepeatSaveAs value
+
+
+@dataclass(frozen=True)
+class AddedUnit:
+    """What one add put in a row of the meal, so a +1 can repeat it (§8.12, "Botones +1")."""
+
+    portion_id: int
+    unit_g: float  # one counted piece, else one serving, else the grams of that add
+
+
+@dataclass(frozen=True)
+class PreparationChoice:
+    """The values of one preparation field the assistant offered for a row of the
+    meal, to pick with a tap (§8.12, "Preparación con un toque")."""
+
+    portion_id: int
+    field: str  # a key of PREPARATION_OPTION_FIELDS
+    options: tuple[str, ...]  # values of its enum, the likeliest first
+
+
+@dataclass(frozen=True)
 class TurnView:
     """One message of the user and everything the assistant did for it."""
 
@@ -830,6 +1040,120 @@ class TurnView:
     added: list[AddedCard]
     drafts: list[DraftCard]
     changed: list[str]
+    provisional: list[ProvisionalCard] = field(default_factory=list)
+    repeats: list[RepeatCard] = field(default_factory=list)
+    units: list[AddedUnit] = field(default_factory=list)
+    quick_replies: list[str] = field(default_factory=list)
+    preparation: list[PreparationChoice] = field(default_factory=list)
+    guides: list[str] = field(default_factory=list)  # topics of the guide read in it
+
+    @property
+    def is_guide_question(self) -> bool:
+        """Only a question about the guide: it read the guide and touched nothing (§8.12)."""
+        return bool(self.guides) and not (
+            self.added or self.drafts or self.changed or self.provisional or self.repeats or self.units
+        )
+
+
+def _added_unit(added) -> AddedUnit | None:
+    """The unit of an add with its row id; None for a recipe or an old result."""
+    if not isinstance(added, dict) or not _is_id(added.get("food_id")):
+        return None
+    grams = _number(added.get("grams"))
+    if not grams or grams <= 0:
+        return None
+    # The pieces the user counted win over the servings: "2 croquetas" +1 is a
+    # third croqueta, even if the serving is two of them (§8.12, "Botones +1").
+    count = _number(added.get("pieces")) or _number(added.get("servings"))
+    unit = grams / count if count and count > 0 else grams
+    return AddedUnit(portion_id=added["food_id"], unit_g=unit)
+
+
+def parse_preparation_options(field_name: str, raw) -> tuple[str, ...]:
+    """The values of one preparation field the model offered: known ones only,
+    without repeats, at most PREPARATION_OPTIONS_MAX; anything else gives none."""
+    enum_cls = PREPARATION_OPTION_FIELDS.get(field_name)
+    if enum_cls is None or not isinstance(raw, list):
+        return ()
+    known = {member.value for member in enum_cls}
+    options: list[str] = []
+    for value in raw:
+        if isinstance(value, str) and value in known and value not in options:
+            options.append(value)
+    return tuple(options[:PREPARATION_OPTIONS_MAX])
+
+
+def parse_quick_replies(raw) -> list[str]:
+    """The answer buttons the model offered (§8.12, "Respuestas rápidas").
+
+    Raises:
+        ValidationError: not 2 to 4 non-empty texts of at most 40 characters.
+    """
+    if not isinstance(raw, list):
+        raise ValidationError("options must be a list of texts.")
+    options = [" ".join(str(value).split()) for value in raw if isinstance(value, str)]
+    options = [option for option in options if option]
+    if not QUICK_REPLIES_MIN <= len(options) <= QUICK_REPLIES_MAX or len(options) != len(raw):
+        raise ValidationError(f"Give {QUICK_REPLIES_MIN} to {QUICK_REPLIES_MAX} non-empty options.")
+    if any(len(option) > QUICK_REPLY_MAX_LENGTH for option in options):
+        raise ValidationError(f"Each option at most {QUICK_REPLY_MAX_LENGTH} characters.")
+    return options
+
+
+def preparation_choices(turns: list["TurnView"]) -> dict[int, dict[str, tuple[str, ...]]]:
+    """The latest values offered for each preparation field of each row of the
+    meal (§8.12), in the order of PREPARATION_OPTION_FIELDS."""
+    latest: dict[int, dict[str, tuple[str, ...]]] = {}
+    for turn in turns:
+        for choice in turn.preparation:
+            latest.setdefault(choice.portion_id, {})[choice.field] = choice.options
+    return {
+        portion_id: {name: fields[name] for name in PREPARATION_OPTION_FIELDS if name in fields}
+        for portion_id, fields in latest.items()
+    }
+
+
+# Days of confirmed meals read for the usual preparation of a food (§8.12).
+USUAL_PREPARATION_DAYS = 90
+
+
+def with_usual_first(options: tuple[str, ...], usual: str | None) -> tuple[str, ...]:
+    """The values offered for one field with the user's usual one for that food
+    first (§8.12, "Preparación con un toque"): DiaBot ranks by what the chat says,
+    the history of the food decides the first place. It stays at
+    PREPARATION_OPTIONS_MAX values."""
+    if usual is None:
+        return options
+    return (usual, *(value for value in options if value != usual))[:PREPARATION_OPTIONS_MAX]
+
+
+def plus_one_units(turns: list["TurnView"]) -> list[AddedUnit]:
+    """The rows a +1 can repeat, the last added first, each with the unit of its
+    latest add (§8.12, "Botones +1")."""
+    latest: dict[int, AddedUnit] = {}
+    for turn in turns:
+        for unit in turn.units:
+            latest.pop(unit.portion_id, None)
+            latest[unit.portion_id] = unit
+    return list(reversed(latest.values()))
+
+
+# Steps of a +1 button and of its long-press menu, in units (frontend §9.11).
+PLUS_STEPS = (1.0, 0.5, 2.0, -1.0)
+
+
+def parse_plus_step(raw) -> float:
+    try:
+        step = float(str(raw).strip())
+    except (TypeError, ValueError) as error:
+        raise ValidationError("Unknown step.") from error
+    if step not in PLUS_STEPS:
+        raise ValidationError("Unknown step.")
+    return step
+
+
+def _is_id(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 def _number(value) -> float | None:
@@ -846,6 +1170,62 @@ def starts_turn(message: AssistantMessageRead) -> bool:
 # messages in a row instead of changing with every message.
 ASSISTANT_HISTORY_MAX_TURNS = 30
 ASSISTANT_HISTORY_CUT_STEP = 10
+
+
+def without_guide_questions(messages: list[AssistantMessageRead]) -> list[AssistantMessageRead]:
+    """The stored messages without the turns that only answered a question about the
+    guide (§8.12, "Dudas sobre la guía"): kept for the study and shown folded, but
+    never sent back to the model, so they do not make the chat dearer."""
+    starts = [i for i, message in enumerate(messages) if starts_turn(message)]
+    if not starts:
+        return messages
+    kept = messages[: starts[0]]
+    bounds = starts + [len(messages)]
+    for start, end in zip(bounds, bounds[1:]):
+        turn = messages[start:end]
+        views = turn_views(turn)
+        if views and views[0].is_guide_question:
+            continue
+        kept.extend(turn)
+    return kept
+
+
+def without_unanswered_calls(messages: list[AssistantMessageRead]) -> list[AssistantMessageRead]:
+    """The stored messages without the tool calls the API would reject (§8.12,
+    "Turno"): an answer whose calls are not all answered by the next row, as one
+    cut by its token limit was stored before 2026-11-22, and the results of calls
+    that are no longer sent. Without this, one such row breaks the chat for good."""
+    kept: list[AssistantMessageRead] = []
+    answered: set = set()
+    for index, message in enumerate(messages):
+        if message.role is AssistantRole.ASSISTANT:
+            calls = {block.get("id") for block in message.content if block.get("type") == "tool_use"}
+            if calls:
+                following = messages[index + 1] if index + 1 < len(messages) else None
+                results = (
+                    {block.get("tool_use_id") for block in following.content if block.get("type") == "tool_result"}
+                    if following is not None and following.role is AssistantRole.USER
+                    else set()
+                )
+                if not calls <= results:
+                    continue
+                answered = calls
+            else:
+                answered = set()
+            kept.append(message)
+            continue
+        if any(block.get("type") == "tool_result" for block in message.content):
+            content = [
+                block for block in message.content
+                if block.get("type") != "tool_result" or block.get("tool_use_id") in answered
+            ]
+            answered = set()
+            if not content:
+                continue
+            if len(content) != len(message.content):
+                message = replace(message, content=content)
+        kept.append(message)
+    return kept
 
 
 def history_window(messages: list[AssistantMessageRead]) -> list[AssistantMessageRead]:
@@ -906,6 +1286,47 @@ def _read_tool_result(turn: TurnView, block: dict, tool_message: dict[str, int])
     if not isinstance(result, dict):
         return
     added = result.get(TOOL_RESULT_ADDED)
+    unit = _added_unit(added)
+    if unit is not None:
+        turn.units.append(unit)
+        offered = added.get("preparation_options")
+        if isinstance(offered, dict):
+            for name in PREPARATION_OPTION_FIELDS:
+                options = parse_preparation_options(name, offered.get(name))
+                if options:
+                    turn.preparation.append(PreparationChoice(unit.portion_id, name, options))
+    guide = result.get(TOOL_RESULT_GUIDE)
+    if isinstance(guide, str) and guide:
+        turn.guides.append(guide)
+    replies = result.get(TOOL_RESULT_REPLIES)
+    if isinstance(replies, list):
+        turn.quick_replies[:] = [str(reply) for reply in replies if isinstance(reply, str) and reply]
+    provisional = result.get(TOOL_RESULT_PROVISIONAL)
+    if isinstance(added, dict) and isinstance(provisional, dict) and _is_id(provisional.get("id")):
+        # Shown on its own card, with Review, instead of in Added to the cart.
+        turn.provisional.append(
+            ProvisionalCard(
+                entry_type=str(provisional.get("entry_type")),
+                entry_id=provisional["id"],
+                name=str(added.get("name") or ""),
+                brand_or_origin=provisional.get("brand_or_origin"),
+                carbs_100g=_number(provisional.get("carbs_100g")),
+                macros_source=provisional.get("macros_source"),
+                grams=_number(added.get("grams")),
+                carbs_g=_number(added.get("carbs_g")),
+            )
+        )
+        added = None
+    repeat = result.get(TOOL_RESULT_REPEAT)
+    if isinstance(repeat, dict) and isinstance(added, dict) and _is_id(repeat.get("quick_add_id")):
+        turn.repeats.append(
+            RepeatCard(
+                quick_add_id=repeat["quick_add_id"],
+                name=str(added.get("name") or ""),
+                count=int(_number(repeat.get("count")) or 0),
+                save_as=str(repeat.get("save_as")),
+            )
+        )
     if isinstance(added, dict) and added.get("name"):
         turn.added.append(
             AddedCard(
@@ -951,3 +1372,219 @@ def draft_tool_input(message: AssistantMessageRead, tool_use_id: str, tool_name:
         ):
             return block["input"]
     return None
+
+
+# ============================================
+# Quick mode (§8.12, "Modo rápido")
+# ============================================
+
+QUICK_LIST_MAX_ITEMS = 12
+QUICK_MODE_EFFORT = "low"
+TOOL_EFFORT_MARKER = "effort"  # block type of a `system` row: our marker, not an API block
+
+_QUICK_SPLIT = re.compile(r"\s*(?:,|;|\n|\s+y\s+|\s+and\s+)\s*", re.IGNORECASE)
+_QUICK_UNIT = r"(?:(?:g|gr|grs|gramos|ml|ud|uds|unidad|unidades)\.?)"
+_QUICK_NUMBER = r"\d+(?:[.,]\d+)?"
+_QUICK_NAME = r"[^\d?¿!¡]*[^\W\d_][^\d?¿!¡]*"
+_QUICK_ITEM = re.compile(
+    rf"^(?:{_QUICK_NAME}\s+{_QUICK_NUMBER}\s*{_QUICK_UNIT}?"
+    rf"|{_QUICK_NUMBER}\s*{_QUICK_UNIT}?\s+(?:de\s+)?{_QUICK_NAME})$",
+    re.IGNORECASE,
+)
+
+
+def is_quick_list(text: str, *, has_photo: bool = False) -> bool:
+    """Whether a message is only a list of foods with their amounts ("arroz 150,
+    pollo 120, pan 40"): decided by its form, before calling the model. Each part
+    is a short name and an amount; a time or a day ("sobre las 9") is not one."""
+    if has_photo or "?" in text or "¿" in text:
+        return False
+    parts = [part.strip() for part in _QUICK_SPLIT.split(text.strip()) if part.strip()]
+    if not 1 <= len(parts) <= QUICK_LIST_MAX_ITEMS:
+        return False
+    return all(_quick_item(part) for part in parts)
+
+
+# A number that is a time or a day is not an amount ("sobre las 9", "ayer 14").
+_QUICK_NOT_AMOUNT = re.compile(
+    r"\b(?:las|la|hora|horas|ayer|hoy|mañana|anoche|at|pm|am|yesterday|today)\b", re.IGNORECASE
+)
+QUICK_NAME_MAX_WORDS = 4
+
+
+def _quick_item(part: str) -> bool:
+    if not _QUICK_ITEM.match(part) or _QUICK_NOT_AMOUNT.search(part):
+        return False
+    name = re.sub(rf"{_QUICK_NUMBER}\s*{_QUICK_UNIT}?|\bde\b", " ", part, flags=re.IGNORECASE)
+    return len(name.split()) <= QUICK_NAME_MAX_WORDS
+
+
+def effort_marker(effort: str) -> list[dict]:
+    """The content of a `system` row that changes the effort from there on."""
+    return [{"type": TOOL_EFFORT_MARKER, "effort": effort}]
+
+
+def current_effort(messages: list[AssistantMessageRead], default: str) -> str:
+    """The effort the model runs at after these messages: the last change in
+    them, or the request's own."""
+    for message in reversed(messages):
+        if message.role is AssistantRole.SYSTEM:
+            for block in message.content:
+                if block.get("type") == TOOL_EFFORT_MARKER and block.get("effort"):
+                    return str(block["effort"])
+    return default
+
+
+def api_message(role: AssistantRole, content: list[dict]) -> dict:
+    """A stored row as the API takes it: a `system` row is a change of effort."""
+    if role is AssistantRole.SYSTEM:
+        effort = next(
+            (block.get("effort") for block in content if block.get("type") == TOOL_EFFORT_MARKER), None
+        )
+        return {"role": "system", "content": [], "output_config": {"effort": effort}}
+    return {"role": role.value, "content": content}
+
+
+# ============================================
+# Learning from the user's corrections (§8.12, "Aprender de las correcciones")
+# ============================================
+
+CALIBRATION_DAYS = 90
+CALIBRATION_MIN_SAMPLES = 5
+CALIBRATION_MIN_SHIFT = 0.10  # a median ratio within ±10 % changes nothing
+CALIBRATION_RATIO_RANGE = (0.25, 4.0)  # one ratio outside it is clipped, not trusted
+
+
+@unique
+class CalibrationGroup(str, Enum):
+    PHOTO = "photo"  # the turn had a photo; wins over the other two
+    OUT = "out"  # the meal was eaten out
+    HOME = "home"
+
+
+_CALIBRATION_WHAT = {
+    CalibrationGroup.PHOTO: "from a photo",
+    CalibrationGroup.OUT: "when eating out",
+    CalibrationGroup.HOME: "at home",
+}
+
+
+@dataclass(frozen=True)
+class EstimateSample:
+    """One add of DiaBot with an estimated amount, as its tool result stored it."""
+    portion_id: int
+    grams: float
+    carbs_g: float | None
+    is_quick_add: bool  # an add_estimate: its carbs are DiaBot's too
+    group: CalibrationGroup
+
+
+@dataclass(frozen=True)
+class CalibrationPortion:
+    """The row of a confirmed meal an estimate went to, as it ended."""
+    portion_id: int
+    served_g: float  # amount / eaten_fraction of its plate
+    carbs_100g: float | None  # of a quick add, now; None for anything else
+
+
+def estimate_samples(rows: list[tuple[int, list[dict], bool]]) -> list[EstimateSample]:
+    """The estimated adds of some conversations. `rows` are their `user` rows in
+    order, each as (conversation_id, content, eating_out): turn starts say
+    whether the turn had a photo, tool results say what was added."""
+    samples: list[EstimateSample] = []
+    photo: dict[int, bool] = {}
+    for conversation_id, content, eating_out in rows:
+        if any(block.get("type") != "tool_result" for block in content):
+            photo[conversation_id] = any(
+                block.get("type") == "image" or block.get("text") in _PHOTO_PLACEHOLDERS for block in content
+            )
+            continue
+        for block in content:
+            if block.get("type") != "tool_result" or block.get("is_error"):
+                continue
+            try:
+                result = json.loads(block.get("content") or "")
+            except (TypeError, ValueError):
+                continue
+            added = result.get(TOOL_RESULT_ADDED) if isinstance(result, dict) else None
+            if not isinstance(added, dict) or added.get("amount_method") != "ai_estimate":
+                continue
+            portion_id, grams = added.get("food_id"), added.get("grams")
+            if not isinstance(portion_id, int) or not isinstance(grams, (int, float)) or grams <= 0:
+                continue
+            carbs = added.get("carbs_g")
+            group = (
+                CalibrationGroup.PHOTO
+                if photo.get(conversation_id)
+                else CalibrationGroup.OUT
+                if eating_out
+                else CalibrationGroup.HOME
+            )
+            samples.append(
+                EstimateSample(
+                    portion_id,
+                    float(grams),
+                    float(carbs) if isinstance(carbs, (int, float)) else None,
+                    added.get("kind") == "estimate",
+                    group,
+                )
+            )
+    return samples
+
+
+def _clipped(ratio: float) -> float:
+    low, high = CALIBRATION_RATIO_RANGE
+    return min(max(ratio, low), high)
+
+
+def _median(values: list[float]) -> float:
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    return ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def _shift_text(ratio: float) -> str:
+    return f"{(ratio - 1) * 100:+.0f} %".replace("-", "−")
+
+
+def calibration_lines(samples: list[EstimateSample], portions: dict[int, CalibrationPortion]) -> list[str]:
+    """The lines of the context block that tell DiaBot how the user corrects its
+    estimates: one per group with enough samples and a real shift. Several adds
+    to one row count as one estimate, their grams summed."""
+    grams_by_row: dict[int, tuple[float, CalibrationGroup]] = {}
+    for sample in samples:
+        total, group = grams_by_row.get(sample.portion_id, (0.0, sample.group))
+        grams_by_row[sample.portion_id] = (total + sample.grams, group)
+    amount_ratios: dict[CalibrationGroup, list[float]] = {}
+    for portion_id, (grams, group) in grams_by_row.items():
+        portion = portions.get(portion_id)
+        if portion is not None and portion.served_g > 0:
+            amount_ratios.setdefault(group, []).append(_clipped(portion.served_g / grams))
+    carbs_ratios: list[float] = []
+    for sample in samples:
+        portion = portions.get(sample.portion_id)
+        if not sample.is_quick_add or not sample.carbs_g or portion is None or portion.carbs_100g is None:
+            continue
+        carbs_ratios.append(_clipped((portion.carbs_100g / 100) / (sample.carbs_g / sample.grams)))
+
+    lines = []
+    for group in CalibrationGroup:
+        ratios = amount_ratios.get(group, [])
+        if len(ratios) < CALIBRATION_MIN_SAMPLES:
+            continue
+        ratio = _median(ratios)
+        if abs(ratio - 1) <= CALIBRATION_MIN_SHIFT:
+            continue
+        lines.append(
+            f"Calibration: the user corrects your estimated amounts {_CALIBRATION_WHAT[group]} to "
+            f"x{ratio:.2f} (median of {len(ratios)}). Scale those estimates by it and say so in a few "
+            f"words (\"{_shift_text(ratio)}, as you usually correct\")."
+        )
+    if len(carbs_ratios) >= CALIBRATION_MIN_SAMPLES:
+        ratio = _median(carbs_ratios)
+        if abs(ratio - 1) > CALIBRATION_MIN_SHIFT:
+            lines.append(
+                f"Calibration: the user corrects the carbs of your quick add estimates to x{ratio:.2f} "
+                f"(median of {len(carbs_ratios)}). Scale them by it and say so in a few words."
+            )
+    return lines

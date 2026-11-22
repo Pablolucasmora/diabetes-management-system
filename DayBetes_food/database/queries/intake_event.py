@@ -549,6 +549,25 @@ def list_consumed_intake_events(connection, user_id: int) -> list[IntakeEventRea
     return [intake_event_read_from_row(row) for row in rows]
 
 
+def list_consumed_intake_events_since(connection, user_id: int, days: int) -> list[IntakeEventRead]:
+    """The user's consumed events of the last `days` days, the latest first."""
+    rows = _execute_query_many(
+        connection,
+        f"""
+        SELECT {_INTAKE_EVENT_COLUMNS}
+        FROM intake_event
+        WHERE users_id = %(user_id)s
+          AND state = %(state)s
+          AND deleted_at IS NULL
+          AND meal_time >= CURRENT_TIMESTAMP - (%(days)s * INTERVAL '1 day')
+        ORDER BY meal_time DESC, id DESC;
+        """,
+        {"user_id": user_id, "state": IntakeEventState.CONSUMED.value, "days": max(1, int(days))},
+        commit=False,
+    )
+    return [intake_event_read_from_row(row) for row in rows]
+
+
 def update_intake_event(
     connection,
     user_id: int,

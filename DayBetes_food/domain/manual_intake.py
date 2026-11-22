@@ -10,7 +10,7 @@ normalization, subtype limit, default serving) in domain/food.py.
 from dataclasses import dataclass
 from datetime import datetime
 
-from DayBetes_food.domain.constants import AmountMethod, GlycemicIndex, MacrosSource
+from DayBetes_food.domain.constants import AmountMethod, GlycemicIndex, MacrosSource, ServingMethod
 from DayBetes_food.domain.food import FOOD_DEFAULT_PORTION_RANGE, normalize_food_text
 from DayBetes_food.domain.nutrition import NutrientValues, parse_number
 from DayBetes_food.errors import ValidationError
@@ -125,7 +125,9 @@ class ManualIntakeRead:
     macros_confidence: int | None
     macros_source: MacrosSource | None  # U1: the dish's data, read live by portions (measurement §6.11)
     default_amount_method: AmountMethod | None  # U2: copied to each new portion
+    serving_method: ServingMethod | None  # what its serving is; the + of a row copies it (§6.11)
     is_quick_add: bool
+    needs_review: bool  # provisional, made by the assistant (§11.2.2, §11.2.3)
     is_published: bool
     created_at: datetime
     updated_at: datetime
@@ -156,7 +158,10 @@ class ManualIntakeCreate:
     macros_confidence: int | None
     macros_source: MacrosSource | None
     default_amount_method: AmountMethod | None  # U2: copied to each new portion
+    serving_method: ServingMethod | None  # what its serving is; the + of a row copies it (§6.11)
     is_quick_add: bool = False
+    # Provisional: only the assistant creates it so (§8.12, §11.2.3).
+    needs_review: bool = False
 
 
 @dataclass(frozen=True)
@@ -178,6 +183,7 @@ class ManualIntakeUpdate:
     macros_confidence: int | None
     macros_source: MacrosSource | None
     default_amount_method: AmountMethod | None  # U2: copied to each new portion
+    serving_method: ServingMethod | None  # what its serving is; the + of a row copies it (§6.11)
 
 
 @dataclass(frozen=True)
@@ -197,6 +203,7 @@ class ManualIntakeRequest:
     macros_confidence: int | None
     macros_source: MacrosSource | None
     default_amount_method: AmountMethod | None  # U2: copied to each new portion
+    serving_method: ServingMethod | None  # what its serving is; the + of a row copies it (§6.11)
     favorite: bool | None  # None = field absent (edit form)
 
 
@@ -210,4 +217,5 @@ class QuickAddRequest:
     nutrients: NutrientValues  # already per 100 g (measurement §5.4)
     description: str | None  # the notes
     macros_source: MacrosSource | None = None  # U1, optional (study §6.3)
+    origin: str | None = None  # who or where made it; finds repetitions (§8.12)
     amount_method: AmountMethod | None = None  # U2 of the weight, optional

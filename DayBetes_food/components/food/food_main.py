@@ -3,10 +3,10 @@ from urllib.parse import urlencode
 
 from fasthtml.common import *
 from DayBetes_food.components.injection_zone import asset_busted
-from DayBetes_food.config import ASSISTANT_ENABLED
 from DayBetes_food.components.food.food_actions import FoodActionsModal
 from DayBetes_food.components.food.food_list import (
     Filters,
+    ReviewBanner,
     FoodView,
     FoodFiltersModal,
     MealSelector,
@@ -18,7 +18,13 @@ from DayBetes_food.components.food.food_list import (
 from DayBetes_food.components.food.recipe_add import RecipeAddModal
 
 
-def food_main(view: FoodView, events: list, plate_options: list, last_used_plate: int | None):
+def food_main(
+    view: FoodView,
+    events: list,
+    plate_options: list,
+    last_used_plate: int | None,
+    review_count: int = 0,
+):
     """The Food page, opened on `view`: its pill, tabs and filters (frontend §5, §9.3).
 
     `events` are the planned meals and `plate_options` the plates of the first
@@ -42,8 +48,9 @@ def food_main(view: FoodView, events: list, plate_options: list, last_used_plate
             id="food_menu_scrim",
             cls="fixed inset-0 z-[1] backdrop-blur-[1px] opacity-0 invisible transition-opacity duration-200",
         ),
-        QuickCreateButtons(assistant_enabled=ASSISTANT_ENABLED),
+        QuickCreateButtons(),
         SearchInput(view),
+        ReviewBanner(view, review_count),
         Filters(view),
         MealSelector(
             events,

@@ -19,7 +19,8 @@ from DayBetes_food.database.queries.crud import (
     _execute_query_many,
 )
 from DayBetes_food.domain.constants import IntakeEventState, PortionOrigin, SystemTag
-from DayBetes_food.domain.food_entry import MENTION_SUGGESTIONS_MAX, MENTION_USAGE_DAYS, MentionSuggestion
+from DayBetes_food.domain.constants import FoodEntryType
+from DayBetes_food.domain.food_entry import MENTION_SUGGESTIONS_MAX, MENTION_USAGE_DAYS, MentionSuggestion, ReviewEntry
 from DayBetes_food.domain.search_text import normalize_search_text, search_text_sql
 from DayBetes_food.domain.tag import SYSTEM_TAG_MEAL_TYPE
 from DayBetes_food.time_utils import current_timezone
@@ -427,3 +428,258 @@ def get_mention_suggestions(
     """
     rows = _execute_query_many(connection, query, params, commit=False)
     return [mention_suggestion_from_row(row) for row in rows if row]
+
+
+# Provisional foods and dishes of their owner (§8.12, §11.2.2): active only.
+_NEEDS_REVIEW_SQL = """
+    SELECT 'catalog' AS entry_type, c.id AS entry_id, c.name, COALESCE(fb.label, '') AS subtitle,
+           c.carbs_100g, c.macros_source, c.created_at,
+           EXISTS (SELECT 1 FROM user_favorites uf WHERE uf.user_id = %(user_id)s AND uf.catalog_id = c.id)
+               AS is_favorite
+    FROM catalog c LEFT JOIN food_brands fb ON fb.id = c.brand_id
+    WHERE c.created_by = %(user_id)s AND c.needs_review AND c.deleted_at IS NULL
+    UNION ALL
+    SELECT 'manual_intake', m.id, m.name, COALESCE(m.origin, ''), m.carbs_100g, m.macros_source, m.created_at,
+           EXISTS (SELECT 1 FROM user_favorites uf WHERE uf.user_id = %(user_id)s AND uf.manual_intake_id = m.id)
+    FROM manual_intake m
+    WHERE m.created_by = %(user_id)s AND m.needs_review AND m.deleted_at IS NULL
+"""
+
+
+def list_needs_review(connection, user_id: int) -> list[ReviewEntry]:
+    """The user's provisional foods and dishes, the newest first."""
+    rows = _execute_query_many(
+        connection,
+        f"SELECT * FROM ({_NEEDS_REVIEW_SQL}) entry ORDER BY entry.created_at DESC, entry.entry_id DESC;",
+        {"user_id": user_id},
+        commit=False,
+    )
+    return [
+        ReviewEntry(
+            entry_type=FoodEntryType(row["entry_type"]),
+            entry_id=int(row["entry_id"]),
+            name=row["name"],
+            subtitle=row["subtitle"] or "",
+            carbs_100g=row.get("carbs_100g"),
+            macros_source=row.get("macros_source"),
+            is_favorite=bool(row.get("is_favorite")),
+        )
+        for row in rows
+    ]
+
+
+def count_needs_review(connection, user_id: int) -> int:
+    """How many provisional foods and dishes the user has (Home, Food, island)."""
+    row = _execute_query(
+        connection,
+        f"SELECT count(*) AS pending FROM ({_NEEDS_REVIEW_SQL}) entry;",
+        {"user_id": user_id},
+        commit=False,
+    )
+    return int(row["pending"]) if row else 0
+
+
+# The columns that point at a food or a dish, by entry type: the arc of each table.
+_ENTRY_COLUMN = {FoodEntryType.CATALOG: "catalog_id", FoodEntryType.MANUAL_INTAKE: "manual_intake_id"}
+
+
+def count_cooked_weight_portions(connection, entry_type: FoodEntryType, entry_id: int) -> int:
+    """Portions of this food weighed cooked: only a catalog food has a cooking factor."""
+    column = _ENTRY_COLUMN[entry_type]
+    row = _execute_query(
+        connection,
+        f"SELECT count(*) AS cooked FROM portion_detail WHERE {column} = %(entry_id)s AND is_cooked_weight;",
+        {"entry_id": entry_id},
+        commit=False,
+    )
+    return int(row["cooked"]) if row else 0
+
+
+def move_entry_references(
+    connection, user_id: int, source: tuple[FoodEntryType, int], target: tuple[FoodEntryType, int]
+) -> None:
+    """Point the portions, favorites and tags of one provisional entry at another
+    (code_conventions.md §8.12, "Alimentos provisionales"), inside the caller's
+    transaction. A provisional entry is personal: only its owner's rows point at it."""
+    source_column, target_column = _ENTRY_COLUMN[source[0]], _ENTRY_COLUMN[target[0]]
+    params = {"source_id": source[1], "target_id": target[1], "user_id": user_id}
+    for table, owner in (("portion_detail", None), ("user_favorites", "user_id"), ("linked_tags", "users_id")):
+        owned = f" AND {owner} = %(user_id)s" if owner else ""
+        _execute_query(
+            connection,
+            f"UPDATE {table} SET {source_column} = NULL, {target_column} = %(target_id)s "
+            f"WHERE {source_column} = %(source_id)s{owned} RETURNING 1;",
+            params,
+            commit=False,
+        )
+
+
+def delete_provisional_entry(connection, user_id: int, entry_type: FoodEntryType, entry_id: int) -> bool:
+    """Delete a provisional entry of the user once nothing points at it. False if
+    it is not theirs or no longer provisional."""
+    table = "catalog" if entry_type is FoodEntryType.CATALOG else "manual_intake"
+    row = _execute_query(
+        connection,
+        f"DELETE FROM {table} WHERE id = %(entry_id)s AND created_by = %(user_id)s AND needs_review RETURNING id;",
+        {"entry_id": entry_id, "user_id": user_id},
+        commit=False,
+    )
+    return row is not None
+
+
+def get_usual_amounts(
+    connection, user_id: int, catalog_ids: list[int], manual_intake_ids: list[int], days: int
+) -> dict[tuple[str, int], tuple[str, float]]:
+    """(entry_type, id) -> (name, median grams eaten) of those foods in the user's
+    confirmed meals of the last `days` days (frontend §9.11, "Usual now").
+    Archived foods and quick adds are left out."""
+    rows = _execute_query_many(
+        connection,
+        """
+        SELECT 'catalog' AS entry_type, pd.catalog_id AS entry_id, c.name,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY pd.amount) AS grams
+        FROM portion_detail pd
+        JOIN intake_event ie ON ie.id = pd.intake_event_id
+        JOIN catalog c ON c.id = pd.catalog_id
+        WHERE ie.users_id = %(user_id)s
+          AND ie.state = %(state)s
+          AND ie.deleted_at IS NULL
+          AND c.deleted_at IS NULL
+          AND pd.catalog_id = ANY(%(catalog_ids)s)
+          AND ie.meal_time >= CURRENT_TIMESTAMP - (%(days)s * INTERVAL '1 day')
+        GROUP BY pd.catalog_id, c.name
+        UNION ALL
+        SELECT 'manual_intake', pd.manual_intake_id, im.name,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY pd.amount)
+        FROM portion_detail pd
+        JOIN intake_event ie ON ie.id = pd.intake_event_id
+        JOIN manual_intake im ON im.id = pd.manual_intake_id
+        WHERE ie.users_id = %(user_id)s
+          AND ie.state = %(state)s
+          AND ie.deleted_at IS NULL
+          AND im.deleted_at IS NULL
+          AND NOT im.is_quick_add
+          AND pd.manual_intake_id = ANY(%(manual_intake_ids)s)
+          AND ie.meal_time >= CURRENT_TIMESTAMP - (%(days)s * INTERVAL '1 day')
+        GROUP BY pd.manual_intake_id, im.name;
+        """,
+        {
+            "user_id": user_id,
+            "state": IntakeEventState.CONSUMED.value,
+            "catalog_ids": catalog_ids,
+            "manual_intake_ids": manual_intake_ids,
+            "days": max(1, int(days)),
+        },
+        commit=False,
+    )
+    return {(row["entry_type"], int(row["entry_id"])): (row["name"], float(row["grams"])) for row in rows}
+
+
+def get_usual_preparation(
+    connection, user_id: int, catalog_ids: list[int], manual_intake_ids: list[int], days: int
+) -> dict[tuple[str, int], dict[str, str]]:
+    """(origin, id) -> {field: the value set most often} of the preparation fields
+    of those foods in the user's confirmed meals of the last `days` days (§8.12,
+    "Preparación con un toque"). A field never set is left out."""
+    rows = _execute_query_many(
+        connection,
+        """
+        SELECT CASE WHEN pd.catalog_id IS NOT NULL THEN 'catalog' ELSE 'manual_intake' END AS origin,
+               COALESCE(pd.catalog_id, pd.manual_intake_id) AS origin_id,
+               mode() WITHIN GROUP (ORDER BY pd.cooking) FILTER (WHERE pd.cooking IS NOT NULL) AS cooking,
+               mode() WITHIN GROUP (ORDER BY pd.final_state) FILTER (WHERE pd.final_state IS NOT NULL) AS final_state,
+               mode() WITHIN GROUP (ORDER BY pd.conservation)
+                   FILTER (WHERE pd.conservation IS NOT NULL) AS conservation
+        FROM portion_detail pd
+        JOIN intake_event ie ON ie.id = pd.intake_event_id
+        WHERE ie.users_id = %(user_id)s
+          AND ie.state = %(state)s
+          AND ie.deleted_at IS NULL
+          AND (pd.catalog_id = ANY(%(catalog_ids)s) OR pd.manual_intake_id = ANY(%(manual_intake_ids)s))
+          AND ie.meal_time >= CURRENT_TIMESTAMP - (%(days)s * INTERVAL '1 day')
+        GROUP BY 1, 2;
+        """,
+        {
+            "user_id": user_id,
+            "state": IntakeEventState.CONSUMED.value,
+            "catalog_ids": catalog_ids,
+            "manual_intake_ids": manual_intake_ids,
+            "days": max(1, int(days)),
+        },
+        commit=False,
+    )
+    return {
+        (row["origin"], int(row["origin_id"])): {
+            name: row[name] for name in ("cooking", "final_state", "conservation") if row[name] is not None
+        }
+        for row in rows
+    }
+
+
+def list_entry_portions(connection, entry_type: FoodEntryType, entry_id: int) -> list[dict]:
+    """Every portion of one food or dish, wherever it is (a meal, a tupper or a
+    recipe), with what turning it into a quick add needs (§8.12)."""
+    column = _ENTRY_COLUMN[entry_type]
+    return _execute_query_many(
+        connection,
+        f"""
+        SELECT id, intake_event_id, amount, amount_method, is_cooked_weight
+        FROM portion_detail WHERE {column} = %(entry_id)s ORDER BY id;
+        """,
+        {"entry_id": entry_id},
+        commit=False,
+    )
+
+
+def point_portion_at_dish(connection, portion_id: int, source_type: FoodEntryType, manual_intake_id: int) -> None:
+    """Point one portion at another dish, inside the caller's transaction."""
+    column = _ENTRY_COLUMN[source_type]
+    _execute_query(
+        connection,
+        f"UPDATE portion_detail SET {column} = NULL, manual_intake_id = %(manual_intake_id)s "
+        "WHERE id = %(portion_id)s RETURNING 1;",
+        {"portion_id": portion_id, "manual_intake_id": manual_intake_id},
+        commit=False,
+    )
+
+
+def get_time_weighted_food_usage(connection, user_id: int, days: int, spread_minutes: int) -> list[dict]:
+    """Foods of the user's confirmed meals of the last `days` days, scored by how
+    close to this time of day each was eaten (frontend §9.11, "Usual now"): every
+    meal adds exp(-(distance / spread)²), 1 at this very time, about 0.6 at one
+    spread away and almost nothing at three. The highest score first."""
+    return _execute_query_many(
+        connection,
+        """
+        WITH base AS (
+            SELECT
+                CASE WHEN pd.catalog_id IS NOT NULL THEN 'catalog' ELSE 'manual_intake' END AS entry_type,
+                COALESCE(pd.catalog_id, pd.manual_intake_id) AS entry_id,
+                ABS(
+                    (EXTRACT(HOUR FROM (ie.meal_time AT TIME ZONE %(app_timezone)s)) * 60
+                     + EXTRACT(MINUTE FROM (ie.meal_time AT TIME ZONE %(app_timezone)s)))
+                    - (EXTRACT(HOUR FROM (CURRENT_TIMESTAMP AT TIME ZONE %(app_timezone)s)) * 60
+                       + EXTRACT(MINUTE FROM (CURRENT_TIMESTAMP AT TIME ZONE %(app_timezone)s)))
+                ) AS raw_distance
+            FROM portion_detail pd
+            JOIN intake_event ie ON ie.id = pd.intake_event_id
+            WHERE ie.users_id = %(user_id)s
+              AND ie.state = %(state)s
+              AND ie.deleted_at IS NULL
+              AND ie.meal_time >= CURRENT_TIMESTAMP - (%(days)s * INTERVAL '1 day')
+        )
+        SELECT entry_type, entry_id,
+               SUM(EXP(-POWER(LEAST(raw_distance, 1440 - raw_distance) / %(spread)s, 2))) AS score
+        FROM base
+        GROUP BY entry_type, entry_id
+        ORDER BY score DESC, entry_type, entry_id;
+        """,
+        {
+            "user_id": user_id,
+            "days": max(1, int(days)),
+            "spread": float(max(1, int(spread_minutes))),
+            "app_timezone": current_timezone().key,
+            "state": IntakeEventState.CONSUMED.value,
+        },
+        commit=False,
+    )

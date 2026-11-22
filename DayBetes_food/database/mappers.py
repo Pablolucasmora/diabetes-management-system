@@ -10,6 +10,7 @@ from DayBetes_food.domain.catalog import CatalogItemRead
 from DayBetes_food.domain.ciqual_food import CiqualFoodRead
 from DayBetes_food.domain.constants import (
     AmountMethod,
+    FractionMethod,
     AssistantRole,
     AssistantTurnStatus,
     MacrosSource,
@@ -32,6 +33,7 @@ from DayBetes_food.domain.constants import (
     Ripeness,
     StorageLocation,
     SystemTag,
+    ServingMethod,
 )
 from DayBetes_food.domain.food_entry import MentionSuggestion
 from DayBetes_food.domain.fridge import FridgeMoveRead, FridgeRead
@@ -184,7 +186,9 @@ def catalog_item_read_from_row(row: dict) -> CatalogItemRead:
             cooking_factor=row.get("cooking_factor"),
             macros_source=_enum_from_row(row, "macros_source", MacrosSource),
             default_amount_method=_enum_from_row(row, "default_amount_method", AmountMethod),
+            serving_method=_enum_from_row(row, "serving_method", ServingMethod),
             macros_confidence=row.get("macros_confidence"),
+            needs_review=bool(row.get("needs_review")),
             is_published=bool(row["is_published"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -231,7 +235,9 @@ def manual_intake_read_from_row(row: dict) -> ManualIntakeRead:
             macros_confidence=row.get("macros_confidence"),
             macros_source=_enum_from_row(row, "macros_source", MacrosSource),
             default_amount_method=_enum_from_row(row, "default_amount_method", AmountMethod),
+            serving_method=_enum_from_row(row, "serving_method", ServingMethod),
             is_quick_add=bool(row["is_quick_add"]),
+            needs_review=bool(row.get("needs_review")),
             is_published=bool(row["is_published"]),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -374,6 +380,7 @@ def intake_plate_read_from_row(row: dict) -> IntakePlateRead:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             eaten_fraction=row.get("eaten_fraction"),
+            eaten_fraction_method=_enum_from_row(row, "eaten_fraction_method", FractionMethod),
         )
     except KeyError as exc:
         raise InfrastructureError(f"Missing required field {exc} in intake plate row") from exc
@@ -479,6 +486,7 @@ def portion_detail_read_from_row(row: dict) -> PortionDetailRead:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             source=source,
+            split_method=_enum_from_row(row, "split_method", FractionMethod),
         )
     except KeyError as exc:
         raise InfrastructureError(f"Missing required field {exc} in portion_detail row") from exc

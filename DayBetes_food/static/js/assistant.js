@@ -10,9 +10,9 @@
 // Up to four photos, each reduced here before it is sent (§8.12, cost). The composer is
 // cleared only after a successful send: on an error the toast explains it and
 // the message stays to send again.
-// Add to: what was chosen last is kept in sessionStorage for this tab's session
-// and chosen again when the page opens without a meal or conversation in its
-// URL (§9.11). Nothing goes to localStorage and no field takes the focus on its own.
+// The meal of the chat travels in the bar's hidden `intake_event_id`; the list
+// of chats loads the page with each chat's URL (§9.11). Nothing goes to
+// browser storage and no field takes the focus on its own.
 (function () {
   if (window.__dbAssistantBootstrapped) return;
   window.__dbAssistantBootstrapped = true;
@@ -400,8 +400,51 @@
     event.target.value = "";
   });
 
-  // Sending: only the button sends (Enter is a line break, §9.11). A send while
-  // a photo is being prepared waits for it.
+  // Sending (§9.11): the button, or Enter on a computer; Shift+Enter is a line
+  // break there, and on a phone Enter is always a line break. A send while a
+  // photo is being prepared waits for it.
+  var POINTER_FINE = window.matchMedia ? window.matchMedia("(hover: hover) and (pointer: fine)") : null;
+
+  document.addEventListener("keydown", function (event) {
+    if (event.target !== input() || event.key !== "Enter") return;
+    if (event.shiftKey || event.isComposing || !(POINTER_FINE && POINTER_FINE.matches)) return;
+    // With the `/` list open, Enter picks a food (handled below).
+    if (isOpen() && options().length) return;
+    event.preventDefault();
+    var send = byId("assistant_send");
+    var form = byId("assistant_composer");
+    if (send && !send.disabled && form) form.requestSubmit(send);
+  });
+
+  // The message shows in the chat as soon as it is sent (§9.11), and the box
+  // empties; on a failed send it goes back to the box to send again.
+  var sentDraft = null;
+
+  function pendingBubble(text, photoCount) {
+    var bubble = document.createElement("div");
+    bubble.setAttribute("data-pending-turn", "true");
+    bubble.className =
+      "self-end max-w-[85%] rounded-2xl rounded-br-md bg-control border border-line px-3 py-2 flex flex-col gap-1 db_pending_turn";
+    if (photoCount) {
+      var pill = document.createElement("span");
+      pill.className = "inline-block text-[11px] rounded-full bg-white/70 border border-line px-2 py-0.5 w-fit";
+      pill.textContent = photoCount === 1 ? "Photo" : photoCount + " photos";
+      bubble.appendChild(pill);
+    }
+    if (text) {
+      var p = document.createElement("p");
+      p.className = "text-sm whitespace-pre-wrap break-words";
+      p.textContent = text;
+      bubble.appendChild(p);
+    }
+    return bubble;
+  }
+
+  function removePendingBubble() {
+    var pending = document.querySelector("[data-pending-turn]");
+    if (pending) pending.remove();
+  }
+
   document.addEventListener("htmx:beforeRequest", function (event) {
     var form = byId("assistant_composer");
     if (!form || event.detail.elt !== form) return;
@@ -411,6 +454,70 @@
     }
     close();
     syncHidden();
+    setThinkingFailed(false);
+    // The request already holds the text and the mentions (htmx:configRequest
+    // runs first), so the box can empty now.
+    var el = input();
+    sentDraft = { text: el ? el.value : "", mentions: mentions.slice() };
+    var thread = byId("assistant_thread");
+    if (thread) {
+      removePendingBubble();
+      var intro = thread.querySelector("[data-intro]");
+      if (intro) intro.remove();
+      thread.appendChild(pendingBubble(sentDraft.text.trim(), photos.length));
+      scrollToLatest();
+    }
+    if (el) el.value = "";
+    mentions = [];
+    renderChips();
+    autoGrow();
+    Array.prototype.forEach.call(document.querySelectorAll("[data-quick-replies], [data-usual-row]"), function (row) {
+      row.remove();
+    });
+  });
+
+  // Quick answers (§9.11): a tap sends the option as the user's message. They
+  // belong to the latest question only, so any send takes them away.
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest && event.target.closest("[data-quick-reply]");
+    if (!button) return;
+    var el = input();
+    var form = byId("assistant_composer");
+    var send = byId("assistant_send");
+    if (!el || !form || !send) return;
+    el.value = button.getAttribute("data-quick-reply");
+    updateSend();
+    if (!send.disabled) form.requestSubmit(send);
+  });
+
+  // "Usual now" (§9.11): a tap writes `/Name 150 g` as a mention, at the end of
+  // the box, so several can go in one message.
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest && event.target.closest("[data-usual-id]");
+    if (!button) return;
+    var el = input();
+    if (!el) return;
+    var type = button.getAttribute("data-usual-type");
+    var id = parseInt(button.getAttribute("data-usual-id"), 10);
+    var name = button.getAttribute("data-usual-name") || "";
+    var grams = button.getAttribute("data-usual-grams") || "";
+    if (!type || !id || !name) return;
+    var text = el.value.replace(/\s+$/, "");
+    el.value = (text ? text + ", " : "") + "/" + name + " " + grams + " g";
+    var exists = mentions.some(function (m) {
+      return m.type === type && m.id === id;
+    });
+    if (!exists) mentions.push({ type: type, id: id, name: name });
+    renderChips();
+    syncHidden();
+    autoGrow();
+    updateSend();
+  });
+
+  // The answer brings the message again, in its turn: the pending one goes.
+  document.addEventListener("htmx:beforeSwap", function (event) {
+    var form = byId("assistant_composer");
+    if (form && event.detail.elt === form) removePendingBubble();
   });
 
   // The photos travel as repeated `photo` parts of the multipart body.
@@ -429,9 +536,23 @@
     var form = byId("assistant_composer");
     if (!form || event.detail.elt !== form) return;
     if (event.detail.successful) {
+      sentDraft = null;
       resetComposer();
+      // The answer comes later, in its own block: the face turns normal then.
       scrollToLatest();
       return;
+    }
+    setThinkingFailed(true);
+    removePendingBubble();
+    if (sentDraft) {
+      var el = input();
+      if (el && !el.value) el.value = sentDraft.text;
+      if (!mentions.length) mentions = sentDraft.mentions;
+      sentDraft = null;
+      renderChips();
+      syncHidden();
+      autoGrow();
+      updateSend();
     }
     // A failed send may have done part of its work before failing (the rounds
     // already stored, code_conventions.md §8.12): reload the conversation so
@@ -439,12 +560,41 @@
     reloadThread();
   });
 
+  // ---- DiaBot's avatar (§9.11) ----
+
+  // A failed send keeps the thinking row with the confused face until the next send.
+  function setThinkingFailed(failed) {
+    var row = byId("assistant_thinking");
+    if (!row) return;
+    row.classList.toggle("db_failed", failed);
+    var avatar = row.querySelector("[data-avatar]");
+    if (avatar) avatar.setAttribute("data-avatar", failed ? "confused" : "thinking");
+  }
+
+  // The new turn's avatar starts on the thinking face and turns normal, so the
+  // face changes in place of the thinking row instead of jumping.
+  function arriveNormal() {
+    var thread = byId("assistant_thread");
+    var avatars = thread ? thread.querySelectorAll("[data-avatar]") : [];
+    var avatar = avatars[avatars.length - 1];
+    if (!avatar) return;
+    avatar.setAttribute("data-avatar", "thinking");
+    void avatar.offsetWidth;
+    requestAnimationFrame(function () {
+      avatar.setAttribute("data-avatar", "normal");
+    });
+  }
   // A message answered in the background (code_conventions.md §8.12): its block
   // asks every 2 s and is replaced by the answer, or by the failed block.
   document.addEventListener("htmx:afterRequest", function (event) {
     var elt = event.detail && event.detail.elt;
     if (!elt || !elt.id || elt.id.indexOf("assistant_turn_") !== 0) return;
-    if (event.detail.xhr && event.detail.xhr.status === 200) setTimeout(scrollToLatest, 0);
+    if (event.detail.xhr && event.detail.xhr.status === 200) {
+      setTimeout(function () {
+        scrollToLatest();
+        arriveNormal();
+      }, 0);
+    }
   });
 
   // A failed message stored nothing: its text goes back to an empty composer
@@ -478,47 +628,9 @@
     });
   }
 
-  // Add to (§9.11): remember the choice, and show `New chat` only for `No meal`.
-  var CHOICE_KEY = "assistant_add_to";
-
+  // The meal of the chat (§9.11): the bar's hidden field, a meal id, `none` or empty.
   function mealSelect() {
     return byId("assistant_meal");
-  }
-
-  function rememberChoice() {
-    var select = mealSelect();
-    if (!select) return;
-    try {
-      window.sessionStorage.setItem(CHOICE_KEY, select.value);
-    } catch (_) {}
-  }
-
-  function syncNewChat() {
-    var select = mealSelect();
-    var button = byId("assistant_new_chat");
-    if (select && button) button.classList.toggle("hidden", select.value !== "none");
-  }
-
-  function restoreChoice() {
-    var select = mealSelect();
-    if (!select) return;
-    var params = new URLSearchParams(window.location.search);
-    if (params.get("intake_event_id") !== null || params.get("conversation_id") !== null) {
-      rememberChoice();
-      return;
-    }
-    var stored = null;
-    try {
-      stored = window.sessionStorage.getItem(CHOICE_KEY);
-    } catch (_) {}
-    var exists = Array.prototype.some.call(select.options, function (option) {
-      return option.value === stored;
-    });
-    if (stored === null || !exists || stored === select.value) return;
-    select.value = stored;
-    syncNewChat();
-    // htmx loads that conversation, as a change by hand does.
-    select.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
   // The cart opens at the top of the chosen meal's card, so its time and name
@@ -543,21 +655,7 @@
     );
   };
 
-  document.addEventListener("change", function (event) {
-    if (event.target !== mealSelect()) return;
-    rememberChoice();
-    syncNewChat();
-  });
-
-  // A meal created by the first add comes back chosen, out of band.
-  document.addEventListener("htmx:oobAfterSwap", function (event) {
-    if (event.detail && event.detail.target && event.detail.target.id === "assistant_meal_box") {
-      rememberChoice();
-      syncNewChat();
-    }
-  });
-
-  // A meal chosen in Add to opens its conversation: show its end.
+  // A reloaded conversation shows its end.
   document.addEventListener("htmx:afterSwap", function (event) {
     if (event.detail && event.detail.target && event.detail.target.id === "assistant_thread_box") scrollToLatest();
   });
@@ -594,6 +692,19 @@
       if (el) el.focus();
       return;
     }
+    // A card that asks the assistant something on a tap (Save as recipe, §9.11).
+    var promptButton = event.target.closest && event.target.closest("[data-assistant-prompt]");
+    if (promptButton) {
+      var field = input();
+      var form = byId("assistant_composer");
+      if (!field || !form) return;
+      field.value = promptButton.getAttribute("data-assistant-prompt");
+      autoGrow();
+      updateSend();
+      promptButton.disabled = true;
+      form.requestSubmit();
+      return;
+    }
     var removePhotoButton = event.target.closest && event.target.closest("[data-assistant-remove-photo]");
     if (removePhotoButton) {
       removePhoto(parseInt(removePhotoButton.getAttribute("data-assistant-remove-photo"), 10));
@@ -610,8 +721,10 @@
 
   // Keep the focus in the text box when a row is pressed, so the phone
   // keyboard does not close and reopen.
+  // The same for a +1 chip and its menu: the keyboard closing mid-press moved the
+  // composer under the finger.
   document.addEventListener("mousedown", function (event) {
-    if (event.target.closest && event.target.closest("#assistant_mentions [role='option']")) event.preventDefault();
+    if (event.target.closest && event.target.closest("#assistant_mentions [role='option'], [data-plus-url], #assistant_plus_menu")) event.preventDefault();
   });
 
   // After a query with a space stops matching, the `/` stays as plain text.
@@ -637,7 +750,6 @@
     autoGrow();
     updateSend();
     scrollToLatest();
-    restoreChoice();
   });
 
   // A new page of the assistant starts with no mentions.
@@ -647,10 +759,142 @@
       activeSlash = -1;
       dismissedSlash = -1;
       lastQuery = null;
+      mealExpanded = false;
       autoGrow();
       updateSend();
       scrollToLatest();
-      restoreChoice();
     }
+  });
+
+  // ---- The meal's foods (§9.11) ----
+  // Folded into one line as soon as they take more than their share of the chat's
+  // height (data-meal-fold), with two foods or more; opened only while the user
+  // wants, also across the bar's swaps after each message.
+  var mealExpanded = false;
+
+  function fitMealFoods() {
+    var details = document.querySelector("[data-meal-fold]");
+    if (!details) return;
+    var rows = details.querySelector("[data-meal-rows]");
+    if (!rows) return;
+    var share = parseFloat(details.getAttribute("data-meal-fold")) || 0.1;
+    details.removeAttribute("data-foldable");
+    details.open = true;
+    var count = parseInt(rows.getAttribute("data-meal-count"), 10) || 0;
+    var foldable = count > 1 && rows.offsetHeight > window.innerHeight * share;
+    if (foldable) details.setAttribute("data-foldable", "");
+    details.open = !foldable || mealExpanded;
+  }
+
+  document.addEventListener("click", function (event) {
+    var toggle = event.target.closest && event.target.closest("[data-meal-fold-toggle]");
+    if (!toggle) return;
+    var details = toggle.closest("[data-meal-fold]");
+    if (details) mealExpanded = !details.open;
+  });
+
+  document.addEventListener("htmx:afterSettle", fitMealFoods);
+  document.addEventListener("DOMContentLoaded", fitMealFoods);
+  window.addEventListener("resize", function () {
+    clearTimeout(fitMealFoods.timer);
+    fitMealFoods.timer = setTimeout(fitMealFoods, 150);
+  });
+
+  // ---- +1 buttons (§9.11) ----
+  // A tap adds one more at once, without the assistant. Held 500 ms (as a Food
+  // row, §9.3.1), a small menu offers +½, +2 and −1 (−1 only with more than one).
+
+  var PLUS_HOLD_MS = 500;
+  var plusTimer = null;
+  var plusHeld = false;
+
+  function plusRow() {
+    return byId("assistant_plus_row");
+  }
+
+  function sendPlus(chip, step) {
+    var row = plusRow();
+    if (!chip || !row || !window.htmx) return;
+    closePlusMenu();
+    chip.disabled = true;
+    window.htmx.ajax("POST", chip.getAttribute("data-plus-url"), {
+      target: "#assistant_plus_row",
+      swap: "outerHTML",
+      values: { step: String(step), conversation_id: row.getAttribute("data-conversation-id") || "" },
+    }).then(function () {
+      chip.disabled = false;
+    });
+  }
+
+  function closePlusMenu() {
+    var menu = byId("assistant_plus_menu");
+    if (menu) menu.remove();
+  }
+
+  function openPlusMenu(chip) {
+    closePlusMenu();
+    var count = parseFloat(chip.getAttribute("data-plus-count") || "0");
+    var menu = document.createElement("div");
+    menu.id = "assistant_plus_menu";
+    menu.setAttribute("role", "menu");
+    menu.className = "absolute bottom-full mb-2 z-50 flex gap-1 rounded-2xl bg-white border border-line shadow-lg p-1";
+    [["+½", 0.5], ["+2", 2], ["−1", -1]].forEach(function (pair) {
+      if (pair[1] < 0 && count <= 1) return;
+      var item = document.createElement("button");
+      item.type = "button";
+      item.setAttribute("role", "menuitem");
+      item.className = "web_button rounded-full px-3 py-1.5 text-xs";
+      item.textContent = pair[0];
+      item.addEventListener("click", function (event) {
+        event.stopPropagation();
+        sendPlus(chip, pair[1]);
+      });
+      menu.appendChild(item);
+    });
+    // The wrapper is sticky, which already places the menu: setting it relative
+    // unstuck the composer and made it jump up.
+    var wrapper = plusRow() && plusRow().parentElement;
+    if (!wrapper) return;
+    wrapper.appendChild(menu);
+    var left = chip.getBoundingClientRect().left - wrapper.getBoundingClientRect().left;
+    var maxLeft = wrapper.clientWidth - menu.offsetWidth;
+    menu.style.left = Math.max(0, Math.min(left, maxLeft)) + "px";
+    if (navigator.vibrate) navigator.vibrate(10);
+  }
+
+  document.addEventListener("pointerdown", function (event) {
+    var chip = event.target.closest && event.target.closest("[data-plus-url]");
+    if (!chip) return;
+    plusHeld = false;
+    clearTimeout(plusTimer);
+    plusTimer = setTimeout(function () {
+      plusHeld = true;
+      openPlusMenu(chip);
+    }, PLUS_HOLD_MS);
+  });
+
+  ["pointerup", "pointercancel", "pointerleave"].forEach(function (name) {
+    document.addEventListener(name, function () {
+      clearTimeout(plusTimer);
+    }, true);
+  });
+
+  document.addEventListener("click", function (event) {
+    var chip = event.target.closest && event.target.closest("[data-plus-url]");
+    if (!chip) {
+      if (!(event.target.closest && event.target.closest("#assistant_plus_menu"))) closePlusMenu();
+      return;
+    }
+    event.preventDefault();
+    if (plusHeld) {
+      plusHeld = false;
+      return;
+    }
+    sendPlus(chip, 1);
+  });
+
+  // Holding a chip selects no text and opens no iOS callout.
+  document.addEventListener("contextmenu", function (event) {
+    if (event.target.closest && event.target.closest("[data-plus-url]")) event.preventDefault();
   });
 })();

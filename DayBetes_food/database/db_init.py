@@ -43,6 +43,7 @@ from DayBetes_food.database.bootstrap.insulin import (
     _ensure_insulin_injections_schema,
     _ensure_insulin_pen_schema,
 )
+from DayBetes_food.database.bootstrap.menu import _ensure_menu_schema
 from DayBetes_food.database.bootstrap.assistant import (
     _ensure_assistant_schema,
 )
@@ -85,6 +86,7 @@ def init_db():
             # After intake_event, which a conversation references.
             DBSchema.assistant_conversation,
             DBSchema.assistant_message(),
+            DBSchema.menu_item,
             DBSchema.assistant_photo(),
             DBSchema.assistant_turn,
         ]
@@ -125,6 +127,7 @@ def init_db():
         # After portion_detail: it adds source_fridge_id there.
         _ensure_fridge_schema(cur)
         _ensure_assistant_schema(cur)
+        _ensure_menu_schema(cur)
         _remove_legacy_user_sessions(cur)
         _remove_legacy_user_hidden_catalog(cur)
         _remove_legacy_user_columns(cur)

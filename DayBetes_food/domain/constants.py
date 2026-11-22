@@ -174,10 +174,12 @@ class PrefillSource(str, Enum):
 @unique
 class AssistantRole(str, Enum):
     """Author of a stored message of the assistant (code_conventions.md §11.2.9):
-    the same two roles as the Claude API. A `user` row is what the user sent
-    or the results of the tools; an `assistant` row is one answer of the model."""
+    roles of the Claude API. A `user` row is what the user sent or the results
+    of the tools; an `assistant` row is one answer of the model; a `system` row
+    only changes the effort from there on (§8.12, "Modo rápido")."""
     USER = "user"
     ASSISTANT = "assistant"
+    SYSTEM = "system"
 
 
 @unique
@@ -281,15 +283,36 @@ class AmountMethod(str, Enum):
     KITCHEN_SCALE = "kitchen_scale"
     POCKET_SCALE = "pocket_scale"
     PACKAGE = "package"
+    USUAL_AMOUNT = "usual_amount"
     HOUSEHOLD = "household"
     EYEBALL = "eyeball"
     AI_ESTIMATE = "ai_estimate"
+
+
+@unique
+class ServingMethod(str, Enum):
+    """What a food's serving (`default_portion`) is, as U2 codes (study_conventions.md
+    §6.3, decision 2026-11-21): the `amount_method` that the + of its row gives
+    the portion (measurement_conventions.md §6.11). None = not said: `usual_amount`."""
+
+    PACKAGE = AmountMethod.PACKAGE.value
+    USUAL_AMOUNT = AmountMethod.USUAL_AMOUNT.value
 
 
 # Measured amounts: the ones amount_confidence counts (measurement_conventions.md §6.4).
 WEIGHED_AMOUNT_METHODS = frozenset(
     {AmountMethod.KITCHEN_SCALE, AmountMethod.POCKET_SCALE, AmountMethod.PACKAGE}
 )
+
+
+@unique
+class FractionMethod(str, Enum):
+    """How a fraction that split an amount was obtained (study_conventions.md
+    §6.3, decision 2026-11-21): what was eaten of a plate, and the splits between
+    a plate and the fridge. The amount it splits keeps its own `amount_method`."""
+
+    EYEBALL = "eyeball"   # estimated by eye, even when typed from a weighed total
+    WEIGHED = "weighed"   # both sides of the split weighed
 
 
 @unique
@@ -309,6 +332,17 @@ class KeepPartMode(str, Enum):
     goes to the fridge after cooking (measurement_conventions.md §4.8.5)."""
     PERCENT = "percent"   # % of the ingredient that stays on the plate
     WEIGHED = "weighed"   # the cooked total and what was plated, both weighed
+
+
+@unique
+class MenuSection(str, Enum):
+    """Section of a dish read from a restaurant menu (code_conventions.md §11.2.12)."""
+    STARTER = "starter"
+    MAIN = "main"
+    SIDE = "side"
+    DESSERT = "dessert"
+    DRINK = "drink"
+    OTHER = "other"
 
 
 @unique

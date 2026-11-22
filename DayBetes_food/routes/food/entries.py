@@ -1,5 +1,8 @@
 """Foods and dishes of the user (`catalog`, `manual_intake`): create, edit, copy, archive, publish and quick add (code_conventions.md §11.2.2, §11.2.3)."""
 
+import json
+from urllib.parse import urlencode
+
 from fasthtml.common import *
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.services.plate_selector import plate_selector_options
@@ -7,6 +10,7 @@ from DayBetes_food.components.ui import render_page
 from DayBetes_food.http_errors import app_error_response, request_id
 from DayBetes_food.config import ASSISTANT_ENABLED
 from DayBetes_food.domain.assistant import DRAFT_MACROS_SOURCE
+from DayBetes_food.domain.food_entry import EDIT_RETURN_REVIEW
 from DayBetes_food.services.intake_event import add_quick_add_to_meal, resolve_target_event
 from DayBetes_food.database.queries import (
     create_catalog_item,
@@ -36,6 +40,7 @@ from DayBetes_food.database.queries import (
 from DayBetes_food.domain.constants import (
     PathId,
     PrefillSource,
+    FoodCategory,
     FoodEntryType,
     PortionOrigin,
     parse_optional_id,
@@ -65,6 +70,7 @@ from DayBetes_food.components.food.food_forms import (
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.domain.constants import AssistantDraftSource
 from DayBetes_food.services.recipe import copy_recipe
+from DayBetes_food.services.provisional import convert_provisional, make_quick_add
 from DayBetes_food.errors import (
     AuthenticationError,
     AuthorizationError,
@@ -74,6 +80,8 @@ from DayBetes_food.errors import (
     ValidationError,
 )
 from DayBetes_food.routes.food.helpers import (
+    edit_return_path,
+    parse_edit_return,
     _ASSISTANT_DRAFT_NOTES,
     _UNKNOWN_ENTRY_TYPE,
     _add_ingredient,
@@ -293,6 +301,7 @@ def setup_entries_routes(rt):
                             cooking_factor=source.cooking_factor,
                             macros_source=source.macros_source,
                             default_amount_method=source.default_amount_method,
+                            serving_method=source.serving_method,
                             macros_confidence=source.macros_confidence,
                         ),
                         commit=False,
@@ -342,6 +351,7 @@ def setup_entries_routes(rt):
                             macros_confidence=source.macros_confidence,
                             macros_source=source.macros_source,
                             default_amount_method=source.default_amount_method,
+                            serving_method=source.serving_method,
                         ),
                         commit=False,
                     )
@@ -378,8 +388,61 @@ def setup_entries_routes(rt):
                 return app_error_response(request, error, str(error))
         return HTMLResponse("", headers={"HX-Redirect": f"/food/edit/recipe/{created_id}/form"})
 
+    @rt("/food/convert/{entry_type}/{entry_id}")
+    def post(request: Request, entry_type: str, entry_id: PathId, category: str = "", return_to: str = ""):
+        """A provisional food becomes a dish, or the other way round (code_conventions.md
+        §8.12): the form of the new one opens, still to review."""
+        kind = _parse_food_entry_type(entry_type)
+        if kind not in (FoodEntryType.CATALOG, FoodEntryType.MANUAL_INTAKE):
+            raise ValidationError(_UNKNOWN_ENTRY_TYPE, fields={"entry_type": "invalid"})
+        user_id = get_current_user_id()
+        if not user_id:
+            raise AuthenticationError("Your session has expired.")
+        food_category = None
+        if kind is FoodEntryType.MANUAL_INTAKE:
+            try:
+                food_category = FoodCategory((category or "").strip())
+            except ValueError:
+                return app_error_response(request, ValidationError, "Choose the category of the food.")
+        try:
+            with get_connection() as connection:
+                new_type, new_id = convert_provisional(connection, int(user_id), kind, entry_id, food_category)
+        except (ConflictError, NotFoundError, ValidationError) as error:
+            # Their own text says what to do (services/provisional.py).
+            return app_error_response(request, type(error), str(error))
+        target = parse_edit_return(return_to)
+        query = f"?{urlencode({'return_to': target})}" if target else ""
+        return HTMLResponse(
+            "",
+            headers={"HX-Redirect": f"/food/edit/{new_type.value}/{new_id}/form{query}", "HX-Trigger": "dbReviewChanged"},
+        )
+
+    @rt("/food/quick_add_from/{entry_type}/{entry_id}")
+    def post(request: Request, entry_type: str, entry_id: PathId, return_to: str = ""):
+        """A provisional food or dish the user does not want to keep becomes a quick
+        add in each meal that has it, and is deleted (code_conventions.md §8.12)."""
+        kind = _parse_food_entry_type(entry_type)
+        if kind not in (FoodEntryType.CATALOG, FoodEntryType.MANUAL_INTAKE):
+            raise ValidationError(_UNKNOWN_ENTRY_TYPE, fields={"entry_type": "invalid"})
+        user_id = get_current_user_id()
+        if not user_id:
+            raise AuthenticationError("Your session has expired.")
+        try:
+            with get_connection() as connection:
+                make_quick_add(connection, int(user_id), kind, entry_id)
+        except (ConflictError, NotFoundError) as error:
+            # Their own text says what to do (services/provisional.py).
+            return app_error_response(request, type(error), str(error))
+        # The entry is gone: back to where the user came from, by default the To
+        # review list, never its own pages (a 404 now).
+        path = edit_return_path(parse_edit_return(return_to)) or edit_return_path(EDIT_RETURN_REVIEW)
+        location = {"path": path, "target": "#main_content", "swap": "innerHTML", "push": True}
+        return HTMLResponse(
+            "", headers={"HX-Location": json.dumps(location), "HX-Trigger": "dbReviewChanged"}
+        )
+
     @rt("/food/edit/{entry_type}/{entry_id}/form")
-    def get(request: Request, entry_type: str, entry_id: PathId):
+    def get(request: Request, entry_type: str, entry_id: PathId, return_to: str = ""):
         kind = _parse_food_entry_type(entry_type)
         if kind is None:
             raise ValidationError(_UNKNOWN_ENTRY_TYPE, fields={"entry_type": "invalid"})
@@ -402,6 +465,7 @@ def setup_entries_routes(rt):
                         entry=catalog_entry_view(item),
                         brand_options=brands,
                         subtype_options=subtypes,
+                        return_to=parse_edit_return(return_to),
                     ),
                     show_cart=False,
                 )
@@ -422,6 +486,7 @@ def setup_entries_routes(rt):
                         entry=manual_intake_entry_view(manual_item),
                         subtype_options=subtypes,
                         origin_options=origins,
+                        return_to=parse_edit_return(return_to),
                     ),
                     show_cart=False,
                 )
@@ -575,7 +640,9 @@ def setup_entries_routes(rt):
         cooking_factor: str = "",
         macros_source: str = "",
         default_amount_method: str = "",
+        serving_method: str = "",
         macros_confidence: str = "",
+        return_to: str = "",
     ):
         if request.headers.get("HX-Request") != "true":
             return HTMLResponse(status_code=403)
@@ -602,6 +669,7 @@ def setup_entries_routes(rt):
                 cooking_factor=cooking_factor,
                 macros_source=macros_source,
                 default_amount_method=default_amount_method,
+                serving_method=serving_method,
                 macros_confidence=macros_confidence,
                 calories_100g=calories_100g,
                 carbs_100g=carbs_100g,
@@ -631,7 +699,8 @@ def setup_entries_routes(rt):
                 return app_error_response(request, NotFoundError, "Food not found or no longer editable.")
             except ConflictError as error:
                 return app_error_response(request, error, str(error))
-        return HTMLResponse("", headers={"HX-Redirect": f"/food/item/catalog/{entry_id}"})
+        redirect = edit_return_path(parse_edit_return(return_to)) or f"/food/item/catalog/{entry_id}"
+        return HTMLResponse("", headers={"HX-Redirect": redirect})
 
     @rt("/food/edit/manual_intake/{manual_intake_id}")
     def post(
@@ -658,6 +727,8 @@ def setup_entries_routes(rt):
         macros_confidence: str = "",
         macros_source: str = "",
         default_amount_method: str = "",
+        serving_method: str = "",
+        return_to: str = "",
     ):
         """Full replacement of a reusable dish (H1): an empty optional field is
         stored as NULL. Publishing is the detail page's action, not a field here."""
@@ -680,6 +751,7 @@ def setup_entries_routes(rt):
                 macros_confidence=macros_confidence,
                 macros_source=macros_source,
                 default_amount_method=default_amount_method,
+                serving_method=serving_method,
                 calories_100g=calories_100g,
                 carbs_100g=carbs_100g,
                 sugars_100g=sugars_100g,
@@ -710,7 +782,8 @@ def setup_entries_routes(rt):
                 return app_error_response(request, NotFoundError, "Dish not found or no longer editable.")
             except ConflictError as error:
                 return app_error_response(request, error, str(error))
-        return HTMLResponse("", headers={"HX-Redirect": f"/food/item/manual_intake/{manual_intake_id}"})
+        redirect = edit_return_path(parse_edit_return(return_to)) or f"/food/item/manual_intake/{manual_intake_id}"
+        return HTMLResponse("", headers={"HX-Redirect": redirect})
 
     @rt("/food/create/catalog")
     def post(
@@ -732,6 +805,7 @@ def setup_entries_routes(rt):
         cooking_factor: str = "",
         macros_source: str = "",
         default_amount_method: str = "",
+        serving_method: str = "",
         macros_confidence: str = "",
         favorite: str = "",
         catalog_smart_macros_raw: str = "",
@@ -766,6 +840,7 @@ def setup_entries_routes(rt):
                 cooking_factor=cooking_factor,
                 macros_source=macros_source,
                 default_amount_method=default_amount_method,
+                serving_method=serving_method,
                 macros_confidence=macros_confidence,
                 favorite=favorite,
                 smart_raw=catalog_smart_macros_raw,
@@ -840,6 +915,7 @@ def setup_entries_routes(rt):
         macros_confidence: str = "",
         macros_source: str = "",
         default_amount_method: str = "",
+        serving_method: str = "",
         favorite: str = "",
         manual_smart_macros_raw: str = "",
         return_to_assistant: str = "",
@@ -864,6 +940,7 @@ def setup_entries_routes(rt):
                 macros_confidence=macros_confidence,
                 macros_source=macros_source,
                 default_amount_method=default_amount_method,
+                serving_method=serving_method,
                 favorite=favorite,
                 smart_raw=manual_smart_macros_raw,
                 caffeine=caffeine,
@@ -911,9 +988,10 @@ def setup_entries_routes(rt):
             plate_options, selected_plate_id = (
                 plate_selector_options(connection, int(user_id), events[0].id) if events else ([], None)
             )
+            origins = get_manual_origin_suggestions(connection, int(user_id), limit=500)
         return render_page(
             request,
-            QuickAddPage(events, plate_options, selected_plate_id),
+            QuickAddPage(events, plate_options, selected_plate_id, origins),
             show_cart=False,
         )
 
@@ -926,6 +1004,7 @@ def setup_entries_routes(rt):
         description: str = "",
         macros_source: str = "",
         amount_method: str = "",
+        source_origin: str = "",
         intake_event_id: str = "",
         plate_id: str = "",
     ):
@@ -947,6 +1026,7 @@ def setup_entries_routes(rt):
                 notes=description,
                 macros_source=macros_source,
                 amount_method=amount_method,
+                origin=source_origin,
             )
         except ValidationError as error:
             return _error_msg(str(error))

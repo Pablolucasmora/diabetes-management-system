@@ -70,6 +70,7 @@ from DayBetes_food.domain.constants import (
     PortionOrigin,
     parse_enum,
     parse_optional_id,
+    ServingMethod,
 )
 from DayBetes_food.domain.nutrition import (
     NumericRange,
@@ -88,6 +89,7 @@ from DayBetes_food.domain.catalog import (
     parse_catalog_name,
     parse_cooking_factor,
 )
+from DayBetes_food.domain.food_entry import EDIT_RETURN_ASSISTANT_PREFIX, EDIT_RETURN_REVIEW, edit_return_path, parse_edit_return
 from DayBetes_food.domain.food_entry import FoodEntrySummary
 from DayBetes_food.domain.food import (
     INITIAL_AMOUNT_WITHOUT_SERVING_G,
@@ -112,6 +114,7 @@ from DayBetes_food.domain.manual_intake import (
 from DayBetes_food.domain.portion_detail import (
     PortionDetailCreate,
     default_final_state,
+    one_click_portion_defaults,
     portion_defaults,
     ripeness_applies,
 )
@@ -140,7 +143,7 @@ from DayBetes_food.components.food.food_widgets import (
     CONFIDENCE_LABELS,
     GLYCEMIC_INDEX_LABELS,
 )
-from DayBetes_food.components.food.food_shared import AMOUNT_METHOD_LABELS, MACROS_SOURCE_LABELS
+from DayBetes_food.components.food.food_shared import AMOUNT_METHOD_LABELS, MACROS_SOURCE_LABELS, SERVING_METHOD_LABELS
 from DayBetes_food.components.food.food_list import (
     ExternalFoodSection,
     ciqual_food_cards,
@@ -273,6 +276,7 @@ def _parse_catalog_item_request(
     cooking_factor,
     macros_source,
     default_amount_method,
+    serving_method,
     macros_confidence,
     favorite=None,
     smart_raw="",
@@ -311,6 +315,7 @@ def _parse_catalog_item_request(
     parsed_barcode = parse_barcode(barcode)
     parsed_macros_source = parse_enum(MacrosSource, macros_source, field="macros_source")
     parsed_default_amount_method = parse_enum(AmountMethod, default_amount_method, field="default_amount_method")
+    parsed_serving_method = parse_enum(ServingMethod, serving_method, field="serving_method")
     parsed_macros_confidence = parse_declared_confidence(macros_confidence, field="macros_confidence")
     parsed_favorite = None if favorite is None else _parse_strict_bool(favorite)
     parsed_prefill_source, parsed_prefill_source_id = parse_prefill_reference(prefill_source, prefill_source_id)
@@ -331,6 +336,7 @@ def _parse_catalog_item_request(
         cooking_factor=parsed_cooking_factor,
         macros_source=parsed_macros_source,
         default_amount_method=parsed_default_amount_method,
+        serving_method=parsed_serving_method,
         macros_confidence=parsed_macros_confidence,
         favorite=parsed_favorite,
         prefill_source=parsed_prefill_source,
@@ -385,6 +391,7 @@ def _catalog_create(req: CatalogItemRequest, user_id: int, brand_id, subtype) ->
         cooking_factor=req.cooking_factor,
         macros_source=req.macros_source,
         default_amount_method=req.default_amount_method,
+        serving_method=req.serving_method,
         macros_confidence=req.macros_confidence,
         prefill_source=req.prefill_source,
         prefill_source_id=req.prefill_source_id,
@@ -407,6 +414,7 @@ def _catalog_update(req: CatalogItemRequest, brand_id, subtype) -> CatalogItemUp
         cooking_factor=req.cooking_factor,
         macros_source=req.macros_source,
         default_amount_method=req.default_amount_method,
+        serving_method=req.serving_method,
         macros_confidence=req.macros_confidence,
     )
 
@@ -473,6 +481,7 @@ def _parse_manual_intake_request(
     macros_confidence,
     macros_source,
     default_amount_method,
+    serving_method,
     favorite=None,
     smart_raw=None,
     **nutrient_fields,
@@ -515,6 +524,7 @@ def _parse_manual_intake_request(
         macros_confidence=parse_declared_confidence(macros_confidence, field="macros_confidence"),
         macros_source=parse_enum(MacrosSource, macros_source, field="macros_source"),
         default_amount_method=parse_enum(AmountMethod, default_amount_method, field="default_amount_method"),
+        serving_method=parse_enum(ServingMethod, serving_method, field="serving_method"),
         favorite=None if favorite is None else _parse_strict_bool(favorite),
     )
 
@@ -550,6 +560,7 @@ def _manual_intake_create(req: ManualIntakeRequest, user_id: int, subtype) -> Ma
         macros_confidence=req.macros_confidence,
         macros_source=req.macros_source,
         default_amount_method=req.default_amount_method,
+        serving_method=req.serving_method,
     )
 
 
@@ -566,10 +577,13 @@ def _manual_intake_update(req: ManualIntakeRequest, subtype) -> ManualIntakeUpda
         macros_confidence=req.macros_confidence,
         macros_source=req.macros_source,
         default_amount_method=req.default_amount_method,
+        serving_method=req.serving_method,
     )
 
 
-def _parse_quick_add_request(*, name, weight_g, smart_raw, notes, macros_source="", amount_method="") -> QuickAddRequest:
+def _parse_quick_add_request(
+    *, name, weight_g, smart_raw, notes, macros_source="", amount_method="", origin=""
+) -> QuickAddRequest:
     """Quick-add form (§11.2.3): the smart-macros text is always the total of
     what was eaten (measurement §5.4); name, estimated weight and carbs are
     required."""
@@ -585,6 +599,7 @@ def _parse_quick_add_request(*, name, weight_g, smart_raw, notes, macros_source=
         description=parse_manual_intake_description(notes),
         macros_source=parse_enum(MacrosSource, macros_source, field="macros_source"),
         amount_method=parse_enum(AmountMethod, amount_method, field="amount_method"),
+        origin=parse_manual_intake_origin(origin),
     )
 
 
@@ -972,6 +987,7 @@ def _catalog_detail_summary(item) -> dict:
         ("Cooking factor", item.cooking_factor),
         ("Macros from", MACROS_SOURCE_LABELS.get(item.macros_source)),
         ("Amount usually from", AMOUNT_METHOD_LABELS.get(item.default_amount_method)),
+        ("Serving is", SERVING_METHOD_LABELS.get(item.serving_method) if item.default_portion is not None else None),
         ("Macros confidence", CONFIDENCE_LABELS.get(item.macros_confidence)),
     ]
     info_rows = [(label, fmt(value)) for label, value in candidates if value is not None]
@@ -1010,6 +1026,7 @@ def _manual_intake_detail_summary(item: ManualIntakeRead) -> dict:
         ("Macros confidence", CONFIDENCE_LABELS.get(item.macros_confidence)),
         ("Macros from", MACROS_SOURCE_LABELS.get(item.macros_source)),
         ("Amount usually from", AMOUNT_METHOD_LABELS.get(item.default_amount_method)),
+        ("Serving is", SERVING_METHOD_LABELS.get(item.serving_method) if item.default_portion is not None else None),
         ("Caffeine", None if item.caffeine is None else f"{fmt(item.caffeine)} mg/100 g"),
         ("Alcohol", None if item.alcohol is None else f"{fmt(item.alcohol)} g/100 g"),
     ]
@@ -1294,7 +1311,7 @@ def _add_ingredient(connection, user_id: int, recipe_id: int, plate_id: int | No
             destination_id=recipe_id,
             recipe_plate_id=target_plate_id,
             amount=item.default_portion if item.default_portion is not None else INITIAL_AMOUNT_WITHOUT_SERVING_G,
-            **portion_defaults(item),
+            **one_click_portion_defaults(item),
         ),
         commit=False,
     )

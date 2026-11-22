@@ -37,9 +37,12 @@ from DayBetes_food.errors import ExternalServiceError
 
 # Answers are short: a sentence and the tool calls. Non-streaming requests stay
 # well under the SDK's HTTP limits with this ceiling.
-_MAX_TOKENS = 4096
+_MAX_TOKENS = 16000
 _BINDING_BETA = "thinking-binding-controls-2026-08-01"
 _FALLBACK_BETA = "server-side-fallback-2026-07-01"
+# Effort changed by a system message inside `messages`, which keeps the cache
+# (code_conventions.md §8.12, "Modo rápido").
+_EFFORT_BETA = "mid-conversation-output-config-2026-07-01"
 # Haiku models have no server-side fallback: a list of fallbacks is a 400 there,
 # and "default" does nothing.
 _HAS_SERVER_FALLBACK = not ASSISTANT_MODEL.startswith("claude-haiku")
@@ -97,7 +100,7 @@ def create_answer(*, system: str, tools: list[dict], messages: list[dict], timeo
             answer that cannot be read.
     """
     fallback = {"fallbacks": "default"} if _HAS_SERVER_FALLBACK else {}
-    betas = [_BINDING_BETA, _FALLBACK_BETA] if _HAS_SERVER_FALLBACK else [_BINDING_BETA]
+    betas = [_BINDING_BETA, _EFFORT_BETA, _FALLBACK_BETA] if _HAS_SERVER_FALLBACK else [_BINDING_BETA, _EFFORT_BETA]
     started = time.monotonic()
     try:
         response = _get_client().with_options(timeout=min(float(ASSISTANT_TIMEOUT_SECONDS), timeout)).beta.messages.create(

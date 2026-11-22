@@ -1,11 +1,16 @@
 """Create and edit pages of a food, a dish, a recipe and a quick add (frontend_conventions.md §9.1)."""
 
+import json
+
+from DayBetes_food.domain.food_entry import edit_return_path
+
 from dataclasses import dataclass
 from fasthtml.common import *
 from DayBetes_food.components.data_sources import ciqual_attribution, off_attribution
 from DayBetes_food.components.injection_zone import asset_busted
+from DayBetes_food.components.modal import ConfirmActionModal, close_modal_js, modal_confirm_button, open_modal_js
 from DayBetes_food.components.navigation import back_js
-from DayBetes_food.components.food.food_shared import AMOUNT_METHOD_LABELS, FORM_FIELD_CLS
+from DayBetes_food.components.food.food_shared import AMOUNT_METHOD_LABELS, FORM_FIELD_CLS, MACROS_SOURCE_LABELS
 from DayBetes_food.domain.catalog import CATALOG_BARCODE_MAX_LENGTH, CATALOG_NAME_MAX_LENGTH
 from DayBetes_food.domain.food import FOOD_SUBTYPE_MAX_LENGTH
 from DayBetes_food.components.stats.stats_shared import MEAL_TYPE_LABELS
@@ -27,10 +32,12 @@ from DayBetes_food.domain.constants import (
     FoodCategory,
     FoodPhysicalState,
     AmountMethod,
+    MacrosSource,
     Nutriscore,
 )
 from DayBetes_food.components.food.food_widgets import (
     _amount_method_default_select,
+    _serving_method_select,
     _brand_autocomplete_input,
     _confidence_select,
     _decimal_input,
@@ -221,7 +228,7 @@ def CreateCatalogPage(
         _pv(k, "").strip()
         for k in (
             "initial_state", "nutriscore", "nova", "yuka", "caffeine", "alcohol", "barcode", "cooking_factor",
-            "macros_source", "macros_confidence", "default_amount_method",
+            "macros_source", "macros_confidence", "default_amount_method", "serving_method",
         )
     )
     notices = Div(
@@ -317,6 +324,7 @@ def CreateCatalogPage(
                 help_text="Default serving size in g. Leave empty if the food has no serving.",
                 value=_pv("default_portion"),
             ),
+            _serving_method_select(_pv("serving_method") or None),
             step=2,
         ),
         _optional_section(
@@ -467,7 +475,7 @@ def CreateManualPage(
     details_open = any(
         _pv(key) for key in (
             "description", "glycemic_index", "ig_confidence", "caffeine", "alcohol",
-            "macros_source", "macros_confidence", "default_amount_method",
+            "macros_source", "macros_confidence", "default_amount_method", "serving_method",
         )
     )
     note = data.get("assistant_note")
@@ -498,6 +506,7 @@ def CreateManualPage(
             "Nutrition",
             _nutrient_mode_select("manual"),
             _manual_portion_input(_pv("default_portion") or None),
+            _serving_method_select(_pv("serving_method") or None),
             _smart_macros_block(
                 "manual",
                 prefill=data,
@@ -547,7 +556,9 @@ def CreateManualPage(
     return _form_page_shell(form, result_id, Script(src=asset_busted("/js/smart_macros.js"), defer="defer"))
 
 
-def QuickAddPage(events: list, plate_options: list, selected_plate_id: int | None):
+def QuickAddPage(
+    events: list, plate_options: list, selected_plate_id: int | None, origin_options: list[str] | None = None
+):
     """Quick add (code_conventions.md §11.2.3): a one-off meal logged into a
     plate and never offered again. Name, estimated weight and carbs are
     required; the smart-macros text is always the total eaten (measurement §5.4).
@@ -565,6 +576,8 @@ def QuickAddPage(events: list, plate_options: list, selected_plate_id: int | Non
                 help_text="e.g. Menu of the day. Required.",
                 maxlength=MANUAL_INTAKE_NAME_MAX_LENGTH,
             ),
+            # Optional (§11.2.3, decision 2026-11-21): it finds repetitions (§8.12).
+            _manual_origin_input(origin_options),
             _decimal_input(
                 "Estimated weight (g)*",
                 "default_portion",
@@ -785,6 +798,121 @@ def _edit_header(kind: str, name: str, back_path: str, maxlength: int):
     return _form_header(f"Edit {kind}", _name_title_input(name, "Name", maxlength), back_path)
 
 
+def _review_notice(entry: dict, return_to: str | None = None):
+    """The note of a provisional food or dish (code_conventions.md §8.12), with the
+    switch to the other kind in case DiaBot picked the wrong one (frontend §9.3)."""
+    if not entry.get("needs_review"):
+        return None
+    source = MACROS_SOURCE_LABELS.get(_enum_or_none(MacrosSource, entry.get("macros_source")))
+    parts = ["To review: DiaBot added it while you ate."]
+    if source:
+        parts.append(f"Macros from: {source}.")
+    parts.append("Check every value and save it.")
+    return Div(
+        P(" ".join(parts), cls="text-xs text-amber-800"),
+        _convert_control(entry, return_to),
+        _quick_add_control(entry, return_to),
+        cls="web_container rounded-2xl px-4 py-3 flex flex-col gap-2",
+    )
+
+
+def _quick_add_control(entry: dict, return_to: str | None):
+    """Not worth keeping: it becomes a quick add in each meal that has it and is
+    deleted (services/provisional.py). Asks first in a pop-up: it cannot be undone."""
+    result_id = f"quick_add_result_{entry['id']}"
+    modal_id = f"quick_add_confirm_{entry['id']}"
+    kind = "food" if entry["entry_type"] == "catalog" else "dish"
+    return Div(
+        Span("Only for this meal, not worth keeping?", cls="text-xs text-gray-600"),
+        Button(
+            "Make it a quick add",
+            type="button",
+            cls="web_button rounded-xl px-3 py-1.5 text-xs self-start",
+            onclick=open_modal_js(modal_id),
+        ),
+        Div(id=result_id),
+        ConfirmActionModal(
+            modal_id=modal_id,
+            title="Make it a quick add",
+            question=(
+                f"It stays in your meals as a quick add, with the same grams and macros, and this {kind} "
+                "leaves your foods, with its favorites and tags. This cannot be undone. Continue?"
+            ),
+            yes_button=modal_confirm_button(
+                "Yes",
+                danger=True,
+                hx_post=f"/food/quick_add_from/{entry['entry_type']}/{entry['id']}",
+                hx_vals=json.dumps({"return_to": return_to or ""}),
+                hx_params="return_to",
+                hx_target=f"#{result_id}",
+                hx_swap="innerHTML",
+                hx_on__after_request=(
+                    close_modal_js(modal_id)
+                    + ";if(event.detail.successful&&window.dbShowAppNotice)"
+                    + "window.dbShowAppNotice('Now a quick add in your meals');"
+                ),
+                data_skip_page_loading="true",
+            ),
+        ),
+        cls="flex flex-col gap-2",
+    )
+
+
+def _convert_control(entry: dict, return_to: str | None):
+    """Turn it into the other kind: a new entry, still to review, takes its place
+    in every meal (services/provisional.py). A food needs a category, so a dish
+    asks for it under the button, with the same field as the food forms. Its
+    own fields only, and its own message box: it sits inside the edit form."""
+    is_food = entry["entry_type"] == "catalog"
+    block_id = f"convert_block_{entry['id']}"
+    result_id = f"convert_result_{entry['id']}"
+    button = Button(
+        "Make it a dish" if is_food else "Make it a food",
+        type="button",
+        cls="web_button rounded-xl px-3 py-1.5 text-xs self-start",
+        hx_post=f"/food/convert/{entry['entry_type']}/{entry['id']}",
+        hx_vals=json.dumps({"return_to": return_to or ""}),
+        hx_params="category,return_to",
+        hx_include=f"#{block_id}",
+        hx_target=f"#{result_id}",
+        hx_swap="innerHTML",
+        data_skip_page_loading="true",
+    )
+    hint = "Made by someone else, not a packaged food?" if is_food else "A packaged or basic food, not a dish?"
+    category = (
+        _searchable_autocomplete_input(
+            "Category*",
+            "category",
+            [category.value for category in FoodCategory],
+            help_text="Main category of the food. Required to make it a food.",
+            allow_add=False,
+        )
+        if not is_food
+        else None
+    )
+    return Div(
+        Span(hint, cls="text-xs text-gray-600"),
+        button,
+        category,
+        Div(id=result_id),
+        id=block_id,
+        cls="flex flex-col gap-2",
+    )
+
+
+def _edit_return_input(return_to: str | None):
+    return Input(type="hidden", name="return_to", value=return_to) if return_to else None
+
+
+def _enum_or_none(enum_cls, value):
+    if value is None or isinstance(value, enum_cls):
+        return value
+    try:
+        return enum_cls(value)
+    except ValueError:
+        return None
+
+
 def _edit_actions(back_path: str):
     return Div(
         Button(
@@ -810,15 +938,19 @@ def EditCatalogPage(
     entry: dict,
     brand_options: list[str] | None = None,
     subtype_options: list[str] | None = None,
+    return_to: str | None = None,
 ):
     result_id = f"edit_catalog_result_{entry['id']}"
-    back_path = f"/food/item/catalog/{entry['id']}"
+    # Opened from To review or the chat, Back goes there, as Save does (§9.3).
+    back_path = edit_return_path(return_to) or f"/food/item/catalog/{entry['id']}"
 
     def _num(label, name):
         return _decimal_input(label, name, value=_input_value(entry.get(name)))
 
     form = Form(
         _edit_header("food", _input_value(entry.get("name")), back_path, CATALOG_NAME_MAX_LENGTH),
+        _review_notice(entry, return_to),
+        _edit_return_input(return_to),
         _form_section(
             "Basics",
             _brand_autocomplete_input(brand_options=brand_options, value=_input_value(entry.get("brand"))),
@@ -833,6 +965,7 @@ def EditCatalogPage(
                 input_style="transition:none; transform:none; scale:1; box-shadow:none; outline:none;",
             ),
             _decimal_input("Default serving (g)", "default_portion", value=_input_value(entry.get("default_portion"))),
+            _serving_method_select(entry.get("serving_method")),
         ),
         _form_section(
             "Nutrition per 100 g",
@@ -883,13 +1016,14 @@ def EditManualPage(
     entry: dict,
     subtype_options: list[str] | None = None,
     origin_options: list[str] | None = None,
+    return_to: str | None = None,
 ):
     """Full replacement of a reusable dish (H1). It opens in "per 100 g" mode
     with the stored values (measurement §5.4). Publishing is the detail page's
     action (decision 2026-10-09), and favorite is not part of the edit, as in
     catalog."""
     result_id = f"edit_manual_result_{entry['id']}"
-    back_path = f"/food/item/manual_intake/{entry['id']}"
+    back_path = edit_return_path(return_to) or f"/food/item/manual_intake/{entry['id']}"
     nutrient_specs = (
         ("Calories/100g", "Calories (total)", "calories_100g"),
         ("Carbs/100g*", "Carbs (total)*", "carbs_100g"),
@@ -901,6 +1035,8 @@ def EditManualPage(
     )
     form = Form(
         _edit_header("dish", _input_value(entry.get("name")), back_path, MANUAL_INTAKE_NAME_MAX_LENGTH),
+        _review_notice(entry, return_to),
+        _edit_return_input(return_to),
         _form_section(
             "Basics",
             _manual_origin_input(origin_options, value=_input_value(entry.get("origin"))),
@@ -924,6 +1060,7 @@ def EditManualPage(
             "Nutrition",
             _nutrient_mode_select(f"edit_manual_{entry['id']}"),
             _manual_portion_input(value=_input_value(entry.get("default_portion"))),
+            _serving_method_select(entry.get("serving_method")),
         ),
         _form_section(
             "Macros",

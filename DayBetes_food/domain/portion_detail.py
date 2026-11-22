@@ -18,6 +18,7 @@ from DayBetes_food.domain.constants import (
     WEIGHED_AMOUNT_METHODS,
     AmountInputUnit,
     AmountMethod,
+    FractionMethod,
     ConservationMethod,
     CookingMethod,
     FoodCategory,
@@ -165,6 +166,8 @@ class PortionDetailRead:
     created_at: datetime
     updated_at: datetime
     source: PortionSourceRead
+    # How the fraction that split its amount was obtained (study §6.3); None = never split.
+    split_method: FractionMethod | None = None
 
 
 def check_cooked_weight(origin: PortionOrigin, cooking_factor: float | None, value: bool, *, current: bool = False) -> None:
@@ -208,6 +211,7 @@ class PortionDetailCreate:
     # offset given: minutes. Both None: inherited from the plate.
     eaten_at: datetime | None = None
     source_fridge_id: int | None = None
+    split_method: FractionMethod | None = None
 
 
 @dataclass(frozen=True)
@@ -269,6 +273,57 @@ def portion_macro_amount(portion) -> float:
     return raw_amount(portion.amount, portion.origin, portion.is_cooked_weight, portion.source.cooking_factor)
 
 
+# Relative margin of a portion's carbs, by how its amount and its macros were
+# obtained (decision of the user of 2026-11-22, frontend_conventions.md §9.11):
+# the two add up. Not given counts as the widest.
+AMOUNT_MARGIN = {
+    AmountMethod.KITCHEN_SCALE: 0.05,
+    AmountMethod.POCKET_SCALE: 0.05,
+    AmountMethod.PACKAGE: 0.05,
+    AmountMethod.USUAL_AMOUNT: 0.15,
+    AmountMethod.HOUSEHOLD: 0.30,
+    AmountMethod.EYEBALL: 0.30,
+    AmountMethod.AI_ESTIMATE: 0.30,
+}
+MACROS_MARGIN = {
+    MacrosSource.LABEL: 0.05,
+    MacrosSource.OFFICIAL: 0.05,
+    MacrosSource.REFERENCE_DB: 0.15,
+    MacrosSource.INGREDIENTS: 0.15,
+    MacrosSource.OPEN_FOOD_FACTS: 0.15,
+    MacrosSource.AI_ESTIMATE: 0.30,
+    MacrosSource.OWN_ESTIMATE: 0.30,
+}
+UNKNOWN_MARGIN = 0.30
+# A portion within this margin is "measured" (a green dot); wider is estimated.
+MEASURED_MARGIN_MAX = 0.20
+
+
+def portion_carbs_margin(portion) -> float:
+    """Relative margin of a portion's carbs: its amount's plus its macros'."""
+    amount = AMOUNT_MARGIN.get(portion.amount_method, UNKNOWN_MARGIN)
+    macros = MACROS_MARGIN.get(portion.source.macros_source, UNKNOWN_MARGIN)
+    return amount + macros
+
+
+def carbs_range(portions) -> tuple[float, float]:
+    """The meal's carbs as a range (low, high): each portion's carbs give or take
+    its margin, never below 0."""
+    low = high = 0.0
+    for portion in portions:
+        carbs = portion_carbs(portion)
+        margin = carbs * portion_carbs_margin(portion)
+        low += max(0.0, carbs - margin)
+        high += carbs + margin
+    return low, high
+
+
+def portion_carbs(portion) -> float:
+    """Carbohydrates of a stored portion in grams; 0 when its food has none given."""
+    per_100 = parse_source_macro(portion, "carbs")
+    return 0.0 if per_100 is None else portion_macro_amount(portion) * float(per_100) / 100.0
+
+
 def calculate_macro_summary_metrics(portions) -> dict:
     total_amount = sum(portion_intake_amount(p) for p in portions)
     amount_confidence_num = 0.0
@@ -314,3 +369,28 @@ def portion_defaults(item) -> dict:
     that creates a portion from a food without a `Final state` control uses it;
     a copy of another portion keeps that portion's values instead."""
     return {"amount_method": item.default_amount_method, "final_state": default_final_state(item)}
+
+
+def one_click_portion_defaults(item) -> dict:
+    """`portion_defaults` for the + of a food's row (measurement_conventions.md
+    §6.11, decision 2026-11-21). With a serving the portion is one serving, so its
+    amount method is what the serving is (`serving_method`; not said is
+    `usual_amount`). Without one it is 100 g and the food's default applies."""
+    defaults = portion_defaults(item)
+    if item.default_portion is not None:
+        serving = item.serving_method
+        defaults["amount_method"] = AmountMethod(serving.value) if serving is not None else AmountMethod.USUAL_AMOUNT
+    return defaults
+
+
+def combine_split_methods(*methods: FractionMethod | None) -> FractionMethod | None:
+    """The split method of an amount that went through several splits, or that
+    joins amounts from several (study_conventions.md §6.3): the least precise
+    one. Any split by eye makes it `eyeball`; otherwise any weighed one makes it
+    `weighed`; never split is None."""
+    present = {method for method in methods if method is not None}
+    if FractionMethod.EYEBALL in present:
+        return FractionMethod.EYEBALL
+    if FractionMethod.WEIGHED in present:
+        return FractionMethod.WEIGHED
+    return None

@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import dataclass
+from urllib.parse import urlencode
 from fasthtml.common import *
 from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.components.food.food_actions import (
@@ -9,6 +10,7 @@ from DayBetes_food.components.food.food_actions import (
     favorite_button_id,
     food_card_id,
 )
+from DayBetes_food.components.food.menus import MenusIconButton
 from DayBetes_food.components.food.rescue import RescueModal, rescue_open_attrs
 from DayBetes_food.components.modal import (
     ModalLayer,
@@ -19,7 +21,8 @@ from DayBetes_food.components.modal import (
 from DayBetes_food.components.food.recipe_add import recipe_add_open_attrs
 from DayBetes_food.components.stats.stats_shared import MEAL_TYPE_LABELS
 from DayBetes_food.domain.recipe import RECIPE_MEAL_TYPES
-from DayBetes_food.domain.constants import FoodEntryType
+from DayBetes_food.components.food.food_shared import MACROS_SOURCE_LABELS
+from DayBetes_food.domain.constants import FoodEntryType, MacrosSource
 from DayBetes_food.time_utils import to_local
 from DayBetes_food.components.food.food_widgets import (
     FILTER_ITEM_CLS,
@@ -261,7 +264,16 @@ def _mode_tabs(group: str, tabs: tuple[tuple[str, str], ...], *, selected_value:
 
 
 # The pills of the Food header (frontend_conventions.md §9.3), as `(label, filter)`.
-FOOD_FILTERS = (("Search", "all"), ("Food", "food"), ("Recipes", "recipes"), ("Favs", "favs"), ("Fridge", "fridge"))
+FOOD_FILTERS = (
+    ("Search", "all"),
+    ("Food", "food"),
+    ("Recipes", "recipes"),
+    ("Favs", "favs"),
+    ("Fridge", "fridge"),
+    # Not drawn as a pill: ReviewBanner opens it (§9.3, decision 2026-11-21).
+    ("To review", "review"),
+)
+FOOD_FILTER_REVIEW = "review"
 
 # The tabs of each pill, as `(label, value)`; the first is the default.
 FOOD_SEARCH_TABS = (("Recommended", "recommended"), ("Global", "global"))
@@ -283,12 +295,59 @@ class FoodView:
     meal_type: str = ""
 
 
+def ReviewBanner(view: FoodView, review_count: int):
+    """Under the search, while there are provisional foods (frontend §9.3): it opens
+    the To review list, as Home's reminder does. Not a pill: it would crowd them."""
+    if not review_count and view.filter != FOOD_FILTER_REVIEW:
+        return None
+    text = "1 food to review" if review_count == 1 else f"{review_count} foods to review"
+    return Button(
+        Span(
+            Span("!", cls="w-5 h-5 shrink-0 rounded-full bg-amber-100 text-amber-800 text-xs font-bold flex items-center justify-center"),
+            Span(text, cls="max-md:text-xs text-sm font-semibold text-amber-800 truncate"),
+            cls="flex items-center gap-2 min-w-0",
+        ),
+        # Always one line: on a narrow phone the text shrinks and truncates (§9.3).
+        Span("Review ›", cls="text-xs font-semibold text-gray-700 shrink-0 whitespace-nowrap"),
+        type="button",
+        id="food_review_banner",
+        data_skip_page_loading="true",
+        hx_get="/food/list",
+        hx_target="#food-list",
+        hx_swap="innerHTML",
+        hx_include=_FOOD_LIST_INCLUDE,
+        **{
+            "hx-on:click": (
+                f"document.getElementById('food_filter').value='{FOOD_FILTER_REVIEW}';"
+                "this.classList.add('food_review_active');"
+                "document.querySelectorAll('[data-food-filter-btn]').forEach(function(btn){"
+                "btn.classList.remove('bg-black','text-white','shadow-md');"
+                "btn.classList.add('bg-transparent','text-gray-700');"
+                "});"
+                "['search','food','favs','recipes'].forEach(function(group){"
+                "var tabs=document.getElementById('food_'+group+'_tabs');"
+                "if(tabs){tabs.classList.add('hidden');}"
+                "});"
+                "var filtersButton=document.getElementById('food_filters_button');"
+                "if(filtersButton){filtersButton.classList.add('hidden');}"
+            )
+        },
+        cls=(
+            "web_container md:w-xl lg:w-xl w-xs rounded-2xl px-4 max-md:px-3 py-2 flex items-center justify-between gap-2 whitespace-nowrap cursor-pointer"
+            + (" food_review_active" if view.filter == FOOD_FILTER_REVIEW else "")
+        ),
+    )
+
+
 def Filters(view: FoodView = FoodView()):
     """`view` is the state the page opens on (frontend_conventions.md §5): the pill,
     its tab and the filters, as the URL of /food gives them."""
     selected = view.filter
     buttons = []
     for text, value in FOOD_FILTERS:
+        if value == FOOD_FILTER_REVIEW:
+            # Not a pill: the banner under the search opens it (ReviewBanner, §9.3).
+            continue
         buttons.append(
             Button(
                 text,
@@ -307,6 +366,8 @@ def Filters(view: FoodView = FoodView()):
                 **{
                     "hx-on:click": (
                         f"document.getElementById('food_filter').value='{value}';"
+                        "var reviewBanner=document.getElementById('food_review_banner');"
+                        "if(reviewBanner){reviewBanner.classList.remove('food_review_active');}"
                         "document.querySelectorAll('[data-food-filter-btn]').forEach(function(btn){"
                         "btn.classList.remove('bg-black','text-white','shadow-md');"
                         "btn.classList.add('bg-transparent','text-gray-700');"
@@ -460,6 +521,11 @@ def FoodFiltersModal():
 
 
 def SearchInput(view: FoodView = FoodView()):
+    """The search box and, on its right, the saved menus (§9.13)."""
+    return Div(_search_box(view), MenusIconButton(), cls="flex items-center gap-2 md:w-xl lg:w-xl w-xs")
+
+
+def _search_box(view: FoodView):
     return Div(
         Input(
             inputmode="text",
@@ -482,11 +548,11 @@ def SearchInput(view: FoodView = FoodView()):
             hx_swap="innerHTML",
         ),
         _food_filters_button(view),
-        cls="relative md:w-xl lg:w-xl w-xs",
+        cls="relative flex-1 min-w-0",
     )
 
 
-def QuickCreateButtons(assistant_enabled: bool = False):
+def QuickCreateButtons():
     # Solid, not glass: they sit inside the glass header, and Safari paints
     # coloured seams with a backdrop-filter nested in another one
     # (frontend_conventions.md §8).
@@ -534,29 +600,8 @@ def QuickCreateButtons(assistant_enabled: bool = False):
                 RescueModal(),
                 cls="relative flex justify-start",
             ),
-            # The assistant, as a tab hanging from the top edge of the page:
-            # it is pulled up over the header's top padding and has no top
-            # border, only rounded bottom corners (frontend_conventions.md §9.3).
-            Button(
-                Img(src="/images/ui/Logo_DiaBot.png", alt="", cls="h-8 md:h-11 w-auto max-w-full"),
-                type="button",
-                aria_label="Tell the assistant",
-                data_food_assistant_tab="true",
-                cls="""
-                    self-start flex-none w-40 md:w-56 min-w-0 mx-3 md:mx-5
-                    -mt-2 md:-mt-7 h-14 md:h-[5.25rem] pt-2 md:pt-7 pb-3 md:pb-5 px-3
-                    bg-surface border border-t-0 border-line-soft
-                    shadow-[0_4px_14px_rgba(80,60,40,0.14)]
-                    rounded-b-2xl md:rounded-b-3xl
-                    text-sm font-semibold text-gray-900 cursor-pointer
-                    flex items-center justify-center
-                    transition-transform duration-150 active:scale-[0.98]
-                """,
-                hx_get="/assistant",
-                hx_target="#main_content",
-                hx_push_url="true",
-                **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
-            ) if assistant_enabled else "",
+            # Free space: DiaBot lives in the island now (frontend_conventions.md §9.3).
+            Div(cls="flex-1"),
             Div(
                 Button(
                     Img(src="/images/ui/plus_icon.svg", alt="", cls="h-6 w-6"),
@@ -732,7 +777,9 @@ def _entry_meta(food):
     return "Recipe"
 
 
-def FoodCard(food):
+def FoodCard(food, open_url: str | None = None):
+    """`open_url`: where a tap goes, if not the food's page (the To review list
+    opens the edit form, §9.3)."""
     entry_type = FoodEntryType(food["entry_type"])
     add_path = f"/add_food/{food['id']}"
     add_label = "+"
@@ -749,6 +796,11 @@ def FoodCard(food):
         if food.get("is_owned")
         else ""
     )
+    if food.get("needs_review"):
+        # A provisional food of the assistant (code_conventions.md §8.12).
+        archived_badge = Span(
+            "To review", cls="text-[10px] font-semibold text-amber-800 bg-amber-50 rounded-full px-1.5 py-0.5"
+        )
     subtitle = ""
     if food.get("entry_type") == "catalog":
         subtitle = (food.get("brand") or "").strip()
@@ -790,7 +842,7 @@ def FoodCard(food):
         ),
         FoodActionsTrigger(entry_type, food["id"]),
         id=food_card_id(entry_type, food["id"]),
-        hx_get=f"/food/item/{food['entry_type']}/{food['id']}",
+        hx_get=open_url or f"/food/item/{food['entry_type']}/{food['id']}",
         hx_target="#main_content",
         hx_swap="innerHTML",
         hx_push_url="true",
@@ -871,3 +923,34 @@ def FoodSectionsContent(foods):
         sections.append(H2(title, cls="web_section_label md:w-md lg:w-md w-xs mt-2"))
         sections.extend(FoodCard(item) for item in items)
     return sections
+
+
+def ReviewListContent(entries: list):
+    """The To review list (frontend_conventions.md §9.3): the provisional foods and
+    dishes, drawn as the cards of every other list, so a tap, the + and the long
+    press behave the same; their "To review" badge says what is pending."""
+    if not entries:
+        return P("Nothing to review.", cls="text-sm text-gray-600 text-center py-8 md:w-md lg:w-md w-xs")
+    cards = [
+        FoodCard(
+            {
+                "entry_type": entry.entry_type.value,
+                "id": entry.entry_id,
+                "name": entry.name,
+                "brand" if entry.entry_type == FoodEntryType.CATALOG else "origin": entry.subtitle,
+                "carbs_100g": entry.carbs_100g,
+                "favorite": entry.is_favorite,
+                "needs_review": True,
+                "is_owned": True,
+            },
+            # Straight to the form: reviewing is editing; saving clears the mark
+            # and comes back here (§9.3).
+            open_url=f"/food/edit/{entry.entry_type.value}/{entry.entry_id}/form?{urlencode({'return_to': 'review'})}",
+        )
+        for entry in entries
+    ]
+    return Div(
+        Span("Added by DiaBot while you ate", cls="web_section_label px-1"),
+        *cards,
+        cls="flex flex-col items-center md:gap-3 lg:gap-3 gap-2 w-full",
+    )

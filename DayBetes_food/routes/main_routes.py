@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from urllib.parse import quote_plus
 from DayBetes_food.auth.context import get_current_user_id
+from DayBetes_food.components.menu.layout import ReviewDot
 from DayBetes_food.components.menu.main_menu import main_menu
 from DayBetes_food.components.scanner.scanner_main import scanner_main
 from DayBetes_food.components.modal import ModalFormError
@@ -10,6 +11,7 @@ from DayBetes_food.components.ui import render_fragment, render_page
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.auth.service import get_user_by_id
 from DayBetes_food.database.queries import (
+    count_needs_review,
     create_insulin_injection,
     get_catalog_item_by_barcode,
     get_open_insulin_pen,
@@ -34,7 +36,7 @@ def setup_main_routes(rt):
     @rt("/menu")
     def get(req):
         user_id = get_current_user_id()
-        user, latest_event, portions, pens, brands = None, None, [], [], []
+        user, latest_event, portions, pens, brands, review_count = None, None, [], [], [], 0
         if user_id:
             with get_connection() as connection:
                 user = get_user_by_id(connection, int(user_id))
@@ -44,7 +46,20 @@ def setup_main_routes(rt):
                     portions = list_portions_by_event(connection, int(user_id), latest_event.id)
                 pens = list_open_insulin_pens(connection, int(user_id))
                 brands = list_insulin_brands(connection, int(user_id))
-        return render_page(req, main_menu(user, latest_event, portions, pens, brands))
+                review_count = count_needs_review(connection, int(user_id))
+        return render_page(req, main_menu(user, latest_event, portions, pens, brands, review_count))
+
+    @rt("/menu/review_dot")
+    def get(request: Request):
+        """The dot of Food in the bottom bar (frontend §9.3): shown while there
+        are provisional foods to review. Asked for by the bar on load and on
+        `dbReviewChanged`."""
+        user_id = get_current_user_id()
+        count = 0
+        if user_id:
+            with get_connection() as connection:
+                count = count_needs_review(connection, int(user_id))
+        return render_fragment(ReviewDot(count))
 
     @rt("/menu/injection_log")
     def post(

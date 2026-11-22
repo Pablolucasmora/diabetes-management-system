@@ -18,6 +18,7 @@ from DayBetes_food.domain.constants import (
     MacrosSource,
     Nutriscore,
     PrefillSource,
+    ServingMethod,
 )
 from DayBetes_food.domain.food import normalize_food_text
 from DayBetes_food.domain.nutrition import NutrientValues, NumericRange, parse_number
@@ -125,7 +126,9 @@ class CatalogItemRead:
     # (study §6.3). None = not given.
     macros_source: MacrosSource | None  # U1: the food's data, read live by portions
     default_amount_method: AmountMethod | None  # U2: copied to each new portion
+    serving_method: ServingMethod | None  # what its serving is; the + of a row copies it (§6.11)
     macros_confidence: int | None  # declared, ordinal 0-2
+    needs_review: bool  # provisional, made by the assistant (§11.2.2)
     is_published: bool
     created_at: datetime
     updated_at: datetime
@@ -165,10 +168,13 @@ class CatalogItemCreate:
     # (study §6.3). None = not given.
     macros_source: MacrosSource | None  # U1: the food's data, read live by portions
     default_amount_method: AmountMethod | None  # U2: copied to each new portion
+    serving_method: ServingMethod | None  # what its serving is; the + of a row copies it (§6.11)
     macros_confidence: int | None  # declared, ordinal 0-2
     # Where the form's first values came from (measurement §12.1). None = typed.
     prefill_source: PrefillSource | None = None
     prefill_source_id: str | None = None
+    # Provisional: only the assistant creates it so (§8.12, §11.2.2).
+    needs_review: bool = False
 
 
 @dataclass(frozen=True)
@@ -195,6 +201,7 @@ class CatalogItemUpdate:
     # (study §6.3). None = not given.
     macros_source: MacrosSource | None  # U1: the food's data, read live by portions
     default_amount_method: AmountMethod | None  # U2: copied to each new portion
+    serving_method: ServingMethod | None  # what its serving is; the + of a row copies it (§6.11)
     macros_confidence: int | None  # declared, ordinal 0-2
 
 
@@ -221,6 +228,7 @@ class CatalogItemRequest:
     # (study §6.3). None = not given.
     macros_source: MacrosSource | None  # U1: the food's data, read live by portions
     default_amount_method: AmountMethod | None  # U2: copied to each new portion
+    serving_method: ServingMethod | None  # what its serving is; the + of a row copies it (§6.11)
     macros_confidence: int | None  # declared, ordinal 0-2
     favorite: bool | None
     prefill_source: PrefillSource | None = None

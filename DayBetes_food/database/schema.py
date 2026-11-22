@@ -25,12 +25,15 @@ from DayBetes_food.domain.constants import (
     InsulinType,
     InjectionZone,
     MealType,
+    MenuSection,
     Nutriscore,
     PenCloseReason,
     PenFormat,
     PrefillSource,
     Ripeness,
     AmountMethod,
+    FractionMethod,
+    ServingMethod,
     AssistantRole,
     AssistantTurnStatus,
     MacrosSource,
@@ -53,6 +56,7 @@ from DayBetes_food.domain.insulin_pen import (
     PEN_UNITS_RANGE,
 )
 from DayBetes_food.domain.meal_type_schedule import AUTO_ASSIGNABLE_MEAL_TYPES
+from DayBetes_food.domain.menu import MENU_ITEM_DESCRIPTION_MAX_LENGTH, MENU_PRICE_MAX
 from DayBetes_food.domain.nutrition import NUTRIENT_LIMITS, NumericRange
 from DayBetes_food.domain.recipe import RECIPE_MEAL_TYPES, RECIPE_SERVINGS_RANGE
 
@@ -107,9 +111,14 @@ def catalog_check_constraints() -> dict[str, str]:
         "ck_catalog_default_amount_method": (
             f"default_amount_method IS NULL OR default_amount_method IN ({sql_in_list(AmountMethod)})"
         ),
+        "ck_catalog_serving_method": (
+            f"serving_method IS NULL OR serving_method IN ({sql_in_list(ServingMethod)})"
+        ),
         "ck_catalog_macros_confidence_range": (
             f"macros_confidence IS NULL OR macros_confidence BETWEEN {FOOD_CONFIDENCE_MIN} AND {FOOD_CONFIDENCE_MAX}"
         ),
+        # A provisional food is not published until it is reviewed (§11.2.2).
+        "ck_catalog_needs_review_not_published": "NOT (needs_review AND is_published)",
     }
     for field, limits in NUTRIENT_LIMITS.items():
         checks[f"ck_catalog_{field}_range"] = _range_check(field, limits)
@@ -141,9 +150,15 @@ def manual_intake_check_constraints() -> dict[str, str]:
             r"origin IS NULL OR (origin <> '' AND origin = regexp_replace(btrim(origin), '\s+', ' ', 'g'))"
         ),
         "ck_manual_intake_quick_add_not_published": "NOT (is_quick_add AND is_published)",
+        # Provisional dishes (§11.2.2, §11.2.3): never published, never a quick add.
+        "ck_manual_intake_needs_review_not_published": "NOT (needs_review AND is_published)",
+        "ck_manual_intake_needs_review_not_quick_add": "NOT (needs_review AND is_quick_add)",
         "ck_manual_intake_macros_source": f"macros_source IS NULL OR macros_source IN ({sql_in_list(MacrosSource)})",
         "ck_manual_intake_default_amount_method": (
             f"default_amount_method IS NULL OR default_amount_method IN ({sql_in_list(AmountMethod)})"
+        ),
+        "ck_manual_intake_serving_method": (
+            f"serving_method IS NULL OR serving_method IN ({sql_in_list(ServingMethod)})"
         ),
     }
     for field, limits in NUTRIENT_LIMITS.items():
@@ -212,10 +227,11 @@ def assistant_message_check_constraints() -> dict[str, str]:
         "ck_assistant_message_position": "position >= 1",
         # The API rejects an empty content: a row that could not be replayed is never stored.
         "ck_assistant_message_content": "jsonb_typeof(content) = 'array' AND jsonb_array_length(content) > 0",
-        # Usage is of one answer of the model: on `assistant` rows, always; on `user` rows, never.
+        # Usage is of one answer of the model: on `assistant` rows, always; on the others, never.
         "ck_assistant_message_usage_role": (
             f"(role = '{AssistantRole.ASSISTANT.value}' AND {usage_present}) "
-            f"OR (role = '{AssistantRole.USER.value}' AND {usage_absent} AND stop_reason IS NULL)"
+            f"OR (role IN ('{AssistantRole.USER.value}', '{AssistantRole.SYSTEM.value}') "
+            f"AND {usage_absent} AND stop_reason IS NULL)"
         ),
         "ck_assistant_message_usage_non_negative": " AND ".join(
             f"({column} IS NULL OR {column} >= 0)" for column in usage_columns
@@ -491,9 +507,11 @@ class DBSchema:
         cooking_factor REAL,
         macros_source VARCHAR(50), -- U1: where the macros come from; the food's data, read live by portions (measurement §6.11)
         default_amount_method VARCHAR(50), -- U2: copied to each new portion (measurement §6.11)
+        serving_method VARCHAR(50), -- what its serving is, as a U2 code; the + of a row copies it to the portion (measurement §6.11)
         macros_confidence INTEGER, -- declared 0-2 (measurement §6.10)
         prefill_source VARCHAR(20), -- where the form's first values came from; the saved values are the user's (measurement §12.1)
         prefill_source_id VARCHAR(64),
+        needs_review BOOLEAN NOT NULL DEFAULT FALSE, -- provisional, made by the assistant until the owner reviews it (§11.2.2)
         search_name TEXT GENERATED ALWAYS AS ({search_text_sql("name")}) STORED, -- what the search compares with (§11.7)
         is_published BOOLEAN NOT NULL DEFAULT FALSE,
         deleted_at TIMESTAMPTZ,
@@ -551,7 +569,9 @@ class DBSchema:
         macros_confidence INTEGER, -- declared 0-2 (measurement §6.10)
         macros_source VARCHAR(50), -- U1: the dish's data, read live by portions (measurement §6.11)
         default_amount_method VARCHAR(50), -- U2: copied to each new portion (measurement §6.11)
+        serving_method VARCHAR(50), -- what its serving is, as a U2 code; the + of a row copies it to the portion (measurement §6.11)
         is_quick_add BOOLEAN NOT NULL DEFAULT FALSE,
+        needs_review BOOLEAN NOT NULL DEFAULT FALSE, -- provisional, made by the assistant until the owner reviews it (§11.2.2)
         is_published BOOLEAN NOT NULL DEFAULT FALSE,
         deleted_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -740,6 +760,7 @@ class DBSchema:
             REFERENCES intake_event(id) ON DELETE SET NULL,
         model VARCHAR(100) NOT NULL, -- ASSISTANT_MODEL when it started; it is audit data, not a setting
         without_meal BOOLEAN NOT NULL DEFAULT FALSE, -- `No meal` in Add to: only drafts of new foods and recipes, never a meal (§8.12)
+        hidden_at TIMESTAMPTZ, -- hidden from the list of chats by its owner; NULL = shown. Past chats still show it (frontend §9.11)
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, -- last message or link to its meal
         CONSTRAINT ck_assistant_conversation_without_meal CHECK (NOT (without_meal AND intake_event_id IS NOT NULL))
@@ -772,6 +793,33 @@ class DBSchema:
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT uq_assistant_message_conversation_id_position UNIQUE (conversation_id, position),
 {check_lines}
+    );
+    """
+
+    # Dishes read from restaurant menus (code_conventions.md §8.12, §11.2.12):
+    # private, never published, deleted by their owner. Unique index in
+    # _ensure_menu_schema (database/bootstrap/).
+    menu_item = f"""
+    CREATE TABLE IF NOT EXISTS menu_item (
+        id SERIAL CONSTRAINT pk_menu_item PRIMARY KEY,
+        users_id INTEGER NOT NULL
+            CONSTRAINT fk_menu_item_users_id_users
+            REFERENCES users(id) ON DELETE CASCADE,
+        place VARCHAR(255) NOT NULL -- where the menu is from; the `origin` of a dish estimated from it (§11.2.3)
+            CONSTRAINT ck_menu_item_place_normalized
+            CHECK (place <> '' AND place = regexp_replace(btrim(place), '\\s+', ' ', 'g')),
+        name VARCHAR(255) NOT NULL -- as the menu writes it, normalized
+            CONSTRAINT ck_menu_item_name_normalized
+            CHECK (name <> '' AND name = regexp_replace(btrim(name), '\\s+', ' ', 'g')),
+        description VARCHAR({MENU_ITEM_DESCRIPTION_MAX_LENGTH}), -- main ingredients in DiaBot's words, never copied; NULL = none
+        section VARCHAR(20) NOT NULL
+            CONSTRAINT ck_menu_item_section
+            CHECK (section IN ({sql_in_list(MenuSection)})),
+        price NUMERIC(8,2) -- as printed, no currency; NULL = not shown
+            CONSTRAINT ck_menu_item_price
+            CHECK (price IS NULL OR (price >= 0 AND price <= {MENU_PRICE_MAX})),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     """
 
@@ -975,7 +1023,7 @@ class DBSchema:
     );
     """
 
-    intake_plate = """
+    intake_plate = f"""
     CREATE TABLE IF NOT EXISTS intake_plate (
         id SERIAL CONSTRAINT pk_intake_plate PRIMARY KEY,
         intake_event_id INTEGER NOT NULL
@@ -990,6 +1038,9 @@ class DBSchema:
         eaten_fraction REAL
             CONSTRAINT ck_intake_plate_eaten_fraction
             CHECK (eaten_fraction IS NULL OR (eaten_fraction > 0 AND eaten_fraction <= 1)), -- Share of the plate eaten, stored at confirm; NULL = not recorded (planned, or confirmed before 2026-11-17). What was served is amount / eaten_fraction (study_conventions.md 6.3)
+        eaten_fraction_method VARCHAR(50)
+            CONSTRAINT ck_intake_plate_eaten_fraction_method
+            CHECK (eaten_fraction_method IS NULL OR eaten_fraction_method IN ({sql_in_list(FractionMethod)})), -- How eaten_fraction was obtained, marked by the user; NULL = eaten whole or not recorded (study_conventions.md 6.3)
 
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -1079,6 +1130,9 @@ class DBSchema:
         amount_method VARCHAR(50)
             CONSTRAINT ck_portion_detail_amount_method
             CHECK (amount_method IS NULL OR amount_method IN ({sql_in_list(AmountMethod)})), -- U2: how the amount was obtained (study_conventions.md 6.3). NULL = not given
+        split_method VARCHAR(50)
+            CONSTRAINT ck_portion_detail_split_method
+            CHECK (split_method IS NULL OR split_method IN ({sql_in_list(FractionMethod)})), -- How the fraction that split this amount between a plate and the fridge was obtained; the least precise of its splits. NULL = never split (study_conventions.md 6.3)
         macros_quality BOOLEAN, -- UNUSED since 2026-10-09: the origin of the macros is the food's (catalog/manual_intake.macros_source, read live, measurement §6.11). Kept with its values until versioning (portion_detail H1)
         
         is_cooked_weight BOOLEAN DEFAULT FALSE, -- If the food was weighed already cooked, catalog.cooking_factor back-calculates the raw weight ONLY inside the macro calculation; `amount` always keeps what the user weighed and is never overwritten (measurement_conventions.md 5.2, decision 2026-09-18). Only for catalog origins.

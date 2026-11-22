@@ -168,6 +168,10 @@ def _ensure_catalog_schema(cursor):
     )
     for column, definition in (
         ("macros_confidence", "INTEGER"),
+        # What the serving is (study §6.3, decision 2026-11-21); NULL = not said.
+        ("serving_method", "VARCHAR(50)"),
+        # Provisional foods (§11.2.2, decision 2026-11-21): existing rows were reviewed by hand.
+        ("needs_review", "BOOLEAN NOT NULL DEFAULT FALSE"),
     ):
         if not _has_column(cursor, "catalog", column):
             cursor.execute(
@@ -420,6 +424,8 @@ def _ensure_manual_intake_schema(cursor):
         # Existing rows are reusable dishes: FALSE is a technical backfill.
         ("is_quick_add", "BOOLEAN NOT NULL DEFAULT FALSE"),
         ("macros_confidence", "INTEGER"),
+        # Provisional dishes (§11.2.3, decision 2026-11-21): existing rows were reviewed by hand.
+        ("needs_review", "BOOLEAN NOT NULL DEFAULT FALSE"),
     ):
         if not _has_column(cursor, "manual_intake", column):
             cursor.execute(
@@ -446,6 +452,8 @@ def _ensure_manual_intake_schema(cursor):
         cursor, "manual_intake", "default_strictly_weighed", "default_amount_method",
         AmountMethod.KITCHEN_SCALE.value,
     )
+    # What the serving is (study §6.3, decision 2026-11-21); NULL = not said.
+    cursor.execute("ALTER TABLE manual_intake ADD COLUMN IF NOT EXISTS serving_method VARCHAR(50);")
     if legacy_ig_scale:
         # Approved data correction (measurement §6.10, §12.7). It only runs while
         # the legacy CHECK existed, dropped in step 3 of this same transaction,
