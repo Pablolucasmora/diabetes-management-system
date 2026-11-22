@@ -2013,6 +2013,9 @@
     .md\:h-5 {
       height: calc(var(--spacing) * 5);
     }
+    .md\:h-6 {
+      height: calc(var(--spacing) * 6);
+    }
     .md\:h-14 {
       height: calc(var(--spacing) * 14);
     }
@@ -2024,6 +2027,9 @@
     }
     .md\:w-5 {
       width: calc(var(--spacing) * 5);
+    }
+    .md\:w-6 {
+      width: calc(var(--spacing) * 6);
     }
     .md\:w-14 {
       width: calc(var(--spacing) * 14);

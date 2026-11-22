@@ -25,23 +25,34 @@ def menu_place_path(place: str) -> str:
     return f"{MENUS_PATH}/place?{urlencode({'place': place})}"
 
 
-def MenusBanner(count: int):
-    """In Food, under the To review notice (§9.13): only once a menu is saved."""
-    if not count:
-        return None
-    text = "1 restaurant menu" if count == 1 else f"{count} restaurant menus"
+_MENU_ICON = NotStr(
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" '
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="h-5 w-5 md:h-6 md:w-6">'
+    '<path d="M4 5.5C4 4.7 4.7 4 5.5 4H11v16H5.5C4.7 20 4 19.3 4 18.5z"/>'
+    '<path d="M20 5.5c0-.8-.7-1.5-1.5-1.5H13v16h5.5c.8 0 1.5-.7 1.5-1.5z"/>'
+    '<path d="M6.5 8h2.5M6.5 11h2.5M15 8h2.5M15 11h2.5M15 14h2.5"/></svg>'
+)
+
+
+def MenusButton():
+    """In the middle of Food's header, between rescue and `+` (§9.13): always there,
+    as solid as its neighbours, with its name so it reads at a glance."""
     return A(
-        Span(text, cls="max-md:text-xs text-sm font-semibold text-gray-800 truncate"),
-        Span("Open ›", cls="text-xs font-semibold text-gray-700 shrink-0 whitespace-nowrap"),
+        _MENU_ICON,
+        Span("Menus", cls="text-sm md:text-base font-semibold"),
         href=MENUS_PATH,
         hx_get=MENUS_PATH,
         hx_target="#main_content",
         hx_push_url="true",
-        id="food_menus_banner",
-        cls=(
-            "web_container md:w-xl lg:w-xl w-xs rounded-2xl px-4 max-md:px-3 py-2 "
-            "flex items-center justify-between gap-2 whitespace-nowrap cursor-pointer"
-        ),
+        id="food_menus_button",
+        aria_label="Restaurant menus",
+        cls="""
+            h-12 md:h-14 px-4 md:px-5 rounded-3xl md:rounded-4xl
+            bg-surface border border-line-soft text-gray-900
+            shadow-[0_4px_14px_rgba(80,60,40,0.14)]
+            flex items-center gap-2 cursor-pointer
+            transition-transform duration-150 hover:scale-[1.04] active:scale-95
+        """,
     )
 
 

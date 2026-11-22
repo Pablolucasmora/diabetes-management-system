@@ -10,6 +10,7 @@ from DayBetes_food.components.food.food_actions import (
     favorite_button_id,
     food_card_id,
 )
+from DayBetes_food.components.food.menus import MenusButton
 from DayBetes_food.components.food.rescue import RescueModal, rescue_open_attrs
 from DayBetes_food.components.modal import (
     ModalLayer,
@@ -594,8 +595,9 @@ def QuickCreateButtons():
                 RescueModal(),
                 cls="relative flex justify-start",
             ),
-            # Free space: DiaBot lives in the island now (frontend_conventions.md §9.3).
-            Div(cls="flex-1"),
+            # The saved restaurant menus, always at hand without crowding the
+            # filters (frontend_conventions.md §9.13), in the space DiaBot left.
+            Div(MenusButton(), cls="flex-1 flex justify-center"),
             Div(
                 Button(
                     Img(src="/images/ui/plus_icon.svg", alt="", cls="h-6 w-6"),

@@ -96,16 +96,6 @@ def list_menu_places(connection, user_id: int) -> list[MenuPlace]:
     return [MenuPlace(row["place"], int(row["item_count"]), row["updated_at"]) for row in rows]
 
 
-def count_menu_places(connection, user_id: int) -> int:
-    row = _execute_query(
-        connection,
-        "SELECT count(DISTINCT lower(place)) AS places FROM menu_item WHERE users_id = %(user_id)s;",
-        {"user_id": user_id},
-        commit=False,
-    )
-    return int(row["places"]) if row else 0
-
-
 def list_menu_items(connection, user_id: int, place: str) -> list[MenuItemRead]:
     """The dishes of one place of the user, by name; empty if it has none."""
     rows = _execute_query_many(

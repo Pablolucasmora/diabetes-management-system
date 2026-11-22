@@ -22,7 +22,6 @@ from DayBetes_food.database.queries import (
     get_planned_intake_event,
     list_planned_intake_events,
     count_needs_review,
-    count_menu_places,
     list_needs_review,
 )
 from DayBetes_food.domain.constants import PathId, PrefillSource, FoodEntryType, parse_optional_id
@@ -105,17 +104,16 @@ def setup_browse_routes(rt):
         to. An unknown value is a 422 (code_conventions §7.7)."""
         view = _food_view(filter, search_mode, food_mode, favs_mode, recipes_mode, meal_type)
         user_id = get_current_user_id()
-        events, plate_options, last_used_plate, review_count, menu_count = [], [], None, 0, 0
+        events, plate_options, last_used_plate, review_count = [], [], None, 0
         if user_id:
             with get_connection() as connection:
                 events = list_planned_intake_events(connection, int(user_id))
                 review_count = count_needs_review(connection, int(user_id))
-                menu_count = count_menu_places(connection, int(user_id))
                 # The selector shows the first meal chosen, so its plates are the
                 # ones listed (frontend_conventions.md §6).
                 if events:
                     plate_options, last_used_plate = plate_selector_options(connection, int(user_id), events[0].id)
-        return render_page(request, food_main(view, events, plate_options, last_used_plate, review_count, menu_count))
+        return render_page(request, food_main(view, events, plate_options, last_used_plate, review_count))
 
     # Tags of a food, dish or recipe on its detail page (frontend_conventions.md §9.4.1).
 
