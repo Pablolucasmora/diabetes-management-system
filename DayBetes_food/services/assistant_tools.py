@@ -358,6 +358,9 @@ TOOL_DEFINITIONS = [
                 },
             },
         },
+        # Not strict: the API caps nullable parameters of strict tools at 16 in
+        # all; parse_menu_items checks every value anyway.
+        strict=False,
     ),
     _tool(
         "search_menu",
@@ -367,6 +370,7 @@ TOOL_DEFINITIONS = [
             "query": {"type": "string", "description": "A few words of the dish."},
             "place": {**_NULLABLE_TEXT, "description": "Only this place, or null for any."},
         },
+        strict=False,
     ),
     _tool(
         "read_guide",

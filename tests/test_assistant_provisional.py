@@ -370,3 +370,19 @@ def test_calibration_needs_enough_samples_and_a_real_shift():
     # Four samples are not enough, and a 5 % shift changes nothing.
     assert calibration_lines(samples[:4], portions) == []
     assert calibration_lines(samples[:5], {i: CalibrationPortion(i, 210.0, 20.0) for i in range(1, 6)}) == []
+
+
+def test_strict_tools_stay_within_the_api_union_limit():
+    """The API rejects every request when the strict tools have more than 16
+    nullable or union parameters in all (§8.12): the assistant stops working."""
+    from DayBetes_food.services.assistant_tools import TOOL_DEFINITIONS
+
+    def unions(schema):
+        if isinstance(schema, dict):
+            own = 1 if isinstance(schema.get("type"), list) or "anyOf" in schema else 0
+            return own + sum(unions(value) for value in schema.values())
+        if isinstance(schema, list):
+            return sum(unions(value) for value in schema)
+        return 0
+
+    assert sum(unions(tool["input_schema"]) for tool in TOOL_DEFINITIONS if tool["strict"]) <= 16
