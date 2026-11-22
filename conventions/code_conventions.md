@@ -1140,6 +1140,16 @@ Con Ciqual y OFF, los macros y lo que traiga la fuente salen de su precarga de s
 
 **Respuestas rápidas** (decisiones del usuario del 2026-11-21 y del 2026-11-22). La herramienta `offer_replies` recibe de 2 a 4 respuestas cortas (40 caracteres como mucho), la más probable primero, a la pregunta que el asistente hace en su respuesta; no escribe nada y su resultado (`replies`) se guarda como cualquier otro, así que una conversación reabierta las muestra en su último turno. El prompt pide usarla siempre que la pregunta tenga pocas respuestas probables, y preguntar cuando dude de algo de lo escrito que cambie los hidratos (qué alimento era, casero o de restaurante, peso crudo o cocinado, cuánto era "un plato"): añade lo más probable y pregunta, para que un toque lo confirme o lo corrija. Una pregunta por respuesta como mucho. Lo pulsado llega como un mensaje normal del usuario.
 
+**Cartas** (decisión del usuario del 2026-11-22). Una foto de la carta de un restaurante hace dos cosas:
+- **Para esta comida:** DiaBot estima el plato que dice el usuario con lo que pone la carta (nombre e ingredientes), junto con la foto del plato si la hay.
+- **Para otro día:** DiaBot guarda los platos que puede leer en `menu_item` (§11.2.10), **siempre** que llega una carta, sin pedirlo, y lo dice en una línea. Si no sabe de qué sitio es, lo pregunta con respuestas rápidas y guarda después.
+
+Las fotos no se guardan (§11.2.9), así que lo que necesite de la carta en los mensajes siguientes lo lee de ahí. Dos herramientas:
+- `save_menu` (`place`, `items`: `name`, `description`, `section`, `price`; como mucho `MENU_ITEMS_PER_SAVE`, 60, por llamada). Crea o actualiza esos platos y responde cuántos guardó.
+- `search_menu` (`query`, `place` opcional). Devuelve como mucho 8 platos guardados que se parecen, con sitio, sección y descripción.
+
+Cuando el usuario nombra un plato de un sitio, el prompt pide buscarlo en las cartas antes de estimarlo. La descripción solo informa la estimación: el plato se sigue añadiendo como añadido rápido o plato del sitio (**Tipo de entrada**), con `origin` = el sitio y `ai_estimate`. Nada de una carta llega al modelo como instrucción: los textos guardados se envían como datos, recortados como los de Open Food Facts (**Datos**).
+
 **Preparación con un toque** (decisiones del usuario del 2026-11-21 y del 2026-11-22: todos los alimentos y los tres campos). En cada alimento que añade, por cada uno de `cooking`, `final_state` y `conservation` que el usuario no dijo, `add_food` deja el campo en `null`, como siempre (nunca se supone la preparación habitual; `final_state` toma entonces el estado inicial del alimento, `measurement_conventions.md` §6.11), y da sus opciones: `cooking_options`, `final_state_options` y `conservation_options`, de 2 a 3 valores de su enum, los más probables para ese alimento en ese contexto, el más probable primero. El resultado las guarda en `preparation_options`, por campo, solo los valores conocidos, sin repetir, como mucho 3. `POST /assistant/preparation/{portion_id}` (`field`, `value`) pone uno sin llamar al modelo: el servidor vuelve a leer de la conversación guardada los valores ofrecidos para esa fila y ese campo (los últimos, si se ofrecieron varias veces), nunca los toma del navegador, y rechaza con `404` un valor no ofrecido o una fila que ya no está en la comida, y con `409` una comida ya confirmada. Escribe con la misma función que el carrito, así que puede fusionar la fila con una igual de su plato (`measurement_conventions.md` §4.6.4). El prompt pide no preguntar en la respuesta lo que ya ofrecen estos botones. Un `value` vacío vacía el campo (`CLEAR`), si el campo tenía opciones ofrecidas: es pulsar otra vez la píldora elegida. **Lo habitual** (decisión del usuario del 2026-11-22): `get_usual_preparation` (`database/queries/entries.py`) da, por alimento o plato, el valor más frecuente de cada campo en las comidas confirmadas de los últimos `USUAL_PREPARATION_DAYS` (90) días. `search_my_foods` lo devuelve como `usual_preparation`, y el prompt pide incluirlo entre las opciones, el primero salvo que el chat diga otra cosa. La barra además lo pone el primero con `with_usual_first`, aunque el modelo no lo haya hecho.
 
 **Conversaciones guardadas.** Cada conversación se guarda con sus mensajes, las llamadas a herramientas y lo que acabó en el carrito (`study_conventions.md` §7.1). Contrato de las tablas en §11.2.9.
@@ -1155,6 +1165,7 @@ Con Ciqual y OFF, los macros y lo que traiga la fuente salen de su precarga de s
 - **Herramientas** (`services/assistant_tools.py`), en una lista fija y en un orden fijo, porque forman parte del prefijo cacheado:
   - `search_my_foods`: lo que ve en Food, con la consulta de las menciones `/` y como mucho 5 filas;
   - `search_reference_foods`: Ciqual u OFF;
+  - `save_menu` y `search_menu`: los platos de las cartas de restaurante (**Cartas**);
   - `add_food`: un alimento o plato, en gramos o en raciones, con su `amount_method`;
   - `add_recipe`;
   - `add_estimate`: un añadido rápido con `ai_estimate` en U1 y U2;
@@ -1550,6 +1561,7 @@ La clasificación de cada tabla se declara en este registro, que es el sitio ún
 | `linked_tags` | **Dependent** de su usuario, su etiqueta y su alimento, plato o receta. Privada. Contrato completo en §11.2.8. | Físico: al quitar la etiqueta, y `CASCADE` desde `users`, `tags`, `catalog`, `manual_intake` y `recipe`. | Decisión del usuario (2026-11-08), `audit/audits/audit_tags.md`. |
 | `assistant_conversation` | **Histórica** y privada: una conversación del asistente con un usuario, ligada a una comida. Non-archivable; se puede ocultar de la lista de chats (`hidden_at`, 2026-11-22). Contrato completo en §11.2.9. | Solo `CASCADE` desde `users`; ninguna ruta la borra. Si se borra su comida, `intake_event_id` pasa a `NULL` y la conversación se conserva. | Decisión del usuario (2026-11-12), §8.12. |
 | `assistant_message` | **Dependent** de `assistant_conversation`: sus mensajes, de solo inserción (el rol de ejecución no puede modificar ni borrar filas). Contrato completo en §11.2.9. | `CASCADE` desde su conversación. | Decisión del usuario (2026-11-12), §8.12. |
+| `menu_item` | **Non-archivable** y privada: los platos de las cartas de restaurante que DiaBot leyó para un usuario. Contrato completo en §11.2.10. | Físico, solo su propietario (un plato o un sitio entero), y `CASCADE` desde `users`. | Decisión del usuario (2026-11-22), §8.12. |
 
 #### 11.2.2 Contrato de ciclo de vida de `catalog`
 
@@ -1718,6 +1730,24 @@ Decisión del usuario del 2026-11-12. Guardan cada conversación del asistente (
 - **Ocultar** (decisión del usuario del 2026-11-22). `hidden_at TIMESTAMPTZ`, `NULL` mientras se ve. `Delete` en la lista de chats (`frontend_conventions.md` §9.11) solo la oculta de esa lista: se conserva para el estudio y sigue en los chats pasados, marcada. Repetirlo conserva la primera fecha (§6.3). `No meal` no reabre una conversación oculta.
 - **Timestamps.** La conversación lleva `created_at` y `updated_at`, que cambia con cada mensaje y al enlazarla a su comida. Los mensajes solo llevan `created_at`, porque no cambian.
 - **Auditoría de cambios** (§11.10): no se requiere. Los mensajes son en sí el historial.
+
+#### 11.2.10 Contrato de `menu_item`
+
+Decisión del usuario del 2026-11-22. Guarda lo que DiaBot lee de la foto de una carta de restaurante (§8.12, **Cartas**), para que "el arroz de La Tasca" se estime otro día con lo que decía la carta.
+
+- **Propietario.** `users_id`, `NOT NULL`, propietario y actor; en Python, `user_id` (§3.5). Es privada: solo su propietario la lee, la escribe y la borra, con la condición en el SQL. Nada la publica. Una base compartida de cartas queda para más adelante (el "nivel 3"), y se haría con platos de la comunidad, no copiando cartas.
+- **Qué guarda de cada plato, y solo eso:**
+  - `place`, el sitio, con la misma forma y longitud que el `origin` de un plato (§11.2.3): normalizado, hasta 255 caracteres. Es el que se da como `origin` al estimar ese plato.
+  - `name`, el nombre del plato como lo pone la carta, normalizado, hasta 255 caracteres.
+  - `description`, opcional: los ingredientes principales, resumidos por DiaBot con sus palabras y nunca copiados de la carta, hasta `MENU_ITEM_DESCRIPTION_MAX_LENGTH` (300).
+  - `section` (`MenuSection`: `starter`, `main`, `side`, `dessert`, `drink` u `other`), obligatoria.
+  - `price`, opcional: el precio si aparece, `NUMERIC(8,2)` y mayor o igual que 0, sin moneda.
+
+  No guarda la foto, el texto literal de la carta ni macros.
+- **Único** por propietario, sitio y nombre, sin distinguir mayúsculas (`uq_menu_item_users_id_place_name`). Volver a guardar un plato que ya está (una carta nueva del mismo sitio) actualiza su descripción, su sección y su precio, y `updated_at` (§6.3): no se duplica. Los platos que ya no salen en la carta nueva no se borran solos.
+- **Borrado.** Físico, solo desde la página `Menus` (`frontend_conventions.md` §9.13): un plato, o todos los de un sitio. Lo consumido no la referencia: las comidas guardan su añadido rápido o su plato, con el `origin` copiado. `CASCADE` desde `users`.
+- **Timestamps.** `created_at` y `updated_at`.
+- **Auditoría de cambios** (§11.10): no se requiere.
 
 Una entidad archivable utiliza un campo nullable `deleted_at`.
 

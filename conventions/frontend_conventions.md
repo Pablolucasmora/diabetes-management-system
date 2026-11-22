@@ -690,6 +690,23 @@ Para que los campos de calidad del dato se rellenen siempre con el mismo criteri
 
 Exige el header `HX-Request` (`403` si falta).
 
+
+### 9.13 Cartas guardadas, `Menus` (decisión del usuario, 2026-11-22)
+
+Lo que DiaBot ha guardado de las fotos de cartas de restaurante (`code_conventions.md` §8.12, **Cartas**; tabla `menu_item`, §11.2.10).
+
+- **Entrada.** En Food, bajo el aviso `To review` (o bajo el buscador si no lo hay), una línea con el mismo formato que ese aviso pero neutra, no ámbar: `N restaurant menus` y `Open ›`. Solo sale cuando hay alguna carta guardada: hasta entonces no hay nada que ver. Abre `/food/menus`.
+- **`/food/menus`.** Cabecera de cristal con `‹ Food` y el título `Menus`. Debajo, una tarjeta por sitio, del más reciente al más antiguo, con su nombre, cuántos platos tiene y cuándo se guardó por última vez. Tocar una abre el sitio.
+- **El sitio** (`/food/menus/place?place=…`). Su nombre de título y sus platos agrupados por sección (`Starters`, `Mains`, `Sides`, `Desserts`, `Drinks`, `Other`). Cada plato muestra su nombre, su descripción en gris y el precio a la derecha si lo hay, y una papelera. Al final, `Delete this menu` en rojo. Las dos piden confirmación (`ConfirmActionModal`), porque el borrado no se puede deshacer. Borrar el último plato de un sitio vuelve a la lista.
+- **No se editan a mano.** Para cambiar o completar una carta se manda otra foto a DiaBot, que actualiza los platos que ya están. La página lo dice en una línea bajo el título.
+
+| Acción | Destino | Swap | Respuesta | Error |
+|---|---|---|---|---|
+| `GET /food/menus` | página | — | la lista de sitios | — |
+| `GET /food/menus/place?place=…` | página | — | el sitio con sus platos | sitio sin platos del usuario `404` |
+| `POST /food/menus/items/{id}/delete` | la fila | `outerHTML` | vacío: la fila desaparece; si era el último, `HX-Location` a la lista | plato que no es del usuario `404`: toast |
+| `POST /food/menus/delete` (`place`) | — | — | `HX-Location` a la lista, con aviso | sitio sin platos del usuario `404`: toast |
+
 ## 10. Movimiento
 
 Decisión 2026-10-10. Animaciones pequeñas para que los cambios se perciban continuos y no a saltos. Están todas en `static/css/input.css`, al final.

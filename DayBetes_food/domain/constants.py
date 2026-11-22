@@ -319,6 +319,17 @@ class KeepPartMode(str, Enum):
 
 
 @unique
+class MenuSection(str, Enum):
+    """Section of a dish read from a restaurant menu (code_conventions.md §11.2.10)."""
+    STARTER = "starter"
+    MAIN = "main"
+    SIDE = "side"
+    DESSERT = "dessert"
+    DRINK = "drink"
+    OTHER = "other"
+
+
+@unique
 class FridgeCloseReason(str, Enum):
     """Why a container left the fridge (code_conventions.md §11.2.6). An emptied one
     reopens if what was taken from it goes back; a discarded one never does."""

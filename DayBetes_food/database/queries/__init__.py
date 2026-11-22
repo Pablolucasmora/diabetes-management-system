@@ -102,6 +102,15 @@ from DayBetes_food.database.queries.user_favorites import (
     get_user_favorite_access,
     set_user_favorite,
 )
+from DayBetes_food.database.queries.menu import (
+    save_menu_items,
+    search_menu_items,
+    list_menu_places,
+    count_menu_places,
+    list_menu_items,
+    delete_menu_item,
+    delete_menu_place,
+)
 from DayBetes_food.database.queries.entries import (
     get_subtype_suggestions,
     get_subtype_label,
@@ -398,4 +407,11 @@ __all__ = [
     "get_auth_rate_limit",
     "upsert_auth_rate_limit",
     "delete_auth_rate_limit",
+    "save_menu_items",
+    "search_menu_items",
+    "list_menu_places",
+    "count_menu_places",
+    "list_menu_items",
+    "delete_menu_item",
+    "delete_menu_place",
 ]

@@ -24,6 +24,7 @@ from DayBetes_food.domain.constants import (
     InsulinType,
     InjectionZone,
     MealType,
+    MenuSection,
     Nutriscore,
     PenCloseReason,
     PenFormat,
@@ -53,6 +54,7 @@ from DayBetes_food.domain.insulin_pen import (
     PEN_UNITS_RANGE,
 )
 from DayBetes_food.domain.meal_type_schedule import AUTO_ASSIGNABLE_MEAL_TYPES
+from DayBetes_food.domain.menu import MENU_ITEM_DESCRIPTION_MAX_LENGTH, MENU_PRICE_MAX
 from DayBetes_food.domain.nutrition import NUTRIENT_LIMITS, NumericRange
 from DayBetes_food.domain.recipe import RECIPE_MEAL_TYPES, RECIPE_SERVINGS_RANGE
 
@@ -779,6 +781,33 @@ class DBSchema:
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         CONSTRAINT uq_assistant_message_conversation_id_position UNIQUE (conversation_id, position),
 {check_lines}
+    );
+    """
+
+    # Dishes read from restaurant menus (code_conventions.md §8.12, §11.2.10):
+    # private, never published, deleted by their owner. Unique index in
+    # _ensure_menu_schema (database/bootstrap/).
+    menu_item = f"""
+    CREATE TABLE IF NOT EXISTS menu_item (
+        id SERIAL CONSTRAINT pk_menu_item PRIMARY KEY,
+        users_id INTEGER NOT NULL
+            CONSTRAINT fk_menu_item_users_id_users
+            REFERENCES users(id) ON DELETE CASCADE,
+        place VARCHAR(255) NOT NULL -- where the menu is from; the `origin` of a dish estimated from it (§11.2.3)
+            CONSTRAINT ck_menu_item_place_normalized
+            CHECK (place <> '' AND place = regexp_replace(btrim(place), '\s+', ' ', 'g')),
+        name VARCHAR(255) NOT NULL -- as the menu writes it, normalized
+            CONSTRAINT ck_menu_item_name_normalized
+            CHECK (name <> '' AND name = regexp_replace(btrim(name), '\s+', ' ', 'g')),
+        description VARCHAR({MENU_ITEM_DESCRIPTION_MAX_LENGTH}), -- main ingredients in DiaBot's words, never copied; NULL = none
+        section VARCHAR(20) NOT NULL
+            CONSTRAINT ck_menu_item_section
+            CHECK (section IN ({sql_in_list(MenuSection)})),
+        price NUMERIC(8,2) -- as printed, no currency; NULL = not shown
+            CONSTRAINT ck_menu_item_price
+            CHECK (price IS NULL OR (price >= 0 AND price <= {MENU_PRICE_MAX})),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     """
 
