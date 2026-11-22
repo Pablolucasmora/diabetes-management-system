@@ -2,6 +2,7 @@
 (code_conventions.md §8.12): pure logic of domain/, no database."""
 
 import json
+import os
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -372,9 +373,17 @@ def test_calibration_needs_enough_samples_and_a_real_shift():
     assert calibration_lines(samples[:5], {i: CalibrationPortion(i, 210.0, 20.0) for i in range(1, 6)}) == []
 
 
-def test_strict_tools_stay_within_the_api_union_limit():
+def test_strict_tools_stay_within_the_api_union_limit(monkeypatch):
     """The API rejects every request when the strict tools have more than 16
-    nullable or union parameters in all (§8.12): the assistant stops working."""
+    nullable or union parameters in all (§8.12): the assistant stops working.
+    The tool list lives in services/, whose import reads the configuration:
+    placeholders where it is missing (CI), never a connection."""
+    if not os.getenv("DATABASE_URL"):
+        monkeypatch.setenv("DATABASE_URL", "postgresql://unused@localhost/unused")
+        monkeypatch.setenv("DB_INIT_ON_STARTUP", "false")
+    for name in ("AUTH_TOKEN_PEPPER", "PASSWORD_PEPPER"):
+        if not os.getenv(name):
+            monkeypatch.setenv(name, "unused-in-this-test")
     from DayBetes_food.services.assistant_tools import TOOL_DEFINITIONS
 
     def unions(schema):
