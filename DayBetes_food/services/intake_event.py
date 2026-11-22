@@ -23,6 +23,7 @@ from DayBetes_food.database.queries import (
     get_meal_type_schedule,
     get_planned_intake_event,
     list_event_exact_times,
+    list_intake_plates,
     list_portions_by_event,
     scale_plate_portion_amounts,
     set_intake_plate_eaten_fraction,
@@ -506,3 +507,63 @@ def save_quick_add_as_dish(connection, user_id: int, quick_add_id: int) -> tuple
         commit=False,
     )
     return dish_id, quick_add.name
+
+
+def repeat_meal(connection, user_id: int, source_event_id: int) -> int:
+    """`Repeat today` of a past chat (frontend_conventions.md §9.11, decision of the
+    user of 2026-11-22): a new planned meal for now with what the confirmed meal
+    served, inside the caller's transaction. Its name, its plates with their name
+    and offset in minutes, and each food with its preparation and its U2; the
+    amount is the one served, before what was left (measurement_conventions.md
+    §4.4: `amount / eaten_fraction` of its plate, the stored amount when the
+    fraction was not recorded). Exact times and fridge links are not copied: they
+    belonged to that day. Returns the new meal's id.
+
+    Raises:
+        NotFoundError: not a consumed meal of the user.
+    """
+    source = get_intake_event(connection, user_id, source_event_id)
+    if source is None or source.state is IntakeEventState.PLANNED:
+        raise NotFoundError("Meal not found.")
+    event_id = create_intake_event(
+        connection,
+        IntakeEventCreate(
+            user_id=user_id,
+            state=IntakeEventState.PLANNED,
+            meal_type=default_meal_type_now(connection, user_id),
+            name=source.name,
+        ),
+        commit=False,
+    )
+    portions = _portions_by_plate(list_portions_by_event(connection, user_id, source_event_id))
+    for plate in list_intake_plates(connection, user_id, source_event_id):
+        plate_portions = portions.get(plate.id, [])
+        if not plate_portions:
+            continue
+        new_plate_id = create_intake_plate(
+            connection,
+            IntakePlateCreate(intake_event_id=event_id, name=plate.name, offset_minutes=plate.offset_minutes),
+            commit=False,
+        )
+        fraction = plate.eaten_fraction if plate.eaten_fraction else 1.0
+        for portion in plate_portions:
+            create_portion_detail(
+                connection,
+                user_id,
+                PortionDetailCreate(
+                    origin=portion.origin,
+                    origin_id=portion.origin_id,
+                    destination=PortionDestination.INTAKE_EVENT,
+                    destination_id=event_id,
+                    plate_id=new_plate_id,
+                    amount=portion.amount / fraction,
+                    cooking=portion.cooking,
+                    conservation=portion.conservation,
+                    final_state=portion.final_state,
+                    ripeness=portion.ripeness,
+                    amount_method=portion.amount_method,
+                    is_cooked_weight=portion.is_cooked_weight,
+                ),
+                commit=False,
+            )
+    return event_id

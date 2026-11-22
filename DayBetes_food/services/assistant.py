@@ -33,8 +33,12 @@ from DayBetes_food.database.queries import (
     list_assistant_messages,
     list_intake_plates,
     list_needs_review,
+    get_consumed_food_usage_rankings,
+    get_usual_amounts,
+    get_usual_preparation,
     list_portions_by_event,
     update_portion_amount,
+    update_portion_detail_fields,
 )
 from DayBetes_food.domain.assistant import (
     ASSISTANT_CONTEXT_TAG,
@@ -44,11 +48,22 @@ from DayBetes_food.domain.assistant import (
     AssistantUsage,
     Mention,
     TurnView,
+    PREPARATION_OPTION_FIELDS,
+    USUAL_FOODS_DAYS,
+    USUAL_FOODS_MINUTES,
+    USUAL_FOODS_SHOWN,
+    UsualFood,
+    preparation_choices,
+    USUAL_PREPARATION_DAYS,
     history_window,
+    with_usual_first,
+    without_unanswered_calls,
     plus_one_units,
     turn_views,
+    without_guide_questions,
 )
-from DayBetes_food.domain.constants import AssistantRole, FoodEntryType
+from DayBetes_food.domain.constants import CLEAR, AssistantRole, FoodEntryType, PortionOrigin
+from DayBetes_food.domain.portion_detail import PortionDetailUpdate
 from DayBetes_food.errors import ConflictError, ExternalServiceError, NotFoundError, ValidationError
 from DayBetes_food.integrations.anthropic_client import create_answer
 from DayBetes_food.services.assistant_tools import TOOL_DEFINITIONS, ToolContext, run_tool
@@ -80,9 +95,11 @@ Amount and amount_method (how the amount was obtained):
 - Household measures ("una cucharada", "un vaso", "un puñado"): estimate the grams, household.
 - No amount ("un plato de lentejas"), or a photo of the dish: estimate the grams, ai_estimate.
 
-Preparation (cooking, final_state, conservation, ripeness, is_cooked_weight): fill in only what the user said ("hervido", "a la plancha", "crudo", "de la nevera", "pesado cocinado"), choosing the closest value of the list; when nothing fits or they did not say it, leave it null. Never assume the usual preparation. A preparation said once for several foods ("en una sartén con aceite: zanahoria, tomate y pechuga") applies to all of them. A pan or a grill ("sartén", "plancha") is griddle; only "frito" or a lot of oil is fried. Leave final_state null unless they said it: the server then uses the food's initial state. Cooked "con aceite" without grams: add the oil too, about 5 g per person for a pan, with amount_method ai_estimate, and say so. Food weighed after cooking: give the grams as weighed with is_cooked_weight true; the server converts them to raw with the food's cooking factor and its carbs_g already account for it, so never convert the grams yourself. If the food has no cooking factor the tool says so: then add the grams as weighed, without the mark.
+Preparation (cooking, final_state, conservation, ripeness, is_cooked_weight): fill in only what the user said ("hervido", "a la plancha", "crudo", "de la nevera", "pesado cocinado"), choosing the closest value of the list; when nothing fits or they did not say it, leave it null. Never assume the usual preparation. A preparation said once for several foods ("en una sartén con aceite: zanahoria, tomate y pechuga") applies to all of them. A pan or a grill ("sartén", "plancha") is griddle; only "frito" or a lot of oil is fried. Leave final_state null unless they said it: the server then uses the food's initial state. Cooked "con aceite" without grams: add the oil too, about 5 g per person for a pan, with amount_method ai_estimate, and say so. Food weighed after cooking: give the grams as weighed with is_cooked_weight true; the server converts them to raw with the food's cooking factor and its carbs_g already account for it, so never convert the grams yourself. If the food has no cooking factor the tool says so: then add the grams as weighed, without the mark. For every food you add, for each of cooking, final_state and conservation that the user did not say, still leave it null (final_state then takes the food's initial state) but give its options in add_food (cooking_options, final_state_options, conservation_options): the 2 or 3 likeliest values for that food in this context (the dish, the time, where they ate, what they said), the likeliest first. search_my_foods gives usual_preparation, how the user has had that food most often: include it, first unless this chat points elsewhere, and still leave the field null. The page shows them as buttons under the food and the user picks with a tap, so do not ask about the preparation in your reply.
 
-Plates: put everything in the meal's last plate (plate_id null), unless the user splits the meal into courses eaten at different times ("de primero…", "de postre a los 20 minutos"): then add_plate for each course, with its name and offset, and add its foods there. When they say a clock time instead of minutes ("el aperitivo a las 13:30"), give eaten_time HH:MM instead of offset_minutes: the app keeps the time and derives the offset, also when the meal time changes later.
+Quick answers: whenever you ask the user something with a few likely answers, call offer_replies with 2 to 4 short options in their language, the likeliest first, and ask the question in your reply as always. A tapped option comes back as their message. Ask when you are unsure of something they wrote that changes the carbs (which food they meant, homemade or restaurant, raw or cooked weight, how much "un plato" was): add your best guess first and ask, so one tap confirms or corrects it. At most one question per reply; never ask what the preparation buttons already offer.
+
+Plates: put everything in the meal's last plate (plate_id null), unless the user splits the meal into courses eaten at different times ("de primero…", "de postre a los 20 minutos") or says another round is coming ("ahora otra tanda", "repito"): then add_plate for each course, with its name and offset, and add its foods there. When they say a clock time instead of minutes ("el aperitivo a las 13:30"), give eaten_time HH:MM instead of offset_minutes: the app keeps the time and derives the offset, also when the meal time changes later.
 
 The meal: when the user says when they ate ("a las 14:30", "ayer en la cena"), call update_meal with that local time (and date, if it is not today) and meal type, and eating_out true when they ate at a bar, a restaurant or someone else's home. Change the meal, a plate or a food already added only when the user says so; use the ids of the context block.
 
@@ -279,6 +296,103 @@ def apply_plus(connection, user_id: int, conversation_id: int, portion_id: int, 
     update_portion_amount(connection, user_id, portion_id, amount, commit=False)
 
 
+def usual_foods(connection, user_id: int) -> list[UsualFood]:
+    """The foods the user eats most around this time of day, with the amount they
+    usually eat (frontend §9.11, "Usual now"): the app's usage ranking, which
+    weighs how often and how close to now, kept to foods eaten on average within
+    USUAL_FOODS_MINUTES of now."""
+    ranking = [
+        row
+        for row in get_consumed_food_usage_rankings(connection, user_id, USUAL_FOODS_DAYS)
+        if float(row["avg_minute_distance"]) <= USUAL_FOODS_MINUTES
+    ][: USUAL_FOODS_SHOWN * 2]
+    if not ranking:
+        return []
+    amounts = get_usual_amounts(
+        connection,
+        user_id,
+        [int(row["entry_id"]) for row in ranking if row["entry_type"] == FoodEntryType.CATALOG.value],
+        [int(row["entry_id"]) for row in ranking if row["entry_type"] == FoodEntryType.MANUAL_INTAKE.value],
+        USUAL_FOODS_DAYS,
+    )
+    foods = []
+    for row in ranking:
+        found = amounts.get((row["entry_type"], int(row["entry_id"])))
+        if found is not None:
+            foods.append(UsualFood(row["entry_type"], int(row["entry_id"]), found[0], round(found[1])))
+    return foods[:USUAL_FOODS_SHOWN]
+
+
+def meal_preparation_choices(connection, user_id: int, conversation) -> dict[int, dict[str, tuple[str, ...]]]:
+    """The preparation values offered for the rows of the conversation's meal that
+    are still in it (§8.12, "Preparación con un toque"), the user's usual value for
+    each food first; none for a meal not planned."""
+    if conversation is None or conversation.without_meal or conversation.intake_event_id is None:
+        return {}
+    try:
+        get_planned_intake_event(connection, user_id, conversation.intake_event_id)
+    except (NotFoundError, ConflictError):
+        return {}
+    rows = {p.id: p for p in list_portions_by_event(connection, user_id, conversation.intake_event_id)}
+    choices = {
+        portion_id: fields
+        for portion_id, fields in preparation_choices(conversation_turns(connection, user_id, conversation.id)).items()
+        if portion_id in rows
+    }
+    if not choices:
+        return {}
+    origins = [(rows[portion_id].origin, rows[portion_id].origin_id) for portion_id in choices]
+    usual = get_usual_preparation(
+        connection,
+        user_id,
+        [origin_id for origin, origin_id in origins if origin is PortionOrigin.CATALOG],
+        [origin_id for origin, origin_id in origins if origin is PortionOrigin.MANUAL_INTAKE],
+        USUAL_PREPARATION_DAYS,
+    )
+    ranked = {}
+    for portion_id, fields in choices.items():
+        portion = rows[portion_id]
+        habits = usual.get((portion.origin.value, portion.origin_id), {})
+        ranked[portion_id] = {name: with_usual_first(options, habits.get(name)) for name, options in fields.items()}
+    return ranked
+
+
+def apply_preparation(
+    connection, user_id: int, conversation_id: int, portion_id: int, field_name: str, raw_value: str
+) -> None:
+    """Set one preparation field of a row of the conversation's meal, picked with a
+    tap among the values the assistant offered, or emptied by tapping the chosen
+    one again, without the model (§8.12), inside
+    the caller's transaction. The offered values are read again from the stored
+    conversation, never taken from the browser. Like the cart, it can merge the
+    row into an equal one of its plate (measurement_conventions.md §4.6.4).
+
+    Raises:
+        NotFoundError: the conversation, its meal or the row is gone, or the value
+            was not offered for that field.
+        ConflictError: the meal was confirmed.
+    """
+    conversation = get_assistant_conversation(connection, user_id, conversation_id)
+    if conversation is None or conversation.intake_event_id is None:
+        raise NotFoundError("Conversation not found.")
+    get_planned_intake_event(connection, user_id, conversation.intake_event_id)
+    offered = meal_preparation_choices(connection, user_id, conversation).get(portion_id, {})
+    enum_cls = PREPARATION_OPTION_FIELDS.get(field_name)
+    if enum_cls is None or field_name not in offered:
+        raise NotFoundError("That value is not offered for this food.")
+    # Empty: the chosen value tapped again, to undo a wrong tap; the field is left
+    # unknown, as when it is emptied in the cart.
+    if raw_value == "":
+        value = CLEAR
+    elif raw_value in offered[field_name]:
+        value = enum_cls(raw_value)
+    else:
+        raise NotFoundError("That value is not offered for this food.")
+    update_portion_detail_fields(
+        connection, user_id, portion_id, PortionDetailUpdate(**{field_name: value}), commit=False
+    )
+
+
 def _mention_lines(connection, user_id: int, mentions: tuple[Mention, ...]) -> tuple[list[str], list[str]]:
     """The pinned entries, read again with their visibility rule (§8.12). One the
     user no longer sees is left out, and a notice says so."""
@@ -462,7 +576,11 @@ def send_assistant_message(
     history = (
         [
             {"role": message.role.value, "content": message.content}
-            for message in history_window(list_assistant_messages(connection, user_id, conversation.id))
+            for message in history_window(
+                without_guide_questions(
+                    without_unanswered_calls(list_assistant_messages(connection, user_id, conversation.id))
+                )
+            )
         ]
         if conversation
         else []
@@ -493,11 +611,14 @@ def send_assistant_message(
             outcome = "failed_after_tools"
             break
         usages.append(answer.usage)
-        if answer.content:
+        tool_calls = [block for block in answer.content if block.get("type") == "tool_use"]
+        # An answer cut by its token limit may end in a call that never runs: stored,
+        # the API would reject the chat from then on (§8.12, "Turno").
+        cut_call = bool(tool_calls) and answer.stop_reason != "tool_use"
+        if answer.content and not cut_call:
             turn.live.append({"role": AssistantRole.ASSISTANT.value, "content": answer.content})
             turn.stored.append(AssistantMessageCreate(0, AssistantRole.ASSISTANT, answer.content, answer.usage))
 
-        tool_calls = [block for block in answer.content if block.get("type") == "tool_use"]
         if answer.stop_reason != "tool_use" or not tool_calls:
             if answer.stop_reason == "refusal":
                 notices.append(NOTICE_REFUSED)

@@ -13,7 +13,7 @@ import json
 import math
 import re
 from enum import Enum
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 from DayBetes_food.domain.catalog import CATALOG_NAME_MAX_LENGTH, parse_barcode, parse_cooking_factor
@@ -110,6 +110,22 @@ RECIPE_DRAFT_SOURCE = "recipe"
 MANUAL_INTAKE_DRAFT_SOURCE = "manual_intake"
 # Lines of what a tool changed in the meal (§8.12, "Edición de la comida").
 TOOL_RESULT_CHANGED = "changed"
+# A topic of the guide the assistant read to answer a question about it (§8.12,
+# "Dudas sobre la guía"): the page folds that turn and the model never sees it again.
+TOOL_RESULT_GUIDE = "guide"
+# The answer buttons the assistant offers under its question (§8.12, "Respuestas rápidas").
+TOOL_RESULT_REPLIES = "replies"
+QUICK_REPLIES_MIN = 2
+QUICK_REPLIES_MAX = 4
+QUICK_REPLY_MAX_LENGTH = 40
+# The preparation values offered as buttons under a food, per field (§8.12,
+# "Preparación con un toque"): the likeliest first, at most this many.
+PREPARATION_OPTIONS_MAX = 3
+PREPARATION_OPTION_FIELDS = {
+    "cooking": CookingMethod,
+    "final_state": FoodPhysicalState,
+    "conservation": ConservationMethod,
+}
 
 # A tool_use id as the API writes it (`toolu_...`); it travels in the URL of a
 # draft (frontend §9.11), so it is checked before reaching the SQL.
@@ -730,6 +746,141 @@ def is_context_block(block: dict) -> bool:
     return block.get("type") == "text" and str(block.get("text", "")).startswith(ASSISTANT_CONTEXT_TAG)
 
 
+# Length of the first line of a chat in the list of chats (frontend §9.11).
+CHAT_PREVIEW_LENGTH = 60
+
+
+def chat_preview(content: list | None) -> str:
+    """What the user wrote first in a chat, on one line, for the list of chats
+    (frontend §9.11): `Photo` when it was only photos, `Empty chat` when nothing."""
+    blocks = content or []
+    texts = [
+        str(block.get("text", ""))
+        for block in blocks
+        if block.get("type") == "text" and not is_context_block(block)
+        and block.get("text") != ASSISTANT_PHOTO_PLACEHOLDER
+    ]
+    text = " ".join(" ".join(texts).split())
+    if not text:
+        has_photo = any(
+            block.get("type") == "image" or block.get("text") == ASSISTANT_PHOTO_PLACEHOLDER for block in blocks
+        )
+        return "Photo" if has_photo else "Empty chat"
+    if len(text) <= CHAT_PREVIEW_LENGTH:
+        return text
+    return text[: CHAT_PREVIEW_LENGTH - 1].rstrip() + "…"
+
+
+# "Usual now" in an empty chat (decision of the user of 2026-11-22, frontend §9.11):
+# the foods eaten most around this time of day.
+USUAL_FOODS_SHOWN = 5
+USUAL_FOODS_DAYS = 60
+USUAL_FOODS_MINUTES = 120  # eaten on average within this many minutes of now
+
+
+@dataclass(frozen=True)
+class UsualFood:
+    """A food the user eats often at this time, offered in an empty chat (§9.11)."""
+
+    entry_type: str  # FoodEntryType value: catalog or manual_intake
+    entry_id: int
+    name: str
+    grams: float  # the median amount eaten
+
+
+# "Lo de siempre" (decision of the user of 2026-11-22, §8.12): a meal eaten at
+# least this many times in this many days, around this time of day, with the
+# same foods.
+USUAL_MEAL_DAYS = 30
+USUAL_MEAL_MIN_COUNT = 3
+USUAL_MEAL_MINUTES = 90
+USUAL_MEALS_SHOWN = 3
+
+
+@dataclass(frozen=True)
+class UsualMealFood:
+    entry_type: str
+    entry_id: int
+    name: str
+    grams: float  # the median amount eaten
+    cooking: str | None
+    final_state: str | None
+    conservation: str | None
+
+
+@dataclass(frozen=True)
+class UsualMeal:
+    times: int
+    foods: tuple[UsualMealFood, ...]
+
+
+def _minutes_apart(a: int, b: int) -> int:
+    distance = abs(a - b) % 1440
+    return min(distance, 1440 - distance)
+
+
+def usual_meals(meals: list[tuple[int, list]], now_minute: int) -> list[UsualMeal]:
+    """The meals eaten again and again around this time (§8.12, "Lo de siempre").
+
+    `meals`: (local minute of the day, its portions) of the confirmed meals of the
+    window. Two meals are the same when they have the same foods, whatever the
+    amounts; each food takes the median of what was eaten and its latest
+    preparation. The most repeated first, at most USUAL_MEALS_SHOWN.
+    """
+    groups: dict[frozenset, list[list]] = {}
+    for minute, portions in meals:
+        if not portions or _minutes_apart(minute, now_minute) > USUAL_MEAL_MINUTES:
+            continue
+        key = frozenset((p.origin.value, p.origin_id) for p in portions)
+        groups.setdefault(key, []).append(portions)
+    found = []
+    for key, occurrences in groups.items():
+        if len(occurrences) < USUAL_MEAL_MIN_COUNT:
+            continue
+        foods = []
+        for entry_type, entry_id in sorted(key):
+            rows = [p for portions in occurrences for p in portions if (p.origin.value, p.origin_id) == (entry_type, entry_id)]
+            amounts = sorted(p.amount for p in rows)
+            middle = len(amounts) // 2
+            median = amounts[middle] if len(amounts) % 2 else (amounts[middle - 1] + amounts[middle]) / 2
+            latest = rows[0]
+            foods.append(
+                UsualMealFood(
+                    entry_type,
+                    entry_id,
+                    latest.source.name or "",
+                    round(median),
+                    latest.cooking.value if latest.cooking else None,
+                    latest.final_state.value if latest.final_state else None,
+                    latest.conservation.value if latest.conservation else None,
+                )
+            )
+        found.append(UsualMeal(len(occurrences), tuple(foods)))
+    found.sort(key=lambda meal: -meal.times)
+    return found[:USUAL_MEALS_SHOWN]
+
+
+@dataclass(frozen=True)
+class ChatSummary:
+    """A chat without a meal in the list of chats (frontend §9.11)."""
+
+    conversation_id: int
+    updated_at: datetime
+    preview: str
+
+
+@dataclass(frozen=True)
+class PastChat:
+    """A chat in the past chats (frontend §9.11): the conversation of a confirmed
+    meal, or a `No meal` chat, hidden or not."""
+
+    conversation_id: int
+    event_id: int | None  # None: a `No meal` chat
+    updated_at: datetime
+    preview: str
+    hidden: bool
+
+
 @dataclass(frozen=True)
 class AddedCard:
     """Something the assistant put in the cart, as its tool reported it."""
@@ -788,6 +939,16 @@ class AddedUnit:
 
 
 @dataclass(frozen=True)
+class PreparationChoice:
+    """The values of one preparation field the assistant offered for a row of the
+    meal, to pick with a tap (§8.12, "Preparación con un toque")."""
+
+    portion_id: int
+    field: str  # a key of PREPARATION_OPTION_FIELDS
+    options: tuple[str, ...]  # values of its enum, the likeliest first
+
+
+@dataclass(frozen=True)
 class TurnView:
     """One message of the user and everything the assistant did for it."""
 
@@ -800,6 +961,16 @@ class TurnView:
     provisional: list[ProvisionalCard] = field(default_factory=list)
     repeats: list[RepeatCard] = field(default_factory=list)
     units: list[AddedUnit] = field(default_factory=list)
+    quick_replies: list[str] = field(default_factory=list)
+    preparation: list[PreparationChoice] = field(default_factory=list)
+    guides: list[str] = field(default_factory=list)  # topics of the guide read in it
+
+    @property
+    def is_guide_question(self) -> bool:
+        """Only a question about the guide: it read the guide and touched nothing (§8.12)."""
+        return bool(self.guides) and not (
+            self.added or self.drafts or self.changed or self.provisional or self.repeats or self.units
+        )
 
 
 def _added_unit(added) -> AddedUnit | None:
@@ -814,6 +985,64 @@ def _added_unit(added) -> AddedUnit | None:
     count = _number(added.get("pieces")) or _number(added.get("servings"))
     unit = grams / count if count and count > 0 else grams
     return AddedUnit(portion_id=added["food_id"], unit_g=unit)
+
+
+def parse_preparation_options(field_name: str, raw) -> tuple[str, ...]:
+    """The values of one preparation field the model offered: known ones only,
+    without repeats, at most PREPARATION_OPTIONS_MAX; anything else gives none."""
+    enum_cls = PREPARATION_OPTION_FIELDS.get(field_name)
+    if enum_cls is None or not isinstance(raw, list):
+        return ()
+    known = {member.value for member in enum_cls}
+    options: list[str] = []
+    for value in raw:
+        if isinstance(value, str) and value in known and value not in options:
+            options.append(value)
+    return tuple(options[:PREPARATION_OPTIONS_MAX])
+
+
+def parse_quick_replies(raw) -> list[str]:
+    """The answer buttons the model offered (§8.12, "Respuestas rápidas").
+
+    Raises:
+        ValidationError: not 2 to 4 non-empty texts of at most 40 characters.
+    """
+    if not isinstance(raw, list):
+        raise ValidationError("options must be a list of texts.")
+    options = [" ".join(str(value).split()) for value in raw if isinstance(value, str)]
+    options = [option for option in options if option]
+    if not QUICK_REPLIES_MIN <= len(options) <= QUICK_REPLIES_MAX or len(options) != len(raw):
+        raise ValidationError(f"Give {QUICK_REPLIES_MIN} to {QUICK_REPLIES_MAX} non-empty options.")
+    if any(len(option) > QUICK_REPLY_MAX_LENGTH for option in options):
+        raise ValidationError(f"Each option at most {QUICK_REPLY_MAX_LENGTH} characters.")
+    return options
+
+
+def preparation_choices(turns: list["TurnView"]) -> dict[int, dict[str, tuple[str, ...]]]:
+    """The latest values offered for each preparation field of each row of the
+    meal (§8.12), in the order of PREPARATION_OPTION_FIELDS."""
+    latest: dict[int, dict[str, tuple[str, ...]]] = {}
+    for turn in turns:
+        for choice in turn.preparation:
+            latest.setdefault(choice.portion_id, {})[choice.field] = choice.options
+    return {
+        portion_id: {name: fields[name] for name in PREPARATION_OPTION_FIELDS if name in fields}
+        for portion_id, fields in latest.items()
+    }
+
+
+# Days of confirmed meals read for the usual preparation of a food (§8.12).
+USUAL_PREPARATION_DAYS = 90
+
+
+def with_usual_first(options: tuple[str, ...], usual: str | None) -> tuple[str, ...]:
+    """The values offered for one field with the user's usual one for that food
+    first (§8.12, "Preparación con un toque"): DiaBot ranks by what the chat says,
+    the history of the food decides the first place. It stays at
+    PREPARATION_OPTIONS_MAX values."""
+    if usual is None:
+        return options
+    return (usual, *(value for value in options if value != usual))[:PREPARATION_OPTIONS_MAX]
 
 
 def plus_one_units(turns: list["TurnView"]) -> list[AddedUnit]:
@@ -859,6 +1088,62 @@ def starts_turn(message: AssistantMessageRead) -> bool:
 # messages in a row instead of changing with every message.
 ASSISTANT_HISTORY_MAX_TURNS = 30
 ASSISTANT_HISTORY_CUT_STEP = 10
+
+
+def without_guide_questions(messages: list[AssistantMessageRead]) -> list[AssistantMessageRead]:
+    """The stored messages without the turns that only answered a question about the
+    guide (§8.12, "Dudas sobre la guía"): kept for the study and shown folded, but
+    never sent back to the model, so they do not make the chat dearer."""
+    starts = [i for i, message in enumerate(messages) if starts_turn(message)]
+    if not starts:
+        return messages
+    kept = messages[: starts[0]]
+    bounds = starts + [len(messages)]
+    for start, end in zip(bounds, bounds[1:]):
+        turn = messages[start:end]
+        views = turn_views(turn)
+        if views and views[0].is_guide_question:
+            continue
+        kept.extend(turn)
+    return kept
+
+
+def without_unanswered_calls(messages: list[AssistantMessageRead]) -> list[AssistantMessageRead]:
+    """The stored messages without the tool calls the API would reject (§8.12,
+    "Turno"): an answer whose calls are not all answered by the next row, as one
+    cut by its token limit was stored before 2026-11-22, and the results of calls
+    that are no longer sent. Without this, one such row breaks the chat for good."""
+    kept: list[AssistantMessageRead] = []
+    answered: set = set()
+    for index, message in enumerate(messages):
+        if message.role is AssistantRole.ASSISTANT:
+            calls = {block.get("id") for block in message.content if block.get("type") == "tool_use"}
+            if calls:
+                following = messages[index + 1] if index + 1 < len(messages) else None
+                results = (
+                    {block.get("tool_use_id") for block in following.content if block.get("type") == "tool_result"}
+                    if following is not None and following.role is AssistantRole.USER
+                    else set()
+                )
+                if not calls <= results:
+                    continue
+                answered = calls
+            else:
+                answered = set()
+            kept.append(message)
+            continue
+        if any(block.get("type") == "tool_result" for block in message.content):
+            content = [
+                block for block in message.content
+                if block.get("type") != "tool_result" or block.get("tool_use_id") in answered
+            ]
+            answered = set()
+            if not content:
+                continue
+            if len(content) != len(message.content):
+                message = replace(message, content=content)
+        kept.append(message)
+    return kept
 
 
 def history_window(messages: list[AssistantMessageRead]) -> list[AssistantMessageRead]:
@@ -922,6 +1207,18 @@ def _read_tool_result(turn: TurnView, block: dict, tool_message: dict[str, int])
     unit = _added_unit(added)
     if unit is not None:
         turn.units.append(unit)
+        offered = added.get("preparation_options")
+        if isinstance(offered, dict):
+            for name in PREPARATION_OPTION_FIELDS:
+                options = parse_preparation_options(name, offered.get(name))
+                if options:
+                    turn.preparation.append(PreparationChoice(unit.portion_id, name, options))
+    guide = result.get(TOOL_RESULT_GUIDE)
+    if isinstance(guide, str) and guide:
+        turn.guides.append(guide)
+    replies = result.get(TOOL_RESULT_REPLIES)
+    if isinstance(replies, list):
+        turn.quick_replies[:] = [str(reply) for reply in replies if isinstance(reply, str) and reply]
     provisional = result.get(TOOL_RESULT_PROVISIONAL)
     if isinstance(added, dict) and isinstance(provisional, dict) and _is_id(provisional.get("id")):
         # Shown on its own card, with Review, instead of in Added to the cart.

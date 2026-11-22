@@ -24,6 +24,8 @@ from datetime import datetime
 from enum import Enum
 
 from DayBetes_food.database.queries import (
+    list_consumed_intake_events_since,
+    list_portions_by_events,
     apply_plate_offset_to_portions,
     count_similar_quick_adds,
     create_catalog_item,
@@ -38,6 +40,7 @@ from DayBetes_food.database.queries import (
     get_intake_event,
     get_manual_intake,
     get_mention_suggestions,
+    get_usual_preparation,
     get_off_product_by_code,
     get_planned_intake_event,
     get_portion_detail,
@@ -62,7 +65,9 @@ from DayBetes_food.database.queries import (
     update_portion_flag,
     update_portion_offset,
 )
+from DayBetes_food.domain.guide import GUIDE_GROUPS, GUIDE_TOPICS, guide_text
 from DayBetes_food.domain.assistant import (
+    USUAL_PREPARATION_DAYS,
     ASSISTANT_SEARCH_RESULTS_MAX,
     MANUAL_DRAFT_MACROS_SOURCES,
     MANUAL_INTAKE_DRAFT_SOURCE,
@@ -72,6 +77,13 @@ from DayBetes_food.domain.assistant import (
     TOOL_RESULT_DRAFT,
     TOOL_RESULT_PROVISIONAL,
     TOOL_RESULT_REPEAT,
+    TOOL_RESULT_GUIDE,
+    TOOL_RESULT_REPLIES,
+    PREPARATION_OPTION_FIELDS,
+    USUAL_MEAL_DAYS,
+    parse_preparation_options,
+    usual_meals,
+    parse_quick_replies,
     DRAFT_MACROS_SOURCE,
     REPEAT_MIN_COUNT,
     REPEAT_WINDOW_DAYS,
@@ -158,7 +170,7 @@ from DayBetes_food.services.intake_event import (
     update_meal_time,
 )
 from DayBetes_food.services.recipe import add_recipe_to_meal, recipe_draft_foods
-from DayBetes_food.time_utils import to_local
+from DayBetes_food.time_utils import local_now, to_local
 
 _ENTRY_TYPE_NAMES = {
     FoodEntryType.CATALOG: "food",
@@ -219,6 +231,24 @@ _PREPARATION = {
 }
 
 
+# The preparation values offered as buttons under a food (§8.12, "Preparación
+# con un toque"): for every field the user did not say, the likeliest 2 or 3.
+def _preparation_options(enum_cls, what: str) -> dict:
+    return {
+        "type": ["array", "null"],
+        "items": {"type": "string", "enum": [member.value for member in enum_cls]},
+        "description": f"Only when the user did not say {what}: the 2 or 3 likeliest values for this "
+        "food in this context, the likeliest first, shown as buttons to pick with a tap. Null when they said it.",
+    }
+
+
+_PREPARATION_OPTIONS = {
+    "cooking_options": _preparation_options(CookingMethod, "how it was cooked"),
+    "final_state_options": _preparation_options(FoodPhysicalState, "its texture as eaten"),
+    "conservation_options": _preparation_options(ConservationMethod, "whether it was freshly made or kept"),
+}
+
+
 def _schema(properties: dict) -> dict:
     """Strict input schema: every property required (null when not given)."""
     return {
@@ -276,7 +306,29 @@ TOOL_DEFINITIONS = [
             "amount_method": {"type": "string", "enum": [method.value for method in AmountMethod]},
             "plate_id": _PLATE_ID,
             **_PREPARATION,
+            **_PREPARATION_OPTIONS,
         },
+    ),
+    _tool(
+        "offer_replies",
+        "Show 2 to 4 short answer buttons under your question, so the user answers with one tap "
+        "(\"Homemade\", \"Restaurant\"). Use it whenever you ask something with a few likely answers; "
+        "write the question in your reply as always. A tapped option comes back as the user's message.",
+        {"options": {"type": "array", "items": {"type": "string"}}},
+    ),
+    _tool(
+        "find_usual_meals",
+        "The meals the user has eaten at least 3 times in the last 30 days around this time of day, "
+        "with the same foods: each with its foods, the usual grams and the latest preparation. Use it "
+        "when they say \"lo de siempre\", \"lo mismo de siempre\" or similar.",
+        {},
+    ),
+    _tool(
+        "read_guide",
+        "The app's guide on how to log a meal: what each value of a field means. Use it to answer "
+        "a question of the user about the app (\"what is usual amount?\"); then answer only that, "
+        "without adding or changing anything in the same turn.",
+        {"topic": {"type": "string", "enum": [*GUIDE_TOPICS, *GUIDE_GROUPS]}},
     ),
     _tool(
         "add_recipe",
@@ -672,6 +724,14 @@ def _compact(row: dict) -> dict:
 def _search_my_foods(ctx: ToolContext, tool_input: dict) -> dict:
     query = tool_text(tool_input.get("query"), "query", max_length=100, required=True)
     rows = get_mention_suggestions(ctx.connection, ctx.user_id, query, limit=ASSISTANT_SEARCH_RESULTS_MAX)
+    # How the user usually has each food, so the preparation options start from it (§8.12).
+    usual = get_usual_preparation(
+        ctx.connection,
+        ctx.user_id,
+        [row.entry_id for row in rows if row.entry_type is FoodEntryType.CATALOG],
+        [row.entry_id for row in rows if row.entry_type is FoodEntryType.MANUAL_INTAKE],
+        USUAL_PREPARATION_DAYS,
+    )
     return {
         "results": [
             _compact(
@@ -684,6 +744,7 @@ def _search_my_foods(ctx: ToolContext, tool_input: dict) -> dict:
                     "carbs_100g": _round(row.carbs_100g),
                     "serving_g": _round(row.serving_g),
                     "favorite": row.is_favorite or None,
+                    "usual_preparation": usual.get((row.entry_type.value, row.entry_id)) or None,
                 }
             )
             for row in rows
@@ -765,6 +826,16 @@ def _portion_grams(item, tool_input: dict) -> tuple[float, float | None]:
         raise ToolInputError("The amount must be greater than 0 g and at most 100000 g.") from error
 
 
+def _offered_preparation(tool_input: dict) -> dict:
+    """The preparation values offered for each field the user did not say (§8.12)."""
+    offered = {}
+    for name in PREPARATION_OPTION_FIELDS:
+        options = parse_preparation_options(name, tool_input.get(f"{name}_options"))
+        if options:
+            offered[name] = list(options)
+    return offered
+
+
 def _pieces(tool_input: dict) -> int | None:
     """The pieces the user counted (§8.12, "Botones +1"): a +1 then adds one piece,
     whatever the food's serving is."""
@@ -823,6 +894,8 @@ def _add_portion(ctx: ToolContext, entry_type: FoodEntryType, item, tool_input: 
                 "food_id": portion_id,
                 "servings": servings,
                 "pieces": _pieces(tool_input),
+                # Buttons to pick its preparation with a tap (§8.12).
+                "preparation_options": _offered_preparation(tool_input) or None,
             }
         )
     }
@@ -1512,10 +1585,72 @@ def _draft_recipe(ctx: ToolContext, tool_input: dict) -> dict:
     }
 
 
+def _find_usual_meals(ctx: ToolContext, tool_input: dict) -> dict:
+    """The meals eaten again and again around now (§8.12, "Lo de siempre")."""
+    events = list_consumed_intake_events_since(ctx.connection, ctx.user_id, USUAL_MEAL_DAYS)
+    portions: dict[int, list] = {}
+    for portion in list_portions_by_events(ctx.connection, ctx.user_id, [event.id for event in events]):
+        portions.setdefault(portion.destination_id, []).append(portion)
+    meals = []
+    for event in events:
+        when = to_local(event.meal_time)
+        if when is not None:
+            meals.append((when.hour * 60 + when.minute, portions.get(event.id, [])))
+    now = local_now()
+    found = usual_meals(meals, now.hour * 60 + now.minute)
+    if not found:
+        return {"usual_meals": [], "note": "No meal repeated 3 times in 30 days around this time: ask what they ate."}
+    return {
+        "usual_meals": [
+            {
+                "times": meal.times,
+                "foods": [
+                    _compact(
+                        {
+                            "entry_type": food.entry_type,
+                            "entry_id": food.entry_id,
+                            "name": food.name,
+                            "grams": food.grams,
+                            "cooking": food.cooking,
+                            "final_state": food.final_state,
+                            "conservation": food.conservation,
+                        }
+                    )
+                    for food in meal.foods
+                ],
+            }
+            for meal in found
+        ]
+    }
+
+
+def _read_guide(ctx: ToolContext, tool_input: dict) -> dict:
+    """A topic of the guide, to answer a question about the app (§8.12, "Dudas
+    sobre la guía"). Its key marks the turn as a question the page folds."""
+    topic = str(tool_input.get("topic") or "")
+    text = guide_text(topic)
+    if text is None:
+        raise ToolInputError("Unknown topic of the guide.")
+    return {TOOL_RESULT_GUIDE: topic, "text": text}
+
+
+def _offer_replies(ctx: ToolContext, tool_input: dict) -> dict:
+    """Answer buttons under the reply (§8.12, "Respuestas rápidas"): nothing is
+    written; the page shows them on the latest turn."""
+    try:
+        options = parse_quick_replies(tool_input.get("options"))
+    except ValidationError as error:
+        raise ToolInputError(str(error)) from error
+    return {TOOL_RESULT_REPLIES: options}
+
+
 _HANDLERS = {
     "search_my_foods": _search_my_foods,
     "search_reference_foods": _search_reference_foods,
     "add_food": _add_food,
+    "offer_replies": _offer_replies,
+    "read_guide": _read_guide,
+    "find_usual_meals": _find_usual_meals,
     "add_recipe": _add_recipe,
     "add_estimate": _add_estimate,
     "show_meal": _show_meal,

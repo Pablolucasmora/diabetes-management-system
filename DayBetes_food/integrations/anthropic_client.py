@@ -37,7 +37,7 @@ from DayBetes_food.errors import ExternalServiceError
 
 # Answers are short: a sentence and the tool calls. Non-streaming requests stay
 # well under the SDK's HTTP limits with this ceiling.
-_MAX_TOKENS = 4096
+_MAX_TOKENS = 16000
 _BINDING_BETA = "thinking-binding-controls-2026-08-01"
 _FALLBACK_BETA = "server-side-fallback-2026-07-01"
 # Haiku models have no server-side fallback: a list of fallbacks is a 400 there,

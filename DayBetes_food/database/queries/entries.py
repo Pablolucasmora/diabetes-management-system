@@ -525,3 +525,119 @@ def delete_provisional_entry(connection, user_id: int, entry_type: FoodEntryType
         commit=False,
     )
     return row is not None
+
+
+def get_usual_amounts(
+    connection, user_id: int, catalog_ids: list[int], manual_intake_ids: list[int], days: int
+) -> dict[tuple[str, int], tuple[str, float]]:
+    """(entry_type, id) -> (name, median grams eaten) of those foods in the user's
+    confirmed meals of the last `days` days (frontend §9.11, "Usual now").
+    Archived foods and quick adds are left out."""
+    rows = _execute_query_many(
+        connection,
+        """
+        SELECT 'catalog' AS entry_type, pd.catalog_id AS entry_id, c.name,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY pd.amount) AS grams
+        FROM portion_detail pd
+        JOIN intake_event ie ON ie.id = pd.intake_event_id
+        JOIN catalog c ON c.id = pd.catalog_id
+        WHERE ie.users_id = %(user_id)s
+          AND ie.state = %(state)s
+          AND ie.deleted_at IS NULL
+          AND c.deleted_at IS NULL
+          AND pd.catalog_id = ANY(%(catalog_ids)s)
+          AND ie.meal_time >= CURRENT_TIMESTAMP - (%(days)s * INTERVAL '1 day')
+        GROUP BY pd.catalog_id, c.name
+        UNION ALL
+        SELECT 'manual_intake', pd.manual_intake_id, im.name,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY pd.amount)
+        FROM portion_detail pd
+        JOIN intake_event ie ON ie.id = pd.intake_event_id
+        JOIN manual_intake im ON im.id = pd.manual_intake_id
+        WHERE ie.users_id = %(user_id)s
+          AND ie.state = %(state)s
+          AND ie.deleted_at IS NULL
+          AND im.deleted_at IS NULL
+          AND NOT im.is_quick_add
+          AND pd.manual_intake_id = ANY(%(manual_intake_ids)s)
+          AND ie.meal_time >= CURRENT_TIMESTAMP - (%(days)s * INTERVAL '1 day')
+        GROUP BY pd.manual_intake_id, im.name;
+        """,
+        {
+            "user_id": user_id,
+            "state": IntakeEventState.CONSUMED.value,
+            "catalog_ids": catalog_ids,
+            "manual_intake_ids": manual_intake_ids,
+            "days": max(1, int(days)),
+        },
+        commit=False,
+    )
+    return {(row["entry_type"], int(row["entry_id"])): (row["name"], float(row["grams"])) for row in rows}
+
+
+def get_usual_preparation(
+    connection, user_id: int, catalog_ids: list[int], manual_intake_ids: list[int], days: int
+) -> dict[tuple[str, int], dict[str, str]]:
+    """(origin, id) -> {field: the value set most often} of the preparation fields
+    of those foods in the user's confirmed meals of the last `days` days (§8.12,
+    "Preparación con un toque"). A field never set is left out."""
+    rows = _execute_query_many(
+        connection,
+        """
+        SELECT CASE WHEN pd.catalog_id IS NOT NULL THEN 'catalog' ELSE 'manual_intake' END AS origin,
+               COALESCE(pd.catalog_id, pd.manual_intake_id) AS origin_id,
+               mode() WITHIN GROUP (ORDER BY pd.cooking) FILTER (WHERE pd.cooking IS NOT NULL) AS cooking,
+               mode() WITHIN GROUP (ORDER BY pd.final_state) FILTER (WHERE pd.final_state IS NOT NULL) AS final_state,
+               mode() WITHIN GROUP (ORDER BY pd.conservation)
+                   FILTER (WHERE pd.conservation IS NOT NULL) AS conservation
+        FROM portion_detail pd
+        JOIN intake_event ie ON ie.id = pd.intake_event_id
+        WHERE ie.users_id = %(user_id)s
+          AND ie.state = %(state)s
+          AND ie.deleted_at IS NULL
+          AND (pd.catalog_id = ANY(%(catalog_ids)s) OR pd.manual_intake_id = ANY(%(manual_intake_ids)s))
+          AND ie.meal_time >= CURRENT_TIMESTAMP - (%(days)s * INTERVAL '1 day')
+        GROUP BY 1, 2;
+        """,
+        {
+            "user_id": user_id,
+            "state": IntakeEventState.CONSUMED.value,
+            "catalog_ids": catalog_ids,
+            "manual_intake_ids": manual_intake_ids,
+            "days": max(1, int(days)),
+        },
+        commit=False,
+    )
+    return {
+        (row["origin"], int(row["origin_id"])): {
+            name: row[name] for name in ("cooking", "final_state", "conservation") if row[name] is not None
+        }
+        for row in rows
+    }
+
+
+def list_entry_portions(connection, entry_type: FoodEntryType, entry_id: int) -> list[dict]:
+    """Every portion of one food or dish, wherever it is (a meal, a tupper or a
+    recipe), with what turning it into a quick add needs (§8.12)."""
+    column = _ENTRY_COLUMN[entry_type]
+    return _execute_query_many(
+        connection,
+        f"""
+        SELECT id, intake_event_id, amount, amount_method, is_cooked_weight
+        FROM portion_detail WHERE {column} = %(entry_id)s ORDER BY id;
+        """,
+        {"entry_id": entry_id},
+        commit=False,
+    )
+
+
+def point_portion_at_dish(connection, portion_id: int, source_type: FoodEntryType, manual_intake_id: int) -> None:
+    """Point one portion at another dish, inside the caller's transaction."""
+    column = _ENTRY_COLUMN[source_type]
+    _execute_query(
+        connection,
+        f"UPDATE portion_detail SET {column} = NULL, manual_intake_id = %(manual_intake_id)s "
+        "WHERE id = %(portion_id)s RETURNING 1;",
+        {"portion_id": portion_id, "manual_intake_id": manual_intake_id},
+        commit=False,
+    )

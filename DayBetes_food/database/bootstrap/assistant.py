@@ -18,6 +18,8 @@ def _ensure_assistant_schema(cursor):
             "ALTER TABLE assistant_conversation ADD CONSTRAINT ck_assistant_conversation_without_meal "
             "CHECK (NOT (without_meal AND intake_event_id IS NOT NULL));"
         )
+    # Hidden from the list of chats (2026-11-22, frontend §9.11): kept for the study.
+    cursor.execute("ALTER TABLE assistant_conversation ADD COLUMN IF NOT EXISTS hidden_at TIMESTAMPTZ;")
     # The latest conversation of a meal (§8.12: one conversation per meal).
     _create_index_once(
         cursor,

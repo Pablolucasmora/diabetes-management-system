@@ -273,6 +273,57 @@ def portion_macro_amount(portion) -> float:
     return raw_amount(portion.amount, portion.origin, portion.is_cooked_weight, portion.source.cooking_factor)
 
 
+# Relative margin of a portion's carbs, by how its amount and its macros were
+# obtained (decision of the user of 2026-11-22, frontend_conventions.md §9.11):
+# the two add up. Not given counts as the widest.
+AMOUNT_MARGIN = {
+    AmountMethod.KITCHEN_SCALE: 0.05,
+    AmountMethod.POCKET_SCALE: 0.05,
+    AmountMethod.PACKAGE: 0.05,
+    AmountMethod.USUAL_AMOUNT: 0.15,
+    AmountMethod.HOUSEHOLD: 0.30,
+    AmountMethod.EYEBALL: 0.30,
+    AmountMethod.AI_ESTIMATE: 0.30,
+}
+MACROS_MARGIN = {
+    MacrosSource.LABEL: 0.05,
+    MacrosSource.OFFICIAL: 0.05,
+    MacrosSource.REFERENCE_DB: 0.15,
+    MacrosSource.INGREDIENTS: 0.15,
+    MacrosSource.OPEN_FOOD_FACTS: 0.15,
+    MacrosSource.AI_ESTIMATE: 0.30,
+    MacrosSource.OWN_ESTIMATE: 0.30,
+}
+UNKNOWN_MARGIN = 0.30
+# A portion within this margin is "measured" (a green dot); wider is estimated.
+MEASURED_MARGIN_MAX = 0.20
+
+
+def portion_carbs_margin(portion) -> float:
+    """Relative margin of a portion's carbs: its amount's plus its macros'."""
+    amount = AMOUNT_MARGIN.get(portion.amount_method, UNKNOWN_MARGIN)
+    macros = MACROS_MARGIN.get(portion.source.macros_source, UNKNOWN_MARGIN)
+    return amount + macros
+
+
+def carbs_range(portions) -> tuple[float, float]:
+    """The meal's carbs as a range (low, high): each portion's carbs give or take
+    its margin, never below 0."""
+    low = high = 0.0
+    for portion in portions:
+        carbs = portion_carbs(portion)
+        margin = carbs * portion_carbs_margin(portion)
+        low += max(0.0, carbs - margin)
+        high += carbs + margin
+    return low, high
+
+
+def portion_carbs(portion) -> float:
+    """Carbohydrates of a stored portion in grams; 0 when its food has none given."""
+    per_100 = parse_source_macro(portion, "carbs")
+    return 0.0 if per_100 is None else portion_macro_amount(portion) * float(per_100) / 100.0
+
+
 def calculate_macro_summary_metrics(portions) -> dict:
     total_amount = sum(portion_intake_amount(p) for p in portions)
     amount_confidence_num = 0.0
