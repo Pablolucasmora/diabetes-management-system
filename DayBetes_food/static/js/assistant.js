@@ -538,7 +538,7 @@
     if (event.detail.successful) {
       sentDraft = null;
       resetComposer();
-      arriveNormal();
+      // The answer comes later, in its own block: the face turns normal then.
       scrollToLatest();
       return;
     }
@@ -584,6 +584,36 @@
       avatar.setAttribute("data-avatar", "normal");
     });
   }
+  // A message answered in the background (code_conventions.md §8.12): its block
+  // asks every 2 s and is replaced by the answer, or by the failed block.
+  document.addEventListener("htmx:afterRequest", function (event) {
+    var elt = event.detail && event.detail.elt;
+    if (!elt || !elt.id || elt.id.indexOf("assistant_turn_") !== 0) return;
+    if (event.detail.xhr && event.detail.xhr.status === 200) {
+      setTimeout(function () {
+        scrollToLatest();
+        arriveNormal();
+      }, 0);
+    }
+  });
+
+  // A failed message stored nothing: its text goes back to an empty composer
+  // to send it again (the photos do not: they are attached again).
+  function restoreFailedText(root) {
+    if (!root || !root.querySelectorAll) return;
+    var failed = root.matches && root.matches("[data-assistant-failed-text]")
+      ? [root]
+      : Array.prototype.slice.call(root.querySelectorAll("[data-assistant-failed-text]"));
+    var el = input();
+    if (!failed.length || !el || el.value.trim()) return;
+    el.value = failed[failed.length - 1].getAttribute("data-assistant-failed-text") || "";
+    autoGrow();
+    updateSend();
+  }
+
+  document.addEventListener("htmx:load", function (event) {
+    restoreFailedText(event.detail && event.detail.elt);
+  });
 
   function reloadThread() {
     var conversation = byId("assistant_conversation_id");
@@ -716,6 +746,7 @@
   });
 
   document.addEventListener("DOMContentLoaded", function () {
+    restoreFailedText(document);
     autoGrow();
     updateSend();
     scrollToLatest();

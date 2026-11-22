@@ -183,6 +183,20 @@ class AssistantRole(str, Enum):
 
 
 @unique
+class AssistantTurnStatus(str, Enum):
+    """State of one message to the assistant answered in the background
+    (code_conventions.md §8.12, "Turno en segundo plano", decision 2026-11-21)."""
+    QUEUED = "queued"     # accepted, waiting for a thread
+    RUNNING = "running"   # the model is answering
+    DONE = "done"         # stored; the conversation shows it
+    FAILED = "failed"     # nothing stored by the first call; the message can be sent again
+
+
+# The states of a turn that is still being answered: one at a time per user.
+ASSISTANT_TURN_PENDING = frozenset({AssistantTurnStatus.QUEUED, AssistantTurnStatus.RUNNING})
+
+
+@unique
 class AssistantDraftSource(str, Enum):
     """Where the assistant takes a new food from: it never creates it, it opens
     the create form prefilled (code_conventions.md §8.12, "Alimentos nuevos")."""
@@ -322,7 +336,7 @@ class KeepPartMode(str, Enum):
 
 @unique
 class MenuSection(str, Enum):
-    """Section of a dish read from a restaurant menu (code_conventions.md §11.2.10)."""
+    """Section of a dish read from a restaurant menu (code_conventions.md §11.2.12)."""
     STARTER = "starter"
     MAIN = "main"
     SIDE = "side"

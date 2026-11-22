@@ -575,13 +575,13 @@ Después, los mensajes de la conversación y, fijo abajo, el compositor: el bot�
 - `No meal` es un chat solo para crear alimentos y recetas (`code_conventions.md` §8.12, **Conversación sin comida**): nada va al carrito. Viaja como `intake_event_id=none`.
 - El id de la conversación viaja en un campo oculto. Vacío empieza una nueva.
 
-**Enviar** (decisión del usuario, 2026-11-12: síncrono).
+**Enviar** (decisión del usuario, 2026-11-12; en segundo plano desde el 2026-11-21, `code_conventions.md` §8.12).
 
 - Envía el botón y, en un ordenador (puntero fino con hover), también Enter; ahí Shift+Enter hace un salto de línea (decisión del usuario del 2026-11-22). En el móvil Enter siempre es un salto de línea, como en los chats del móvil. Con la lista de `/` abierta, Enter elige el alimento. El botón está activo si hay texto, una mención o alguna foto.
 - **Al enviar, el mensaje pasa al chat al momento** (decisión del usuario del 2026-11-22): su burbuja aparece a la derecha, subiendo con un fundido corto (sin animación si el sistema pide reducir el movimiento), con la píldora de fotos si las lleva; el texto y las menciones salen del compositor, y la introducción de un chat vacío desaparece. Las fotos siguen en el compositor hasta que llega la respuesta.
-- Mientras el servidor responde, aparece debajo una burbuja `Thinking` con tres puntos que suben uno tras otro (quietos si el sistema pide reducir el movimiento, §10) y el botón se desactiva.
-- Si sale bien, la burbuja provisional se sustituye por el turno: el mensaje del usuario, las respuestas del asistente, a la izquierda y como texto plano (solo las de un mensaje sin llamadas a herramientas: el texto que el modelo escribe junto a una llamada no es una respuesta), y las tarjetas de lo que hizo. Después se vacían las fotos y se desplaza la vista al turno nuevo.
-- Si falla, el toast lo explica (`code_conventions.md` §8.12), la burbuja provisional desaparece y el texto y las menciones vuelven al compositor para enviarlos otra vez.
+- Mientras se sube el mensaje, aparece una burbuja `Sending` y el botón se desactiva. En cuanto el servidor lo acepta (decisión del usuario del 2026-11-21, `code_conventions.md` §8.12, **Turno en segundo plano**), la burbuja provisional pasa a ser el bloque del mensaje con una burbuja `Thinking` y la cara `thinking` de DiaBot con tres puntos que suben uno tras otro (quietos si el sistema pide reducir el movimiento, §10). Ese bloque pregunta cada 2 s si hay respuesta; se puede salir de la página y, al volver, sigue esperando o ya muestra la respuesta.
+- Cuando la respuesta está, sustituye a `Thinking` el turno: el mensaje del usuario, a la derecha, con la píldora `Photo` si llevaba una foto, o `N photos` si llevaba varias; las respuestas del asistente, a la izquierda y como texto plano (solo las de un mensaje sin llamadas a herramientas: el texto que el modelo escribe junto a una llamada no es una respuesta); y las tarjetas de lo que hizo. Después se vacía el compositor (texto, menciones y fotos) y se desplaza la vista al turno nuevo.
+- Si el envío falla (validación, o el asistente aún responde al anterior), el toast lo explica y el compositor se queda como estaba. Si falla la respuesta, el mensaje queda con el motivo debajo y su texto vuelve al compositor si está vacío; las fotos hay que volver a adjuntarlas.
 
 **Usual now** (decisión del usuario del 2026-11-22). En un chat vacío de una comida, encima del compositor, una fila con la etiqueta `USUAL NOW` y hasta 5 píldoras (`web_button`) con los alimentos que más come el usuario a esta hora: una puntuación por cercanía a la hora del día (decisión del usuario del 2026-11-22, sustituye al ranking de uso filtrado por distancia media): cada comida confirmada de los últimos 60 días suma `exp(−(distancia a ahora / 90 min)²)` a cada alimento que tuvo (1 a esta misma hora, 0,64 a una hora, 0,17 a dos), y salen los de más puntuación, con al menos 0,35 (una comida a hora y media o menos), y con la mediana de lo que se comió de cada uno (`143 g`). Pulsar una no envía nada: escribe `/Nombre 150 g` al final del texto como una mención, así que se pueden juntar varias en un mensaje. Desaparece con el primer envío. Sin alimentos que cumplan, no aparece; en un chat sin comida, tampoco.
 
@@ -609,8 +609,8 @@ Después, los mensajes de la conversación y, fijo abajo, el compositor: el bot�
 - Se pueden elegir varias a la vez o añadirlas de una en una, hasta 4. Las que pasan de 4 no se añaden, y un toast lo dice.
 - Encima del texto aparece una miniatura de cada una, con una × para quitarla. Mientras una se prepara, su miniatura sale atenuada y el botón de enviar espera.
 - Antes de enviarlas, el navegador reduce cada una a 1568 px por el lado mayor y la convierte en JPEG (`code_conventions.md` §8.12, coste).
-- Si el navegador no puede, envía la original, y el servidor rechaza el mensaje si lleva más de 4 fotos, o una de más de 3,75 MB o que no sea JPEG, PNG o WebP según sus bytes.
-- No se guardan: el historial muestra la píldora `Photo` o `N photos`, sin las imágenes.
+- Si el navegador no puede, envía la original, y el servidor rechaza el mensaje si lleva más de 4 fotos, o una de más de 3,75 MB o que no sea JPEG, PNG o WebP según sus bytes. Las que acepta las vuelve a codificar sin metadatos antes de enviarlas al modelo (`code_conventions.md` §8.12).
+- Se guardan desde el 2026-11-18 (`code_conventions.md` §11.2.10), pero el historial sigue mostrando la píldora `Photo` o `N photos`, sin las imágenes.
 
 **Tarjetas.**
 
@@ -652,9 +652,10 @@ Las tarjetas se leen de los resultados guardados de las herramientas, así que u
 | `POST /assistant/history/{id}/repeat` (`Repeat today`) | — | `none` | `HX-Redirect` al chat de la comida nueva | comida que no es del usuario o no confirmada `404`: toast |
 | `POST /assistant/conversations/{id}/hide` (papelera de un chat sin comida en la lista) | la fila | `outerHTML` | vacío: la fila desaparece | chat que no es del usuario `404`: toast |
 | `POST /assistant/preparation/{portion_id}` (`field`, `value`, `conversation_id`; al pulsar una píldora de preparación) | `#assistant_meal_bar` | `outerHTML` | la barra con el valor elegido | no ofrecido o fila que ya no está `404`, comida confirmada `409`: toast |
-| `POST /assistant/message` (`multipart/form-data`: `message`, `mentions`, `photo` (repetido, hasta 4), `intake_event_id`, `conversation_id`) | `#assistant_thread` | `beforeend` | el turno, con el id de la conversación y la barra de la comida fuera de banda; si creó la comida, también la lista de chats | validación `422`, comida confirmada o borrada `404`/`409`, proveedor `502`: status, cuerpo vacío y toast |
+| `POST /assistant/message` (`multipart/form-data`: `message`, `mentions`, `photo` (repetido, hasta 4), `intake_event_id`, `conversation_id`) | `#assistant_thread` | `beforeend` | el mensaje con `Thinking`, que pregunta por su respuesta | validación `422`, conversación ajena `404`, otro mensaje respondiéndose `409`: status, cuerpo vacío y toast |
+| `GET /assistant/turn/{id}` (cada 2 s, desde el bloque `Thinking`) | el propio bloque | `outerHTML` | `204` mientras espera; el turno, con el id de la conversación, la fila `+1` y la barra de la comida fuera de banda y, si creó la comida, la lista de chats; o el bloque de fallo | sin sesión `401` |
 
-Las tres exigen el header `HX-Request` (`403` si falta). Repetir un envío es un mensaje nuevo: el asistente puede volver a añadir lo mismo, y la copia se quita en el carrito.
+Las cuatro exigen el header `HX-Request` (`403` si falta). Repetir un envío es un mensaje nuevo: el asistente puede volver a añadir lo mismo, y la copia se quita en el carrito.
 
 ### 9.12 Guía de criterios (decisión del usuario, 2026-11-21)
 
@@ -693,7 +694,7 @@ Exige el header `HX-Request` (`403` si falta).
 
 ### 9.13 Cartas guardadas, `Menus` (decisión del usuario, 2026-11-22)
 
-Lo que DiaBot ha guardado de las fotos de cartas de restaurante (`code_conventions.md` §8.12, **Cartas**; tabla `menu_item`, §11.2.10). No es tan importante como Food, así que no ocupa sitio en la cabecera ni en las píldoras.
+Lo que DiaBot ha guardado de las fotos de cartas de restaurante (`code_conventions.md` §8.12, **Cartas**; tabla `menu_item`, §11.2.12). No es tan importante como Food, así que no ocupa sitio en la cabecera ni en las píldoras.
 
 - **Entrada.** Un botón cuadrado con el icono de una carta abierta, a la derecha del buscador de Food y con su mismo alto (`web_container`, `aria-label` "Restaurant menus"). Sale siempre, aunque no haya cartas; la página explica entonces cómo se guarda una. Abre `/food/menus`.
 - **En la búsqueda de Food.** En la pestaña de búsqueda (`all`), con texto, después de los resultados del usuario y antes de Ciqual y Open Food Facts, un bloque `From your menus` con como mucho `MENU_FOOD_SEARCH_ROWS` (3) platos. Usan la misma fila que el resto de resultados: nombre; sitio, sección y precio en gris; y la descripción. Si hay más, `See all in Menus ›` abre Menus con esa búsqueda. Tocar un plato abre su carta con el plato buscado. Así no se acumulan muchas filas de otra fuente.

@@ -30,6 +30,7 @@ from DayBetes_food.domain.assistant import (
     ASSISTANT_TEXT_MAX_LENGTH,
     NO_MEAL_CHOICE,
     AddedCard,
+    AssistantTurnRead,
     DraftCard,
     ProvisionalCard,
     RepeatCard,
@@ -944,16 +945,76 @@ def TurnBlock(
     )
 
 
-def AssistantThread(
-    turns: list[TurnView], conversation_id: int | None, pending: frozenset = frozenset(), *, new_meal: bool = False
-):
-    """The conversation of the chosen meal; the intro while it is empty."""
+def _typing_dots():
+    # Three dots that rise in turn while the answer comes (§9.11, static/css/input.css).
+    return Span(
+        Span(cls="db_typing_dot"),
+        Span(cls="db_typing_dot"),
+        Span(cls="db_typing_dot"),
+        aria_hidden="true",
+        cls="flex items-end gap-1 pb-1 text-gray-500",
+    )
+
+
+def assistant_turn_dom_id(turn_id: int) -> str:
+    return f"assistant_turn_{turn_id}"
+
+
+def PendingTurnBlock(turn: AssistantTurnRead):
+    """A message the assistant is answering in the background (code_conventions.md
+    §8.12): what the user sent and `Thinking`, asked for again every 2 s until the
+    answer replaces it. Also drawn on coming back to the page while it waits."""
     return Div(
-        _intro(new_meal) if not turns else None,
+        _user_bubble(turn),
+        Div(
+            _avatar("thinking"),
+            Div(
+                Span("Thinking", cls="text-sm text-gray-500"),
+                _typing_dots(),
+                cls="flex items-end gap-1.5 web_container rounded-2xl rounded-bl-md px-3 py-2",
+            ),
+            role="status",
+            cls="flex items-end gap-2 self-start",
+        ),
+        id=assistant_turn_dom_id(turn.id),
+        hx_get=f"/assistant/turn/{turn.id}",
+        hx_trigger="every 2s",
+        hx_swap="outerHTML",
+        data_skip_page_loading="true",
+        cls="w-full flex flex-col gap-2 scroll-mt-48",
+    )
+
+
+def FailedTurnBlock(turn: AssistantTurnRead):
+    """A message the assistant could not answer: nothing was stored, so the text
+    goes back to an empty composer to send it again (static/js/assistant.js)."""
+    return Div(
+        _user_bubble(turn),
+        _notice(turn.error_message or "The assistant could not answer. Send it again."),
+        id=assistant_turn_dom_id(turn.id),
+        data_assistant_failed_text=turn.user_text,
+        cls="w-full flex flex-col gap-2 scroll-mt-48",
+    )
+
+
+def AssistantThread(
+    turns: list[TurnView],
+    conversation_id: int | None,
+    pending: frozenset = frozenset(),
+    *,
+    new_meal: bool = False,
+    tail=(),
+):
+    """The conversation of the chosen meal; the intro while it is empty. `tail` is
+    a message still being answered, or one that failed, drawn after it (§8.12)."""
+    tail = tuple(block for block in tail if block is not None)
+    return Div(
+        _intro(new_meal) if not turns and not tail else None,
         *(
-            TurnBlock(turn, conversation_id, pending=pending, latest=index == len(turns) - 1)
+            TurnBlock(turn, conversation_id, pending=pending, latest=index == len(turns) - 1 and not tail)
             for index, turn in enumerate(turns)
         ),
+        *tail,
         ConversationIdInput(conversation_id),
         id=THREAD_ID,
         cls="w-full flex flex-col gap-3",
@@ -963,17 +1024,10 @@ def AssistantThread(
 def _thinking():
     # On a failed send assistant.js keeps it shown with `db_failed` (§9.11).
     bubble = Div(
-        Span("Thinking", data_thinking_only="true", cls="text-sm text-gray-500"),
+        # Only while the message is sent: the answer then waits in its own block.
+        Span("Sending", data_thinking_only="true", cls="text-sm text-gray-500"),
         Span("Couldn't answer", data_failed_only="true", cls="text-sm text-gray-500"),
-        # Three dots that rise in turn while the answer comes (§9.11, static/css/input.css).
-        Span(
-            Span(cls="db_typing_dot"),
-            Span(cls="db_typing_dot"),
-            Span(cls="db_typing_dot"),
-            aria_hidden="true",
-            data_thinking_only="true",
-            cls="flex items-end gap-1 pb-1 text-gray-500",
-        ),
+        Span(_typing_dots(), data_thinking_only="true"),
         cls="flex items-end gap-1.5 web_container rounded-2xl rounded-bl-md px-3 py-2",
     )
     return Div(
@@ -1159,6 +1213,7 @@ def AssistantPage(
     preparation: dict | None = None,
     usual: list | None = None,
     plates: list | None = None,
+    tail=(),
 ):
     """`chats`: the list of chats (ChatsModal), drawn with the page. `preparation`:
     the values offered per row of the meal and field. `usual`: "Usual now"."""
@@ -1167,7 +1222,7 @@ def AssistantPage(
             MealBar(event, portions, without_meal=without_meal, pending=pending, preparation=preparation, plates=plates)
         ),
         Div(
-            AssistantThread(turns, conversation_id, pending, new_meal=event is None and not without_meal),
+            AssistantThread(turns, conversation_id, pending, new_meal=event is None and not without_meal, tail=tail),
             id=THREAD_BOX_ID,
             cls="w-full",
         ),

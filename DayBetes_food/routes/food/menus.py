@@ -1,5 +1,5 @@
 """The saved restaurant menus, `Menus` (frontend_conventions.md §9.13;
-code_conventions.md §11.2.10): read and delete, never edited by hand."""
+code_conventions.md §11.2.12): read and delete, never edited by hand."""
 
 import json
 

@@ -8,7 +8,8 @@ what is stored (code_conventions.md §8.12, §11.2.9; study_conventions.md §7.1
 - Each round of tools is one transaction: the tool effects and the messages
   that explain them are stored together, so the conversation can always be
   replayed. A failure in a later round keeps the earlier ones.
-- Each photo is sent once and stored as a text marker (study §7.1).
+- Each photo is sent once: its message keeps a text marker, and the image is
+  stored in assistant_photo with that message (§11.2.10, study §7.1).
 - Usage is logged per message, never its content (§8.3).
 """
 
@@ -35,6 +36,7 @@ from DayBetes_food.database.queries import (
     get_planned_intake_event,
     get_portion_detail,
     get_recipe,
+    insert_assistant_photos,
     list_assistant_messages,
     list_intake_plates,
     list_needs_review,
@@ -50,6 +52,7 @@ from DayBetes_food.database.queries import (
 from DayBetes_food.domain.assistant import (
     ASSISTANT_CONTEXT_TAG,
     ASSISTANT_PHOTO_PLACEHOLDER,
+    AssistantPhoto,
     AssistantMessageCreate,
     AssistantTurnRequest,
     AssistantUsage,
@@ -208,10 +211,13 @@ class AssistantTurnResult:
 
 @dataclass
 class _Turn:
-    """Messages of this turn not stored yet: as sent (with the photo) and as stored."""
+    """Messages of this turn not stored yet: as sent (with the photo) and as stored.
+    `photos` belong to the user's message, the first `user` row stored, and are
+    stored with it (§11.2.10)."""
 
     live: list[dict] = field(default_factory=list)
     stored: list[AssistantMessageCreate] = field(default_factory=list)
+    photos: tuple[AssistantPhoto, ...] = ()
 
 
 def resolve_conversation(
@@ -573,7 +579,13 @@ def _store(ctx: ToolContext, turn: _Turn) -> None:
     rows = [
         AssistantMessageCreate(conversation_id, row.role, row.content, row.usage) for row in turn.stored
     ]
-    append_assistant_messages(ctx.connection, ctx.user_id, conversation_id, rows)
+    ids = append_assistant_messages(ctx.connection, ctx.user_id, conversation_id, rows)
+    if turn.photos:
+        # The first store of a turn holds the user's message, after a change of
+        # effort if the turn has one (§8.12, "Modo rápido").
+        user_row = next(i for i, row in enumerate(rows) if row.role is AssistantRole.USER)
+        insert_assistant_photos(ctx.connection, ctx.user_id, ids[user_row], turn.photos)
+        turn.photos = ()
     turn.stored.clear()
 
 
@@ -640,7 +652,7 @@ def send_assistant_message(
         ),
         request,
     )
-    turn = _Turn(live=[live_user], stored=[stored_user])
+    turn = _Turn(live=[live_user], stored=[stored_user], photos=request.photos)
     # Quick mode runs at low effort; the next message that is not a list goes back.
     # As a system message inside the conversation, so the cache holds (§8.12).
     effort = QUICK_MODE_EFFORT if quick else ASSISTANT_EFFORT

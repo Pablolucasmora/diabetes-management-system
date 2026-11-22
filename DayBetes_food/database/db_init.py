@@ -87,6 +87,8 @@ def init_db():
             DBSchema.assistant_conversation,
             DBSchema.assistant_message(),
             DBSchema.menu_item,
+            DBSchema.assistant_photo(),
+            DBSchema.assistant_turn,
         ]
 
         for table_sql in tables:
@@ -150,6 +152,9 @@ def init_db():
         # messages, so the runtime never changes or removes one. They go with
         # their conversation (CASCADE), which runs as the owner of the table.
         cur.execute(sql.SQL("REVOKE UPDATE, DELETE, TRUNCATE ON assistant_message FROM {}").format(role))
+        # Insert-only (code §11.2.10): a photo is what the model saw, so it never
+        # changes; it goes with its message (CASCADE, run as the owner).
+        cur.execute(sql.SQL("REVOKE UPDATE, DELETE, TRUNCATE ON assistant_photo FROM {}").format(role))
         # History of injections (code §11.10): only its trigger writes it, as the
         # owner of the table, so the runtime can read it and nothing else.
         cur.execute(sql.SQL("REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON insulin_injection_history FROM {}").format(role))

@@ -1,5 +1,5 @@
 """CRUD of `menu_item`: dishes read from restaurant menus (code_conventions.md
-§8.12, "Cartas"; §11.2.10). Private: every statement filters by its owner."""
+§8.12, "Cartas"; §11.2.12). Private: every statement filters by its owner."""
 
 from DayBetes_food.database.queries.crud import _escape_like, _execute_query, _execute_query_many
 from DayBetes_food.domain.constants import MenuSection

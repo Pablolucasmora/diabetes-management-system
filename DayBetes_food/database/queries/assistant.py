@@ -1,30 +1,40 @@
-"""Queries for `assistant_conversation` and `assistant_message`
-(code_conventions.md §8.12, §11.2.9).
+"""Queries for `assistant_conversation`, `assistant_message` and `assistant_photo`
+(code_conventions.md §8.12, §11.2.9, §11.2.10).
 
 Both are private: the owner travels in the SQL of every statement (§5.3), so
 another user's conversation and one that does not exist give the same result
 (§5.4). A conversation is linked only to a planned meal of its owner, checked
 in the same statement that writes it. Messages are insert-only: a
-conversation is replayed to the model from them, in order.
+conversation is replayed to the model from them, in order. Photos are
+insert-only too, and their owner is the one of their message's conversation.
 """
 
+from psycopg.errors import UniqueViolation
 from psycopg.types.json import Jsonb
 
 from DayBetes_food.database.mappers import (
     assistant_conversation_read_from_row,
     assistant_message_read_from_row,
+    assistant_turn_read_from_row,
 )
 from DayBetes_food.database.queries.crud import _execute_query, _execute_query_many
 from DayBetes_food.domain.assistant import (
     AssistantConversationRead,
+    AssistantPhoto,
     AssistantMessageCreate,
     AssistantMessageRead,
+    AssistantTurnRead,
     ChatSummary,
     PastChat,
     chat_preview,
 )
-from DayBetes_food.domain.constants import AssistantRole, IntakeEventState
-from DayBetes_food.errors import NotFoundError
+from DayBetes_food.domain.constants import (
+    ASSISTANT_TURN_PENDING,
+    AssistantRole,
+    AssistantTurnStatus,
+    IntakeEventState,
+)
+from DayBetes_food.errors import ConflictError, NotFoundError
 
 _CONVERSATION_COLUMNS = "c.id, c.users_id, c.intake_event_id, c.model, c.without_meal, c.created_at"
 # A meal the conversation may write to: planned and of the same user.
@@ -406,4 +416,242 @@ def get_calibration_portions(connection, user_id: int, portion_ids: list[int]) -
         """,
         {"ids": portion_ids, "user_id": user_id, "state": IntakeEventState.CONSUMED.value},
         commit=False,
+    )
+
+
+def insert_assistant_photos(
+    connection, user_id: int, message_id: int, photos: tuple[AssistantPhoto, ...]
+) -> None:
+    """Store the photos of one `user` message of the user's, in order (§11.2.10).
+    Runs inside the caller's transaction (§2.3) and never commits.
+
+    The owner is checked in the same statement that writes: the message must be
+    a `user` row of one of the user's conversations.
+
+    Raises:
+        NotFoundError: the message is not a `user` message of the user's.
+    """
+    for order, photo in enumerate(photos, start=1):
+        row = _execute_query(
+            connection,
+            """
+            INSERT INTO assistant_photo (assistant_message_id, photo_order, image, size_bytes)
+            SELECT m.id, %(photo_order)s, %(image)s, %(size_bytes)s
+            FROM assistant_message m
+            JOIN assistant_conversation c ON c.id = m.conversation_id
+            WHERE m.id = %(message_id)s
+              AND m.role = %(user_role)s
+              AND c.users_id = %(user_id)s
+            RETURNING id;
+            """,
+            {
+                "message_id": message_id,
+                "photo_order": order,
+                "image": photo.data,
+                "size_bytes": len(photo.data),
+                "user_role": AssistantRole.USER.value,
+                "user_id": user_id,
+            },
+            commit=False,
+        )
+        if row is None:
+            raise NotFoundError("Message not found.")
+
+
+# ---- Turns answered in the background (§8.12, §11.2.11) ----
+
+_TURN_COLUMNS = """
+    t.id, t.users_id, t.conversation_id, t.intake_event_id, t.meal_created, t.status,
+    t.user_text, t.photo_count, t.notices, t.error_message,
+    t.created_at, t.finished_at, t.seen_at
+"""
+
+
+def create_assistant_turn(
+    connection, user_id: int, conversation_id: int | None, user_text: str, photo_count: int, *, commit: bool = True
+) -> int:
+    """A new turn, queued. `conversation_id`, when given, must be the user's.
+
+    Raises:
+        ConflictError: the user already has a turn being answered (one at a time,
+            enforced by uq_assistant_turn_users_id_pending).
+        NotFoundError: the conversation is not the user's.
+    """
+    try:
+        row = _execute_query(
+            connection,
+            """
+            INSERT INTO assistant_turn (users_id, conversation_id, status, user_text, photo_count)
+            SELECT %(user_id)s, %(conversation_id)s, %(status)s, %(user_text)s, %(photo_count)s
+            WHERE %(conversation_id)s::int IS NULL OR EXISTS (
+                SELECT 1 FROM assistant_conversation c
+                WHERE c.id = %(conversation_id)s AND c.users_id = %(user_id)s
+            )
+            RETURNING id;
+            """,
+            {
+                "user_id": user_id,
+                "conversation_id": conversation_id,
+                "status": AssistantTurnStatus.QUEUED.value,
+                "user_text": user_text,
+                "photo_count": photo_count,
+            },
+            commit=commit,
+        )
+    except UniqueViolation as exc:
+        raise ConflictError("assistant_turn_pending") from exc
+    if row is None:
+        raise NotFoundError("Conversation not found.")
+    return int(row["id"])
+
+
+def get_assistant_turn(connection, user_id: int, turn_id: int) -> AssistantTurnRead | None:
+    row = _execute_query(
+        connection,
+        f"SELECT {_TURN_COLUMNS} FROM assistant_turn t WHERE t.id = %(turn_id)s AND t.users_id = %(user_id)s;",
+        {"turn_id": turn_id, "user_id": user_id},
+        commit=False,
+    )
+    return assistant_turn_read_from_row(row) if row else None
+
+
+def get_pending_assistant_turn(connection, user_id: int) -> AssistantTurnRead | None:
+    """The turn of the user still being answered, if any (one at a time)."""
+    row = _execute_query(
+        connection,
+        f"""
+        SELECT {_TURN_COLUMNS} FROM assistant_turn t
+        WHERE t.users_id = %(user_id)s AND t.status = ANY(%(pending)s)
+        ORDER BY t.id DESC LIMIT 1;
+        """,
+        {"user_id": user_id, "pending": [status.value for status in ASSISTANT_TURN_PENDING]},
+        commit=False,
+    )
+    return assistant_turn_read_from_row(row) if row else None
+
+
+def get_latest_unseen_assistant_turn(connection, user_id: int) -> AssistantTurnRead | None:
+    """The user's latest turn if it finished and the page never showed it: the
+    answer of a message sent before leaving the page (§8.12)."""
+    row = _execute_query(
+        connection,
+        f"""
+        SELECT {_TURN_COLUMNS} FROM assistant_turn t
+        WHERE t.users_id = %(user_id)s
+        ORDER BY t.id DESC LIMIT 1;
+        """,
+        {"user_id": user_id},
+        commit=False,
+    )
+    if row is None:
+        return None
+    turn = assistant_turn_read_from_row(row)
+    return turn if not turn.pending and turn.seen_at is None else None
+
+
+def start_assistant_turn(connection, turn_id: int, *, commit: bool = True) -> bool:
+    """Queued -> running. False if it is no longer queued (failed at startup)."""
+    row = _execute_query(
+        connection,
+        """
+        UPDATE assistant_turn SET status = %(running)s, started_at = NOW()
+        WHERE id = %(turn_id)s AND status = %(queued)s
+        RETURNING id;
+        """,
+        {
+            "turn_id": turn_id,
+            "running": AssistantTurnStatus.RUNNING.value,
+            "queued": AssistantTurnStatus.QUEUED.value,
+        },
+        commit=commit,
+    )
+    return row is not None
+
+
+def finish_assistant_turn(
+    connection,
+    turn_id: int,
+    *,
+    conversation_id: int | None,
+    intake_event_id: int | None,
+    meal_created: bool,
+    notices: list[str],
+    commit: bool = True,
+) -> None:
+    """Running -> done, with where the answer ended up."""
+    _execute_query(
+        connection,
+        """
+        UPDATE assistant_turn
+        SET status = %(done)s, conversation_id = %(conversation_id)s, intake_event_id = %(event_id)s,
+            meal_created = %(meal_created)s, notices = %(notices)s, finished_at = NOW()
+        WHERE id = %(turn_id)s AND status = %(running)s
+        RETURNING id;
+        """,
+        {
+            "turn_id": turn_id,
+            "done": AssistantTurnStatus.DONE.value,
+            "running": AssistantTurnStatus.RUNNING.value,
+            "conversation_id": conversation_id,
+            "event_id": intake_event_id,
+            "meal_created": meal_created,
+            "notices": Jsonb(list(notices)),
+        },
+        commit=commit,
+    )
+
+
+def fail_assistant_turn(connection, turn_id: int, error_message: str, *, commit: bool = True) -> None:
+    """A pending turn -> failed, with the reason the user sees."""
+    _execute_query(
+        connection,
+        """
+        UPDATE assistant_turn
+        SET status = %(failed)s, error_message = %(error_message)s, finished_at = NOW()
+        WHERE id = %(turn_id)s AND status = ANY(%(pending)s)
+        RETURNING id;
+        """,
+        {
+            "turn_id": turn_id,
+            "failed": AssistantTurnStatus.FAILED.value,
+            "error_message": error_message[:200],
+            "pending": [status.value for status in ASSISTANT_TURN_PENDING],
+        },
+        commit=commit,
+    )
+
+
+def fail_interrupted_assistant_turns(connection, error_message: str, *, commit: bool = True) -> int:
+    """At startup: every turn still pending was cut by the restart of the server.
+    They are failed, never run again, because a round may already have written
+    to the cart (§8.12). Returns how many."""
+    rows = _execute_query_many(
+        connection,
+        """
+        UPDATE assistant_turn
+        SET status = %(failed)s, error_message = %(error_message)s, finished_at = NOW()
+        WHERE status = ANY(%(pending)s)
+        RETURNING id;
+        """,
+        {
+            "failed": AssistantTurnStatus.FAILED.value,
+            "error_message": error_message[:200],
+            "pending": [status.value for status in ASSISTANT_TURN_PENDING],
+        },
+        commit=commit,
+    )
+    return len(rows or [])
+
+
+def mark_assistant_turn_seen(connection, user_id: int, turn_id: int, *, commit: bool = True) -> None:
+    """The page showed the outcome of this turn: it is not reopened on coming back."""
+    _execute_query(
+        connection,
+        """
+        UPDATE assistant_turn SET seen_at = NOW()
+        WHERE id = %(turn_id)s AND users_id = %(user_id)s AND seen_at IS NULL
+        RETURNING id;
+        """,
+        {"turn_id": turn_id, "user_id": user_id},
+        commit=commit,
     )

@@ -1,4 +1,4 @@
-"""Bootstrap of the dishes read from restaurant menus (code_conventions.md §11.2.10)."""
+"""Bootstrap of the dishes read from restaurant menus (code_conventions.md §11.2.12)."""
 
 
 from DayBetes_food.database.bootstrap.helpers import _create_unique_index_once

@@ -1,5 +1,5 @@
 """Dishes read from restaurant menus (code_conventions.md §8.12, "Cartas";
-§11.2.10): pure logic of domain/menu.py, no database."""
+§11.2.12): pure logic of domain/menu.py, no database."""
 
 from datetime import datetime, timezone
 

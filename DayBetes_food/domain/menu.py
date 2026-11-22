@@ -1,4 +1,4 @@
-"""Dishes read from restaurant menus (code_conventions.md §8.12, "Cartas"; §11.2.10).
+"""Dishes read from restaurant menus (code_conventions.md §8.12, "Cartas"; §11.2.12).
 
 What DiaBot keeps of a menu: the place, and for each dish its name, its main
 ingredients in DiaBot's own words, its section and its price. Never the photo,

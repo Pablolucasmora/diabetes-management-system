@@ -21,18 +21,24 @@ from DayBetes_food.components.assistant.assistant_page import (
     AssistantThread,
     ChatsModal,
     ConversationIdInput,
+    FailedTurnBlock,
     MealBar,
     MentionOptions,
     PastChatPage,
     PastChatsPage,
+    PendingTurnBlock,
     PlusRow,
     RepeatSavedCard,
     TurnBlock,
+    assistant_turn_dom_id,
 )
 from DayBetes_food.components.ui import render_fragment, render_page
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.database.queries import (
     get_assistant_conversation,
+    get_assistant_turn,
+    get_latest_unseen_assistant_turn,
+    get_pending_assistant_turn,
     list_intake_plates,
     get_intake_event,
     get_mention_suggestions,
@@ -43,6 +49,7 @@ from DayBetes_food.database.queries import (
     list_planned_intake_events,
     list_portions_by_event,
     list_portions_by_events,
+    mark_assistant_turn_seen,
 )
 from DayBetes_food.domain.assistant import (
     parse_meal_choice,
@@ -54,18 +61,17 @@ from DayBetes_food.domain.assistant import (
     parse_mentions,
     require_turn_content,
 )
-from DayBetes_food.domain.constants import IntakeEventState, PathId, parse_optional_id
+from DayBetes_food.domain.constants import AssistantTurnStatus, IntakeEventState, PathId, parse_optional_id
 from DayBetes_food.domain.portion_detail import portion_carbs
 from DayBetes_food.domain.search_text import normalize_search_text
 from DayBetes_food.time_utils import to_local
 from DayBetes_food.errors import (
     AuthenticationError,
     ConflictError,
-    ExternalServiceError,
     NotFoundError,
     ValidationError,
 )
-from DayBetes_food.http_errors import app_error_response, request_id
+from DayBetes_food.http_errors import app_error_response
 from DayBetes_food.domain.assistant import parse_plus_step
 from DayBetes_food.services.assistant import (
     apply_preparation,
@@ -76,14 +82,14 @@ from DayBetes_food.services.assistant import (
     conversation_turns,
     plus_buttons,
     resolve_conversation,
-    send_assistant_message,
 )
+from DayBetes_food.services.assistant_turns import TURN_MEAL_GONE, submit_assistant_turn
 from DayBetes_food.services.intake_event import repeat_meal, save_quick_add_as_dish
 
 logger = logging.getLogger(__name__)
 
-_MEAL_GONE = "That meal was confirmed or deleted. Choose another meal."
-_UNAVAILABLE = "The assistant is not available right now. Try again in a moment."
+_MEAL_GONE = TURN_MEAL_GONE
+_STILL_ANSWERING = "The assistant is still answering your last message. Wait for it, then send this one."
 
 
 def _read_photos(photos) -> list[tuple[str, bytes]]:
@@ -175,6 +181,21 @@ def _chats(connection, user_id: int, current_event_id, current_conversation_id, 
     )
 
 
+def _turn_tail(connection, user_id: int, conversation_id: int | None, unseen) -> list:
+    """What the thread of `conversation_id` draws after its turns (§8.12): a message
+    of this conversation still being answered, or a failed one the page never
+    showed. A new chat has no conversation until its answer: its pending message
+    belongs to the thread without one."""
+    tail = []
+    if unseen is not None and unseen.status is AssistantTurnStatus.FAILED and unseen.conversation_id == conversation_id:
+        tail.append(FailedTurnBlock(unseen))
+        mark_assistant_turn_seen(connection, user_id, unseen.id)
+    pending = get_pending_assistant_turn(connection, user_id)
+    if pending is not None and pending.conversation_id == conversation_id:
+        tail.append(PendingTurnBlock(pending))
+    return tail
+
+
 def setup_assistant_routes(rt):
     @rt("/assistant")
     def get(
@@ -193,6 +214,17 @@ def setup_assistant_routes(rt):
             events = list_planned_intake_events(connection, int(user_id))
             conversation = None
             selected = None
+            # Coming back after leaving while it answered (§8.12): the outcome the
+            # page never showed opens its conversation, and a new chat still
+            # waiting for its first answer opens empty, with that message.
+            unseen = get_latest_unseen_assistant_turn(connection, int(user_id))
+            pending_turn = get_pending_assistant_turn(connection, int(user_id))
+            waiting_new_chat = pending_turn is not None and pending_turn.conversation_id is None
+            if not chosen_conversation and not new_meal and not new_chat:
+                if unseen is not None and unseen.conversation_id is not None:
+                    chosen_conversation = unseen.conversation_id
+                elif pending_turn is not None and pending_turn.conversation_id is not None:
+                    chosen_conversation = pending_turn.conversation_id
             if new_meal:
                 without_meal = False
             elif not (without_meal and new_chat):
@@ -206,21 +238,33 @@ def setup_assistant_routes(rt):
                 except (NotFoundError, ConflictError):
                     # Its meal was confirmed or deleted meanwhile: start on a new meal.
                     conversation, selected, without_meal = None, None, False
+                if waiting_new_chat and not conversation_id:
+                    # Its message belongs to a chat that has no conversation yet.
+                    conversation, selected = None, None
                 if conversation is not None:
                     selected = conversation.intake_event_id
                     without_meal = conversation.without_meal
+            conversation_key = conversation.id if conversation else None
             event, portions = _meal_and_foods(connection, int(user_id), selected)
-            turns = conversation_turns(connection, int(user_id), conversation.id) if conversation else []
+            turns = conversation_turns(connection, int(user_id), conversation_key) if conversation else []
+            if (
+                unseen is not None
+                and unseen.status is AssistantTurnStatus.DONE
+                and unseen.conversation_id == conversation_key
+            ):
+                # Its answer is one of the turns drawn now.
+                mark_assistant_turn_seen(connection, int(user_id), unseen.id)
+            tail = _turn_tail(connection, int(user_id), conversation_key, unseen)
             pending = _pending_review(connection, int(user_id))
             buttons = plus_buttons(connection, int(user_id), conversation)
-            chats = _chats(connection, int(user_id), selected, conversation.id if conversation else None)
+            chats = _chats(connection, int(user_id), selected, conversation_key)
             preparation = meal_preparation_choices(connection, int(user_id), conversation)
-            usual = usual_foods(connection, int(user_id)) if not turns and not without_meal else []
+            usual = usual_foods(connection, int(user_id)) if not turns and not tail and not without_meal else []
             plates = list_intake_plates(connection, int(user_id), event.id) if event is not None else []
         content = AssistantPage(
             event,
             portions,
-            conversation.id if conversation else None,
+            conversation_key,
             turns,
             chats,
             without_meal=without_meal,
@@ -229,6 +273,7 @@ def setup_assistant_routes(rt):
             preparation=preparation,
             usual=usual,
             plates=plates,
+            tail=tail,
         )
         return render_page(request, content, show_cart=False)
 
@@ -353,16 +398,24 @@ def setup_assistant_routes(rt):
             except (NotFoundError, ConflictError):
                 return app_error_response(request, NotFoundError, _MEAL_GONE)
             turns = conversation_turns(connection, int(user_id), conversation.id) if conversation else []
+            conversation_key = conversation.id if conversation else None
+            # A pending new chat belongs only to the `New chat` / `New meal` view.
+            tail = (
+                _turn_tail(connection, int(user_id), conversation_key, None)
+                if conversation_key is not None or new_chat or not intake_event_id
+                else []
+            )
             pending = _pending_review(connection, int(user_id))
             buttons = plus_buttons(connection, int(user_id), conversation)
             bar_event = conversation.intake_event_id if conversation else event_id
             bar_without = conversation.without_meal if conversation else without_meal
             bar = _meal_bar(connection, int(user_id), bar_event, bar_without, pending, conversation)
-        conversation_id_shown = conversation.id if conversation else None
         response = render_fragment(
             (
-                AssistantThread(turns, conversation_id_shown, pending, new_meal=bar_event is None and not bar_without),
-                PlusRow(buttons, conversation_id_shown, oob=True),
+                AssistantThread(
+                    turns, conversation_key, pending, new_meal=bar_event is None and not bar_without, tail=tail
+                ),
+                PlusRow(buttons, conversation_key, oob=True),
                 bar,
             )
         )
@@ -378,9 +431,11 @@ def setup_assistant_routes(rt):
         conversation_id: str = "",
         photo: list[UploadFile] | None = None,
     ):
-        """One message to the assistant (§8.12). Answers the turn, appended to the
-        thread, with the conversation id and, if its first add created the meal,
-        the meal selector out of band.
+        """One message to the assistant (§8.12). It is queued and answered in the
+        background; the response, at once, is the message with `Thinking`, which
+        asks for its answer every 2 s (`/assistant/turn/{id}`). Leaving the page
+        does not stop it. One message at a time per user: another one while it
+        answers is a `409`.
 
         Repeating it is a new message: the assistant may add the food again, and
         the user removes the copy in the cart (§9.6).
@@ -404,50 +459,75 @@ def setup_assistant_routes(rt):
 
         with get_connection() as connection:
             try:
-                result = send_assistant_message(
+                turn_id = submit_assistant_turn(
                     connection,
                     int(user_id),
                     conversation_id=chosen_conversation_id,
                     event_id=chosen_event_id,
-                    request=turn_request,
                     without_meal=without_meal,
+                    request=turn_request,
                 )
-            except (NotFoundError, ConflictError) as error:
-                return app_error_response(request, type(error), _MEAL_GONE)
-            except ExternalServiceError as error:
-                # Logged once here, with the adapter's internal reason (§8.3, §8.6).
-                logger.warning(
-                    "Assistant call failed",
-                    exc_info=error,
-                    extra={"error_code": error.code, "reason": str(error), "request_id": request_id(request)},
-                )
-                return app_error_response(request, ExternalServiceError, _UNAVAILABLE)
+            except ConflictError:
+                return app_error_response(request, ConflictError, _STILL_ANSWERING)
+            except NotFoundError:
+                return app_error_response(request, NotFoundError, _MEAL_GONE)
+            turn = get_assistant_turn(connection, int(user_id), turn_id)
+        return render_fragment(PendingTurnBlock(turn))
+
+    @rt("/assistant/turn/{turn_id}")
+    def get(request: Request, turn_id: PathId):
+        """A message answered in the background (§8.12), asked for every 2 s by its
+        block: `204` while it waits (htmx swaps nothing); its answer, with the
+        conversation id, the +1 row, the meal's bar and, if it created the meal,
+        the list of chats out of band, when it is stored; or
+        the failed block. Showing the outcome marks it seen."""
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        with get_connection() as connection:
+            turn = get_assistant_turn(connection, int(user_id), turn_id)
+            if turn is None:
+                # Not the user's or gone: stop polling with an empty block.
+                return HTMLResponse(f'<div id="{assistant_turn_dom_id(turn_id)}"></div>')
+            if turn.pending:
+                return HTMLResponse(status_code=204)
+            mark_assistant_turn_seen(connection, int(user_id), turn.id)
+            if turn.status is AssistantTurnStatus.FAILED:
+                return render_fragment(FailedTurnBlock(turn))
+            turns = conversation_turns(connection, int(user_id), turn.conversation_id) if turn.conversation_id else []
             pending = _pending_review(connection, int(user_id))
-            buttons = conversation_plus_buttons(connection, int(user_id), result.conversation_id)
+            conversation = (
+                get_assistant_conversation(connection, int(user_id), turn.conversation_id)
+                if turn.conversation_id
+                else None
+            )
+            buttons = conversation_plus_buttons(connection, int(user_id), turn.conversation_id)
             # The bar carries the meal, so a meal created now is the one the next
             # message continues; the list of chats then shows it too (§9.11).
             fragments = [
-                ConversationIdInput(result.conversation_id, oob=True),
-                PlusRow(buttons, result.conversation_id, oob=True),
+                ConversationIdInput(turn.conversation_id, oob=True),
+                PlusRow(buttons, turn.conversation_id, oob=True),
                 _meal_bar(
                     connection,
                     int(user_id),
-                    result.event_id,
-                    without_meal,
+                    turn.intake_event_id or (conversation.intake_event_id if conversation else None),
+                    bool(conversation and conversation.without_meal),
                     pending,
-                    get_assistant_conversation(connection, int(user_id), result.conversation_id),
+                    conversation,
                 ),
             ]
-            if result.meal_created:
+            if turn.meal_created:
                 fragments.append(
-                    _chats(connection, int(user_id), result.event_id, result.conversation_id, oob=True)
+                    _chats(connection, int(user_id), turn.intake_event_id, turn.conversation_id, oob=True)
                 )
-        if result.turn is not None:
-            fragments.insert(
-                0, TurnBlock(result.turn, result.conversation_id, result.notices, pending, latest=True)
-            )
+            if turns:
+                fragments.insert(
+                    0, TurnBlock(turns[-1], turn.conversation_id, list(turn.notices), pending, latest=True)
+                )
         response = render_fragment(tuple(fragments))
-        response.headers["HX-Replace-Url"] = _assistant_url(result.conversation_id, intake_event_id)
+        response.headers["HX-Replace-Url"] = _assistant_url(turn.conversation_id, "")
         # The bar's dot of foods to review (frontend §9.3) asks again.
         response.headers["HX-Trigger"] = "dbReviewChanged"
         return response
