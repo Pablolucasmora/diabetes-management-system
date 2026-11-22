@@ -33,8 +33,10 @@ from DayBetes_food.domain.assistant import (
     AssistantTurnRead,
     DraftCard,
     ProvisionalCard,
+    RemovalCard,
     RepeatCard,
     RepeatSaveAs,
+    StoredCard,
     TurnView,
 )
 from DayBetes_food.domain.constants import (
@@ -45,6 +47,7 @@ from DayBetes_food.domain.constants import (
     FoodEntryType,
     FoodPhysicalState,
     MacrosSource,
+    StorageLocation,
 )
 from DayBetes_food.domain.food_entry import MentionSuggestion
 from DayBetes_food.domain.portion_detail import (
@@ -190,7 +193,7 @@ def _confidence_dot(portion):
         aria_label="Measured" if measured else "Estimated",
         title="Measured" if measured else "Estimated: the total shows its margin",
         role="img",
-        cls="shrink-0 h-2 w-2 rounded-full " + ("bg-emerald-600" if measured else "bg-warning"),
+        cls="shrink-0 h-2 w-2 rounded-full " + ("bg-emerald-600" if measured else "bg-amber-400"),
     )
 
 
@@ -578,6 +581,10 @@ def _added_line(card: AddedCard):
     if card.kind == "recipe":
         amount = f"{card.servings:g} servings" if card.servings else "whole recipe"
         meta = ["Recipe", amount]
+    elif card.kind == "fridge":
+        meta = ["From the fridge", f"{card.grams:g} g" if card.grams is not None else ""]
+        if card.carbs_g is not None:
+            meta.append(f"{card.carbs_g:g} g carbs")
     else:
         meta = [f"{card.grams:g} g" if card.grams is not None else ""]
         if card.carbs_g is not None:
@@ -629,6 +636,108 @@ def _changed_card(lines: list[str]):
     return _cart_card(
         "Changed in the cart",
         [Li(line, cls="text-sm text-gray-900 min-w-0 break-words") for line in lines],
+    )
+
+
+_STORED_TITLES = {
+    StorageLocation.FRIDGE.value: "Stored in the fridge",
+    StorageLocation.FREEZER.value: "Stored in the freezer",
+}
+
+
+def _stored_card(cards: list[StoredCard]):
+    """Containers the assistant stored (§9.11), with `Fridge`, which opens it in Food."""
+    titles = {_STORED_TITLES.get(card.location, "Stored") for card in cards}
+    title = titles.pop() if len(titles) == 1 else "Stored in the fridge and freezer"
+    return Div(
+        Div(
+            Span(title, cls="web_section_label"),
+            Button(
+                "Fridge",
+                type="button",
+                cls="web_button px-3 py-1 text-xs",
+                hx_get="/food?filter=fridge",
+                hx_target="#main_content",
+                hx_push_url="true",
+            ),
+            cls="flex items-center justify-between gap-2",
+        ),
+        Ul(
+            *(
+                Li(
+                    Span(card.name, cls="text-sm text-gray-900 min-w-0 break-words"),
+                    Span(
+                        " · ".join(
+                            part
+                            for part in (
+                                "Freezer" if card.location == StorageLocation.FREEZER.value else "Fridge",
+                                f"{card.grams:g} g" if card.grams is not None else "",
+                            )
+                            if part
+                        ),
+                        cls="text-[11px] text-gray-500",
+                    ),
+                    cls="flex flex-col",
+                )
+                for card in cards
+            ),
+            cls="flex flex-col gap-1.5",
+        ),
+        cls="self-start w-full max-w-[85%] web_container rounded-2xl px-3 py-2 flex flex-col gap-2",
+    )
+
+
+def RemovalRow(card: RemovalCard, conversation_id: int, *, removed: bool = False, read_only: bool = False):
+    """A food DiaBot proposes to remove (§9.11): only the user's tap on `Remove`
+    removes it. Once gone, the row says so instead."""
+    grams = f"{card.grams:g} g" if card.grams is not None else None
+    if removed:
+        action = Span("Removed", cls="shrink-0 text-xs font-semibold text-muted")
+    elif read_only:
+        action = None
+    else:
+        action = Button(
+            "Remove",
+            type="button",
+            cls="shrink-0 rounded-full px-3 py-1 text-xs font-semibold border border-danger text-danger bg-white/70 hover:bg-white cursor-pointer active:scale-95",
+            hx_post=f"/assistant/remove/{card.portion_id}",
+            hx_vals=json.dumps({"conversation_id": str(conversation_id)}),
+            hx_target="closest [data-removal-row]",
+            hx_swap="outerHTML",
+            hx_disabled_elt="this",
+            data_skip_page_loading="true",
+        )
+    return Li(
+        Div(
+            Span(card.name, cls="text-sm min-w-0 break-words " + ("text-gray-400 line-through" if removed else "text-gray-900")),
+            Span(grams, cls="text-[11px] text-gray-500") if grams else None,
+            cls="flex flex-col min-w-0",
+        ),
+        action,
+        data_removal_row="true",
+        cls="flex items-center justify-between gap-3",
+    )
+
+
+def _removal_card(cards: list[RemovalCard], conversation_id: int, meal_rows: frozenset | None, read_only: bool):
+    """What DiaBot proposes to take out of the meal (§9.11, "Quitar del carrito").
+    `meal_rows`: the rows the meal still has; a row not in it shows as removed
+    (None: unknown, every row keeps its button)."""
+    return Div(
+        Span("Remove from the cart?", cls="web_section_label"),
+        Ul(
+            *(
+                RemovalRow(
+                    card,
+                    conversation_id,
+                    removed=meal_rows is not None and card.portion_id not in meal_rows,
+                    read_only=read_only,
+                )
+                for card in cards
+            ),
+            cls="flex flex-col gap-2",
+        ),
+        cls="self-start w-full max-w-[85%] web_container rounded-2xl px-3 py-2 flex flex-col gap-2",
     )
 
 
@@ -920,11 +1029,13 @@ def TurnBlock(
     *,
     read_only: bool = False,
     latest: bool = False,
+    meal_rows: frozenset | None = None,
 ):
     """One message of the user and what the assistant did for it (§9.11).
     `pending`: the (entry_type, id) of the provisional entries still to review.
     `read_only` (a past chat): without the cards that only offer an action
-    (save a repetition, review a draft), which belong to the live chat."""
+    (save a repetition, review a draft), which belong to the live chat.
+    `meal_rows`: the ids of the meal's rows now, for the removal cards."""
     if turn.is_guide_question:
         return _guide_question(turn, open_=latest)
     bot = [
@@ -933,6 +1044,8 @@ def TurnBlock(
         *(_provisional_card(card, conversation_id, pending) for card in turn.provisional),
         *(() if read_only else (_repeat_card(card, conversation_id) for card in turn.repeats)),
         _changed_card(turn.changed) if turn.changed else None,
+        _stored_card(turn.stored) if turn.stored else None,
+        _removal_card(turn.removals, conversation_id, meal_rows, read_only) if turn.removals else None,
         *(() if read_only else (_draft_card(card, conversation_id) for card in turn.drafts)),
         *(_notice(text) for text in (notices or [])),
     ]
@@ -1004,14 +1117,22 @@ def AssistantThread(
     *,
     new_meal: bool = False,
     tail=(),
+    meal_rows: frozenset | None = None,
 ):
     """The conversation of the chosen meal; the intro while it is empty. `tail` is
-    a message still being answered, or one that failed, drawn after it (§8.12)."""
+    a message still being answered, or one that failed, drawn after it (§8.12).
+    `meal_rows`: the ids of the meal's rows, for the removal cards."""
     tail = tuple(block for block in tail if block is not None)
     return Div(
         _intro(new_meal) if not turns and not tail else None,
         *(
-            TurnBlock(turn, conversation_id, pending=pending, latest=index == len(turns) - 1 and not tail)
+            TurnBlock(
+                turn,
+                conversation_id,
+                pending=pending,
+                latest=index == len(turns) - 1 and not tail,
+                meal_rows=meal_rows,
+            )
             for index, turn in enumerate(turns)
         ),
         *tail,
@@ -1222,7 +1343,14 @@ def AssistantPage(
             MealBar(event, portions, without_meal=without_meal, pending=pending, preparation=preparation, plates=plates)
         ),
         Div(
-            AssistantThread(turns, conversation_id, pending, new_meal=event is None and not without_meal, tail=tail),
+            AssistantThread(
+                turns,
+                conversation_id,
+                pending,
+                new_meal=event is None and not without_meal,
+                tail=tail,
+                meal_rows=frozenset(portion.id for portion in portions),
+            ),
             id=THREAD_BOX_ID,
             cls="w-full",
         ),

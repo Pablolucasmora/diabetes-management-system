@@ -395,3 +395,60 @@ def test_strict_tools_stay_within_the_api_union_limit(monkeypatch):
         return 0
 
     assert sum(unions(tool["input_schema"]) for tool in TOOL_DEFINITIONS if tool["strict"]) <= 16
+
+
+def test_stored_and_removal_results_become_cards():
+    """A container stored and the foods proposed for removal show as cards; a
+    removal card never comes from a malformed row (§8.12, "Nevera", "Quitar del carrito")."""
+    stored = {"stored": {"container_id": 4, "name": "Lentejas", "location": "freezer", "grams": 300}}
+    removal = {
+        "removal": [
+            {"food_id": 7, "name": "Cerveza", "grams": 330},
+            {"food_id": "7", "name": "Bad id"},
+            {"food_id": 8},
+        ],
+        "note": "Nothing was removed yet.",
+    }
+    turn = turn_views(_conversation(stored, removal))[0]
+    assert [(card.name, card.location, card.grams) for card in turn.stored] == [("Lentejas", "freezer", 300)]
+    assert [(card.portion_id, card.name) for card in turn.removals] == [(7, "Cerveza")]
+    assert not turn.is_guide_question
+
+
+def test_conversation_turns_leave_out_a_pending_message(monkeypatch):
+    """The rounds of a message still being answered are stored as they end, but its
+    pending block draws it: the thread leaves them out, so it does not show twice."""
+    if not os.getenv("DATABASE_URL"):
+        monkeypatch.setenv("DATABASE_URL", "postgresql://unused@localhost/unused")
+        monkeypatch.setenv("DB_INIT_ON_STARTUP", "false")
+    for name in ("AUTH_TOKEN_PEPPER", "PASSWORD_PEPPER"):
+        if not os.getenv(name):
+            monkeypatch.setenv(name, "unused-in-this-test")
+    from DayBetes_food.services import assistant as service
+
+    earlier = datetime(2026, 11, 21, 10, tzinfo=timezone.utc)
+    later = datetime(2026, 11, 21, 12, tzinfo=timezone.utc)
+    messages = [
+        SimpleNamespace(id=1, role=AssistantRole.USER, content=[{"type": "text", "text": "pan"}], created_at=earlier),
+        SimpleNamespace(id=2, role=AssistantRole.ASSISTANT, content=[{"type": "text", "text": "Ok"}], created_at=earlier),
+        SimpleNamespace(id=3, role=AssistantRole.USER, content=[{"type": "text", "text": "y queso"}], created_at=later),
+    ]
+    monkeypatch.setattr(service, "list_assistant_messages", lambda *args: messages)
+    assert [turn.user_text for turn in service.conversation_turns(None, 1, 1)] == ["pan", "y queso"]
+    pending_since = datetime(2026, 11, 21, 11, tzinfo=timezone.utc)
+    assert [turn.user_text for turn in service.conversation_turns(None, 1, 1, before=pending_since)] == ["pan"]
+
+
+def test_a_weighed_food_without_macros_source_is_measured():
+    """Macros with no source count as a table's (±15 %), never as estimated: a
+    weighed food is then within the 20 % of a green dot (frontend §9.11)."""
+    from DayBetes_food.domain.constants import AmountMethod, MacrosSource
+    from DayBetes_food.domain.portion_detail import MEASURED_MARGIN_MAX, portion_carbs_margin
+
+    def portion(amount_method, macros_source):
+        return SimpleNamespace(amount_method=amount_method, source=SimpleNamespace(macros_source=macros_source))
+
+    assert portion_carbs_margin(portion(AmountMethod.KITCHEN_SCALE, None)) <= MEASURED_MARGIN_MAX
+    assert portion_carbs_margin(portion(AmountMethod.EYEBALL, None)) > MEASURED_MARGIN_MAX
+    assert portion_carbs_margin(portion(AmountMethod.KITCHEN_SCALE, MacrosSource.AI_ESTIMATE)) > MEASURED_MARGIN_MAX
+    assert portion_carbs_margin(portion(None, MacrosSource.LABEL)) > MEASURED_MARGIN_MAX

@@ -133,6 +133,11 @@ TOOL_RESULT_CHANGED = "changed"
 TOOL_RESULT_GUIDE = "guide"
 # The answer buttons the assistant offers under its question (§8.12, "Respuestas rápidas").
 TOOL_RESULT_REPLIES = "replies"
+# A container the assistant stored in the fridge or the freezer (§8.12, "Nevera").
+TOOL_RESULT_STORED = "stored"
+# A row of the meal the assistant proposes to remove: the user removes it with a
+# tap on its card; no tool removes anything (§8.12, "Quitar del carrito").
+TOOL_RESULT_REMOVAL = "removal"
 QUICK_REPLIES_MIN = 2
 QUICK_REPLIES_MAX = 4
 QUICK_REPLY_MAX_LENGTH = 40
@@ -977,6 +982,24 @@ class AddedCard:
 
 
 @dataclass(frozen=True)
+class StoredCard:
+    """A container the assistant stored, as its tool reported it (§8.12, "Nevera")."""
+
+    name: str
+    location: str  # StorageLocation value
+    grams: float | None
+
+
+@dataclass(frozen=True)
+class RemovalCard:
+    """A row of the meal the assistant proposes to remove (§8.12, "Quitar del carrito")."""
+
+    portion_id: int
+    name: str
+    grams: float | None
+
+
+@dataclass(frozen=True)
 class DraftCard:
     """A new food or recipe prepared for the user to review: opens its create form."""
 
@@ -1046,12 +1069,21 @@ class TurnView:
     quick_replies: list[str] = field(default_factory=list)
     preparation: list[PreparationChoice] = field(default_factory=list)
     guides: list[str] = field(default_factory=list)  # topics of the guide read in it
+    stored: list[StoredCard] = field(default_factory=list)
+    removals: list[RemovalCard] = field(default_factory=list)
 
     @property
     def is_guide_question(self) -> bool:
         """Only a question about the guide: it read the guide and touched nothing (§8.12)."""
         return bool(self.guides) and not (
-            self.added or self.drafts or self.changed or self.provisional or self.repeats or self.units
+            self.added
+            or self.drafts
+            or self.changed
+            or self.provisional
+            or self.repeats
+            or self.units
+            or self.stored
+            or self.removals
         )
 
 
@@ -1339,6 +1371,18 @@ def _read_tool_result(turn: TurnView, block: dict, tool_message: dict[str, int])
                 preparation=str(added["preparation"]) if added.get("preparation") else None,
             )
         )
+    stored = result.get(TOOL_RESULT_STORED)
+    if isinstance(stored, dict) and stored.get("name") and stored.get("location"):
+        turn.stored.append(
+            StoredCard(name=str(stored["name"]), location=str(stored["location"]), grams=_number(stored.get("grams")))
+        )
+    removal = result.get(TOOL_RESULT_REMOVAL)
+    if isinstance(removal, list):
+        for row in removal:
+            if isinstance(row, dict) and _is_id(row.get("food_id")) and row.get("name"):
+                turn.removals.append(
+                    RemovalCard(portion_id=row["food_id"], name=str(row["name"]), grams=_number(row.get("grams")))
+                )
     changed = result.get(TOOL_RESULT_CHANGED)
     if isinstance(changed, list):
         turn.changed.extend(str(line) for line in changed if isinstance(line, str) and line)

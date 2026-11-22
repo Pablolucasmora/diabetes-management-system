@@ -87,6 +87,8 @@ from DayBetes_food.domain.assistant import (
     TOOL_RESULT_REPEAT,
     TOOL_RESULT_GUIDE,
     TOOL_RESULT_REPLIES,
+    TOOL_RESULT_REMOVAL,
+    TOOL_RESULT_STORED,
     PREPARATION_OPTION_FIELDS,
     USUAL_MEAL_DAYS,
     parse_preparation_options,
@@ -109,6 +111,7 @@ from DayBetes_food.domain.assistant import (
 from DayBetes_food.domain.catalog import CatalogItemCreate, parse_barcode, parse_catalog_name
 from DayBetes_food.domain.ciqual_food import parse_ciqual_code
 from DayBetes_food.domain.constants import (
+    AmountInputUnit,
     AmountMethod,
     MenuSection,
     ServingMethod,
@@ -129,6 +132,14 @@ from DayBetes_food.domain.constants import (
     PREFILL_MACROS_SOURCE,
     PrefillSource,
     Ripeness,
+    StorageLocation,
+)
+from DayBetes_food.domain.fridge import (
+    FridgeContent,
+    FridgeStoreCommand,
+    merge_contents,
+    parse_fridge_name,
+    parse_take_fraction,
 )
 from DayBetes_food.domain.insulin import parse_insulin_units
 from DayBetes_food.domain.intake_event import (
@@ -159,6 +170,7 @@ from DayBetes_food.domain.portion_detail import (
     check_cooked_weight,
     default_final_state,
     parse_amount_grams,
+    portion_carbs,
     portion_macro_amount,
     raw_amount,
 )
@@ -177,6 +189,13 @@ from DayBetes_food.services.intake_event import (
     resolve_offset_input,
     resolve_target_event,
     update_meal_time,
+)
+from DayBetes_food.services.fridge import (
+    create_fridge_container,
+    create_recipe_container,
+    get_fridge_item,
+    list_fridge_items,
+    take_from_fridge,
 )
 from DayBetes_food.services.recipe import add_recipe_to_meal, recipe_draft_foods
 from DayBetes_food.time_utils import local_now, to_local
@@ -713,6 +732,78 @@ TOOL_DEFINITIONS = [
             **_PREPARATION,
         },
         strict=False,
+    ),
+    _tool(
+        "show_fridge",
+        "The user's open containers in the fridge and the freezer: id, name, place, when it expires, "
+        "its weight if weighed, and its foods with their grams. Call it before take_from_fridge.",
+        {},
+    ),
+    _tool(
+        "store_in_fridge",
+        "Store one new container (a tupper) in the fridge or the freezer, now: either some of the "
+        "user's foods or dishes (`foods`), or a recipe (`recipe_id`), never both. Two tuppers are "
+        "two calls. Fill in how each food was prepared only with what the user said. Use it only "
+        "when the user asks to keep something; it does not touch the meal.",
+        {
+            "location": {"type": "string", "enum": [location.value for location in StorageLocation]},
+            "name": {"type": ["string", "null"], "description": "Only if the user names the container."},
+            "foods": {
+                "type": ["array", "null"],
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "entry_type": {"type": "string", "enum": ["catalog", "manual_intake"]},
+                        "entry_id": {"type": "integer"},
+                        "grams": {"type": "number"},
+                        "amount_method": _nullable_enum(AmountMethod),
+                        "cooking": _nullable_enum(CookingMethod),
+                        "final_state": _nullable_enum(FoodPhysicalState),
+                        "is_cooked_weight": _NULLABLE_BOOLEAN,
+                    },
+                    "required": [
+                        "entry_type",
+                        "entry_id",
+                        "grams",
+                        "amount_method",
+                        "cooking",
+                        "final_state",
+                        "is_cooked_weight",
+                    ],
+                    "additionalProperties": False,
+                },
+            },
+            "recipe_id": _NULLABLE_INTEGER,
+            "servings": {
+                "type": ["number", "null"],
+                "description": "Servings of the recipe that go in; null for the whole recipe.",
+            },
+            "content_weight_g": {
+                "type": ["number", "null"],
+                "description": "The weight of the whole content, only if the user weighed it.",
+            },
+        },
+        strict=False,
+    ),
+    _tool(
+        "take_from_fridge",
+        "Take a part of a container (an id from show_fridge) into the meal of this conversation: "
+        "give `percent` (by eye, 100 = all of it) or `grams` (only if the container has its weight). "
+        "Taking all of it empties the container.",
+        {
+            "container_id": {"type": "integer"},
+            "percent": _NULLABLE_NUMBER,
+            "grams": _NULLABLE_NUMBER,
+            "plate_id": _PLATE_ID,
+        },
+        strict=False,
+    ),
+    _tool(
+        "propose_removal",
+        "Propose removing foods from the meal of this conversation (ids from show_meal), e.g. when "
+        "the user corrects something that was added by mistake. It removes nothing: the page shows "
+        "each food with a Remove button and only the user's tap removes it. Say so in one line.",
+        {"food_ids": {"type": "array", "items": {"type": "integer"}}},
     ),
 ]
 
@@ -1728,6 +1819,177 @@ def _search_menu(ctx: ToolContext, tool_input: dict) -> dict:
     }
 
 
+def _show_fridge(ctx: ToolContext, tool_input: dict) -> dict:
+    items = list_fridge_items(ctx.connection, ctx.user_id)
+    if not items:
+        return {"containers": [], "note": "The fridge and the freezer are empty."}
+    return {
+        "containers": [
+            _compact(
+                {
+                    "container_id": item.fridge.id,
+                    "name": item.display_name,
+                    "location": item.fridge.location.value,
+                    "expires": f"{to_local(item.fridge.expires_at):%Y-%m-%d}",
+                    "weight_g": _round(item.fridge.content_weight),
+                    "foods": [
+                        _compact({"name": portion.source.name, "grams": _round(portion.amount)})
+                        for portion in item.portions
+                    ],
+                }
+            )
+            for item in items
+        ]
+    }
+
+
+def _fridge_content(ctx: ToolContext, row) -> FridgeContent:
+    """One food of a store_in_fridge call, checked as the store form checks it."""
+    if not isinstance(row, dict):
+        raise ToolInputError("Each food must be an object.")
+    entry_type = FoodEntryType(row.get("entry_type"))
+    if entry_type is FoodEntryType.RECIPE:
+        raise ToolInputError("A recipe goes in recipe_id, not in foods.")
+    entry_id = tool_id(row.get("entry_id"), "entry_id")
+    item = _read_food(ctx, entry_type, entry_id)
+    if item is None:
+        raise ToolInputError(f"There is no {_ENTRY_TYPE_NAMES[entry_type]} with id {entry_id} for this user.")
+    try:
+        grams = parse_amount_grams(tool_number(row.get("grams"), "grams", required=True))
+    except ValidationError as error:
+        raise ToolInputError("The amount must be greater than 0 g and at most 100000 g.") from error
+    origin = PortionOrigin(entry_type.value)
+    is_cooked_weight = bool(tool_bool(row.get("is_cooked_weight"), "is_cooked_weight"))
+    check_cooked_weight(origin, getattr(item, "cooking_factor", None), is_cooked_weight)
+    amount_method = row.get("amount_method")
+    return FridgeContent(
+        origin=origin,
+        origin_id=item.id,
+        amount=grams,
+        cooking=CookingMethod(row["cooking"]) if row.get("cooking") is not None else None,
+        final_state=(
+            FoodPhysicalState(row["final_state"]) if row.get("final_state") is not None else default_final_state(item)
+        ),
+        amount_method=AmountMethod(amount_method) if amount_method is not None else item.default_amount_method,
+        is_cooked_weight=is_cooked_weight,
+    )
+
+
+def _store_in_fridge(ctx: ToolContext, tool_input: dict) -> dict:
+    location = StorageLocation(tool_input.get("location"))
+    foods = tool_input.get("foods")
+    recipe_id = tool_input.get("recipe_id")
+    if (not foods) == (recipe_id is None):
+        raise ToolInputError("Give either foods or recipe_id, not both and not neither.")
+    if recipe_id is not None:
+        recipe_id = tool_id(recipe_id, "recipe_id")
+        recipe = get_recipe(ctx.connection, ctx.user_id, recipe_id)
+        if recipe is None:
+            raise ToolInputError(f"There is no recipe with id {recipe_id} for this user.")
+        raw_servings = tool_number(tool_input.get("servings"), "servings")
+        try:
+            servings = parse_recipe_add_servings(raw_servings) if raw_servings is not None else None
+        except ValidationError as error:
+            raise ToolInputError(str(error)) from error
+        try:
+            fridge_id = create_recipe_container(
+                ctx.connection,
+                ctx.user_id,
+                recipe_id,
+                location,
+                RecipeAddRequest(event_id=None, plate_id=None, servings=servings, preparations={}),
+            )
+        except ConflictError as error:
+            raise ToolInputError(f"{recipe.name} has no ingredients to store.") from error
+    else:
+        if not isinstance(foods, list):
+            raise ToolInputError("foods must be a list.")
+        contents = tuple(_fridge_content(ctx, row) for row in foods)
+        try:
+            name = parse_fridge_name(tool_input.get("name"))
+            weight = tool_number(tool_input.get("content_weight_g"), "content_weight_g")
+            content_weight = parse_amount_grams(weight) if weight is not None else None
+        except ValidationError as error:
+            raise ToolInputError(str(error)) from error
+        fridge_id = create_fridge_container(
+            ctx.connection,
+            FridgeStoreCommand(
+                user_id=ctx.user_id,
+                location=location,
+                contents=merge_contents(list(contents)),
+                name=name,
+                content_weight=content_weight,
+            ),
+        )
+    item = get_fridge_item(ctx.connection, ctx.user_id, fridge_id)
+    return {
+        TOOL_RESULT_STORED: _compact(
+            {
+                "container_id": fridge_id,
+                "name": item.display_name,
+                "location": location.value,
+                "grams": _round(sum(portion.amount for portion in item.portions)),
+            }
+        )
+    }
+
+
+def _take_from_fridge(ctx: ToolContext, tool_input: dict) -> dict:
+    container_id = tool_id(tool_input.get("container_id"), "container_id")
+    percent = tool_number(tool_input.get("percent"), "percent")
+    grams = tool_number(tool_input.get("grams"), "grams")
+    if (percent is None) == (grams is None):
+        raise ToolInputError("Give either percent or grams, not both and not neither.")
+    item = get_fridge_item(ctx.connection, ctx.user_id, container_id)
+    if item is None:
+        raise ToolInputError(f"There is no open container {container_id}: call show_fridge.")
+    unit = AmountInputUnit.PERCENT if percent is not None else AmountInputUnit.GRAMS
+    raw = percent if percent is not None else grams
+    try:
+        fraction = parse_take_fraction(raw, unit, item.fridge.content_weight)
+    except ValidationError as error:
+        raise ToolInputError(str(error)) from error
+    event_id = ctx.target_event()
+    plate_id = _target_plate(ctx, event_id, tool_input.get("plate_id"))
+    try:
+        take_from_fridge(ctx.connection, ctx.user_id, container_id, raw, unit, event_id, plate_id)
+    except ValidationError as error:
+        raise ToolInputError(str(error)) from error
+    taken = sum(portion.amount for portion in item.portions) * fraction
+    carbs = sum(portion_carbs(portion) for portion in item.portions) * fraction
+    return {
+        TOOL_RESULT_ADDED: _compact(
+            {
+                "name": item.display_name,
+                "grams": _round(taken),
+                "carbs_g": _round(carbs),
+                "kind": "fridge",
+                "location": item.fridge.location.value,
+                "emptied": fraction >= 1.0 or None,
+            }
+        )
+    }
+
+
+def _propose_removal(ctx: ToolContext, tool_input: dict) -> dict:
+    raw_ids = tool_input.get("food_ids")
+    if not isinstance(raw_ids, list) or not raw_ids:
+        raise ToolInputError("food_ids must be a list of ids from show_meal.")
+    event_id = _meal_event(ctx)
+    rows = {portion.id: portion for portion in list_portions_by_event(ctx.connection, ctx.user_id, event_id)}
+    proposed = []
+    for raw_id in dict.fromkeys(raw_ids):
+        portion_id = tool_id(raw_id, "food_ids")
+        portion = rows.get(portion_id)
+        if portion is None:
+            raise ToolInputError(f"There is no food {portion_id} in this meal: call show_meal.")
+        proposed.append({"food_id": portion.id, "name": portion.source.name, "grams": _round(portion.amount)})
+    return {
+        TOOL_RESULT_REMOVAL: proposed,
+        "note": "Nothing was removed yet: the user taps Remove on each one to remove it.",
+    }
+
+
 _HANDLERS = {
     "search_my_foods": _search_my_foods,
     "search_reference_foods": _search_reference_foods,
@@ -1750,6 +2012,10 @@ _HANDLERS = {
     "draft_recipe": _draft_recipe,
     "add_new_food": _add_new_food,
     "add_new_dish": _add_new_dish,
+    "show_fridge": _show_fridge,
+    "store_in_fridge": _store_in_fridge,
+    "take_from_fridge": _take_from_fridge,
+    "propose_removal": _propose_removal,
 }
 
 

@@ -275,7 +275,8 @@ def portion_macro_amount(portion) -> float:
 
 # Relative margin of a portion's carbs, by how its amount and its macros were
 # obtained (decision of the user of 2026-11-22, frontend_conventions.md §9.11):
-# the two add up. Not given counts as the widest.
+# the two add up. An amount not given counts as the widest; macros not given as a
+# table's, since `macros_source` NULL never means estimated (measurement §6.11).
 AMOUNT_MARGIN = {
     AmountMethod.KITCHEN_SCALE: 0.05,
     AmountMethod.POCKET_SCALE: 0.05,
@@ -294,15 +295,16 @@ MACROS_MARGIN = {
     MacrosSource.AI_ESTIMATE: 0.30,
     MacrosSource.OWN_ESTIMATE: 0.30,
 }
-UNKNOWN_MARGIN = 0.30
+UNKNOWN_AMOUNT_MARGIN = 0.30
+UNKNOWN_MACROS_MARGIN = 0.15
 # A portion within this margin is "measured" (a green dot); wider is estimated.
 MEASURED_MARGIN_MAX = 0.20
 
 
 def portion_carbs_margin(portion) -> float:
     """Relative margin of a portion's carbs: its amount's plus its macros'."""
-    amount = AMOUNT_MARGIN.get(portion.amount_method, UNKNOWN_MARGIN)
-    macros = MACROS_MARGIN.get(portion.source.macros_source, UNKNOWN_MARGIN)
+    amount = AMOUNT_MARGIN.get(portion.amount_method, UNKNOWN_AMOUNT_MARGIN)
+    macros = MACROS_MARGIN.get(portion.source.macros_source, UNKNOWN_MACROS_MARGIN)
     return amount + macros
 
 

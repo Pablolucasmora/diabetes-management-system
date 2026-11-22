@@ -17,6 +17,7 @@ import base64
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from DayBetes_food.config import (
     ASSISTANT_EFFORT,
@@ -87,13 +88,14 @@ from DayBetes_food.domain.portion_detail import PortionDetailUpdate
 from DayBetes_food.errors import ConflictError, ExternalServiceError, NotFoundError, ValidationError
 from DayBetes_food.integrations.anthropic_client import create_answer
 from DayBetes_food.services.assistant_tools import TOOL_DEFINITIONS, ToolContext, run_tool
+from DayBetes_food.services.intake_event import delete_planned_portion, portion_event_id
 from DayBetes_food.time_utils import local_now, to_local
 
 logger = logging.getLogger(__name__)
 
 QUICK_MODE_LINE = "Quick mode: the message is only a list of foods with their amounts."
 
-SYSTEM_PROMPT = """You are the meal logging assistant of DayBetes, an app that a person with type 1 diabetes uses to log what they eat. They tell you what they ate; you put it in the cart of the app as a planned meal, and they review and confirm it there. You can also change that meal as they edit it in the cart: its time, type, name, notes and whether they ate out, its plates, the grams, offset and preparation of its foods, and the insulin they tell you they injected. Foods and dishes they do not have yet you create at once, marked for them to review later; and you prepare recipes, and foods and dishes in a chat without a meal, as drafts, which they review and save in a form. The page has +1 buttons that add one more of what is already in the meal without you: the context block shows the result. You cannot confirm meals, delete anything or edit foods of their database: if they ask, tell them to do it in the cart or in Food.
+SYSTEM_PROMPT = """You are the meal logging assistant of DayBetes, an app that a person with type 1 diabetes uses to log what they eat. They tell you what they ate; you put it in the cart of the app as a planned meal, and they review and confirm it there. You can also change that meal as they edit it in the cart: its time, type, name, notes and whether they ate out, its plates, the grams, offset and preparation of its foods, and the insulin they tell you they injected. Foods and dishes they do not have yet you create at once, marked for them to review later; and you prepare recipes, and foods and dishes in a chat without a meal, as drafts, which they review and save in a form. The page has +1 buttons that add one more of what is already in the meal without you: the context block shows the result. You can also store containers in their fridge and freezer, and take from them into the meal. You cannot confirm meals, delete anything or edit foods of their database: if they ask, tell them to do it in the cart or in Food. To take something out of the meal, propose it with propose_removal: the user removes it with a tap.
 
 If the user only asks for a new food, dish or recipe, prepare the draft and add nothing to the cart.
 
@@ -126,6 +128,10 @@ Quick answers: whenever you ask the user something with a few likely answers, ca
 Plates: put everything in the meal's last plate (plate_id null), unless the user splits the meal into courses eaten at different times ("de primero…", "de postre a los 20 minutos") or says another round is coming ("ahora otra tanda", "repito"): then add_plate for each course, with its name and offset, and add its foods there. When they say a clock time instead of minutes ("el aperitivo a las 13:30"), give eaten_time HH:MM instead of offset_minutes: the app keeps the time and derives the offset, also when the meal time changes later.
 
 The meal: when the user says when they ate ("a las 14:30", "ayer en la cena"), call update_meal with that local time (and date, if it is not today) and meal type, and eating_out true when they ate at a bar, a restaurant or someone else's home. Change the meal, a plate or a food already added only when the user says so; use the ids of the context block.
+
+Fridge and freezer: when the user asks to keep something ("guarda 300 g de lentejas en la nevera", "congela la mitad del guiso"), store it with store_in_fridge: their foods with the grams and preparation they said, or a recipe of theirs with its servings; it does not go into the meal. When they eat from a container ("me como el táper de lentejas", "la mitad del guiso congelado"), call show_fridge and take_from_fridge with the part they ate, in percent unless they weighed it and the container has its weight. If two containers fit, ask with offer_replies.
+
+Removing: when the user says something in the meal is wrong and should go ("quita la cerveza", "eso no era, era …"), first add the right food if there is one, then call propose_removal with the ids from show_meal of what should go, and say in one line that they can remove it with the button. Never claim it is removed.
 
 Insulin: only when the user tells you the dose, zone or pen they injected or will inject, write it with update_insulin, exactly as they said it. Never suggest, calculate or correct a dose, never fill one they did not say, and never comment on whether a dose is right. They check it in the cart before confirming the meal.
 
@@ -255,8 +261,16 @@ def resolve_conversation(
     return None
 
 
-def conversation_turns(connection, user_id: int, conversation_id: int) -> list[TurnView]:
-    return turn_views(list_assistant_messages(connection, user_id, conversation_id))
+def conversation_turns(
+    connection, user_id: int, conversation_id: int, *, before: datetime | None = None
+) -> list[TurnView]:
+    """The conversation's turns. `before`: only the messages stored before then; a
+    message still being answered stores its rounds as they end, and its pending
+    block already draws it (§8.12, "Turno")."""
+    messages = list_assistant_messages(connection, user_id, conversation_id)
+    if before is not None:
+        messages = [message for message in messages if message.created_at < before]
+    return turn_views(messages)
 
 
 @dataclass(frozen=True)
@@ -418,6 +432,34 @@ def apply_preparation(
     update_portion_detail_fields(
         connection, user_id, portion_id, PortionDetailUpdate(**{field_name: value}), commit=False
     )
+
+
+def remove_proposed_food(connection, user_id: int, conversation_id: int, portion_id: int) -> str:
+    """Remove a row of the conversation's meal that the assistant proposed to remove,
+    on the user's tap on its card (§8.12, "Quitar del carrito"), inside the caller's
+    transaction. The proposal is read again from the stored conversation, never
+    taken from the browser. Like the cart, a row taken from a container goes back
+    to it (measurement_conventions.md §4.8.6). Returns the row's name.
+
+    Raises:
+        NotFoundError: the conversation, its meal or the row is gone, or the row was
+            not proposed in this conversation.
+        ConflictError: the meal was confirmed.
+    """
+    conversation = get_assistant_conversation(connection, user_id, conversation_id)
+    if conversation is None or conversation.intake_event_id is None:
+        raise NotFoundError("Conversation not found.")
+    get_planned_intake_event(connection, user_id, conversation.intake_event_id)
+    proposed = {
+        card.portion_id for turn in conversation_turns(connection, user_id, conversation_id) for card in turn.removals
+    }
+    if portion_id not in proposed:
+        raise NotFoundError("That food was not proposed for removal.")
+    portion = get_portion_detail(connection, user_id, portion_id)
+    if portion_event_id(connection, user_id, portion) != conversation.intake_event_id:
+        raise NotFoundError("That food is not in this meal anymore.")
+    delete_planned_portion(connection, user_id, portion)
+    return portion.source.name
 
 
 def _mention_lines(connection, user_id: int, mentions: tuple[Mention, ...]) -> tuple[list[str], list[str]]:
