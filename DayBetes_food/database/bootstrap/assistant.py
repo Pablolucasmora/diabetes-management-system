@@ -2,9 +2,12 @@
 
 
 from DayBetes_food.database.bootstrap.helpers import (
+    _check_lacks_values,
     _constraint_exists,
     _create_index_once,
 )
+from DayBetes_food.database.schema import assistant_message_check_constraints
+from DayBetes_food.domain.constants import AssistantRole
 
 
 def _ensure_assistant_schema(cursor):
@@ -18,6 +21,12 @@ def _ensure_assistant_schema(cursor):
             "ALTER TABLE assistant_conversation ADD CONSTRAINT ck_assistant_conversation_without_meal "
             "CHECK (NOT (without_meal AND intake_event_id IS NOT NULL));"
         )
+    # `system` rows (2026-11-22, §8.12 "Modo rápido"): a change of effort.
+    if _check_lacks_values(cursor, "assistant_message", "ck_assistant_message_role", [r.value for r in AssistantRole]):
+        checks = assistant_message_check_constraints()
+        for name in ("ck_assistant_message_role", "ck_assistant_message_usage_role"):
+            cursor.execute(f"ALTER TABLE assistant_message DROP CONSTRAINT IF EXISTS {name};")
+            cursor.execute(f"ALTER TABLE assistant_message ADD CONSTRAINT {name} CHECK ({checks[name]});")
     # Hidden from the list of chats (2026-11-22, frontend §9.11): kept for the study.
     cursor.execute("ALTER TABLE assistant_conversation ADD COLUMN IF NOT EXISTS hidden_at TIMESTAMPTZ;")
     # The latest conversation of a meal (§8.12: one conversation per meal).

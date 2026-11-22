@@ -102,6 +102,8 @@ from DayBetes_food.database.queries.user_favorites import (
     get_user_favorite_access,
     set_user_favorite,
 )
+from DayBetes_food.database.queries.assistant import list_estimate_rows
+from DayBetes_food.database.queries.assistant import get_calibration_portions
 from DayBetes_food.database.queries.menu import (
     save_menu_items,
     search_menu_items,
@@ -414,4 +416,6 @@ __all__ = [
     "list_menu_items",
     "delete_menu_item",
     "delete_menu_place",
+    "list_estimate_rows",
+    "get_calibration_portions",
 ]

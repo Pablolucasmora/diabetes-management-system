@@ -1140,6 +1140,28 @@ Con Ciqual y OFF, los macros y lo que traiga la fuente salen de su precarga de s
 
 **Respuestas rápidas** (decisiones del usuario del 2026-11-21 y del 2026-11-22). La herramienta `offer_replies` recibe de 2 a 4 respuestas cortas (40 caracteres como mucho), la más probable primero, a la pregunta que el asistente hace en su respuesta; no escribe nada y su resultado (`replies`) se guarda como cualquier otro, así que una conversación reabierta las muestra en su último turno. El prompt pide usarla siempre que la pregunta tenga pocas respuestas probables, y preguntar cuando dude de algo de lo escrito que cambie los hidratos (qué alimento era, casero o de restaurante, peso crudo o cocinado, cuánto era "un plato"): añade lo más probable y pregunta, para que un toque lo confirme o lo corrija. Una pregunta por respuesta como mucho. Lo pulsado llega como un mensaje normal del usuario.
 
+**Modo rápido** (decisión del usuario del 2026-11-22). Un mensaje que es solo una lista de alimentos con su cantidad ("arroz 150, pollo 120, pan 40") se añade entero sin conversación. **Cuándo cuenta como lista** (`is_quick_list`, `domain/assistant.py`):
+- no lleva foto ni `?`;
+- tiene de 1 a `QUICK_LIST_MAX_ITEMS` (12) partes, separadas por comas, saltos de línea, `;` o " y ";
+- cada parte es un nombre y un número, en cualquier orden, con una unidad opcional (`g`, `gr`, `gramos`, `ml`, `ud`, `uds`, `unidades`) y un `de` opcional ("150 g de arroz").
+
+La app lo decide antes de llamar al modelo, sin gastar nada. Ese mensaje:
+- **Esfuerzo `low`.** Va como un mensaje de sistema dentro de `messages` (`{"role": "system", "content": [], "output_config": {"effort": "low"}}`, beta `mid-conversation-output-config-2026-07-01`), que, a diferencia de cambiar el `effort` de la petición, no invalida la caché. El siguiente mensaje que no sea una lista vuelve a `ASSISTANT_EFFORT` con otro igual.
+- **Los cambios de esfuerzo se guardan.** Son filas `system` de `assistant_message` (§11.2.9), porque al reenviar la conversación tienen que seguir en su sitio. El esfuerzo vigente se calcula sobre el historial que se envía, no sobre todas las filas, porque la ventana de historial puede dejar fuera el último cambio.
+- **Instrucción.** El bloque de contexto añade `Quick mode` y el prompt pide añadirlo todo con las cantidades dadas, sin preguntar, y contestar solo "Added N.", con como mucho una línea con lo que no pudo añadir o tuvo que suponer (y sus respuestas rápidas).
+
+**Aprender de las correcciones** (decisión del usuario del 2026-11-22). DiaBot ajusta sus estimaciones a cómo las corrige el usuario. Se calcula con lo ya guardado, sin columnas nuevas (`calibration` en `services/assistant.py`, la lógica pura en `domain/assistant.py`). Se usan las comidas confirmadas de los últimos `CALIBRATION_DAYS` (90) días:
+- **Cantidades.** Cada añadido de DiaBot con `amount_method = ai_estimate` (sus `tool_result`, con la fila y los gramos) se compara con lo servido de esa fila al confirmar (`amount / eaten_fraction` de su tanda).
+- **Hidratos de los añadidos rápidos estimados.** Se comparan los hidratos por gramo que puso DiaBot con los `carbs_100g` que tiene ahora el añadido rápido, por si el usuario los cambió.
+- **Grupos:** `photo` (el turno llevaba foto, y gana sobre los otros dos), `out` (la comida es `eating_out`) y `home`.
+- **Cálculo.** Cada cociente se recorta a `[0.25, 4]` y se usa la mediana. Con al menos `CALIBRATION_MIN_SAMPLES` (5) muestras y una diferencia de más del 10 %, el bloque de contexto lleva una línea `Calibration` por grupo: le pide escalar esas estimaciones y decirlo en pocas palabras ("−15 %, as you usually correct").
+- **Límites declarados:**
+  - un `+1` cuenta como corrección, porque no queda registrado aparte;
+  - los resultados guardados antes de que llevaran la fila (`food_id`) no cuentan, así que el ajuste empieza con las comidas registradas desde entonces;
+  - solo hay línea en un chat con comida.
+
+La preparación ya se aprende con **Lo habitual** de **Preparación con un toque**.
+
 **Cartas** (decisión del usuario del 2026-11-22). Una foto de la carta de un restaurante hace dos cosas:
 - **Para esta comida:** DiaBot estima el plato que dice el usuario con lo que pone la carta (nombre e ingredientes), junto con la foto del plato si la hay.
 - **Para otro día:** DiaBot guarda los platos que puede leer en `menu_item` (§11.2.10), **siempre** que llega una carta, sin pedirlo, y lo dice en una línea. Si no sabe de qué sitio es, lo pregunta con respuestas rápidas y guarda después.
@@ -1722,7 +1744,7 @@ Decisión del usuario del 2026-11-12. Guardan cada conversación del asistente (
 - **Una conversación por comida.** `intake_event_id` es la comida en la que escribe. Es `NULL` hasta que su primer añadido crea la comida, y vuelve a `NULL` si la comida se borra (`ON DELETE SET NULL`). Solo se enlaza a una comida `planned` del mismo usuario, y lo comprueba la sentencia que escribe (§5.3). La base no lo impone con una FK compuesta porque `intake_event` no tiene un único `(users_id, id)`. Si una comida tuviera varias conversaciones, se abre la última.
 - **Conversación sin comida** (2026-11-13, §8.12). `without_meal BOOLEAN NOT NULL DEFAULT FALSE` marca la de `No meal`, que nunca se enlaza a una comida: `ck_assistant_conversation_without_meal` impide `without_meal` con `intake_event_id`. Se fija al crearla y no cambia.
 - **Se crea con su primera respuesta guardada.** Un mensaje cuya primera llamada al modelo falla no deja ninguna fila.
-- **Mensajes.** Cada fila es un mensaje de la API de Claude, tal como se envió o se recibió: `role` (`AssistantRole`), `position` desde 1 (única por conversación) y `content`, la lista de bloques en `JSONB`, nunca vacía. La conversación se reenvía al modelo a partir de estas filas, en orden. Por eso son de **solo inserción**: `init_db` retira al rol de ejecución `UPDATE`, `DELETE` y `TRUNCATE` sobre `assistant_message`, como en `fridge_move` (§11.2.6). Añadir bloquea antes la fila de la conversación, para que dos envíos simultáneos no choquen en la posición (§6.8).
+- **Mensajes.** Cada fila es un mensaje de la API de Claude, tal como se envió o se recibió: `role` (`AssistantRole`; `system` solo para un cambio de esfuerzo del **Modo rápido**, con el marcador `[{"type": "effort", "effort": …}]` como contenido y sin uso, decisión 2026-11-22), `position` desde 1 (única por conversación) y `content`, la lista de bloques en `JSONB`, nunca vacía. La conversación se reenvía al modelo a partir de estas filas, en orden. Por eso son de **solo inserción**: `init_db` retira al rol de ejecución `UPDATE`, `DELETE` y `TRUNCATE` sobre `assistant_message`, como en `fridge_move` (§11.2.6). Añadir bloquea antes la fila de la conversación, para que dos envíos simultáneos no choquen en la posición (§6.8).
 - **Fotos.** Nunca se guardan. Se envían una vez y en la fila se sustituyen por un marcador de texto (`study_conventions.md` §7.1).
 - **Uso.** Las filas `assistant` llevan el uso de esa respuesta: tokens de entrada, de escritura y lectura de caché, de salida, duración y `stop_reason`. Las filas `user` no llevan ninguno (`ck_assistant_message_usage_role`). `stop_reason` es un conjunto abierto de la API, así que no tiene CHECK.
 - **Qué acabó en el carrito.** Los resultados de las herramientas (`tool_result`) lo dicen: el alimento, los gramos, los hidratos y el `amount_method` de cada añadido, o el borrador de un alimento nuevo. La página los vuelve a leer de ahí al reabrir una conversación.

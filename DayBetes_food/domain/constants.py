@@ -174,10 +174,12 @@ class PrefillSource(str, Enum):
 @unique
 class AssistantRole(str, Enum):
     """Author of a stored message of the assistant (code_conventions.md §11.2.9):
-    the same two roles as the Claude API. A `user` row is what the user sent
-    or the results of the tools; an `assistant` row is one answer of the model."""
+    roles of the Claude API. A `user` row is what the user sent or the results
+    of the tools; an `assistant` row is one answer of the model; a `system` row
+    only changes the effort from there on (§8.12, "Modo rápido")."""
     USER = "user"
     ASSISTANT = "assistant"
+    SYSTEM = "system"
 
 
 @unique

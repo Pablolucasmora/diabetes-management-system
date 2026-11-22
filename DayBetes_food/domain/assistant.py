@@ -12,7 +12,7 @@ DayBetes_food/database/mappers.py.
 import json
 import math
 import re
-from enum import Enum
+from enum import Enum, unique
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 
@@ -1290,3 +1290,219 @@ def draft_tool_input(message: AssistantMessageRead, tool_use_id: str, tool_name:
         ):
             return block["input"]
     return None
+
+
+# ============================================
+# Quick mode (§8.12, "Modo rápido")
+# ============================================
+
+QUICK_LIST_MAX_ITEMS = 12
+QUICK_MODE_EFFORT = "low"
+TOOL_EFFORT_MARKER = "effort"  # block type of a `system` row: our marker, not an API block
+
+_QUICK_SPLIT = re.compile(r"\s*(?:,|;|\n|\s+y\s+|\s+and\s+)\s*", re.IGNORECASE)
+_QUICK_UNIT = r"(?:(?:g|gr|grs|gramos|ml|ud|uds|unidad|unidades)\.?)"
+_QUICK_NUMBER = r"\d+(?:[.,]\d+)?"
+_QUICK_NAME = r"[^\d?¿!¡]*[^\W\d_][^\d?¿!¡]*"
+_QUICK_ITEM = re.compile(
+    rf"^(?:{_QUICK_NAME}\s+{_QUICK_NUMBER}\s*{_QUICK_UNIT}?"
+    rf"|{_QUICK_NUMBER}\s*{_QUICK_UNIT}?\s+(?:de\s+)?{_QUICK_NAME})$",
+    re.IGNORECASE,
+)
+
+
+def is_quick_list(text: str, *, has_photo: bool = False) -> bool:
+    """Whether a message is only a list of foods with their amounts ("arroz 150,
+    pollo 120, pan 40"): decided by its form, before calling the model. Each part
+    is a short name and an amount; a time or a day ("sobre las 9") is not one."""
+    if has_photo or "?" in text or "¿" in text:
+        return False
+    parts = [part.strip() for part in _QUICK_SPLIT.split(text.strip()) if part.strip()]
+    if not 1 <= len(parts) <= QUICK_LIST_MAX_ITEMS:
+        return False
+    return all(_quick_item(part) for part in parts)
+
+
+# A number that is a time or a day is not an amount ("sobre las 9", "ayer 14").
+_QUICK_NOT_AMOUNT = re.compile(
+    r"\b(?:las|la|hora|horas|ayer|hoy|mañana|anoche|at|pm|am|yesterday|today)\b", re.IGNORECASE
+)
+QUICK_NAME_MAX_WORDS = 4
+
+
+def _quick_item(part: str) -> bool:
+    if not _QUICK_ITEM.match(part) or _QUICK_NOT_AMOUNT.search(part):
+        return False
+    name = re.sub(rf"{_QUICK_NUMBER}\s*{_QUICK_UNIT}?|\bde\b", " ", part, flags=re.IGNORECASE)
+    return len(name.split()) <= QUICK_NAME_MAX_WORDS
+
+
+def effort_marker(effort: str) -> list[dict]:
+    """The content of a `system` row that changes the effort from there on."""
+    return [{"type": TOOL_EFFORT_MARKER, "effort": effort}]
+
+
+def current_effort(messages: list[AssistantMessageRead], default: str) -> str:
+    """The effort the model runs at after these messages: the last change in
+    them, or the request's own."""
+    for message in reversed(messages):
+        if message.role is AssistantRole.SYSTEM:
+            for block in message.content:
+                if block.get("type") == TOOL_EFFORT_MARKER and block.get("effort"):
+                    return str(block["effort"])
+    return default
+
+
+def api_message(role: AssistantRole, content: list[dict]) -> dict:
+    """A stored row as the API takes it: a `system` row is a change of effort."""
+    if role is AssistantRole.SYSTEM:
+        effort = next(
+            (block.get("effort") for block in content if block.get("type") == TOOL_EFFORT_MARKER), None
+        )
+        return {"role": "system", "content": [], "output_config": {"effort": effort}}
+    return {"role": role.value, "content": content}
+
+
+# ============================================
+# Learning from the user's corrections (§8.12, "Aprender de las correcciones")
+# ============================================
+
+CALIBRATION_DAYS = 90
+CALIBRATION_MIN_SAMPLES = 5
+CALIBRATION_MIN_SHIFT = 0.10  # a median ratio within ±10 % changes nothing
+CALIBRATION_RATIO_RANGE = (0.25, 4.0)  # one ratio outside it is clipped, not trusted
+
+
+@unique
+class CalibrationGroup(str, Enum):
+    PHOTO = "photo"  # the turn had a photo; wins over the other two
+    OUT = "out"  # the meal was eaten out
+    HOME = "home"
+
+
+_CALIBRATION_WHAT = {
+    CalibrationGroup.PHOTO: "from a photo",
+    CalibrationGroup.OUT: "when eating out",
+    CalibrationGroup.HOME: "at home",
+}
+
+
+@dataclass(frozen=True)
+class EstimateSample:
+    """One add of DiaBot with an estimated amount, as its tool result stored it."""
+    portion_id: int
+    grams: float
+    carbs_g: float | None
+    is_quick_add: bool  # an add_estimate: its carbs are DiaBot's too
+    group: CalibrationGroup
+
+
+@dataclass(frozen=True)
+class CalibrationPortion:
+    """The row of a confirmed meal an estimate went to, as it ended."""
+    portion_id: int
+    served_g: float  # amount / eaten_fraction of its plate
+    carbs_100g: float | None  # of a quick add, now; None for anything else
+
+
+def estimate_samples(rows: list[tuple[int, list[dict], bool]]) -> list[EstimateSample]:
+    """The estimated adds of some conversations. `rows` are their `user` rows in
+    order, each as (conversation_id, content, eating_out): turn starts say
+    whether the turn had a photo, tool results say what was added."""
+    samples: list[EstimateSample] = []
+    photo: dict[int, bool] = {}
+    for conversation_id, content, eating_out in rows:
+        if any(block.get("type") != "tool_result" for block in content):
+            photo[conversation_id] = any(
+                block.get("type") == "image" or block.get("text") == ASSISTANT_PHOTO_PLACEHOLDER for block in content
+            )
+            continue
+        for block in content:
+            if block.get("type") != "tool_result" or block.get("is_error"):
+                continue
+            try:
+                result = json.loads(block.get("content") or "")
+            except (TypeError, ValueError):
+                continue
+            added = result.get(TOOL_RESULT_ADDED) if isinstance(result, dict) else None
+            if not isinstance(added, dict) or added.get("amount_method") != "ai_estimate":
+                continue
+            portion_id, grams = added.get("food_id"), added.get("grams")
+            if not isinstance(portion_id, int) or not isinstance(grams, (int, float)) or grams <= 0:
+                continue
+            carbs = added.get("carbs_g")
+            group = (
+                CalibrationGroup.PHOTO
+                if photo.get(conversation_id)
+                else CalibrationGroup.OUT
+                if eating_out
+                else CalibrationGroup.HOME
+            )
+            samples.append(
+                EstimateSample(
+                    portion_id,
+                    float(grams),
+                    float(carbs) if isinstance(carbs, (int, float)) else None,
+                    added.get("kind") == "estimate",
+                    group,
+                )
+            )
+    return samples
+
+
+def _clipped(ratio: float) -> float:
+    low, high = CALIBRATION_RATIO_RANGE
+    return min(max(ratio, low), high)
+
+
+def _median(values: list[float]) -> float:
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    return ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def _shift_text(ratio: float) -> str:
+    return f"{(ratio - 1) * 100:+.0f} %".replace("-", "−")
+
+
+def calibration_lines(samples: list[EstimateSample], portions: dict[int, CalibrationPortion]) -> list[str]:
+    """The lines of the context block that tell DiaBot how the user corrects its
+    estimates: one per group with enough samples and a real shift. Several adds
+    to one row count as one estimate, their grams summed."""
+    grams_by_row: dict[int, tuple[float, CalibrationGroup]] = {}
+    for sample in samples:
+        total, group = grams_by_row.get(sample.portion_id, (0.0, sample.group))
+        grams_by_row[sample.portion_id] = (total + sample.grams, group)
+    amount_ratios: dict[CalibrationGroup, list[float]] = {}
+    for portion_id, (grams, group) in grams_by_row.items():
+        portion = portions.get(portion_id)
+        if portion is not None and portion.served_g > 0:
+            amount_ratios.setdefault(group, []).append(_clipped(portion.served_g / grams))
+    carbs_ratios: list[float] = []
+    for sample in samples:
+        portion = portions.get(sample.portion_id)
+        if not sample.is_quick_add or not sample.carbs_g or portion is None or portion.carbs_100g is None:
+            continue
+        carbs_ratios.append(_clipped((portion.carbs_100g / 100) / (sample.carbs_g / sample.grams)))
+
+    lines = []
+    for group in CalibrationGroup:
+        ratios = amount_ratios.get(group, [])
+        if len(ratios) < CALIBRATION_MIN_SAMPLES:
+            continue
+        ratio = _median(ratios)
+        if abs(ratio - 1) <= CALIBRATION_MIN_SHIFT:
+            continue
+        lines.append(
+            f"Calibration: the user corrects your estimated amounts {_CALIBRATION_WHAT[group]} to "
+            f"x{ratio:.2f} (median of {len(ratios)}). Scale those estimates by it and say so in a few "
+            f"words (\"{_shift_text(ratio)}, as you usually correct\")."
+        )
+    if len(carbs_ratios) >= CALIBRATION_MIN_SAMPLES:
+        ratio = _median(carbs_ratios)
+        if abs(ratio - 1) > CALIBRATION_MIN_SHIFT:
+            lines.append(
+                f"Calibration: the user corrects the carbs of your quick add estimates to x{ratio:.2f} "
+                f"(median of {len(carbs_ratios)}). Scale them by it and say so in a few words."
+            )
+    return lines

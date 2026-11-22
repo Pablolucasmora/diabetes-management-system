@@ -225,10 +225,11 @@ def assistant_message_check_constraints() -> dict[str, str]:
         "ck_assistant_message_position": "position >= 1",
         # The API rejects an empty content: a row that could not be replayed is never stored.
         "ck_assistant_message_content": "jsonb_typeof(content) = 'array' AND jsonb_array_length(content) > 0",
-        # Usage is of one answer of the model: on `assistant` rows, always; on `user` rows, never.
+        # Usage is of one answer of the model: on `assistant` rows, always; on the others, never.
         "ck_assistant_message_usage_role": (
             f"(role = '{AssistantRole.ASSISTANT.value}' AND {usage_present}) "
-            f"OR (role = '{AssistantRole.USER.value}' AND {usage_absent} AND stop_reason IS NULL)"
+            f"OR (role IN ('{AssistantRole.USER.value}', '{AssistantRole.SYSTEM.value}') "
+            f"AND {usage_absent} AND stop_reason IS NULL)"
         ),
         "ck_assistant_message_usage_non_negative": " AND ".join(
             f"({column} IS NULL OR {column} >= 0)" for column in usage_columns

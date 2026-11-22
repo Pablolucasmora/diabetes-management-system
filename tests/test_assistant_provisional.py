@@ -296,3 +296,77 @@ def test_with_usual_first_moves_or_adds_the_usual_value():
     assert with_usual_first(("boiled", "griddle"), None) == ("boiled", "griddle")
     assert with_usual_first(("boiled", "griddle"), "griddle") == ("griddle", "boiled")
     assert with_usual_first(("boiled", "griddle", "fried"), "baked") == ("baked", "boiled", "griddle")
+
+
+@pytest.mark.parametrize(
+    "text, quick",
+    [
+        ("arroz 150, pollo 120, pan 40", True),
+        ("150 g de arroz\n2 huevos", True),
+        ("pechuga 120g y ensalada 80 gr", True),
+        ("croquetas 3", True),
+        ("paella en casa de mi madre sobre las 9", False),
+        ("¿arroz 150?", False),
+        ("lo de siempre", False),
+        ("he comido arroz", False),
+    ],
+)
+def test_is_quick_list(text, quick):
+    from DayBetes_food.domain.assistant import is_quick_list
+
+    assert is_quick_list(text) is quick
+    assert is_quick_list(text, has_photo=True) is False
+
+
+def test_effort_marker_round_trip():
+    from DayBetes_food.domain.assistant import AssistantMessageRead, api_message, current_effort, effort_marker
+
+    now = datetime(2026, 11, 22, tzinfo=timezone.utc)
+    rows = [
+        AssistantMessageRead(1, 1, 1, AssistantRole.USER, [{"type": "text", "text": "arroz 150"}], now),
+        AssistantMessageRead(2, 1, 2, AssistantRole.SYSTEM, effort_marker("low"), now),
+    ]
+    assert current_effort(rows[:1], "high") == "high"
+    assert current_effort(rows, "high") == "low"
+    assert api_message(AssistantRole.SYSTEM, effort_marker("low")) == {
+        "role": "system",
+        "content": [],
+        "output_config": {"effort": "low"},
+    }
+    assert turn_views(rows)[0].user_text == "arroz 150"
+
+
+def _estimate_result(portion_id, grams, carbs, kind=None):
+    added = {"name": "x", "grams": grams, "carbs_g": carbs, "amount_method": "ai_estimate", "food_id": portion_id}
+    if kind:
+        added["kind"] = kind
+    return {"type": "tool_result", "tool_use_id": f"t{portion_id}", "content": json.dumps({TOOL_RESULT_ADDED: added})}
+
+
+def test_calibration_needs_enough_samples_and_a_real_shift():
+    from DayBetes_food.domain.assistant import (
+        ASSISTANT_PHOTO_PLACEHOLDER,
+        CalibrationPortion,
+        calibration_lines,
+        estimate_samples,
+    )
+
+    text = [{"type": "text", "text": "una paella"}]
+    photo = [{"type": "text", "text": ASSISTANT_PHOTO_PLACEHOLDER}]
+    rows = []
+    for i in range(1, 6):  # five meals out, each estimated 200 g and served 160 g
+        rows.append((i, text, True))
+        rows.append((i, [_estimate_result(i, 200, 40, kind="estimate")], True))
+    rows.append((9, photo, False))
+    rows.append((9, [_estimate_result(9, 100, 20)], False))
+    samples = estimate_samples(rows)
+    assert [s.group.value for s in samples] == ["out"] * 5 + ["photo"]
+    portions = {i: CalibrationPortion(i, 160.0, 24.0) for i in range(1, 6)}  # carbs 0.20 -> 0.24 per g
+    portions[9] = CalibrationPortion(9, 50.0, None)
+    lines = calibration_lines(samples, portions)
+    assert len(lines) == 2
+    assert "eating out" in lines[0] and "x0.80" in lines[0] and "−20 %" in lines[0]
+    assert "quick add" in lines[1] and "x1.20" in lines[1]
+    # Four samples are not enough, and a 5 % shift changes nothing.
+    assert calibration_lines(samples[:4], portions) == []
+    assert calibration_lines(samples[:5], {i: CalibrationPortion(i, 210.0, 20.0) for i in range(1, 6)}) == []

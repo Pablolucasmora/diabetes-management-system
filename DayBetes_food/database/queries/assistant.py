@@ -350,3 +350,60 @@ def append_assistant_messages(
         )
         ids.append(int(row["id"]))
     return ids
+
+
+def list_estimate_rows(connection, user_id: int, days: int) -> list[tuple[int, list[dict], bool]]:
+    """The `user` rows of the conversations of the user's confirmed meals of the
+    last `days` days that matter to learn from corrections (§8.12): the turn
+    starts (whether a photo came) and the tool results with an estimated amount.
+    In order, as (conversation_id, content, eating_out)."""
+    rows = _execute_query_many(
+        connection,
+        """
+        SELECT m.conversation_id, m.content, coalesce(ie.eating_out, FALSE) AS eating_out
+        FROM assistant_message m
+        JOIN assistant_conversation c ON c.id = m.conversation_id
+        JOIN intake_event ie ON ie.id = c.intake_event_id
+        WHERE c.users_id = %(user_id)s
+          AND ie.users_id = %(user_id)s
+          AND ie.state = %(state)s
+          AND ie.deleted_at IS NULL
+          AND ie.meal_time >= CURRENT_TIMESTAMP - (%(days)s * INTERVAL '1 day')
+          AND m.role = %(role)s
+          AND (
+              NOT m.content @> '[{"type": "tool_result"}]'::jsonb
+              OR m.content::text LIKE '%%ai_estimate%%'
+          )
+        ORDER BY m.conversation_id, m.position;
+        """,
+        {
+            "user_id": user_id,
+            "state": IntakeEventState.CONSUMED.value,
+            "role": AssistantRole.USER.value,
+            "days": max(1, int(days)),
+        },
+        commit=False,
+    )
+    return [(int(row["conversation_id"]), row["content"], bool(row["eating_out"])) for row in rows]
+
+
+def get_calibration_portions(connection, user_id: int, portion_ids: list[int]) -> list[dict]:
+    """How the rows of the user's confirmed meals ended: what was served and, for
+    a quick add, its carbs per 100 g now."""
+    if not portion_ids:
+        return []
+    return _execute_query_many(
+        connection,
+        """
+        SELECT pd.id,
+               pd.amount / coalesce(ip.eaten_fraction, 1) AS served_g,
+               CASE WHEN mi.is_quick_add THEN mi.carbs_100g END AS carbs_100g
+        FROM portion_detail pd
+        JOIN intake_event ie ON ie.id = pd.intake_event_id
+        LEFT JOIN intake_plate ip ON ip.id = pd.plate_id
+        LEFT JOIN manual_intake mi ON mi.id = pd.manual_intake_id
+        WHERE pd.id = ANY(%(ids)s) AND ie.users_id = %(user_id)s AND ie.state = %(state)s;
+        """,
+        {"ids": portion_ids, "user_id": user_id, "state": IntakeEventState.CONSUMED.value},
+        commit=False,
+    )
