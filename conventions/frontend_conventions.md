@@ -693,18 +693,25 @@ Exige el header `HX-Request` (`403` si falta).
 
 ### 9.13 Cartas guardadas, `Menus` (decisión del usuario, 2026-11-22)
 
-Lo que DiaBot ha guardado de las fotos de cartas de restaurante (`code_conventions.md` §8.12, **Cartas**; tabla `menu_item`, §11.2.10).
+Lo que DiaBot ha guardado de las fotos de cartas de restaurante (`code_conventions.md` §8.12, **Cartas**; tabla `menu_item`, §11.2.10). No es tan importante como Food, así que no ocupa sitio en la cabecera ni en las píldoras.
 
-- **Entrada** (decisión del usuario del 2026-11-22: visible siempre y fuera de las píldoras y del menú `+`, para no sobrecargarlos). En la cabecera de Food, en el hueco central entre el botón de rescate y `+` que dejó DiaBot al pasar a la isla, un botón con el mismo fondo sólido, sombra y alto que sus vecinos: el icono de una carta abierta y `Menus`. Sale aunque no haya ninguna carta guardada; la página explica entonces cómo se guarda una. Abre `/food/menus`.
-- **`/food/menus`.** Cabecera de cristal con `‹ Food` y el título `Menus`. Debajo, una tarjeta por sitio, del más reciente al más antiguo, con su nombre, cuántos platos tiene y cuándo se guardó por última vez. Tocar una abre el sitio.
-- **El sitio** (`/food/menus/place?place=…`). Su nombre de título y sus platos agrupados por sección (`Starters`, `Mains`, `Sides`, `Desserts`, `Drinks`, `Other`). Cada plato muestra su nombre, su descripción en gris y el precio a la derecha si lo hay, y una papelera. Al final, `Delete this menu` en rojo. Las dos piden confirmación (`ConfirmActionModal`), porque el borrado no se puede deshacer. Borrar el último plato de un sitio vuelve a la lista.
-- **No se editan a mano.** Para cambiar o completar una carta se manda otra foto a DiaBot, que actualiza los platos que ya están. La página lo dice en una línea bajo el título.
+- **Entrada.** Un botón cuadrado con el icono de una carta abierta, a la derecha del buscador de Food y con su mismo alto (`web_container`, `aria-label` "Restaurant menus"). Sale siempre, aunque no haya cartas; la página explica entonces cómo se guarda una. Abre `/food/menus`.
+- **En la búsqueda de Food.** En la pestaña de búsqueda (`all`), con texto, después de los resultados del usuario y antes de Ciqual y Open Food Facts, un bloque `From your menus` con como mucho `MENU_FOOD_SEARCH_ROWS` (3) platos. Usan la misma fila que el resto de resultados: nombre; sitio, sección y precio en gris; y la descripción. Si hay más, `See all in Menus ›` abre Menus con esa búsqueda. Tocar un plato abre su carta con el plato buscado. Así no se acumulan muchas filas de otra fuente.
+- **`/food/menus`, una sola página filtrada por su URL**: `q` (búsqueda), `place` (una carta) y `section`, cada uno opcional.
+  - **Cabecera:** `‹ Food`, `Menus`, el buscador de platos (nombre, descripción y sitio, sin acentos; reemplaza solo la lista y la URL) y una fila de controles.
+  - **Fila de controles:**
+    - Un botón con el sitio elegido (`All places ▾`) que abre un pop-up `Places`. Ahí están `All places` y cada sitio con cuántos platos tiene y cuándo se guardó, el elegido en negrita y con ✓. Desde 8 sitios lleva su propio buscador y la lista hace scroll, así que aguanta las cartas que se acumulen. Elegir un sitio conserva la búsqueda y quita la sección.
+    - Las secciones, con el estilo de las píldoras de Food (tinta la elegida): `All` y solo las secciones que tienen algún plato, en una fila con scroll lateral.
+  - **Lista:**
+    - Con un sitio elegido, sus platos por sección, cada uno con su papelera, y al final `Delete this menu` en rojo. Las dos piden confirmación (`ConfirmActionModal`), porque el borrado no se puede deshacer. Borrar el último plato vuelve a la lista sin sitio.
+    - Sin sitio elegido, un grupo por sitio. Sin búsqueda ni sección, cada grupo muestra `MENU_PLACE_PREVIEW` (4) platos con su sección y `All N ›` para abrir ese sitio. Con búsqueda o sección, todos los que coinciden. Aquí no se borra.
+  - **Sin cartas:** una línea que explica cómo se guardan. **Sin coincidencias:** `No dishes match "…"`.
+- **No se editan a mano.** Para cambiar o completar una carta se manda otra foto a DiaBot, que actualiza los platos que ya están. La página lo dice bajo los controles.
 
 | Acción | Destino | Swap | Respuesta | Error |
 |---|---|---|---|---|
-| `GET /food/menus` | página | — | la lista de sitios | — |
-| `GET /food/menus/place?place=…` | página | — | el sitio con sus platos | sitio sin platos del usuario `404` |
-| `POST /food/menus/items/{id}/delete` | la fila | `outerHTML` | vacío: la fila desaparece; si era el último, `HX-Location` a la lista | plato que no es del usuario `404`: toast |
+| `GET /food/menus` (`q`, `place`, `section`) | página; el buscador, `#menus_list` | — / `outerHTML` | la página en ese estado; un sitio que no es del usuario o una sección desconocida se ignoran | — |
+| `POST /food/menus/items/{id}/delete` | la fila | `outerHTML` | vacío: la fila desaparece; si era el último de su sitio, `HX-Location` a la lista | plato que no es del usuario `404`: toast |
 | `POST /food/menus/delete` (`place`) | — | — | `HX-Location` a la lista, con aviso | sitio sin platos del usuario `404`: toast |
 
 ## 10. Movimiento

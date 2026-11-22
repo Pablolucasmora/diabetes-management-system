@@ -433,6 +433,9 @@
   .m-6 {
     margin: calc(var(--spacing) * 6);
   }
+  .-mx-2 {
+    margin-inline: calc(var(--spacing) * -2);
+  }
   .mx-auto {
     margin-inline: auto;
   }
@@ -471,6 +474,9 @@
   }
   .mt-auto {
     margin-top: auto;
+  }
+  .-mr-2 {
+    margin-right: calc(var(--spacing) * -2);
   }
   .-mb-1 {
     margin-bottom: calc(var(--spacing) * -1);
@@ -607,6 +613,9 @@
   .max-h-\[50vh\] {
     max-height: 50vh;
   }
+  .max-h-\[55dvh\] {
+    max-height: 55dvh;
+  }
   .max-h-\[85vh\] {
     max-height: 85vh;
   }
@@ -724,6 +733,9 @@
   .w-full {
     width: 100%;
   }
+  .w-px {
+    width: 1px;
+  }
   .w-xs {
     width: var(--container-xs);
   }
@@ -735,6 +747,9 @@
   }
   .max-w-\[40\%\] {
     max-width: 40%;
+  }
+  .max-w-\[45\%\] {
+    max-width: 45%;
   }
   .max-w-\[55\%\] {
     max-width: 55%;
@@ -953,6 +968,9 @@
   .overscroll-contain {
     overscroll-behavior: contain;
   }
+  .overscroll-x-contain {
+    overscroll-behavior-x: contain;
+  }
   .rounded {
     border-radius: 0.25rem;
   }
@@ -1142,6 +1160,9 @@
     @supports (color: color-mix(in lab, red, red)) {
       background-color: color-mix(in oklab, var(--color-ink) 30%, transparent);
     }
+  }
+  .bg-line {
+    background-color: var(--color-line);
   }
   .bg-line-soft {
     background-color: var(--color-line-soft);
@@ -1905,6 +1926,14 @@
     }
     .hover\:bg-white:hover {
       background-color: var(--color-white);
+    }
+    .hover\:bg-white\/60:hover {
+      background-color: color-mix(in srgb, #fff 60%, transparent);
+    }
+    @supports (color: color-mix(in lab, red, red)) {
+      .hover\:bg-white\/60:hover {
+        background-color: color-mix(in oklab, var(--color-white) 60%, transparent);
+      }
     }
     .hover\:text-danger:hover {
       color: var(--color-danger);

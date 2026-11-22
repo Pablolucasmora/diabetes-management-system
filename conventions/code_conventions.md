@@ -1767,7 +1767,7 @@ Decisión del usuario del 2026-11-22. Guarda lo que DiaBot lee de la foto de una
 
   No guarda la foto, el texto literal de la carta ni macros.
 - **Único** por propietario, sitio y nombre, sin distinguir mayúsculas (`uq_menu_item_users_id_place_name`). Volver a guardar un plato que ya está (una carta nueva del mismo sitio) actualiza su descripción, su sección y su precio, y `updated_at` (§6.3): no se duplica. Los platos que ya no salen en la carta nueva no se borran solos.
-- **Borrado.** Físico, solo desde la página `Menus` (`frontend_conventions.md` §9.13): un plato, o todos los de un sitio. Lo consumido no la referencia: las comidas guardan su añadido rápido o su plato, con el `origin` copiado. `CASCADE` desde `users`.
+- **Borrado.** Físico, solo desde la página `Menus` con un sitio elegido (`frontend_conventions.md` §9.13): un plato, o todos los de un sitio. Lo consumido no la referencia: las comidas guardan su añadido rápido o su plato, con el `origin` copiado. `CASCADE` desde `users`.
 - **Timestamps.** `created_at` y `updated_at`.
 - **Auditoría de cambios** (§11.10): no se requiere.
 

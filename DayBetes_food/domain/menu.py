@@ -22,6 +22,11 @@ MENU_PRICE_MAX = 999999.99  # = NUMERIC(8,2)
 # Dishes one save_menu call may carry, and dishes search_menu returns (§8.12).
 MENU_ITEMS_PER_SAVE = 60
 MENU_SEARCH_RESULTS_MAX = 8
+# Rows the Menus page reads at most, and dishes of each place it shows under All
+# places (frontend §9.13); dishes that Food's search shows before `See all`.
+MENU_PAGE_ROWS_MAX = 500
+MENU_PLACE_PREVIEW = 4
+MENU_FOOD_SEARCH_ROWS = 3
 
 # Order and headings of the sections on the Menus page (frontend §9.13).
 MENU_SECTION_LABELS = {

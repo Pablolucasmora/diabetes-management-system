@@ -22,9 +22,12 @@ from DayBetes_food.database.queries import (
     get_planned_intake_event,
     list_planned_intake_events,
     count_needs_review,
+    search_menu_items,
     list_needs_review,
 )
+from DayBetes_food.components.food.menus import FoodMenuResults
 from DayBetes_food.domain.constants import PathId, PrefillSource, FoodEntryType, parse_optional_id
+from DayBetes_food.domain.menu import MENU_FOOD_SEARCH_ROWS
 from DayBetes_food.components.data_sources import ciqual_attribution, off_attribution
 from DayBetes_food.components.food.food_widgets import on_after
 from DayBetes_food.components.food.food_list import (
@@ -468,7 +471,17 @@ def setup_browse_routes(rt):
                 and user_id
                 and (filter == "all" or (filter == "food" and food_mode_norm == "catalog"))
             ):
+                # The user's menus, after their own results (frontend §9.13): a few
+                # rows, the rest in Menus.
+                menu_items = (
+                    search_menu_items(connection, int(user_id), clean_search, None, MENU_FOOD_SEARCH_ROWS + 1)
+                    if filter == "all"
+                    else []
+                )
                 off_nodes = [
+                    *FoodMenuResults(
+                        menu_items[:MENU_FOOD_SEARCH_ROWS], clean_search, len(menu_items) > MENU_FOOD_SEARCH_ROWS
+                    ),
                     *ExternalFoodSection(
                         "From Ciqual",
                         *_external_page(connection, int(user_id), PrefillSource.CIQUAL, clean_search, 1),

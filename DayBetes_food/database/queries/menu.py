@@ -3,7 +3,7 @@
 
 from DayBetes_food.database.queries.crud import _escape_like, _execute_query, _execute_query_many
 from DayBetes_food.domain.constants import MenuSection
-from DayBetes_food.domain.menu import MenuItemCreate, MenuItemRead, MenuPlace
+from DayBetes_food.domain.menu import MENU_PAGE_ROWS_MAX, MenuItemCreate, MenuItemRead, MenuPlace
 from DayBetes_food.domain.search_text import normalize_search_text, search_text_sql
 
 
@@ -96,20 +96,39 @@ def list_menu_places(connection, user_id: int) -> list[MenuPlace]:
     return [MenuPlace(row["place"], int(row["item_count"]), row["updated_at"]) for row in rows]
 
 
-def list_menu_items(connection, user_id: int, place: str) -> list[MenuItemRead]:
-    """The dishes of one place of the user, by name; empty if it has none."""
+def list_menu_dishes(
+    connection, user_id: int, *, query: str = "", place: str | None = None, limit: int
+) -> list[MenuItemRead]:
+    """The user's saved dishes for the Menus page (frontend §9.13): those of `place`
+    when given (exact, ignoring case), and with every word of `query` in their
+    name, description or place, ignoring accents. By place, then by name."""
+    conditions = ["users_id = %(user_id)s"]
+    params: dict = {"user_id": user_id, "limit": int(limit)}
+    if place:
+        conditions.append("lower(place) = lower(%(place)s)")
+        params["place"] = place
+    haystack = search_text_sql("(name || ' ' || coalesce(description, '') || ' ' || place)")
+    for i, word in enumerate(normalize_search_text(query).split()):
+        conditions.append(f"{haystack} LIKE %(w{i})s")
+        params[f"w{i}"] = f"%{_escape_like(word)}%"
     rows = _execute_query_many(
         connection,
-        """
+        f"""
         SELECT id, place, name, description, section, price, updated_at
         FROM menu_item
-        WHERE users_id = %(user_id)s AND lower(place) = lower(%(place)s)
-        ORDER BY lower(name), id;
+        WHERE {' AND '.join(conditions)}
+        ORDER BY lower(place), lower(name), id
+        LIMIT %(limit)s;
         """,
-        {"user_id": user_id, "place": place},
+        params,
         commit=False,
     )
     return [_item(row) for row in rows]
+
+
+def list_menu_items(connection, user_id: int, place: str) -> list[MenuItemRead]:
+    """The dishes of one place of the user, by name; empty if it has none."""
+    return list_menu_dishes(connection, user_id, place=place, limit=MENU_PAGE_ROWS_MAX)
 
 
 def delete_menu_item(connection, user_id: int, item_id: int) -> str | None:

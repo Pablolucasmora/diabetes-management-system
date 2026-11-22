@@ -10,7 +10,7 @@ from DayBetes_food.components.food.food_actions import (
     favorite_button_id,
     food_card_id,
 )
-from DayBetes_food.components.food.menus import MenusButton
+from DayBetes_food.components.food.menus import MenusIconButton
 from DayBetes_food.components.food.rescue import RescueModal, rescue_open_attrs
 from DayBetes_food.components.modal import (
     ModalLayer,
@@ -521,6 +521,11 @@ def FoodFiltersModal():
 
 
 def SearchInput(view: FoodView = FoodView()):
+    """The search box and, on its right, the saved menus (§9.13)."""
+    return Div(_search_box(view), MenusIconButton(), cls="flex items-center gap-2 md:w-xl lg:w-xl w-xs")
+
+
+def _search_box(view: FoodView):
     return Div(
         Input(
             inputmode="text",
@@ -543,7 +548,7 @@ def SearchInput(view: FoodView = FoodView()):
             hx_swap="innerHTML",
         ),
         _food_filters_button(view),
-        cls="relative md:w-xl lg:w-xl w-xs",
+        cls="relative flex-1 min-w-0",
     )
 
 
@@ -595,9 +600,8 @@ def QuickCreateButtons():
                 RescueModal(),
                 cls="relative flex justify-start",
             ),
-            # The saved restaurant menus, always at hand without crowding the
-            # filters (frontend_conventions.md §9.13), in the space DiaBot left.
-            Div(MenusButton(), cls="flex-1 flex justify-center"),
+            # Free space: DiaBot lives in the island now (frontend_conventions.md §9.3).
+            Div(cls="flex-1"),
             Div(
                 Button(
                     Img(src="/images/ui/plus_icon.svg", alt="", cls="h-6 w-6"),

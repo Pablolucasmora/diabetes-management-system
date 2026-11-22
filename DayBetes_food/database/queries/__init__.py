@@ -109,6 +109,7 @@ from DayBetes_food.database.queries.menu import (
     search_menu_items,
     list_menu_places,
     list_menu_items,
+    list_menu_dishes,
     delete_menu_item,
     delete_menu_place,
 )
@@ -418,4 +419,5 @@ __all__ = [
     "list_estimate_rows",
     "get_calibration_portions",
     "get_time_weighted_food_usage",
+    "list_menu_dishes",
 ]

@@ -6,10 +6,18 @@ import json
 from fasthtml.common import *
 
 from DayBetes_food.auth.context import get_current_user_id
-from DayBetes_food.components.food.menus import MENUS_PATH, MenuPlacePage, MenusPage
+from DayBetes_food.components.food.menus import MENUS_PATH, MenusPage
 from DayBetes_food.components.ui import render_page
 from DayBetes_food.database.connection import get_connection
-from DayBetes_food.database.queries import delete_menu_item, delete_menu_place, list_menu_items, list_menu_places
+from DayBetes_food.database.queries import (
+    delete_menu_item,
+    delete_menu_place,
+    list_menu_dishes,
+    list_menu_items,
+    list_menu_places,
+)
+from DayBetes_food.domain.constants import MenuSection
+from DayBetes_food.domain.menu import MENU_PAGE_ROWS_MAX
 from DayBetes_food.errors import AuthenticationError, NotFoundError
 from DayBetes_food.http_errors import app_error_response
 from DayBetes_food.domain.constants import PathId
@@ -31,20 +39,18 @@ def _user_id() -> int:
 
 def setup_menus_routes(rt):
     @rt(MENUS_PATH)
-    def get(request: Request):
+    def get(request: Request, q: str = "", place: str = "", section: str = ""):
+        """The page in the state of its URL (frontend §9.13): a search, one place
+        and a section, each optional. An unknown section shows them all."""
         user_id = _user_id()
+        query, place = q.strip()[:100], place.strip()
+        section = section if section in {s.value for s in MenuSection} else ""
         with get_connection() as connection:
             places = list_menu_places(connection, user_id)
-        return render_page(request, MenusPage(places))
-
-    @rt(f"{MENUS_PATH}/place")
-    def get(request: Request, place: str = ""):
-        user_id = _user_id()
-        with get_connection() as connection:
-            items = list_menu_items(connection, user_id, place.strip())
-        if not items:
-            raise NotFoundError(_MENU_NOT_FOUND)
-        return render_page(request, MenuPlacePage(items[0].place, items))
+            if place and not any(p.place.lower() == place.lower() for p in places):
+                place = ""
+            items = list_menu_dishes(connection, user_id, query=query, place=place or None, limit=MENU_PAGE_ROWS_MAX)
+        return render_page(request, MenusPage(places, items, query=query, place=place, section=section))
 
     @rt(f"{MENUS_PATH}/items/{{item_id}}/delete")
     def post(request: Request, item_id: PathId):
