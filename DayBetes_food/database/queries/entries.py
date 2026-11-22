@@ -641,3 +641,45 @@ def point_portion_at_dish(connection, portion_id: int, source_type: FoodEntryTyp
         {"portion_id": portion_id, "manual_intake_id": manual_intake_id},
         commit=False,
     )
+
+
+def get_time_weighted_food_usage(connection, user_id: int, days: int, spread_minutes: int) -> list[dict]:
+    """Foods of the user's confirmed meals of the last `days` days, scored by how
+    close to this time of day each was eaten (frontend §9.11, "Usual now"): every
+    meal adds exp(-(distance / spread)²), 1 at this very time, about 0.6 at one
+    spread away and almost nothing at three. The highest score first."""
+    return _execute_query_many(
+        connection,
+        """
+        WITH base AS (
+            SELECT
+                CASE WHEN pd.catalog_id IS NOT NULL THEN 'catalog' ELSE 'manual_intake' END AS entry_type,
+                COALESCE(pd.catalog_id, pd.manual_intake_id) AS entry_id,
+                ABS(
+                    (EXTRACT(HOUR FROM (ie.meal_time AT TIME ZONE %(app_timezone)s)) * 60
+                     + EXTRACT(MINUTE FROM (ie.meal_time AT TIME ZONE %(app_timezone)s)))
+                    - (EXTRACT(HOUR FROM (CURRENT_TIMESTAMP AT TIME ZONE %(app_timezone)s)) * 60
+                       + EXTRACT(MINUTE FROM (CURRENT_TIMESTAMP AT TIME ZONE %(app_timezone)s)))
+                ) AS raw_distance
+            FROM portion_detail pd
+            JOIN intake_event ie ON ie.id = pd.intake_event_id
+            WHERE ie.users_id = %(user_id)s
+              AND ie.state = %(state)s
+              AND ie.deleted_at IS NULL
+              AND ie.meal_time >= CURRENT_TIMESTAMP - (%(days)s * INTERVAL '1 day')
+        )
+        SELECT entry_type, entry_id,
+               SUM(EXP(-POWER(LEAST(raw_distance, 1440 - raw_distance) / %(spread)s, 2))) AS score
+        FROM base
+        GROUP BY entry_type, entry_id
+        ORDER BY score DESC, entry_type, entry_id;
+        """,
+        {
+            "user_id": user_id,
+            "days": max(1, int(days)),
+            "spread": float(max(1, int(spread_minutes))),
+            "app_timezone": current_timezone().key,
+            "state": IntakeEventState.CONSUMED.value,
+        },
+        commit=False,
+    )

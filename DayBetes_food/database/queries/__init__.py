@@ -119,6 +119,7 @@ from DayBetes_food.database.queries.entries import (
     get_rescue_entries_suggestions,
     get_mention_suggestions,
     get_consumed_food_usage_rankings,
+    get_time_weighted_food_usage,
     get_usual_amounts,
     get_usual_preparation,
     point_portion_at_dish,
@@ -418,4 +419,5 @@ __all__ = [
     "delete_menu_place",
     "list_estimate_rows",
     "get_calibration_portions",
+    "get_time_weighted_food_usage",
 ]

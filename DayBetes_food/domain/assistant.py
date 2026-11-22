@@ -775,7 +775,10 @@ def chat_preview(content: list | None) -> str:
 # the foods eaten most around this time of day.
 USUAL_FOODS_SHOWN = 5
 USUAL_FOODS_DAYS = 60
-USUAL_FOODS_MINUTES = 120  # eaten on average within this many minutes of now
+# Each past meal counts exp(-(distance to now / spread)²): 1 at this time, 0.64 an
+# hour away, 0.17 two hours away (frontend §9.11, decision of the user 2026-11-22).
+USUAL_FOODS_SPREAD_MINUTES = 90
+USUAL_FOODS_MIN_SCORE = 0.35  # at least one meal within about 90 minutes of now
 
 
 @dataclass(frozen=True)
@@ -793,7 +796,7 @@ class UsualFood:
 # same foods.
 USUAL_MEAL_DAYS = 30
 USUAL_MEAL_MIN_COUNT = 3
-USUAL_MEAL_MINUTES = 90
+USUAL_MEAL_MINUTES = 120  # ±2 h of now (decision of the user 2026-11-22)
 USUAL_MEALS_SHOWN = 3
 
 

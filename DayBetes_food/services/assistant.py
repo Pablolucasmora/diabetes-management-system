@@ -38,7 +38,7 @@ from DayBetes_food.database.queries import (
     list_assistant_messages,
     list_intake_plates,
     list_needs_review,
-    get_consumed_food_usage_rankings,
+    get_time_weighted_food_usage,
     get_usual_amounts,
     get_calibration_portions,
     get_usual_preparation,
@@ -57,7 +57,8 @@ from DayBetes_food.domain.assistant import (
     TurnView,
     PREPARATION_OPTION_FIELDS,
     USUAL_FOODS_DAYS,
-    USUAL_FOODS_MINUTES,
+    USUAL_FOODS_MIN_SCORE,
+    USUAL_FOODS_SPREAD_MINUTES,
     USUAL_FOODS_SHOWN,
     UsualFood,
     preparation_choices,
@@ -318,13 +319,13 @@ def apply_plus(connection, user_id: int, conversation_id: int, portion_id: int, 
 
 def usual_foods(connection, user_id: int) -> list[UsualFood]:
     """The foods the user eats most around this time of day, with the amount they
-    usually eat (frontend §9.11, "Usual now"): the app's usage ranking, which
-    weighs how often and how close to now, kept to foods eaten on average within
-    USUAL_FOODS_MINUTES of now."""
+    usually eat (frontend §9.11, "Usual now"): each past meal weighs by how close
+    to this time of day it was, so a food eaten an hour earlier still counts and
+    one eaten at any hour does not crowd out the rest."""
     ranking = [
         row
-        for row in get_consumed_food_usage_rankings(connection, user_id, USUAL_FOODS_DAYS)
-        if float(row["avg_minute_distance"]) <= USUAL_FOODS_MINUTES
+        for row in get_time_weighted_food_usage(connection, user_id, USUAL_FOODS_DAYS, USUAL_FOODS_SPREAD_MINUTES)
+        if float(row["score"]) >= USUAL_FOODS_MIN_SCORE
     ][: USUAL_FOODS_SHOWN * 2]
     if not ranking:
         return []
