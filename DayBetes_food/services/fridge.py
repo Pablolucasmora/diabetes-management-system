@@ -141,34 +141,40 @@ def store_recipe_in_fridge(
         ValidationError: an ingredient is not of this recipe, or an amount leaves the limits.
     """
     with connection.transaction():
-        recipe = get_recipe(connection, user_id, recipe_id)
-        if recipe is None:
-            raise NotFoundError("Recipe not found.")
-        portions = list_viewable_recipe_portions(connection, user_id, recipe_id)
-        if not portions:
-            raise ConflictError("recipe_without_ingredients")
-        if not set(request.preparations) <= {portion.id for portion in portions}:
-            raise ValidationError("An ingredient is not part of this recipe.")
-        contents = []
-        for portion in portions:
-            preparation = request.preparations.get(portion.id)
-            contents.append(
-                FridgeContent(
-                    origin=portion.origin,
-                    origin_id=portion.origin_id,
-                    amount=scaled_recipe_amount(portion.amount, request.servings, recipe.servings),
-                    cooking=preparation.cooking if preparation else portion.cooking,
-                    final_state=preparation.final_state if preparation else portion.final_state,
-                    amount_method=portion.amount_method,
-                    is_cooked_weight=portion.is_cooked_weight,
-                )
+        return create_recipe_container(connection, user_id, recipe_id, location, request)
+
+
+def create_recipe_container(
+    connection, user_id: int, recipe_id: int, location: StorageLocation, request: RecipeAddRequest
+) -> int:
+    """`store_recipe_in_fridge` inside the caller's transaction (the assistant's
+    tool, code_conventions.md §8.12). Raises the same errors."""
+    recipe = get_recipe(connection, user_id, recipe_id)
+    if recipe is None:
+        raise NotFoundError("Recipe not found.")
+    portions = list_viewable_recipe_portions(connection, user_id, recipe_id)
+    if not portions:
+        raise ConflictError("recipe_without_ingredients")
+    if not set(request.preparations) <= {portion.id for portion in portions}:
+        raise ValidationError("An ingredient is not part of this recipe.")
+    contents = []
+    for portion in portions:
+        preparation = request.preparations.get(portion.id)
+        contents.append(
+            FridgeContent(
+                origin=portion.origin,
+                origin_id=portion.origin_id,
+                amount=scaled_recipe_amount(portion.amount, request.servings, recipe.servings),
+                cooking=preparation.cooking if preparation else portion.cooking,
+                final_state=preparation.final_state if preparation else portion.final_state,
+                amount_method=portion.amount_method,
+                is_cooked_weight=portion.is_cooked_weight,
             )
-        return create_fridge_container(
-            connection,
-            FridgeStoreCommand(
-                user_id=user_id, location=location, contents=merge_contents(contents), name=recipe.name
-            ),
         )
+    return create_fridge_container(
+        connection,
+        FridgeStoreCommand(user_id=user_id, location=location, contents=merge_contents(contents), name=recipe.name),
+    )
 
 
 def keep_part_in_fridge(

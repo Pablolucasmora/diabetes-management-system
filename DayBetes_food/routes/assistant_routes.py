@@ -28,6 +28,7 @@ from DayBetes_food.components.assistant.assistant_page import (
     PastChatsPage,
     PendingTurnBlock,
     PlusRow,
+    RemovalRow,
     RepeatSavedCard,
     TurnBlock,
     assistant_turn_dom_id,
@@ -72,7 +73,7 @@ from DayBetes_food.errors import (
     ValidationError,
 )
 from DayBetes_food.http_errors import app_error_response
-from DayBetes_food.domain.assistant import parse_plus_step
+from DayBetes_food.domain.assistant import RemovalCard, parse_plus_step
 from DayBetes_food.services.assistant import (
     apply_preparation,
     apply_plus,
@@ -81,6 +82,7 @@ from DayBetes_food.services.assistant import (
     conversation_plus_buttons,
     conversation_turns,
     plus_buttons,
+    remove_proposed_food,
     resolve_conversation,
 )
 from DayBetes_food.services.assistant_turns import TURN_MEAL_GONE, submit_assistant_turn
@@ -89,6 +91,7 @@ from DayBetes_food.services.intake_event import repeat_meal, save_quick_add_as_d
 logger = logging.getLogger(__name__)
 
 _MEAL_GONE = TURN_MEAL_GONE
+_FOOD_GONE = "That food is no longer in this meal."
 _STILL_ANSWERING = "The assistant is still answering your last message. Wait for it, then send this one."
 
 
@@ -181,6 +184,15 @@ def _chats(connection, user_id: int, current_event_id, current_conversation_id, 
     )
 
 
+def _pending_since(pending, conversation_id: int | None):
+    """When the message still being answered in `conversation_id` was sent, or None.
+    Its rounds are stored as they end, but its pending block draws it until the
+    answer: the thread leaves them out, so it does not show twice (§8.12)."""
+    if pending is None or conversation_id is None or pending.conversation_id != conversation_id:
+        return None
+    return pending.created_at
+
+
 def _turn_tail(connection, user_id: int, conversation_id: int | None, unseen) -> list:
     """What the thread of `conversation_id` draws after its turns (§8.12): a message
     of this conversation still being answered, or a failed one the page never
@@ -246,7 +258,13 @@ def setup_assistant_routes(rt):
                     without_meal = conversation.without_meal
             conversation_key = conversation.id if conversation else None
             event, portions = _meal_and_foods(connection, int(user_id), selected)
-            turns = conversation_turns(connection, int(user_id), conversation_key) if conversation else []
+            turns = (
+                conversation_turns(
+                    connection, int(user_id), conversation_key, before=_pending_since(pending_turn, conversation_key)
+                )
+                if conversation
+                else []
+            )
             if (
                 unseen is not None
                 and unseen.status is AssistantTurnStatus.DONE
@@ -397,8 +415,17 @@ def setup_assistant_routes(rt):
                 )
             except (NotFoundError, ConflictError):
                 return app_error_response(request, NotFoundError, _MEAL_GONE)
-            turns = conversation_turns(connection, int(user_id), conversation.id) if conversation else []
             conversation_key = conversation.id if conversation else None
+            turns = (
+                conversation_turns(
+                    connection,
+                    int(user_id),
+                    conversation.id,
+                    before=_pending_since(get_pending_assistant_turn(connection, int(user_id)), conversation_key),
+                )
+                if conversation
+                else []
+            )
             # A pending new chat belongs only to the `New chat` / `New meal` view.
             tail = (
                 _turn_tail(connection, int(user_id), conversation_key, None)
@@ -410,10 +437,16 @@ def setup_assistant_routes(rt):
             bar_event = conversation.intake_event_id if conversation else event_id
             bar_without = conversation.without_meal if conversation else without_meal
             bar = _meal_bar(connection, int(user_id), bar_event, bar_without, pending, conversation)
+            meal_rows = frozenset(portion.id for portion in _meal_and_foods(connection, int(user_id), bar_event)[1])
         response = render_fragment(
             (
                 AssistantThread(
-                    turns, conversation_key, pending, new_meal=bar_event is None and not bar_without, tail=tail
+                    turns,
+                    conversation_key,
+                    pending,
+                    new_meal=bar_event is None and not bar_without,
+                    tail=tail,
+                    meal_rows=meal_rows,
                 ),
                 PlusRow(buttons, conversation_key, oob=True),
                 bar,
@@ -635,6 +668,56 @@ def setup_assistant_routes(rt):
                 oob=False,
             )
         return render_fragment(bar)
+
+    @rt("/assistant/remove/{portion_id}")
+    def post(request: Request, portion_id: PathId, conversation_id: str = ""):
+        """Remove a food DiaBot proposed to remove (§8.12, "Quitar del carrito"): the
+        user's tap on its card. Answers the row, marked removed, with the bar and the
+        +1 row out of band. Repeating it -> 404, the food is already gone (§9.6)."""
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        try:
+            chosen_conversation_id = parse_optional_id(conversation_id, "conversation")
+            if chosen_conversation_id is None:
+                raise ValidationError("Conversation not found.")
+        except ValidationError as error:
+            return app_error_response(request, ValidationError, str(error))
+        with get_connection() as connection:
+            try:
+                with connection.transaction():
+                    name = remove_proposed_food(connection, int(user_id), chosen_conversation_id, portion_id)
+            except NotFoundError:
+                return app_error_response(request, NotFoundError, _FOOD_GONE)
+            except ConflictError:
+                return app_error_response(request, ConflictError, _MEAL_GONE)
+            conversation = get_assistant_conversation(connection, int(user_id), chosen_conversation_id)
+            card = next(
+                (
+                    card
+                    for turn in conversation_turns(connection, int(user_id), chosen_conversation_id)
+                    for card in turn.removals
+                    if card.portion_id == portion_id
+                ),
+                RemovalCard(portion_id, name, None),
+            )
+            fragments = (
+                RemovalRow(card, chosen_conversation_id, removed=True),
+                _meal_bar(
+                    connection,
+                    int(user_id),
+                    conversation.intake_event_id if conversation else None,
+                    False,
+                    _pending_review(connection, int(user_id)),
+                    conversation,
+                ),
+                PlusRow(conversation_plus_buttons(connection, int(user_id), chosen_conversation_id), chosen_conversation_id, oob=True),
+            )
+        response = render_fragment(fragments)
+        response.headers["HX-Trigger"] = "dbReviewChanged"
+        return response
 
     @rt("/assistant/mentions")
     def get(request: Request, q: str = ""):
