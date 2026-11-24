@@ -34,7 +34,10 @@ _PEN_SELECT = """
 # most recently, else the one opened most recently. It is a subquery so that the
 # INSERT or UPDATE that writes it resolves it in the same statement. It needs
 # the parameters `user_id` and `exclude_pen_id` (None = exclude none).
-DEFAULT_RAPID_PEN_SQL = f"""
+def _default_pen_sql(insulin_type: InsulinType) -> str:
+    """The open pen of that type used most recently, else the one opened most
+    recently, as a subquery (measurement §8.4)."""
+    return f"""
     (SELECT dp.id
      FROM insulin_pen dp
      JOIN insulin_brand db ON db.id = dp.insulin_brand_id
@@ -45,11 +48,38 @@ DEFAULT_RAPID_PEN_SQL = f"""
      ) du ON TRUE
      WHERE dp.users_id = %(user_id)s
        AND dp.closed_at IS NULL
-       AND db.insulin_type = '{InsulinType.RAPID.value}'
+       AND db.insulin_type = '{insulin_type.value}'
        AND (%(exclude_pen_id)s::integer IS NULL OR dp.id <> %(exclude_pen_id)s::integer)
      ORDER BY du.last_used DESC NULLS LAST, dp.opened_at DESC, dp.id DESC
      LIMIT 1)
 """
+
+
+DEFAULT_RAPID_PEN_SQL = _default_pen_sql(InsulinType.RAPID)
+
+
+def get_injection_default_pen(connection, user_id: int, day_start) -> int | None:
+    """The pen chosen beforehand in the injection pop-up of the menu
+    (measurement §8.4): the default basal pen while no basal shot was logged
+    since `day_start` (the start of the insulin day, UTC); otherwise, or with no
+    open basal pen, the default rapid pen. None without open pens."""
+    row = _execute_query(
+        connection,
+        f"""
+        SELECT COALESCE(
+            CASE WHEN NOT EXISTS (
+                SELECT 1 FROM insulin_injections i
+                WHERE i.users_id = %(user_id)s
+                  AND i.insulin_type = '{InsulinType.BASAL.value}'
+                  AND i.shot_time >= %(day_start)s
+            ) THEN {_default_pen_sql(InsulinType.BASAL)} END,
+            {DEFAULT_RAPID_PEN_SQL}
+        ) AS id;
+        """,
+        {"user_id": user_id, "day_start": day_start, "exclude_pen_id": None},
+        commit=False,
+    )
+    return int(row["id"]) if row and row["id"] is not None else None
 
 
 def create_insulin_pen(connection, payload: InsulinPenCreate, commit: bool = True) -> int:

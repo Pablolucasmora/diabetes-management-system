@@ -30,6 +30,18 @@ PEN_PRIMING_UNITS = 1.0
 PEN_WARNING_DAYS = 3
 PEN_WARNING_UNITS = 30.0
 
+# The insulin day starts at this local time, not at midnight: a basal shot at
+# 01:00 after a late night still counts for the day before (measurement §8.4,
+# pen of the injection pop-up; decision of the user of 2026-11-24).
+INSULIN_DAY_START = time(6, 30)
+
+
+def insulin_day_start(now_local: datetime) -> datetime:
+    """The local start of the insulin day `now_local` belongs to: today at
+    INSULIN_DAY_START, or yesterday's if that time has not come yet."""
+    start = datetime.combine(now_local.date(), INSULIN_DAY_START, tzinfo=now_local.tzinfo)
+    return start if now_local >= start else start - timedelta(days=1)
+
 
 def _normalize_text(raw) -> str:
     """strip + collapse any whitespace run into one space (§7.3)."""

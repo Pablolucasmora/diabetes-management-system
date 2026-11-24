@@ -10,7 +10,7 @@ def _greeting(user):
     )
 
 
-def main_menu(user, latest_event, portions, pens, brands, review_count: int = 0):
+def main_menu(user, latest_event, portions, pens, brands, review_count: int = 0, default_pen_id: int | None = None):
     """The home page from the data the route read (code_conventions.md §1.4)."""
 
     return Header(IslandLogo()
@@ -19,7 +19,8 @@ def main_menu(user, latest_event, portions, pens, brands, review_count: int = 0)
                   """), Div(
                       _greeting(user),
                       quick_actions(
-                          latest_event, portions, pens, brands, review_count=review_count
+                          latest_event, portions, pens, brands, review_count=review_count,
+                          default_pen_id=default_pen_id,
                       ),
                       cls="""
                       md:mt-36 lg:mt-36 mt-28 pb-40
