@@ -396,3 +396,59 @@ def combine_split_methods(*methods: FractionMethod | None) -> FractionMethod | N
     if FractionMethod.WEIGHED in present:
         return FractionMethod.WEIGHED
     return None
+
+
+# Preparation to confirm (frontend_conventions.md §7.1, decision of the user of
+# 2026-11-24): the fields offered on a cart row or a food page, and how many
+# values each one offers. Texture and ripeness are changed in `Adjust`.
+PREPARATION_TO_CONFIRM_FIELDS = ("cooking", "conservation")
+PREPARATION_TO_CONFIRM_OPTIONS = 2
+
+
+@dataclass(frozen=True)
+class PreparationFood:
+    """A food whose preparation is suggested: its origin and what the fallback
+    levels group it by (subtype of the same table, catalog category)."""
+    origin: PortionOrigin
+    origin_id: int
+    subtype: str | None
+    category: str | None
+
+
+def preparation_levels(food: PreparationFood) -> list[tuple[str, str]]:
+    """The (level, key) the suggestions of a food are read from, the most
+    concrete first (§7.1): the food itself, its subtype and, for a catalog
+    food, its category. A dish without subtype keeps only the first."""
+    if food.origin is PortionOrigin.CATALOG:
+        levels = [("catalog", str(food.origin_id)), ("catalog_subtype", food.subtype), ("category", food.category)]
+    else:
+        levels = [("manual_intake", str(food.origin_id)), ("manual_intake_subtype", food.subtype)]
+    return [(level, key) for level, key in levels if key]
+
+
+def rank_preparation_options(
+    counts: dict[tuple[str, str, str], list[tuple[str, int, datetime]]],
+    levels: list[tuple[str, str]],
+    field: str,
+) -> tuple[str, ...]:
+    """The values offered for one field (§7.1): level by level, the most
+    frequent first and, on a tie, the most recent; completed up to
+    PREPARATION_TO_CONFIRM_OPTIONS without repeats. `counts` maps
+    (level, key, field) to (value, times, last time)."""
+    chosen: list[str] = []
+    for level, key in levels:
+        ranked = sorted(counts.get((level, key, field), ()), key=lambda row: (row[1], row[2]), reverse=True)
+        for value, _times, _last in ranked:
+            if value not in chosen:
+                chosen.append(value)
+            if len(chosen) == PREPARATION_TO_CONFIRM_OPTIONS:
+                return tuple(chosen)
+    return tuple(chosen)
+
+
+def missing_preparation_fields(portion) -> tuple[str, ...]:
+    """The fields of the preparation to confirm that a meal row still lacks
+    (§7.1); none for a quick add, which has no food to suggest from."""
+    if portion.destination is not PortionDestination.INTAKE_EVENT or portion.source.is_quick_add:
+        return ()
+    return tuple(name for name in PREPARATION_TO_CONFIRM_FIELDS if getattr(portion, name) is None)

@@ -8,7 +8,7 @@ from DayBetes_food.components.navigation import back_js
 from DayBetes_food.time_utils import local_today
 
 
-def cart_events_list(events, portions_by_event, plates_by_event=None, rapid_pens=()):
+def cart_events_list(events, portions_by_event, plates_by_event=None, rapid_pens=(), preparation=None):
     """
     Local container of the event cards (#cart_events_list). It is the target
     of the actions that can reorder the list (e.g. meal_hour, which changes
@@ -23,6 +23,7 @@ def cart_events_list(events, portions_by_event, plates_by_event=None, rapid_pens
                 portions_by_event.get(event.id, []),
                 plates_by_event.get(event.id, []),
                 rapid_pens,
+                preparation,
             )
             for event in events
         ],
@@ -42,7 +43,9 @@ def _cart_back_button():
     )
 
 
-def cart_main(events, portions_by_event, plates_by_event=None, oob: bool = False, rapid_pens=(), brands=()):
+def cart_main(
+    events, portions_by_event, plates_by_event=None, oob: bool = False, rapid_pens=(), brands=(), preparation=None
+):
     """
     `oob=True` marks the root Div (#cart_body) as an out-of-band swap
     (hx-swap-oob), so that an endpoint that deletes/confirms the last planned
@@ -103,7 +106,7 @@ def cart_main(events, portions_by_event, plates_by_event=None, oob: bool = False
             P("Check what you are about to eat, then confirm it.", cls="text-sm text-gray-600"),
             cls="w-full px-1 flex flex-col gap-0.5",
         ),
-        cart_events_list(events, portions_by_event, plates_by_event, rapid_pens),
+        cart_events_list(events, portions_by_event, plates_by_event, rapid_pens, preparation),
         # Outside the cards, so repainting one does not remove an open pop-up.
         CartLeftoversModal(),
         # `+ New pen` of a card's pen selector (frontend_conventions.md §9.9).

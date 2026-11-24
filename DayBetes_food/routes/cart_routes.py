@@ -95,6 +95,7 @@ from DayBetes_food.domain.portion_detail import (
 )
 from DayBetes_food.http_errors import app_error_response
 from DayBetes_food.services.intake_event import (
+    cart_preparation_to_confirm,
     confirm_planned_event,
     plates_with_leftovers,
     delete_planned_event,
@@ -148,6 +149,13 @@ def _load_events_and_portions(connection, user_id: int):
     return events, portions_by_event, plates_by_event
 
 
+def _preparation_to_confirm(connection, user_id: int, portions_by_event: dict) -> dict:
+    """The preparation to confirm of every row of the cart (§7.1), keyed by row id."""
+    return cart_preparation_to_confirm(
+        connection, user_id, [portion for portions in portions_by_event.values() for portion in portions]
+    )
+
+
 def _load_cart_main(connection):
     user_id = get_current_user_id()
     if not user_id:
@@ -159,6 +167,7 @@ def _load_cart_main(connection):
         plates_by_event,
         rapid_pens=list_open_insulin_pens(connection, int(user_id), InsulinType.RAPID),
         brands=list_insulin_brands(connection, int(user_id)),
+        preparation=_preparation_to_confirm(connection, int(user_id), portions_by_event),
     )
 
 
@@ -181,7 +190,8 @@ def _events_list_response(connection, user_id: int):
     """
     events, portions_by_event, plates_by_event = _load_events_and_portions(connection, user_id)
     rapid_pens = list_open_insulin_pens(connection, user_id, InsulinType.RAPID)
-    return render_fragment(cart_events_list(events, portions_by_event, plates_by_event, rapid_pens))
+    preparation = _preparation_to_confirm(connection, user_id, portions_by_event)
+    return render_fragment(cart_events_list(events, portions_by_event, plates_by_event, rapid_pens, preparation))
 
 
 def _card_response(request: Request, connection, user_id: int, event_id: int):
@@ -196,7 +206,8 @@ def _card_response(request: Request, connection, user_id: int, event_id: int):
     portions = list_portions_by_event(connection, user_id, event_id)
     plates = list_intake_plates(connection, user_id, event_id)
     rapid_pens = list_open_insulin_pens(connection, user_id, InsulinType.RAPID)
-    return render_fragment(CartCard(event, portions, plates, rapid_pens))
+    preparation = cart_preparation_to_confirm(connection, user_id, portions)
+    return render_fragment(CartCard(event, portions, plates, rapid_pens, preparation))
 
 
 def _removal_response(connection, user_id: int):
@@ -1082,6 +1093,46 @@ def setup_cart_routes(rt):
                         ),
                         commit=False,
                     )
+            except NotFoundError:
+                return _error(request, NotFoundError, _INGREDIENT_GONE)
+            except ConflictError:
+                return _error(request, ConflictError, _EVENT_NOT_PLANNED)
+            except ValidationError as error:
+                # A merge over the limit (measurement §4.6.4).
+                return _error(request, ValidationError, str(error))
+            return _card_response(request, connection, int(user_id), event_id)
+
+    @rt("/cart/portion/{portion_id}/preparation/confirm")
+    def post(request: Request, portion_id: PathId, cooking: str | None = None, conservation: str | None = None):
+        """The tick of the preparation to confirm (frontend_conventions.md §7.1).
+
+        Only the fields of the block are sent: an empty one is written as NULL
+        and an absent one is left as is, so texture and ripeness never change
+        here. The values are not checked against the ones offered, which only
+        order the buttons, as in `Adjust`. Like `Save preparation`, it can merge
+        the row into a sibling (measurement_conventions.md §4.6.4): the whole
+        card is repainted.
+        """
+        if request.headers.get("HX-Request") != "true":
+            return _error(request, AuthorizationError, _NOT_HTMX)
+        user_id = get_current_user_id()
+        if not user_id:
+            return _error(request, AuthenticationError, _NO_SESSION)
+        try:
+            parsed_cooking = parse_enum(CookingMethod, cooking, field="cooking")
+            parsed_conservation = parse_enum(ConservationMethod, conservation, field="conservation")
+        except ValidationError as error:
+            return _error(request, ValidationError, str(error))
+        update = PortionDetailUpdate(
+            cooking=None if cooking is None else (parsed_cooking or CLEAR),
+            conservation=None if conservation is None else (parsed_conservation or CLEAR),
+        )
+        with get_connection() as connection:
+            try:
+                portion = get_portion_detail(connection, int(user_id), portion_id)
+                event_id = portion_event_id(connection, int(user_id), portion)
+                with connection.transaction():
+                    update_portion_detail_fields(connection, int(user_id), portion_id, update, commit=False)
             except NotFoundError:
                 return _error(request, NotFoundError, _INGREDIENT_GONE)
             except ConflictError:

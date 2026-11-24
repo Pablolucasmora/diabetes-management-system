@@ -18,6 +18,7 @@ from DayBetes_food.components.cart.cart_shared import (
 )
 from DayBetes_food.components.food.food_shared import AMOUNT_METHOD_LABELS, NOT_GIVEN_LABEL, STORAGE_LABELS
 from DayBetes_food.components.guide import GuideHelpButton
+from DayBetes_food.components.preparation import PreparationToConfirm
 from DayBetes_food.components.insulin_pen import PenSelect, units_text
 from DayBetes_food.components.injection_zone import (
     BASE_INJECTION_ZONE_IMAGE,
@@ -823,7 +824,7 @@ def PlateHeader(event, plate, display_name, card_target, has_portions=False):
     )
 
 
-def PlateBlock(event, plate, plate_portions, plates, plate_labels):
+def PlateBlock(event, plate, plate_portions, plates, plate_labels, preparation=None):
     """A plate inside the event card: its header and its rows.
 
     The header is always drawn, also for a single unnamed plate (§7.2,
@@ -868,6 +869,7 @@ def PlateBlock(event, plate, plate_portions, plates, plate_labels):
                 plates=plates,
                 plate_labels=plate_labels,
                 differences=_differences(item),
+                to_confirm=(preparation or {}).get(int(item["sample"].id)),
             )
             for item in grouped
         ],
@@ -1124,10 +1126,12 @@ def IngredientSettingsModal(event, plate, sample, item_key, ingredient_name, pla
     )
 
 
-def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, differences=()):
+def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, differences=(), to_confirm=None):
     """Row of an ingredient inside a plate: its name, how it was prepared, its
     amount and `Strictly weighted`. The rest lives in
     `IngredientSettingsModal`, behind `Adjust` (frontend_conventions.md §7.1).
+    `to_confirm` holds the values offered for each missing preparation field;
+    with it, the row shows the preparation to confirm.
     """
     sample = grouped_item["sample"]
     portion_id = int(sample.id)
@@ -1177,6 +1181,15 @@ def IngredientRow(event, plate, grouped_item, plates=(), plate_labels=None, diff
             _trash_button("Delete food", open_modal_js(confirm_id)),
             cls="flex items-start gap-1.5",
         ),
+        PreparationToConfirm(
+            to_confirm,
+            ingredient_name,
+            hx_post=f"/cart/portion/{portion_id}/preparation/confirm",
+            hx_target=card_target,
+            dismiss_key=f"prep_dismissed_{portion_id}",
+        )
+        if to_confirm
+        else None,
         Form(
             Input(
                 type="text",
@@ -1504,7 +1517,7 @@ def _bolus_row(event, rapid_pens, zone_label: str, card_target: str):
     )
 
 
-def CartCard(event, portions, plates=(), rapid_pens=()):
+def CartCard(event, portions, plates=(), rapid_pens=(), preparation=None):
     """One planned meal, read from top to bottom in the order it is used:
     what it is, what it has, the details that matter before eating, and the
     confirmation (frontend_conventions.md §7.1)."""
@@ -1536,6 +1549,7 @@ def CartCard(event, portions, plates=(), rapid_pens=()):
                     portions_by_plate.get(plate.id, []),
                     plates,
                     plate_labels,
+                    preparation,
                 )
                 for plate in plates
             ],
