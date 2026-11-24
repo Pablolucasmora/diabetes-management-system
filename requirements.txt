@@ -767,9 +767,9 @@ python-dotenv==1.2.4 \
     # via
     #   -r requirements.in
     #   uvicorn
-python-fasthtml==0.14.23 \
-    --hash=sha256:00befe5fdb8a79685bac90e0ef402984fccefa7aac968b28fed6d930978e26f8 \
-    --hash=sha256:7c58e6508af12a31e01eb1e7b7bfe10601b82538cb9785ace4df78e130e61af1
+python-fasthtml==0.14.26 \
+    --hash=sha256:5de7df8dd37b4b4c46ad56eb622f4f2e94407fa2efd3139f2bf1d9024c17dff9 \
+    --hash=sha256:c51a66773f02934834393af4c71c9a4366909204f2c074e621d0c0e19681d406
     # via -r requirements.in
 python-multipart==0.0.34 \
     --hash=sha256:b998ae90ca6e1e363261ce2e0e230281b8af53867b757970abd69ee9edcd843a \
