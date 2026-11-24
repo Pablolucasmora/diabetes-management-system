@@ -22,6 +22,7 @@ from DayBetes_food.database.queries import (
     get_intake_plate,
     get_meal_type_schedule,
     get_planned_intake_event,
+    get_preparation_counts,
     list_event_exact_times,
     list_intake_plates,
     list_portions_by_event,
@@ -54,9 +55,14 @@ from DayBetes_food.domain.meal_type_schedule import resolve_meal_type_for_time
 from DayBetes_food.domain.portion_detail import (
     PortionDetailCreate,
     PortionDetailRead,
+    PreparationFood,
     calculate_macro_summary_metrics,
+    missing_preparation_fields,
     portion_intake_amount,
+    preparation_levels,
+    rank_preparation_options,
 )
+from DayBetes_food.domain.assistant import USUAL_PREPARATION_DAYS
 from DayBetes_food.errors import ConflictError, NotFoundError, ValidationError
 from DayBetes_food.services.fridge import return_to_fridge, store_plate_leftovers
 from DayBetes_food.time_utils import current_timezone, local_naive_to_utc_aware, local_now, to_local, utc_now
@@ -567,3 +573,57 @@ def repeat_meal(connection, user_id: int, source_event_id: int) -> int:
                 commit=False,
             )
     return event_id
+
+
+def preparation_suggestions(
+    connection, user_id: int, foods: Sequence[PreparationFood], fields: Sequence[str]
+) -> dict[tuple[PortionOrigin, int], dict[str, tuple[str, ...]]]:
+    """The values offered for each field of the preparation to confirm of each
+    food (frontend_conventions.md §7.1): from the user's confirmed meals of the
+    last USUAL_PREPARATION_DAYS days, the food first, then its subtype and its
+    category. A field with no value is left out."""
+    if not foods:
+        return {}
+    rows = get_preparation_counts(
+        connection,
+        user_id,
+        sorted({f.origin_id for f in foods if f.origin is PortionOrigin.CATALOG}),
+        sorted({f.origin_id for f in foods if f.origin is PortionOrigin.MANUAL_INTAKE}),
+        sorted({f.subtype for f in foods if f.origin is PortionOrigin.CATALOG and f.subtype}),
+        sorted({f.subtype for f in foods if f.origin is PortionOrigin.MANUAL_INTAKE and f.subtype}),
+        sorted({f.category for f in foods if f.origin is PortionOrigin.CATALOG and f.category}),
+        USUAL_PREPARATION_DAYS,
+    )
+    counts: dict[tuple[str, str, str], list] = defaultdict(list)
+    for row in rows:
+        counts[(row["level"], row["key"], row["field"])].append((row["value"], int(row["n"]), row["last_at"]))
+    result = {}
+    for food in foods:
+        levels = preparation_levels(food)
+        options = {name: rank_preparation_options(counts, levels, name) for name in fields}
+        result[(food.origin, food.origin_id)] = {name: values for name, values in options.items() if values}
+    return result
+
+
+def cart_preparation_to_confirm(
+    connection, user_id: int, portions: Sequence[PortionDetailRead]
+) -> dict[int, dict[str, tuple[str, ...]]]:
+    """Per meal row that still lacks cooking or conservation, the values offered
+    for each missing field (frontend_conventions.md §7.1). Rows with nothing to
+    offer are left out, so they show no block."""
+    missing = {p.id: missing_preparation_fields(p) for p in portions}
+    pending = [p for p in portions if missing[p.id]]
+    if not pending:
+        return {}
+    foods = {
+        (p.origin, p.origin_id): PreparationFood(p.origin, p.origin_id, p.source.subtype, p.source.category)
+        for p in pending
+    }
+    offered = preparation_suggestions(connection, user_id, list(foods.values()), ("cooking", "conservation"))
+    result = {}
+    for portion in pending:
+        fields = offered.get((portion.origin, portion.origin_id), {})
+        chosen = {name: fields[name] for name in missing[portion.id] if name in fields}
+        if chosen:
+            result[portion.id] = chosen
+    return result

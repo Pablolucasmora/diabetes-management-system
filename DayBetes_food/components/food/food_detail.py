@@ -5,6 +5,7 @@ from fasthtml.common import *
 from DayBetes_food.components.cart.cart_shared import CHECKBOX_CLS
 from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.components.navigation import back_js
+from DayBetes_food.components.preparation import PreparationToConfirm
 from DayBetes_food.components.guide import GuideHelpButton
 from DayBetes_food.components.food.food_actions import COPY_LABEL, COPY_QUESTION, EDIT_LABELS
 from DayBetes_food.components.food.food_shared import (
@@ -671,6 +672,7 @@ def FoodDetailPage(
     is_library: bool = False,
     has_serving: bool = True,
     cooking_factor: float | None = None,
+    preparation: dict | None = None,
 ):
     can_archive = can_edit if can_archive is None else can_archive
     # catalog and manual_intake are archived (§11.2.2, §11.2.3) under can_archive;
@@ -953,7 +955,7 @@ def FoodDetailPage(
                 ),
                 Div(
                     Button(
-                        "Advanced",
+                        "Preparation",
                         type="button",
                         cls="web_button px-2 py-1 text-[11px] w-fit",
                         onclick=(
@@ -1032,6 +1034,14 @@ def FoodDetailPage(
                     cls="w-full relative z-0 transition-all duration-300 ease-out overflow-hidden",
                     style="max-height:0px;opacity:0;",
                 ),
+                # In view, not inside Preparation: its tick fills Preparation's fields
+                # and leaves the summary line below (§9.4).
+                PreparationToConfirm(preparation, entry.get("name") or "this food", scope_id=form_id)
+                if preparation
+                else None,
+                P(data_prep_summary=form_id, hidden=True, cls="text-xs text-gray-600")
+                if preparation
+                else None,
                 id=form_id,
                 cls="web_container p-3 rounded-2xl flex flex-col gap-2",
             ),

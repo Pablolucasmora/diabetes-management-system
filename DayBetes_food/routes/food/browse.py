@@ -7,7 +7,8 @@ from DayBetes_food.services.plate_selector import plate_selector_options
 from DayBetes_food.components.ui import render_fragment, render_page
 from DayBetes_food.http_errors import app_error_response
 from DayBetes_food.services.fridge import list_fridge_items
-from DayBetes_food.services.intake_event import default_meal_type_now
+from DayBetes_food.services.intake_event import default_meal_type_now, preparation_suggestions
+from DayBetes_food.domain.portion_detail import PREPARATION_TO_CONFIRM_FIELDS, PreparationFood
 from DayBetes_food.database.queries import (
     list_recipes,
     get_catalog_item,
@@ -26,7 +27,7 @@ from DayBetes_food.database.queries import (
     list_needs_review,
 )
 from DayBetes_food.components.food.menus import FoodMenuResults
-from DayBetes_food.domain.constants import PathId, PrefillSource, FoodEntryType, parse_optional_id
+from DayBetes_food.domain.constants import PathId, PortionOrigin, PrefillSource, FoodEntryType, parse_optional_id
 from DayBetes_food.domain.menu import MENU_FOOD_SEARCH_ROWS
 from DayBetes_food.components.data_sources import ciqual_attribution, off_attribution
 from DayBetes_food.components.food.food_widgets import on_after
@@ -89,6 +90,16 @@ from DayBetes_food.routes.food.helpers import (
     _search_load_more_node,
     _tag_id_for_name,
 )
+
+
+def _detail_preparation(connection, user_id, food: PreparationFood) -> dict[str, tuple[str, ...]]:
+    """The values offered for the preparation to confirm of a food page
+    (frontend_conventions.md §9.4); none without a session."""
+    if not user_id:
+        return {}
+    return preparation_suggestions(connection, int(user_id), [food], PREPARATION_TO_CONFIRM_FIELDS).get(
+        (food.origin, food.origin_id), {}
+    )
 
 
 def setup_browse_routes(rt):
@@ -311,6 +322,11 @@ def setup_browse_routes(rt):
                         has_serving=item.default_portion is not None,
                         cooking_factor=item.cooking_factor,
                         tags_block=tags_block,
+                        preparation=_detail_preparation(
+                            connection,
+                            user_id,
+                            PreparationFood(PortionOrigin.CATALOG, item.id, item.subtype, item.category.value),
+                        ),
                     ),
                     show_cart=False,
                 )
@@ -344,6 +360,11 @@ def setup_browse_routes(rt):
                         has_serving=manual_item.default_portion is not None,
                         cooking_factor=None,
                         tags_block=tags_block,
+                        preparation=_detail_preparation(
+                            connection,
+                            user_id,
+                            PreparationFood(PortionOrigin.MANUAL_INTAKE, manual_item.id, manual_item.subtype, None),
+                        ),
                     ),
                     show_cart=False,
                 )

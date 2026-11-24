@@ -21,6 +21,7 @@ from DayBetes_food.components.modal import (
     open_modal_js,
 )
 from DayBetes_food.components.navigation import back_js
+from DayBetes_food.components.preparation import PREPARATION_FIELD_LABELS, PREPARATION_LABELS, pill_cls
 from DayBetes_food.components.settings.subpage import SearchField
 from DayBetes_food.domain.intake_plate import plate_label
 from DayBetes_food.domain.assistant import (
@@ -42,10 +43,7 @@ from DayBetes_food.domain.assistant import (
 from DayBetes_food.domain.constants import (
     AmountMethod,
     AssistantDraftSource,
-    ConservationMethod,
-    CookingMethod,
     FoodEntryType,
-    FoodPhysicalState,
     MacrosSource,
     StorageLocation,
 )
@@ -210,33 +208,6 @@ def _meal_value(event, without_meal: bool) -> str:
     return NO_MEAL_CHOICE if without_meal else ""
 
 
-# How each preparation value reads on its button, per field (§9.11).
-_PREPARATION_LABELS = {
-    "cooking": {
-        CookingMethod.STEAM.value: "Steamed",
-        CookingMethod.BOILED_AL_DENTE.value: "Al dente",
-        CookingMethod.BOILED_SOFT.value: "Boiled",
-        CookingMethod.FRIED.value: "Fried",
-        CookingMethod.RAW.value: "Raw",
-        CookingMethod.OVEN.value: "Oven",
-        CookingMethod.AIRFRYER.value: "Air fryer",
-        CookingMethod.TOASTER.value: "Toasted",
-        CookingMethod.GRIDDLE.value: "Griddle",
-    },
-    "final_state": {
-        FoodPhysicalState.SOLID.value: "Solid",
-        FoodPhysicalState.MASHED_CREAMY.value: "Mashed",
-        FoodPhysicalState.LIQUID.value: "Liquid",
-        FoodPhysicalState.GEL.value: "Gel",
-    },
-    "conservation": {
-        ConservationMethod.FRESHLY_MADE.value: "Fresh",
-        ConservationMethod.FRIDGE.value: "Fridge",
-        ConservationMethod.FREEZER.value: "Frozen",
-        ConservationMethod.PRE_COOKED.value: "Pre-cooked",
-    },
-}
-_PREPARATION_FIELD_LABELS = {"cooking": "Cooked", "final_state": "Texture", "conservation": "Kept"}
 
 
 def _preparation_chips(portion, field_name: str, options: tuple):
@@ -245,7 +216,7 @@ def _preparation_chips(portion, field_name: str, options: tuple):
     tapping it again unsets it, to undo a wrong tap."""
     current_value = getattr(portion, field_name)
     current = current_value.value if current_value else None
-    labels = _PREPARATION_LABELS[field_name]
+    labels = PREPARATION_LABELS[field_name]
     chips = []
     for value in options:
         chosen = value == current
@@ -261,19 +232,14 @@ def _preparation_chips(portion, field_name: str, options: tuple):
                 hx_target=f"#{MEAL_BAR_ID}",
                 hx_swap="outerHTML",
                 data_skip_page_loading="true",
-                cls="rounded-full px-2.5 py-1 text-xs font-medium transition "
-                + (
-                    "bg-ink text-white border border-ink cursor-pointer hover:opacity-80 active:scale-95"
-                    if chosen
-                    else "bg-control border border-line text-gray-800 cursor-pointer hover:bg-white active:scale-95"
-                ),
+                cls=pill_cls(chosen),
             )
         )
     return Div(
-        Span(_PREPARATION_FIELD_LABELS[field_name], cls="w-14 shrink-0 web_section_label"),
+        Span(PREPARATION_FIELD_LABELS[field_name], cls="w-14 shrink-0 web_section_label"),
         Div(*chips, cls="flex flex-wrap gap-1.5"),
         role="group",
-        aria_label=_PREPARATION_FIELD_LABELS[field_name],
+        aria_label=PREPARATION_FIELD_LABELS[field_name],
         cls="flex items-center gap-2",
     )
 

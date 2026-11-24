@@ -616,6 +616,73 @@ def get_usual_preparation(
     }
 
 
+def get_preparation_counts(
+    connection,
+    user_id: int,
+    catalog_ids: list[int],
+    manual_intake_ids: list[int],
+    catalog_subtypes: list[str],
+    manual_intake_subtypes: list[str],
+    categories: list[str],
+    days: int,
+) -> list[dict]:
+    """How often each cooking and conservation value was set in the user's
+    confirmed meals of the last `days` days, and when last, at the three levels
+    of the preparation to confirm (frontend_conventions.md §7.1): per food, per
+    subtype of the same table and per catalog category. One row per
+    (level, key, field, value), with `level` in `catalog`, `manual_intake`,
+    `catalog_subtype`, `manual_intake_subtype` and `category`."""
+    return _execute_query_many(
+        connection,
+        """
+        WITH base AS (
+            SELECT pd.catalog_id, pd.manual_intake_id, c.subtype AS catalog_subtype,
+                   c.category AS category, mi.subtype AS manual_intake_subtype,
+                   ie.meal_time, pd.cooking, pd.conservation
+            FROM portion_detail pd
+            JOIN intake_event ie ON ie.id = pd.intake_event_id
+            LEFT JOIN catalog c ON c.id = pd.catalog_id
+            LEFT JOIN manual_intake mi ON mi.id = pd.manual_intake_id
+            WHERE ie.users_id = %(user_id)s
+              AND ie.state = %(state)s
+              AND ie.deleted_at IS NULL
+              AND ie.meal_time >= CURRENT_TIMESTAMP - (%(days)s * INTERVAL '1 day')
+        ),
+        vals AS (
+            SELECT base.*, 'cooking' AS field, cooking::text AS value FROM base WHERE cooking IS NOT NULL
+            UNION ALL
+            SELECT base.*, 'conservation', conservation::text FROM base WHERE conservation IS NOT NULL
+        )
+        SELECT 'catalog' AS level, catalog_id::text AS key, field, value,
+               count(*) AS n, max(meal_time) AS last_at
+        FROM vals WHERE catalog_id = ANY(%(catalog_ids)s) GROUP BY 2, 3, 4
+        UNION ALL
+        SELECT 'manual_intake', manual_intake_id::text, field, value, count(*), max(meal_time)
+        FROM vals WHERE manual_intake_id = ANY(%(manual_intake_ids)s) GROUP BY 2, 3, 4
+        UNION ALL
+        SELECT 'catalog_subtype', catalog_subtype, field, value, count(*), max(meal_time)
+        FROM vals WHERE catalog_subtype = ANY(%(catalog_subtypes)s) GROUP BY 2, 3, 4
+        UNION ALL
+        SELECT 'manual_intake_subtype', manual_intake_subtype, field, value, count(*), max(meal_time)
+        FROM vals WHERE manual_intake_subtype = ANY(%(manual_intake_subtypes)s) GROUP BY 2, 3, 4
+        UNION ALL
+        SELECT 'category', category::text, field, value, count(*), max(meal_time)
+        FROM vals WHERE category::text = ANY(%(categories)s) GROUP BY 2, 3, 4;
+        """,
+        {
+            "user_id": user_id,
+            "state": IntakeEventState.CONSUMED.value,
+            "catalog_ids": catalog_ids,
+            "manual_intake_ids": manual_intake_ids,
+            "catalog_subtypes": catalog_subtypes,
+            "manual_intake_subtypes": manual_intake_subtypes,
+            "categories": categories,
+            "days": max(1, int(days)),
+        },
+        commit=False,
+    )
+
+
 def list_entry_portions(connection, entry_type: FoodEntryType, entry_id: int) -> list[dict]:
     """Every portion of one food or dish, wherever it is (a meal, a tupper or a
     recipe), with what turning it into a quick add needs (§8.12)."""
