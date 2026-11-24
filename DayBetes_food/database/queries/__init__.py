@@ -229,6 +229,7 @@ from DayBetes_food.database.queries.insulin_brand import (
 from DayBetes_food.database.queries.insulin_pen import (
     create_insulin_pen,
     list_open_insulin_pens,
+    get_injection_default_pen,
     list_insulin_pens_by_ids,
     get_insulin_pen,
     get_open_insulin_pen,
@@ -417,6 +418,7 @@ __all__ = [
     "archive_insulin_brand",
     "create_insulin_pen",
     "list_open_insulin_pens",
+    "get_injection_default_pen",
     "list_insulin_pens_by_ids",
     "get_insulin_pen",
     "get_open_insulin_pen",

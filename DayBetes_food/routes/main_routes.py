@@ -17,6 +17,7 @@ from DayBetes_food.database.queries import (
     get_open_insulin_pen,
     list_insulin_brands,
     list_open_insulin_pens,
+    get_injection_default_pen,
     list_planned_intake_events,
     list_portions_by_event,
 )
@@ -25,7 +26,8 @@ from DayBetes_food.domain.catalog import parse_barcode
 from DayBetes_food.domain.insulin import InsulinInjectionCreate, parse_insulin_units, parse_shot_local
 from DayBetes_food.errors import AuthenticationError, AuthorizationError, NotFoundError, ValidationError
 from DayBetes_food.http_errors import app_error_response
-from DayBetes_food.time_utils import current_timezone, local_naive_to_utc_aware
+from DayBetes_food.domain.insulin_pen import insulin_day_start
+from DayBetes_food.time_utils import current_timezone, local_naive_to_utc_aware, local_now
 
 
 def setup_main_routes(rt):
@@ -37,6 +39,7 @@ def setup_main_routes(rt):
     def get(req):
         user_id = get_current_user_id()
         user, latest_event, portions, pens, brands, review_count = None, None, [], [], [], 0
+        default_pen_id = None
         if user_id:
             with get_connection() as connection:
                 user = get_user_by_id(connection, int(user_id))
@@ -45,9 +48,13 @@ def setup_main_routes(rt):
                 if latest_event:
                     portions = list_portions_by_event(connection, int(user_id), latest_event.id)
                 pens = list_open_insulin_pens(connection, int(user_id))
+                # Basal first thing in the insulin day, else the usual rapid pen (measurement §8.4).
+                default_pen_id = get_injection_default_pen(connection, int(user_id), insulin_day_start(local_now()))
                 brands = list_insulin_brands(connection, int(user_id))
                 review_count = count_needs_review(connection, int(user_id))
-        return render_page(req, main_menu(user, latest_event, portions, pens, brands, review_count))
+        return render_page(
+            req, main_menu(user, latest_event, portions, pens, brands, review_count, default_pen_id=default_pen_id)
+        )
 
     @rt("/menu/review_dot")
     def get(request: Request):

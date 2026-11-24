@@ -19,7 +19,7 @@ from DayBetes_food.components.modal import (
 )
 from DayBetes_food.components.food.rescue import RescueModal, rescue_open_attrs
 from DayBetes_food.components.insulin_pen import InsulinPenModal, PenSelect, open_pen_modal_js
-from DayBetes_food.domain.constants import InjectionZone
+from DayBetes_food.domain.constants import InjectionZone, InsulinType
 from DayBetes_food.time_utils import local_now, to_local
 
 def _meal_totals(portions) -> dict:
@@ -142,8 +142,9 @@ def _section_title(text: str):
 
 
 def quick_actions(
-    latest_event, portions, pens=(), brands=(), review_count: int = 0
+    latest_event, portions, pens=(), brands=(), review_count: int = 0, default_pen_id: int | None = None
 ):
+    default_pen_type = next((pen.insulin_type for pen in pens if pen.id == default_pen_id), None)
     now = local_now()
     modal_id = "menu_injection_modal"
     open_js = open_modal_js(modal_id)
@@ -291,9 +292,11 @@ def quick_actions(
             # The type comes from the pen's brand (frontend_conventions.md §9.9).
             Div(
                 Label("Pen", cls="text-xs text-gray-600", **{"for": "menu_injection_pen"}),
+                # Chosen beforehand: basal while the day's one is missing, else
+                # the usual rapid pen (measurement_conventions.md §8.4).
                 PenSelect(
                     pens,
-                    None,
+                    default_pen_id,
                     select_id="menu_injection_pen",
                     cls="web_input border border-white rounded-lg px-2 py-1 text-base w-full min-w-0",
                     onchange=switch_insulin_js,
@@ -339,7 +342,12 @@ def quick_actions(
                 Div(
                     Label(
                         "Dose (U)",
-                        Span(" - optional", data_menu_dose_optional="true"),
+                        # Optional only for rapid: hidden when the chosen pen is basal.
+                        Span(
+                            " - optional",
+                            data_menu_dose_optional="true",
+                            cls="hidden" if default_pen_type is InsulinType.BASAL else None,
+                        ),
                         cls="text-xs text-gray-600",
                     ),
                     Input(
