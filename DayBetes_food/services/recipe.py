@@ -246,7 +246,7 @@ def add_recipe_to_meal(
             raise ValidationError("An ingredient is not part of this recipe.")
 
         if request.event_id is not None:
-            event_id = get_planned_intake_event(connection, user_id, request.event_id)
+            event_id = get_planned_intake_event(connection, user_id, request.event_id, lock=True)
         else:
             event_id = create_intake_event(
                 connection,

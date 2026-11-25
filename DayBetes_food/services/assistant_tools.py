@@ -1465,7 +1465,7 @@ def _meal_event(ctx: ToolContext) -> int:
     """
     if ctx.event_id is None:
         raise ToolInputError("The meal is empty: there is nothing to change yet.")
-    return get_planned_intake_event(ctx.connection, ctx.user_id, ctx.event_id)
+    return get_planned_intake_event(ctx.connection, ctx.user_id, ctx.event_id, lock=True)
 
 
 def _add_plate(ctx: ToolContext, tool_input: dict) -> dict:

@@ -22,6 +22,7 @@ from DayBetes_food.database.queries import (
     get_intake_plate,
     get_meal_type_schedule,
     get_planned_intake_event,
+    get_portion_detail,
     get_preparation_counts,
     list_event_exact_times,
     list_intake_plates,
@@ -139,6 +140,10 @@ def confirm_planned_event(
         ValidationError: total or fraction out of range, or a plate that is not
             of this meal or has nothing left.
     """
+    # Locked before its portions are read (§6.8): an edit of the cart or of the
+    # assistant that is running waits here or ends before, so every portion that
+    # is confirmed counts in the totals.
+    get_planned_intake_event(connection, user_id, event_id, lock=True)
     portions = list_portions_by_event(connection, user_id, event_id)
     if not portions:
         # Rule that depends on the database state (§7.10): an event
@@ -203,7 +208,7 @@ def delete_planned_event(connection, user_id: int, event_id: int) -> None:
         NotFoundError: it does not exist or is not the user's.
         ConflictError: it is no longer planned.
     """
-    get_planned_intake_event(connection, user_id, event_id)
+    get_planned_intake_event(connection, user_id, event_id, lock=True)
     return_to_fridge(connection, user_id, list_portions_by_event(connection, user_id, event_id))
     delete_intake_event(connection, user_id=user_id, event_id=event_id, commit=False)
 
@@ -226,6 +231,7 @@ def portion_event_id(connection, user_id: int, portion: PortionDetailRead, *, re
     request: it is derived from the portion, whose ownership `get_portion_detail`
     already validated inside the SQL.
 
+    A planned event stays locked until the caller's transaction ends (§6.8).
     `require_planned=False` for the actions valid on a consumed event
     (measurement_conventions.md §6.9.3).
 
@@ -236,10 +242,20 @@ def portion_event_id(connection, user_id: int, portion: PortionDetailRead, *, re
     if portion.destination is not PortionDestination.INTAKE_EVENT:
         raise NotFoundError("portion_not_in_event")
     if require_planned:
-        get_planned_intake_event(connection, user_id, portion.destination_id)
+        get_planned_intake_event(connection, user_id, portion.destination_id, lock=True)
     elif not get_intake_event(connection, user_id, portion.destination_id):
         raise NotFoundError("intake_event_not_found")
     return portion.destination_id
+
+
+def lock_planned_portion(connection, user_id: int, portion_id: int) -> tuple[PortionDetailRead, int]:
+    """A portion of a planned meal, to change it, and its event. The event is locked
+    first and the portion read again after it, so that an amount computed from it
+    is never stale (§6.8). Runs inside the caller's transaction. Raises as
+    `portion_event_id`."""
+    portion = get_portion_detail(connection, user_id, portion_id)
+    event_id = portion_event_id(connection, user_id, portion)
+    return get_portion_detail(connection, user_id, portion_id), event_id
 
 
 def plate_event_id(connection, user_id: int, plate_id: int, *, require_planned: bool = True) -> int:
@@ -249,6 +265,7 @@ def plate_event_id(connection, user_id: int, plate_id: int, *, require_planned: 
     request: it is derived from the plate, which `get_intake_plate` validates
     against the user who owns the event.
 
+    A planned event stays locked until the caller's transaction ends (§6.8).
     `require_planned=False` for the actions that are also valid on an already
     consumed event (measurement_conventions.md §6.9.3).
 
@@ -258,7 +275,7 @@ def plate_event_id(connection, user_id: int, plate_id: int, *, require_planned: 
     """
     plate = get_intake_plate(connection, user_id, plate_id)
     if require_planned:
-        get_planned_intake_event(connection, user_id, plate.intake_event_id)
+        get_planned_intake_event(connection, user_id, plate.intake_event_id, lock=True)
     return plate.intake_event_id
 
 
@@ -370,7 +387,7 @@ def resolve_target_event(connection, user_id: int, chosen_event_id: int | None) 
     (checked in SQL, NotFoundError or ConflictError otherwise) or, with no id, a new
     one with the automatic meal_type (§7.14). Runs inside the caller's transaction."""
     if chosen_event_id:
-        return get_planned_intake_event(connection, user_id, chosen_event_id), False
+        return get_planned_intake_event(connection, user_id, chosen_event_id, lock=True), False
     event_id = create_intake_event(
         connection,
         IntakeEventCreate(

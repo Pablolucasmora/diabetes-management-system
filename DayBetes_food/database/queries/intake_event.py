@@ -854,22 +854,30 @@ def restore_intake_event(connection, user_id: int, event_id: int, *, commit: boo
         raise
 
 
-def get_planned_intake_event(connection, user_id: int, event_id: int) -> int:
+def get_planned_intake_event(connection, user_id: int, event_id: int, *, lock: bool = False) -> int:
     """Check that the event exists, is the user's, is active and is still 'planned'.
 
     Returns the event id. Ownership and state live inside the SQL (§5.3).
+
+    `lock=True` keeps the row locked until the caller's transaction ends (§6.8), so
+    the event cannot be confirmed between this check and the write that depends
+    on it, nor edited while it is being confirmed. Every write to a planned meal
+    uses it; plain reads do not. It is FOR NO KEY UPDATE so that it does not
+    wait for the foreign keys of its plates and portions.
 
     Raises:
         NotFoundError: it does not exist, is not the user's or is archived.
         ConflictError: it is the user's but is no longer 'planned'.
     """
     query = """
-        SELECT id, state
-        FROM intake_event
-        WHERE id = %(event_id)s
-          AND users_id = %(user_id)s
-          AND deleted_at IS NULL;
+        SELECT ie.id, ie.state
+        FROM intake_event ie
+        WHERE ie.id = %(event_id)s
+          AND ie.users_id = %(user_id)s
+          AND ie.deleted_at IS NULL
     """
+    if lock:
+        query += " FOR NO KEY UPDATE"
     with connection.cursor() as cursor:
         cursor.execute(query, {"event_id": event_id, "user_id": user_id})
         row = cursor.fetchone()
