@@ -16,6 +16,7 @@ from DayBetes_food.database.mappers import (
     assistant_conversation_read_from_row,
     assistant_message_read_from_row,
     assistant_turn_read_from_row,
+    calibration_portion_from_row,
 )
 from DayBetes_food.database.queries.crud import _execute_query, _execute_query_many
 from DayBetes_food.domain.assistant import (
@@ -24,6 +25,7 @@ from DayBetes_food.domain.assistant import (
     AssistantMessageCreate,
     AssistantMessageRead,
     AssistantTurnRead,
+    CalibrationPortion,
     ChatSummary,
     PastChat,
     chat_preview,
@@ -397,12 +399,12 @@ def list_estimate_rows(connection, user_id: int, days: int) -> list[tuple[int, l
     return [(int(row["conversation_id"]), row["content"], bool(row["eating_out"])) for row in rows]
 
 
-def get_calibration_portions(connection, user_id: int, portion_ids: list[int]) -> list[dict]:
+def list_calibration_portions(connection, user_id: int, portion_ids: list[int]) -> list[CalibrationPortion]:
     """How the rows of the user's confirmed meals ended: what was served and, for
     a quick add, its carbs per 100 g now."""
     if not portion_ids:
         return []
-    return _execute_query_many(
+    rows = _execute_query_many(
         connection,
         """
         SELECT pd.id,
@@ -417,6 +419,7 @@ def get_calibration_portions(connection, user_id: int, portion_ids: list[int]) -
         {"ids": portion_ids, "user_id": user_id, "state": IntakeEventState.CONSUMED.value},
         commit=False,
     )
+    return [calibration_portion_from_row(row) for row in rows]
 
 
 def insert_assistant_photos(
@@ -549,17 +552,18 @@ def get_latest_unseen_assistant_turn(connection, user_id: int) -> AssistantTurnR
     return turn if not turn.pending and turn.seen_at is None else None
 
 
-def start_assistant_turn(connection, turn_id: int, *, commit: bool = True) -> bool:
+def start_assistant_turn(connection, user_id: int, turn_id: int, *, commit: bool = True) -> bool:
     """Queued -> running. False if it is no longer queued (failed at startup)."""
     row = _execute_query(
         connection,
         """
-        UPDATE assistant_turn SET status = %(running)s, started_at = NOW()
-        WHERE id = %(turn_id)s AND status = %(queued)s
-        RETURNING id;
+        UPDATE assistant_turn t SET status = %(running)s, started_at = NOW()
+        WHERE t.id = %(turn_id)s AND t.users_id = %(user_id)s AND t.status = %(queued)s
+        RETURNING t.id;
         """,
         {
             "turn_id": turn_id,
+            "user_id": user_id,
             "running": AssistantTurnStatus.RUNNING.value,
             "queued": AssistantTurnStatus.QUEUED.value,
         },
@@ -570,6 +574,7 @@ def start_assistant_turn(connection, turn_id: int, *, commit: bool = True) -> bo
 
 def finish_assistant_turn(
     connection,
+    user_id: int,
     turn_id: int,
     *,
     conversation_id: int | None,
@@ -582,14 +587,15 @@ def finish_assistant_turn(
     _execute_query(
         connection,
         """
-        UPDATE assistant_turn
+        UPDATE assistant_turn t
         SET status = %(done)s, conversation_id = %(conversation_id)s, intake_event_id = %(event_id)s,
             meal_created = %(meal_created)s, notices = %(notices)s, finished_at = NOW()
-        WHERE id = %(turn_id)s AND status = %(running)s
-        RETURNING id;
+        WHERE t.id = %(turn_id)s AND t.users_id = %(user_id)s AND t.status = %(running)s
+        RETURNING t.id;
         """,
         {
             "turn_id": turn_id,
+            "user_id": user_id,
             "done": AssistantTurnStatus.DONE.value,
             "running": AssistantTurnStatus.RUNNING.value,
             "conversation_id": conversation_id,
@@ -601,18 +607,21 @@ def finish_assistant_turn(
     )
 
 
-def fail_assistant_turn(connection, turn_id: int, error_message: str, *, commit: bool = True) -> None:
+def fail_assistant_turn(
+    connection, user_id: int, turn_id: int, error_message: str, *, commit: bool = True
+) -> None:
     """A pending turn -> failed, with the reason the user sees."""
     _execute_query(
         connection,
         """
-        UPDATE assistant_turn
+        UPDATE assistant_turn t
         SET status = %(failed)s, error_message = %(error_message)s, finished_at = NOW()
-        WHERE id = %(turn_id)s AND status = ANY(%(pending)s)
-        RETURNING id;
+        WHERE t.id = %(turn_id)s AND t.users_id = %(user_id)s AND t.status = ANY(%(pending)s)
+        RETURNING t.id;
         """,
         {
             "turn_id": turn_id,
+            "user_id": user_id,
             "failed": AssistantTurnStatus.FAILED.value,
             "error_message": error_message[:200],
             "pending": [status.value for status in ASSISTANT_TURN_PENDING],

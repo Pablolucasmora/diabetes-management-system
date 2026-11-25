@@ -41,13 +41,18 @@ from DayBetes_food.domain.insulin import InsulinInjectionRead
 from DayBetes_food.domain.insulin_pen import InsulinBrandRead, InsulinPenRead
 from DayBetes_food.domain.intake_event import IntakeEventRead
 from DayBetes_food.domain.intake_plate import IntakePlateRead
-from DayBetes_food.domain.assistant import AssistantConversationRead, AssistantMessageRead, AssistantTurnRead
+from DayBetes_food.domain.assistant import (
+    AssistantConversationRead,
+    AssistantMessageRead,
+    AssistantTurnRead,
+    CalibrationPortion,
+)
 from DayBetes_food.domain.manual_intake import ManualIntakeRead
 from DayBetes_food.domain.off_product import OffProductRead
 from DayBetes_food.domain.recipe import RecipeRead
 from DayBetes_food.domain.recipe_plate import RecipePlateRead
 from DayBetes_food.domain.tag import TagRead
-from DayBetes_food.domain.portion_detail import PortionDetailRead, PortionSourceRead
+from DayBetes_food.domain.portion_detail import PortionDetailRead, PortionSourceRead, PreparationCount
 from DayBetes_food.domain.user_favorite import UserFavoriteAccess
 from DayBetes_food.errors import InfrastructureError
 
@@ -633,3 +638,23 @@ def assistant_turn_read_from_row(row: dict) -> AssistantTurnRead:
         )
     except (KeyError, ValueError) as exc:
         raise InfrastructureError(f"Invalid assistant turn row: {exc}") from exc
+
+
+def calibration_portion_from_row(row) -> CalibrationPortion:
+    carbs = row.get("carbs_100g")
+    return CalibrationPortion(
+        portion_id=int(row["id"]),
+        served_g=float(row["served_g"]),
+        carbs_100g=float(carbs) if carbs is not None else None,
+    )
+
+
+def preparation_count_from_row(row) -> PreparationCount:
+    return PreparationCount(
+        level=row["level"],
+        key=row["key"],
+        field=row["field"],
+        value=row["value"],
+        times=int(row["n"]),
+        last_at=row["last_at"],
+    )

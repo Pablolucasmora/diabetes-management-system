@@ -8,6 +8,7 @@ from fasthtml.common import to_xml
 from DayBetes_food.components.preparation import PreparationToConfirm
 from DayBetes_food.domain.constants import ConservationMethod, CookingMethod, PortionDestination, PortionOrigin
 from DayBetes_food.domain.portion_detail import (
+    PreparationCount,
     PreparationFood,
     missing_preparation_fields,
     preparation_levels,
@@ -74,10 +75,10 @@ def test_the_cart_offers_only_the_missing_fields_that_have_values(monkeypatch):
     from DayBetes_food.services import intake_event
 
     rows = [
-        {"level": "catalog", "key": "10", "field": "cooking", "value": "oven", "n": 3, "last_at": NEW},
-        {"level": "category", "key": "cereals", "field": "conservation", "value": "fridge", "n": 1, "last_at": OLD},
+        PreparationCount("catalog", "10", "cooking", "oven", 3, NEW),
+        PreparationCount("category", "cereals", "conservation", "fridge", 1, OLD),
     ]
-    monkeypatch.setattr(intake_event, "get_preparation_counts", lambda *args, **kwargs: rows)
+    monkeypatch.setattr(intake_event, "list_preparation_counts", lambda *args, **kwargs: rows)
     set_cooking = _row(2, cooking=CookingMethod.OVEN)
     result = intake_event.cart_preparation_to_confirm(None, 1, [_row(1), set_cooking, _row(3, quick_add=True)])
     assert result == {1: {"cooking": ("oven",), "conservation": ("fridge",)}, 2: {"conservation": ("fridge",)}}
