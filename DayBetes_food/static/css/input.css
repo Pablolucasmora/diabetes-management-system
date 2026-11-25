@@ -250,6 +250,16 @@
     .web_section_label {
         @apply text-[11px] uppercase tracking-wide font-semibold text-muted;
     }
+    /* A number field without the arrows of the browser. */
+    .no_spinner {
+        appearance: textfield;
+        -moz-appearance: textfield;
+    }
+    .no_spinner::-webkit-inner-spin-button,
+    .no_spinner::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+    }
     /* A row of a list: the glass without its blur, which phones pay once per row
        while scrolling (frontend_conventions.md §8). A bit whiter to make up for it. */
     .food_entry {

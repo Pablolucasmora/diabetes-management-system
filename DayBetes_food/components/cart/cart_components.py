@@ -535,6 +535,13 @@ def plate_display_name(plate, plate_portions) -> str:
     return plate_label(plate, plate_portions)
 
 
+def _offset_minutes_js(minutes_id: str) -> str:
+    """The typed minutes, or a text the server rejects when they are not a number:
+    the browser gives such a field as empty, which would clear the offset."""
+    field = f"document.getElementById('{minutes_id}')"
+    return f"({field}.validity.badInput ? 'invalid' : {field}.value)"
+
+
 def OffsetControl(event, control_id, offset_minutes, eaten_at, post_url, card_target, aria_name, input_cls):
     """Offset of a plate or an ingredient, in minutes or as an exact time, with the
     button that switches between them (frontend_conventions.md §7.3,
@@ -553,15 +560,17 @@ def OffsetControl(event, control_id, offset_minutes, eaten_at, post_url, card_ta
     # Both fields share the container's sync queue, which `Apply all` also joins
     # (see _ApplyAllButton): its click replaces the request of the field's blur.
     common = dict(
-        hx_post=post_url, hx_trigger="change", hx_target=card_target, hx_swap="outerHTML",
+        hx_post=post_url, hx_target=card_target, hx_swap="outerHTML",
         hx_sync=f"#{control_id}:replace",
     )
+    # The switch too: its click comes after the blur that saves the field (§7.10).
+    switch_sync = {"hx_sync": f"#{control_id}:replace"}
 
     if is_time:
-        switch = dict(hx_post=post_url, hx_target=card_target, hx_swap="outerHTML",
+        switch = dict(hx_post=post_url, hx_target=card_target, hx_swap="outerHTML", **switch_sync,
                       hx_vals=json.dumps({"offset_mode": "minutes", "offset_minutes": minutes_value}))
     elif time_value:
-        switch = dict(hx_post=post_url, hx_target=card_target, hx_swap="outerHTML",
+        switch = dict(hx_post=post_url, hx_target=card_target, hx_swap="outerHTML", **switch_sync,
                       hx_vals=json.dumps({"offset_mode": "time", "eaten_time": time_value}))
     else:
         switch = dict(onclick=(
@@ -577,16 +586,17 @@ def OffsetControl(event, control_id, offset_minutes, eaten_at, post_url, card_ta
         result = "min"
     return Div(
         Input(
-            type="text",
+            # Without inputmode: the iPhone's numeric keypad has no minus sign, and the
+            # keyboard of a number field does (frontend §4). The server checks the value.
+            type="number",
+            step="any",
             id=minutes_id,
             name="offset_minutes",
-            # Full keyboard: the numeric keypad has no minus sign (frontend §4).
-            inputmode="text",
-            pattern="-?[0-9]*",
             value=minutes_value,
             aria_label=f"{aria_name} offset minutes",
-            cls=f"{input_cls}{' hidden' if is_time else ''}",
-            hx_vals=json.dumps({"offset_mode": "minutes"}),
+            cls=f"{input_cls} no_spinner{' hidden' if is_time else ''}",
+            hx_vals=f"js:{{offset_mode: 'minutes', offset_minutes: {_offset_minutes_js(minutes_id)}}}",
+            hx_trigger="change",
             onclick="this.select()",
             **common,
         ),
@@ -598,6 +608,9 @@ def OffsetControl(event, control_id, offset_minutes, eaten_at, post_url, card_ta
             aria_label=f"{aria_name} time eaten",
             cls=f"{input_cls} w-auto{'' if is_time else ' hidden'}",
             hx_vals=json.dumps({"offset_mode": "time"}),
+            # On leaving the field, as the meal's time: a time field says `change` with
+            # each digit. Not if it did not change, so a glance clears nothing.
+            hx_trigger="blur changed",
             **common,
         ),
         Span(result, id=f"{control_id}_unit", cls="text-xs text-gray-600 whitespace-nowrap"),
@@ -643,7 +656,7 @@ def _ApplyAllButton(plate, offset_input_id, card_target):
         hx_sync=f"#{offset_input_id}:replace",
         **{"hx-vals": (
             f"js:{{offset_mode: document.getElementById('{offset_input_id}').dataset.mode, "
-            f"offset_minutes: document.getElementById('{offset_input_id}_minutes').value, "
+            f"offset_minutes: {_offset_minutes_js(f'{offset_input_id}_minutes')}, "
             f"eaten_time: document.getElementById('{offset_input_id}_time').value}}"
         )},
     )
