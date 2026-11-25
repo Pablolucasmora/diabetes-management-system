@@ -9,7 +9,7 @@ that is why they do not live in any individual table's file
 (code_conventions.md §1.3.1).
 """
 
-from DayBetes_food.database.mappers import mention_suggestion_from_row
+from DayBetes_food.database.mappers import mention_suggestion_from_row, preparation_count_from_row
 from DayBetes_food.database.queries.crud import (
     _RECIPE_VISIBLE,
     _build_fuzzy_search,
@@ -21,8 +21,10 @@ from DayBetes_food.database.queries.crud import (
 from DayBetes_food.domain.constants import IntakeEventState, PortionOrigin, SystemTag
 from DayBetes_food.domain.constants import FoodEntryType
 from DayBetes_food.domain.food_entry import MENTION_SUGGESTIONS_MAX, MENTION_USAGE_DAYS, MentionSuggestion, ReviewEntry
+from DayBetes_food.domain.portion_detail import PreparationCount
 from DayBetes_food.domain.search_text import normalize_search_text, search_text_sql
 from DayBetes_food.domain.tag import SYSTEM_TAG_MEAL_TYPE
+from DayBetes_food.errors import NotFoundError
 from DayBetes_food.time_utils import current_timezone
 
 
@@ -616,7 +618,7 @@ def get_usual_preparation(
     }
 
 
-def get_preparation_counts(
+def list_preparation_counts(
     connection,
     user_id: int,
     catalog_ids: list[int],
@@ -625,14 +627,14 @@ def get_preparation_counts(
     manual_intake_subtypes: list[str],
     categories: list[str],
     days: int,
-) -> list[dict]:
+) -> list[PreparationCount]:
     """How often each cooking and conservation value was set in the user's
     confirmed meals of the last `days` days, and when last, at the three levels
     of the preparation to confirm (frontend_conventions.md §7.1): per food, per
     subtype of the same table and per catalog category. One row per
     (level, key, field, value), with `level` in `catalog`, `manual_intake`,
     `catalog_subtype`, `manual_intake_subtype` and `category`."""
-    return _execute_query_many(
+    rows = _execute_query_many(
         connection,
         """
         WITH base AS (
@@ -649,25 +651,25 @@ def get_preparation_counts(
               AND ie.meal_time >= CURRENT_TIMESTAMP - (%(days)s * INTERVAL '1 day')
         ),
         vals AS (
-            SELECT base.*, 'cooking' AS field, cooking::text AS value FROM base WHERE cooking IS NOT NULL
+            SELECT base.*, 'cooking' AS field, base.cooking::text AS value FROM base WHERE base.cooking IS NOT NULL
             UNION ALL
-            SELECT base.*, 'conservation', conservation::text FROM base WHERE conservation IS NOT NULL
+            SELECT base.*, 'conservation', base.conservation::text FROM base WHERE base.conservation IS NOT NULL
         )
-        SELECT 'catalog' AS level, catalog_id::text AS key, field, value,
-               count(*) AS n, max(meal_time) AS last_at
-        FROM vals WHERE catalog_id = ANY(%(catalog_ids)s) GROUP BY 2, 3, 4
+        SELECT 'catalog' AS level, vals.catalog_id::text AS key, vals.field, vals.value,
+               count(*) AS n, max(vals.meal_time) AS last_at
+        FROM vals WHERE vals.catalog_id = ANY(%(catalog_ids)s) GROUP BY 2, 3, 4
         UNION ALL
-        SELECT 'manual_intake', manual_intake_id::text, field, value, count(*), max(meal_time)
-        FROM vals WHERE manual_intake_id = ANY(%(manual_intake_ids)s) GROUP BY 2, 3, 4
+        SELECT 'manual_intake', vals.manual_intake_id::text, vals.field, vals.value, count(*), max(vals.meal_time)
+        FROM vals WHERE vals.manual_intake_id = ANY(%(manual_intake_ids)s) GROUP BY 2, 3, 4
         UNION ALL
-        SELECT 'catalog_subtype', catalog_subtype, field, value, count(*), max(meal_time)
-        FROM vals WHERE catalog_subtype = ANY(%(catalog_subtypes)s) GROUP BY 2, 3, 4
+        SELECT 'catalog_subtype', vals.catalog_subtype, vals.field, vals.value, count(*), max(vals.meal_time)
+        FROM vals WHERE vals.catalog_subtype = ANY(%(catalog_subtypes)s) GROUP BY 2, 3, 4
         UNION ALL
-        SELECT 'manual_intake_subtype', manual_intake_subtype, field, value, count(*), max(meal_time)
-        FROM vals WHERE manual_intake_subtype = ANY(%(manual_intake_subtypes)s) GROUP BY 2, 3, 4
+        SELECT 'manual_intake_subtype', vals.manual_intake_subtype, vals.field, vals.value, count(*), max(vals.meal_time)
+        FROM vals WHERE vals.manual_intake_subtype = ANY(%(manual_intake_subtypes)s) GROUP BY 2, 3, 4
         UNION ALL
-        SELECT 'category', category::text, field, value, count(*), max(meal_time)
-        FROM vals WHERE category::text = ANY(%(categories)s) GROUP BY 2, 3, 4;
+        SELECT 'category', vals.category::text, vals.field, vals.value, count(*), max(vals.meal_time)
+        FROM vals WHERE vals.category::text = ANY(%(categories)s) GROUP BY 2, 3, 4;
         """,
         {
             "user_id": user_id,
@@ -681,33 +683,54 @@ def get_preparation_counts(
         },
         commit=False,
     )
+    return [preparation_count_from_row(row) for row in rows]
 
 
-def list_entry_portions(connection, entry_type: FoodEntryType, entry_id: int) -> list[dict]:
-    """Every portion of one food or dish, wherever it is (a meal, a tupper or a
-    recipe), with what turning it into a quick add needs (§8.12)."""
-    column = _ENTRY_COLUMN[entry_type]
+_ENTRY_TABLE = {FoodEntryType.CATALOG: "catalog", FoodEntryType.MANUAL_INTAKE: "manual_intake"}
+
+
+def _points_at_own_entry(entry_type: FoodEntryType) -> str:
+    """The portion `pd` points at an entry created by the user (§5.3)."""
+    return (
+        f"EXISTS (SELECT 1 FROM {_ENTRY_TABLE[entry_type]} entry "
+        f"WHERE entry.id = pd.{_ENTRY_COLUMN[entry_type]} AND entry.created_by = %(user_id)s)"
+    )
+
+
+def list_entry_portions(connection, user_id: int, entry_type: FoodEntryType, entry_id: int) -> list[dict]:
+    """Every portion of one food or dish of the user, wherever it is (a meal, a tupper
+    or a recipe), with what turning it into a quick add needs (§8.12)."""
     return _execute_query_many(
         connection,
         f"""
-        SELECT id, intake_event_id, amount, amount_method, is_cooked_weight
-        FROM portion_detail WHERE {column} = %(entry_id)s ORDER BY id;
+        SELECT pd.id, pd.intake_event_id, pd.amount, pd.amount_method, pd.is_cooked_weight
+        FROM portion_detail pd
+        WHERE pd.{_ENTRY_COLUMN[entry_type]} = %(entry_id)s AND {_points_at_own_entry(entry_type)}
+        ORDER BY pd.id;
         """,
-        {"entry_id": entry_id},
+        {"entry_id": entry_id, "user_id": user_id},
         commit=False,
     )
 
 
-def point_portion_at_dish(connection, portion_id: int, source_type: FoodEntryType, manual_intake_id: int) -> None:
-    """Point one portion at another dish, inside the caller's transaction."""
-    column = _ENTRY_COLUMN[source_type]
-    _execute_query(
+def point_portion_at_dish(
+    connection, user_id: int, portion_id: int, source_type: FoodEntryType, manual_intake_id: int
+) -> None:
+    """Point one portion of an entry of the user at another dish, inside the caller's
+    transaction.
+
+    Raises:
+        NotFoundError: the portion is not of an entry of the user.
+    """
+    row = _execute_query(
         connection,
-        f"UPDATE portion_detail SET {column} = NULL, manual_intake_id = %(manual_intake_id)s "
-        "WHERE id = %(portion_id)s RETURNING 1;",
-        {"portion_id": portion_id, "manual_intake_id": manual_intake_id},
+        "UPDATE portion_detail pd SET catalog_id = NULL, manual_intake_id = %(manual_intake_id)s "
+        f"WHERE pd.id = %(portion_id)s AND {_points_at_own_entry(source_type)} RETURNING pd.id;",
+        {"portion_id": portion_id, "manual_intake_id": manual_intake_id, "user_id": user_id},
         commit=False,
     )
+    if row is None:
+        raise NotFoundError("portion_not_found")
 
 
 def get_time_weighted_food_usage(connection, user_id: int, days: int, spread_minutes: int) -> list[dict]:

@@ -403,6 +403,20 @@ def combine_split_methods(*methods: FractionMethod | None) -> FractionMethod | N
 # values each one offers. Texture and ripeness are changed in `Adjust`.
 PREPARATION_TO_CONFIRM_FIELDS = ("cooking", "conservation")
 PREPARATION_TO_CONFIRM_OPTIONS = 2
+# Days of confirmed meals read for the usual preparation of a food.
+USUAL_PREPARATION_DAYS = 90
+
+
+@dataclass(frozen=True)
+class PreparationCount:
+    """How often a value was set for a field at one level of the suggestions, and
+    when last (frontend_conventions.md §7.1)."""
+    level: str
+    key: str
+    field: str
+    value: str
+    times: int
+    last_at: datetime
 
 
 @dataclass(frozen=True)

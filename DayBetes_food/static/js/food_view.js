@@ -63,23 +63,35 @@
     cameBack = true;
   });
 
+  // The page just arrived, with its list already in it: the search comes back,
+  // and is asked for, only after Back.
+  function arrive() {
+    var view = document.querySelector("[data-food-view]:not([data-arrived])");
+    if (!view) return;
+    view.setAttribute("data-arrived", "true");
+    var input = byId("food_search_input");
+    var stored = readStored();
+    var here = window.location.pathname + window.location.search;
+    if (!cameBack) {
+      store("", "");
+    } else if (stored && stored.url === here && input && window.htmx) {
+      input.value = stored.text;
+      window.htmx.ajax("GET", "/food/list", { source: input, target: "#food-list", swap: "innerHTML" });
+    }
+    cameBack = false;
+  }
+
+  document.addEventListener("htmx:load", arrive);
+  document.addEventListener("htmx:historyRestore", arrive);
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", arrive);
+  } else {
+    arrive();
+  }
+
   document.addEventListener("htmx:configRequest", function (event) {
     if (!isFoodListRequest(event) || !document.querySelector("[data-food-view]")) return;
     var input = byId("food_search_input");
-
-    if (event.detail.elt && event.detail.elt.id === "food-list") {
-      // The first load of the page: the search comes back only after Back.
-      var stored = readStored();
-      var here = window.location.pathname + window.location.search;
-      if (cameBack && stored && stored.url === here && input) {
-        input.value = stored.text;
-        event.detail.parameters.search = stored.text;
-      } else if (!cameBack) {
-        store("", "");
-      }
-      cameBack = false;
-      return;
-    }
 
     var url = viewUrl();
     if (window.location.pathname + window.location.search !== url) {

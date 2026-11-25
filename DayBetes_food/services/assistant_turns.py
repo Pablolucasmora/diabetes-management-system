@@ -95,7 +95,7 @@ def _answer_turn(
     Nothing raises out of here: an executor would keep the exception unseen."""
     try:
         with get_connection() as connection:
-            if not start_assistant_turn(connection, turn_id):
+            if not start_assistant_turn(connection, user_id, turn_id):
                 return
             try:
                 result = send_assistant_message(
@@ -108,7 +108,7 @@ def _answer_turn(
                 )
             except (NotFoundError, ConflictError):
                 connection.rollback()
-                fail_assistant_turn(connection, turn_id, TURN_MEAL_GONE)
+                fail_assistant_turn(connection, user_id, turn_id, TURN_MEAL_GONE)
                 return
             except ExternalServiceError as error:
                 # Logged once here, with the adapter's internal reason (§8.3, §8.6).
@@ -118,10 +118,11 @@ def _answer_turn(
                     exc_info=error,
                     extra={"error_code": error.code, "reason": str(error), "assistant_turn_id": turn_id},
                 )
-                fail_assistant_turn(connection, turn_id, TURN_UNAVAILABLE)
+                fail_assistant_turn(connection, user_id, turn_id, TURN_UNAVAILABLE)
                 return
             finish_assistant_turn(
                 connection,
+                user_id,
                 turn_id,
                 conversation_id=result.conversation_id,
                 intake_event_id=result.event_id,
@@ -132,7 +133,7 @@ def _answer_turn(
         logger.exception("Assistant turn failed", extra={"assistant_turn_id": turn_id})
         try:
             with get_connection() as connection:
-                fail_assistant_turn(connection, turn_id, TURN_FAILED)
+                fail_assistant_turn(connection, user_id, turn_id, TURN_FAILED)
         except Exception:
             logger.exception("Could not mark the assistant turn as failed", extra={"assistant_turn_id": turn_id})
 

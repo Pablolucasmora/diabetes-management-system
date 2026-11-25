@@ -43,7 +43,7 @@ from DayBetes_food.database.queries import (
     list_needs_review,
     get_time_weighted_food_usage,
     get_usual_amounts,
-    get_calibration_portions,
+    list_calibration_portions,
     get_usual_preparation,
     list_estimate_rows,
     list_portions_by_event,
@@ -66,9 +66,7 @@ from DayBetes_food.domain.assistant import (
     USUAL_FOODS_SHOWN,
     UsualFood,
     preparation_choices,
-    USUAL_PREPARATION_DAYS,
     CALIBRATION_DAYS,
-    CalibrationPortion,
     QUICK_MODE_EFFORT,
     calibration_lines,
     estimate_samples,
@@ -84,7 +82,7 @@ from DayBetes_food.domain.assistant import (
     without_guide_questions,
 )
 from DayBetes_food.domain.constants import CLEAR, AssistantRole, FoodEntryType, PortionOrigin
-from DayBetes_food.domain.portion_detail import PortionDetailUpdate
+from DayBetes_food.domain.portion_detail import USUAL_PREPARATION_DAYS, PortionDetailUpdate
 from DayBetes_food.errors import ConflictError, ExternalServiceError, NotFoundError, ValidationError
 from DayBetes_food.integrations.anthropic_client import create_answer
 from DayBetes_food.services.assistant_tools import TOOL_DEFINITIONS, ToolContext, run_tool
@@ -539,15 +537,8 @@ def calibration(connection, user_id: int) -> list[str]:
     samples = estimate_samples(list_estimate_rows(connection, user_id, CALIBRATION_DAYS))
     if not samples:
         return []
-    rows = get_calibration_portions(connection, user_id, sorted({sample.portion_id for sample in samples}))
-    portions = {
-        int(row["id"]): CalibrationPortion(
-            int(row["id"]),
-            float(row["served_g"]),
-            float(row["carbs_100g"]) if row["carbs_100g"] is not None else None,
-        )
-        for row in rows
-    }
+    rows = list_calibration_portions(connection, user_id, sorted({sample.portion_id for sample in samples}))
+    portions = {row.portion_id: row for row in rows}
     return calibration_lines(samples, portions)
 
 

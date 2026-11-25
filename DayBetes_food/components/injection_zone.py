@@ -55,21 +55,3 @@ def injection_zone_image(zone: InjectionZone | None) -> str:
     If zone is None (not recorded), it returns BASE_INJECTION_ZONE_IMAGE.
     """
     return INJECTION_ZONE_IMAGE_BY_ZONE[zone] if zone else BASE_INJECTION_ZONE_IMAGE
-
-
-def parse_injection_zone(value) -> InjectionZone | None:
-    """Convert a presentation value (DB string or enum) to InjectionZone.
-
-    Lenient by design: it is the presentation layer. An unrecognized value is
-    drawn as "zone not recorded" and does not break the page. Strict
-    validation lives in the database CHECK and in database/mappers.py (§4.3).
-    """
-    if isinstance(value, InjectionZone):
-        return value
-    raw = (value or "").strip().lower()
-    if not raw:
-        return None
-    try:
-        return InjectionZone(raw)
-    except ValueError:
-        return None

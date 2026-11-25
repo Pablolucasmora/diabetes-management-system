@@ -305,7 +305,7 @@ def _brand_row(brand):
     )
 
 
-def _subpage(title: str, back_to: str, *content, data_attrs=None):
+def _subpage(title: str, back_to: str, *content):
     """A settings sub-page: Back, title and its content (same frame as the injection log)."""
     return Div(
         Div(

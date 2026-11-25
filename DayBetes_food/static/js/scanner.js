@@ -1,4 +1,9 @@
 (function () {
+  // The page carries this script: a later visit inserts it again, and the
+  // htmx:afterSwap below already starts the scanner.
+  if (window.__dbScannerBootstrapped) return;
+  window.__dbScannerBootstrapped = true;
+
   var scannerState = null;
   var zxingScriptLoading = null;
 

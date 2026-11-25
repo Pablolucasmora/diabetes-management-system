@@ -23,7 +23,7 @@ from DayBetes_food.database.queries import (
     get_meal_type_schedule,
     get_planned_intake_event,
     get_portion_detail,
-    get_preparation_counts,
+    list_preparation_counts,
     list_event_exact_times,
     list_intake_plates,
     list_portions_by_event,
@@ -56,6 +56,8 @@ from DayBetes_food.domain.meal_type_schedule import resolve_meal_type_for_time
 from DayBetes_food.domain.portion_detail import (
     PortionDetailCreate,
     PortionDetailRead,
+    PREPARATION_TO_CONFIRM_FIELDS,
+    USUAL_PREPARATION_DAYS,
     PreparationFood,
     calculate_macro_summary_metrics,
     missing_preparation_fields,
@@ -63,7 +65,6 @@ from DayBetes_food.domain.portion_detail import (
     preparation_levels,
     rank_preparation_options,
 )
-from DayBetes_food.domain.assistant import USUAL_PREPARATION_DAYS
 from DayBetes_food.errors import ConflictError, NotFoundError, ValidationError
 from DayBetes_food.services.fridge import return_to_fridge, store_plate_leftovers
 from DayBetes_food.time_utils import current_timezone, local_naive_to_utc_aware, local_now, to_local, utc_now
@@ -601,7 +602,7 @@ def preparation_suggestions(
     category. A field with no value is left out."""
     if not foods:
         return {}
-    rows = get_preparation_counts(
+    rows = list_preparation_counts(
         connection,
         user_id,
         sorted({f.origin_id for f in foods if f.origin is PortionOrigin.CATALOG}),
@@ -613,7 +614,7 @@ def preparation_suggestions(
     )
     counts: dict[tuple[str, str, str], list] = defaultdict(list)
     for row in rows:
-        counts[(row["level"], row["key"], row["field"])].append((row["value"], int(row["n"]), row["last_at"]))
+        counts[(row.level, row.key, row.field)].append((row.value, row.times, row.last_at))
     result = {}
     for food in foods:
         levels = preparation_levels(food)
@@ -636,7 +637,7 @@ def cart_preparation_to_confirm(
         (p.origin, p.origin_id): PreparationFood(p.origin, p.origin_id, p.source.subtype, p.source.category)
         for p in pending
     }
-    offered = preparation_suggestions(connection, user_id, list(foods.values()), ("cooking", "conservation"))
+    offered = preparation_suggestions(connection, user_id, list(foods.values()), PREPARATION_TO_CONFIRM_FIELDS)
     result = {}
     for portion in pending:
         fields = offered.get((portion.origin, portion.origin_id), {})

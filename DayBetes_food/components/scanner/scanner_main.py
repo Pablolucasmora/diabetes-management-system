@@ -1,4 +1,5 @@
 from fasthtml.common import *
+from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.components.data_sources import off_attribution
 from DayBetes_food.components.navigation import back_js
 from DayBetes_food.components.modal import ConfirmActionModal, modal_confirm_button, modal_secondary_button
@@ -73,7 +74,7 @@ def scanner_main():
                 no_button=modal_secondary_button("No", id="scanner_confirm_no"),
             ),
             cls="""
-                min-h-screen
+                min-h-dvh
                 flex flex-col items-center
                 md:mt-7 lg:mt-7 mt-2
                 md:w-md lg:w-md w-xs
@@ -83,4 +84,5 @@ def scanner_main():
             """,
             data_hide_cart="true",
         ),
+        Script(src=asset_busted("/js/scanner.js"), defer="defer"),
     )

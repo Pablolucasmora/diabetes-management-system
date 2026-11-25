@@ -5,7 +5,8 @@ APP_NAME = "DayBetes"
 # The `page` colour of static/css/input.css: a manifest and a meta tag cannot read it.
 APP_THEME_COLOR = "#fbf8f3"
 MANIFEST_PATH = "/manifest.webmanifest"
-_ICON_PATH = "/images/ui/app_icon_{size}.png"
+# The version changes with the drawing: phones and the CDN keep the icons.
+_ICON_PATH = "/images/ui/app_icon_{size}.png?v=2"
 
 APP_HEAD_HTML = f"""<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="theme-color" content="{APP_THEME_COLOR}">
@@ -17,8 +18,8 @@ APP_HEAD_HTML = f"""<meta name="viewport" content="width=device-width, initial-s
 
 
 def app_manifest() -> dict:
-    """The manifest of the installed app. The icon's drawing is inside the safe
-    zone, so the large one is also the maskable one."""
+    """The manifest of the installed app. The maskable icon is the same with a
+    smaller drawing, inside the safe zone."""
     return {
         "id": "/",
         "name": APP_NAME,
@@ -32,6 +33,6 @@ def app_manifest() -> dict:
         "icons": [
             {"src": _ICON_PATH.format(size=192), "sizes": "192x192", "type": "image/png", "purpose": "any"},
             {"src": _ICON_PATH.format(size=512), "sizes": "512x512", "type": "image/png", "purpose": "any"},
-            {"src": _ICON_PATH.format(size=512), "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+            {"src": _ICON_PATH.format(size="maskable_512"), "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
         ],
     }

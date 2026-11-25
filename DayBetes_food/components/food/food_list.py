@@ -21,8 +21,7 @@ from DayBetes_food.components.modal import (
 from DayBetes_food.components.food.recipe_add import recipe_add_open_attrs
 from DayBetes_food.components.stats.stats_shared import MEAL_TYPE_LABELS
 from DayBetes_food.domain.recipe import RECIPE_MEAL_TYPES
-from DayBetes_food.components.food.food_shared import MACROS_SOURCE_LABELS
-from DayBetes_food.domain.constants import FoodEntryType, MacrosSource
+from DayBetes_food.domain.constants import FoodEntryType
 from DayBetes_food.time_utils import to_local
 from DayBetes_food.components.food.food_widgets import (
     FILTER_ITEM_CLS,
@@ -543,7 +542,9 @@ def _search_box(view: FoodView):
             """,
             hx_get="/food/list",
             hx_target="#food-list",
-            hx_trigger="keyup changed delay:500ms",
+            hx_trigger="input changed delay:300ms",
+            # A newer search drops the one still running.
+            hx_sync="this:replace",
             hx_include="#food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
             hx_swap="innerHTML",
         ),
