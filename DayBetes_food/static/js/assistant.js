@@ -807,6 +807,9 @@
   var PLUS_HOLD_MS = 500;
   var plusTimer = null;
   var plusHeld = false;
+  // One +1 at a time, in order: htmx keeps only the last of several requests of one
+  // element, so quick taps on different chips would lose the ones in between.
+  var plusQueue = Promise.resolve();
 
   function plusRow() {
     return byId("assistant_plus_row");
@@ -817,13 +820,22 @@
     if (!chip || !row || !window.htmx) return;
     closePlusMenu();
     chip.disabled = true;
-    window.htmx.ajax("POST", chip.getAttribute("data-plus-url"), {
-      target: "#assistant_plus_row",
-      swap: "outerHTML",
-      values: { step: String(step), conversation_id: row.getAttribute("data-conversation-id") || "" },
-    }).then(function () {
+    var url = chip.getAttribute("data-plus-url");
+    var values = { step: String(step), conversation_id: row.getAttribute("data-conversation-id") || "" };
+    function enable() {
       chip.disabled = false;
-    });
+    }
+    plusQueue = plusQueue.then(function () {
+      // Each answer replaces the row, so the row is looked up when its turn comes.
+      var current = plusRow();
+      if (!current || current.getAttribute("data-conversation-id") !== row.getAttribute("data-conversation-id")) return;
+      return window.htmx.ajax("POST", url, {
+        source: current,
+        target: current,
+        swap: "outerHTML",
+        values: values,
+      });
+    }).then(enable, enable);
   }
 
   function closePlusMenu() {
