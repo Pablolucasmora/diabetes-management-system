@@ -517,7 +517,9 @@
   // The answer brings the message again, in its turn: the pending one goes.
   document.addEventListener("htmx:beforeSwap", function (event) {
     var form = byId("assistant_composer");
-    if (form && event.detail.elt === form) removePendingBubble();
+    // `detail.elt` is the target of this event, so the form is the one that asked.
+    var config = event.detail.requestConfig;
+    if (form && config && config.elt === form) removePendingBubble();
   });
 
   // The photos travel as repeated `photo` parts of the multipart body.
@@ -778,13 +780,62 @@
     var rows = details.querySelector("[data-meal-rows]");
     if (!rows) return;
     var share = parseFloat(details.getAttribute("data-meal-fold")) || 0.1;
+    // Measuring it unfolded loses the scroll of the box.
+    var scroll = mealScroll();
     details.removeAttribute("data-foldable");
     details.open = true;
     var count = parseInt(rows.getAttribute("data-meal-count"), 10) || 0;
     var foldable = count > 1 && rows.offsetHeight > window.innerHeight * share;
     if (foldable) details.setAttribute("data-foldable", "");
     details.open = !foldable || mealExpanded;
+    setMealScroll(scroll);
   }
+
+  // A repaint of the bar keeps where its foods were scrolled to and which plates
+  // were open (frontend_conventions.md §7.11).
+  var MEAL_BAR_ID = "assistant_meal_bar";
+  var mealView = null;
+
+  function mealScroll() {
+    var box = document.querySelector("[data-meal-scroll]");
+    return box ? box.scrollTop : 0;
+  }
+
+  function setMealScroll(top) {
+    var box = document.querySelector("[data-meal-scroll]");
+    if (box) box.scrollTop = top;
+  }
+
+  function mealPlates() {
+    return Array.prototype.slice.call(document.querySelectorAll("[data-meal-rows] details"));
+  }
+
+  function keepMealView(event) {
+    var target = event.detail && event.detail.target;
+    if (!target || target.id !== MEAL_BAR_ID) return;
+    mealView = {
+      meal: mealSelect() ? mealSelect().value : "",
+      scroll: mealScroll(),
+      plates: mealPlates().map(function (plate) { return plate.open; }),
+    };
+  }
+
+  function restoreMealView() {
+    var view = mealView;
+    // Another meal's bar starts as it comes.
+    if (!view || !mealSelect() || mealSelect().value !== view.meal) return;
+    var plates = mealPlates();
+    if (plates.length === view.plates.length) {
+      plates.forEach(function (plate, index) { plate.open = view.plates[index]; });
+    }
+    fitMealFoods();
+    setMealScroll(view.scroll);
+  }
+
+  document.addEventListener("htmx:beforeSwap", keepMealView);
+  document.addEventListener("htmx:oobBeforeSwap", keepMealView);
+  document.addEventListener("htmx:afterSwap", restoreMealView);
+  document.addEventListener("htmx:oobAfterSwap", restoreMealView);
 
   document.addEventListener("click", function (event) {
     var toggle = event.target.closest && event.target.closest("[data-meal-fold-toggle]");
@@ -793,7 +844,11 @@
     if (details) mealExpanded = !details.open;
   });
 
-  document.addEventListener("htmx:afterSettle", fitMealFoods);
+  document.addEventListener("htmx:afterSettle", function () {
+    fitMealFoods();
+    restoreMealView();
+    mealView = null;
+  });
   document.addEventListener("DOMContentLoaded", fitMealFoods);
   window.addEventListener("resize", function () {
     clearTimeout(fitMealFoods.timer);

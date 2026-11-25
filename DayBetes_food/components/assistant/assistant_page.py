@@ -332,6 +332,7 @@ def _meal_foods(portions: list, pending: frozenset, preparation: dict | None = N
         ),
         Div(
             rows,
+            data_meal_scroll="true",
             cls="group-data-[foldable]:pt-1.5 group-data-[foldable]:max-h-[45dvh] overflow-y-auto overscroll-contain",
         ),
         open=True,
