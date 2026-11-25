@@ -543,7 +543,9 @@ def _search_box(view: FoodView):
             """,
             hx_get="/food/list",
             hx_target="#food-list",
-            hx_trigger="keyup changed delay:500ms",
+            hx_trigger="input changed delay:300ms",
+            # A newer search drops the one still running.
+            hx_sync="this:replace",
             hx_include="#food_filter, #food_search_mode, #food_food_mode, #food_favs_mode, #food_recipes_mode, #food_recipes_meal",
             hx_swap="innerHTML",
         ),

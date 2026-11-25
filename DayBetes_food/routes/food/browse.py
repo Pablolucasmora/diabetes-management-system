@@ -32,6 +32,7 @@ from DayBetes_food.domain.menu import MENU_FOOD_SEARCH_ROWS
 from DayBetes_food.components.data_sources import ciqual_attribution, off_attribution
 from DayBetes_food.components.food.food_widgets import on_after
 from DayBetes_food.components.food.food_list import (
+    FoodView,
     FoodSectionsContent,
     FoodCard,
     FavoriteButton,
@@ -102,6 +103,130 @@ def _detail_preparation(connection, user_id, food: PreparationFood) -> dict[str,
     )
 
 
+def _food_list_content(connection, view: FoodView, recipe_meal_types, *, search: str = "", page: int = 1) -> tuple:
+    """One page of the list of Food as `view` shows it: the first one comes inside
+    the page, the rest from /food/list (frontend_conventions.md §9.3).
+
+    Raises:
+        AuthenticationError: the review and fridge lists need a session.
+    """
+    clean_search = (search or "").strip()
+    page = max(1, int(page or 1))
+    food_mode_norm = (view.food_mode or "catalog").strip().lower()
+    if food_mode_norm not in ("catalog", "manual"):
+        food_mode_norm = "catalog"
+    if view.filter == "review":
+        # The provisional foods and dishes, without search or pages (§9.3).
+        user_id = get_current_user_id()
+        if not user_id:
+            raise AuthenticationError("Your session has expired.")
+        return (ReviewListContent(list_needs_review(connection, int(user_id))),)
+    if view.filter == "fridge":
+        # The user's containers, without search or pages: there are never
+        # many (frontend_conventions.md §9.8).
+        user_id = get_current_user_id()
+        if not user_id:
+            raise AuthenticationError("Your session has expired.")
+        return tuple(FridgeListContent(list_fridge_items(connection, int(user_id)), utc_now()))
+    favs_mode_norm = (view.favs_mode or "catalog").strip().lower()
+    if favs_mode_norm not in ("catalog", "manual", "recipes"):
+        favs_mode_norm = "catalog"
+    recipes_mode_norm = (view.recipes_mode or "mine").strip().lower()
+    if recipes_mode_norm not in ("mine", "discover"):
+        recipes_mode_norm = "mine"
+    if view.filter == "all":
+        mode = (view.search_mode or "recommended").strip().lower()
+        if mode == "global":
+            entries = _community_entries(connection, search=clean_search)
+        else:
+            mode = "recommended"
+            entries = _recommended_entries(connection, search=clean_search, days=60)
+    elif view.filter == "recipes":
+        mode = (view.search_mode or "recommended").strip().lower()
+        entries = _recipes_entries(
+            connection, search=clean_search, recipes_mode=recipes_mode_norm, meal_types=recipe_meal_types
+        )
+    else:
+        mode = (view.search_mode or "recommended").strip().lower()
+        selected_entry_type = None
+        if view.filter == "food":
+            selected_entry_type = "catalog" if food_mode_norm == "catalog" else "manual_intake"
+        elif view.filter == "favs":
+            selected_entry_type = {
+                "catalog": "catalog",
+                "manual": "manual_intake",
+                "recipes": "recipe",
+            }[favs_mode_norm]
+        entries = _filtered_entries(
+            connection,
+            search=clean_search,
+            filter_value=view.filter,
+            entry_type=selected_entry_type,
+        )
+    # Only with the first page, after its load-more node: the user's next
+    # pages replace that node, so they stay above this section (§12.2).
+    off_nodes = []
+    user_id = get_current_user_id()
+    if (
+        page == 1
+        and clean_search
+        and user_id
+        and (view.filter == "all" or (view.filter == "food" and food_mode_norm == "catalog"))
+    ):
+        # The user's menus, after their own results (frontend §9.13): a few
+        # rows, the rest in Menus.
+        menu_items = (
+            search_menu_items(connection, int(user_id), clean_search, None, MENU_FOOD_SEARCH_ROWS + 1)
+            if view.filter == "all"
+            else []
+        )
+        off_nodes = [
+            *FoodMenuResults(
+                menu_items[:MENU_FOOD_SEARCH_ROWS], clean_search, len(menu_items) > MENU_FOOD_SEARCH_ROWS
+            ),
+            *ExternalFoodSection(
+                "From Ciqual",
+                *_external_page(connection, int(user_id), PrefillSource.CIQUAL, clean_search, 1),
+                ciqual_attribution(),
+            ),
+            *ExternalFoodSection(
+                "From Open Food Facts",
+                *_external_page(connection, int(user_id), PrefillSource.OPEN_FOOD_FACTS, clean_search, 1),
+                off_attribution(),
+            ),
+        ]
+
+    if not entries and not off_nodes:
+        return (H2("No items", cls="text-gray-600"),)
+
+    page_size = SEARCH_PAGE_SIZE if clean_search else LIST_PAGE_SIZE
+    start = (page - 1) * page_size
+    end = start + page_size
+    chunk = entries[start:end]
+    has_more = end < len(entries)
+
+    if page > 1 or (view.filter == "all" and mode == "recommended"):
+        nodes = [FoodCard(item) for item in chunk]
+    elif view.filter == "all":
+        nodes = list(_community_sections_content(chunk))
+    else:
+        nodes = list(FoodSectionsContent(chunk))
+    if has_more:
+        nodes.append(
+            _search_load_more_node(
+                clean_search,
+                view.filter,
+                mode,
+                food_mode_norm,
+                favs_mode_norm,
+                recipes_mode_norm,
+                view.meal_type,
+                page + 1,
+            )
+        )
+    return tuple(nodes + off_nodes)
+
+
 def setup_browse_routes(rt):
     @rt("/food")
     def get(
@@ -118,7 +243,7 @@ def setup_browse_routes(rt):
         to. An unknown value is a 422 (code_conventions §7.7)."""
         view = _food_view(filter, search_mode, food_mode, favs_mode, recipes_mode, meal_type)
         user_id = get_current_user_id()
-        events, plate_options, last_used_plate, review_count = [], [], None, 0
+        events, plate_options, last_used_plate, review_count, list_content = [], [], None, 0, ()
         if user_id:
             with get_connection() as connection:
                 events = list_planned_intake_events(connection, int(user_id))
@@ -127,7 +252,10 @@ def setup_browse_routes(rt):
                 # ones listed (frontend_conventions.md §6).
                 if events:
                     plate_options, last_used_plate = plate_selector_options(connection, int(user_id), events[0].id)
-        return render_page(request, food_main(view, events, plate_options, last_used_plate, review_count))
+                list_content = _food_list_content(connection, view, parse_recipe_meal_types(view.meal_type))
+        return render_page(
+            request, food_main(view, events, plate_options, last_used_plate, review_count, list_content)
+        )
 
     # Tags of a food, dish or recipe on its detail page (frontend_conventions.md §9.4.1).
 
@@ -424,175 +552,9 @@ def setup_browse_routes(rt):
         except ValidationError as error:
             return app_error_response(request, ValidationError, str(error))
 
-        clean_search = (search or "").strip()
-        page = max(1, int(page or 1))
-        food_mode_norm = (food_mode or "catalog").strip().lower()
-        if food_mode_norm not in ("catalog", "manual"):
-            food_mode_norm = "catalog"
-        if filter == "review":
-            # The provisional foods and dishes, without search or pages (§9.3).
-            user_id = get_current_user_id()
-            if not user_id:
-                return app_error_response(request, AuthenticationError, "Your session has expired.")
-            with get_connection() as connection:
-                review_entries = list_needs_review(connection, int(user_id))
-            return render_fragment(ReviewListContent(review_entries))
-        if filter == "fridge":
-            # The user's containers, without search or pages: there are never
-            # many (frontend_conventions.md §9.8).
-            user_id = get_current_user_id()
-            if not user_id:
-                return app_error_response(request, AuthenticationError, "Your session has expired.")
-            with get_connection() as connection:
-                items = list_fridge_items(connection, int(user_id))
-            return render_fragment(FridgeListContent(items, utc_now()))
-        favs_mode_norm = (favs_mode or "catalog").strip().lower()
-        if favs_mode_norm not in ("catalog", "manual", "recipes"):
-            favs_mode_norm = "catalog"
-        recipes_mode_norm = (recipes_mode or "mine").strip().lower()
-        if recipes_mode_norm not in ("mine", "discover"):
-            recipes_mode_norm = "mine"
         with get_connection() as connection:
-            if filter == "all":
-                mode = (search_mode or "recommended").strip().lower()
-                if mode == "global":
-                    entries = _community_entries(connection, search=clean_search)
-                else:
-                    mode = "recommended"
-                    entries = _recommended_entries(connection, search=clean_search, days=60)
-            elif filter == "recipes":
-                mode = (search_mode or "recommended").strip().lower()
-                entries = _recipes_entries(
-                    connection, search=clean_search, recipes_mode=recipes_mode_norm, meal_types=recipe_meal_types
-                )
-            else:
-                mode = (search_mode or "recommended").strip().lower()
-                selected_entry_type = None
-                if filter == "food":
-                    selected_entry_type = "catalog" if food_mode_norm == "catalog" else "manual_intake"
-                elif filter == "favs":
-                    selected_entry_type = {
-                        "catalog": "catalog",
-                        "manual": "manual_intake",
-                        "recipes": "recipe",
-                    }[favs_mode_norm]
-                entries = _filtered_entries(
-                    connection,
-                    search=clean_search,
-                    filter_value=filter,
-                    entry_type=selected_entry_type,
-                )
-            # Only with the first page, after its load-more node: the user's next
-            # pages replace that node, so they stay above this section (§12.2).
-            off_nodes = []
-            user_id = get_current_user_id()
-            if (
-                page == 1
-                and clean_search
-                and user_id
-                and (filter == "all" or (filter == "food" and food_mode_norm == "catalog"))
-            ):
-                # The user's menus, after their own results (frontend §9.13): a few
-                # rows, the rest in Menus.
-                menu_items = (
-                    search_menu_items(connection, int(user_id), clean_search, None, MENU_FOOD_SEARCH_ROWS + 1)
-                    if filter == "all"
-                    else []
-                )
-                off_nodes = [
-                    *FoodMenuResults(
-                        menu_items[:MENU_FOOD_SEARCH_ROWS], clean_search, len(menu_items) > MENU_FOOD_SEARCH_ROWS
-                    ),
-                    *ExternalFoodSection(
-                        "From Ciqual",
-                        *_external_page(connection, int(user_id), PrefillSource.CIQUAL, clean_search, 1),
-                        ciqual_attribution(),
-                    ),
-                    *ExternalFoodSection(
-                        "From Open Food Facts",
-                        *_external_page(connection, int(user_id), PrefillSource.OPEN_FOOD_FACTS, clean_search, 1),
-                        off_attribution(),
-                    ),
-                ]
-
-        if not entries and not off_nodes:
-            return render_fragment(H2("No items", cls="text-gray-600"))
-
-        page_size = SEARCH_PAGE_SIZE if clean_search else LIST_PAGE_SIZE
-        start = (page - 1) * page_size
-        end = start + page_size
-        chunk = entries[start:end]
-        has_more = end < len(entries)
-
-        if filter == "all" and mode == "recommended":
-            nodes = [FoodCard(item) for item in chunk]
-            if has_more:
-                nodes.append(
-                    _search_load_more_node(
-                        clean_search,
-                        filter,
-                        mode,
-                        food_mode_norm,
-                        favs_mode_norm,
-                        recipes_mode_norm,
-                        meal_type,
-                        page + 1,
-                    )
-                )
-            return render_fragment(tuple(nodes + off_nodes))
-
-        if filter == "all" and mode == "global":
-            if page == 1:
-                nodes = list(_community_sections_content(chunk))
-            else:
-                nodes = [FoodCard(item) for item in chunk]
-            if has_more:
-                nodes.append(
-                    _search_load_more_node(
-                        clean_search,
-                        filter,
-                        mode,
-                        food_mode_norm,
-                        favs_mode_norm,
-                        recipes_mode_norm,
-                        meal_type,
-                        page + 1,
-                    )
-                )
-            return render_fragment(tuple(nodes + off_nodes))
-
-        if page == 1:
-            nodes = list(FoodSectionsContent(chunk))
-            if has_more:
-                nodes.append(
-                    _search_load_more_node(
-                        clean_search,
-                        filter,
-                        mode,
-                        food_mode_norm,
-                        favs_mode_norm,
-                        recipes_mode_norm,
-                        meal_type,
-                        page + 1,
-                    )
-                )
-            return render_fragment(tuple(nodes + off_nodes))
-
-        nodes = [FoodCard(item) for item in chunk]
-        if has_more:
-            nodes.append(
-                _search_load_more_node(
-                    clean_search,
-                    filter,
-                    mode,
-                    food_mode_norm,
-                    favs_mode_norm,
-                    recipes_mode_norm,
-                    meal_type,
-                    page + 1,
-                )
-            )
-        return render_fragment(tuple(nodes + off_nodes))
+            view = FoodView(filter, search_mode, food_mode, favs_mode, recipes_mode, meal_type)
+            return render_fragment(_food_list_content(connection, view, recipe_meal_types, search=search, page=page))
 
     @rt("/food/list/external")
     def get(

@@ -1,6 +1,3 @@
-from dataclasses import asdict
-from urllib.parse import urlencode
-
 from fasthtml.common import *
 from DayBetes_food.components.injection_zone import asset_busted
 from DayBetes_food.components.food.food_actions import FoodActionsModal
@@ -24,12 +21,14 @@ def food_main(
     plate_options: list,
     last_used_plate: int | None,
     review_count: int = 0,
+    list_content=(),
 ):
     """The Food page, opened on `view`: its pill, tabs and filters (frontend §5, §9.3).
 
     `events` are the planned meals and `plate_options` the plates of the first
     one, which the meal selector shows chosen (frontend_conventions.md §6); the
-    route reads them (code_conventions.md §1.4).
+    route reads them (code_conventions.md §1.4). `list_content` is the first page of
+    the list, so the page comes whole in one request.
     """
     selected_event_id = events[0].id if events else None
 
@@ -69,13 +68,8 @@ def food_main(
         """,
     ), Div(
         Div(
-            "Loading...",
+            *list_content,
             id="food-list",
-            # The page's own view: a fixed query here showed another tab's list on
-            # coming back. Not hx-include, which the cards inside would inherit.
-            hx_get=f"/food/list?{urlencode({**asdict(view), 'page': 1})}",
-            hx_trigger="load",
-            hx_swap="innerHTML",
             data_skip_page_loading="true",
             cls="flex flex-col items-center md:gap-3 lg:gap-3 gap-2 mt-4 transition-all duration-150 ease-out",
         ),
