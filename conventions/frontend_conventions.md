@@ -309,7 +309,7 @@ Decisión 2026-10-10 (rediseño de la interfaz, rama `feat/ui-refresh`). La web 
 - Un elemento acristalado no lleva utilidades `shadow-*`, `bg-*` ni `border-*` que pisen el cristal.
 - El fondo de color está en una capa fija (`body::before`), no en `background-attachment: fixed`, que Safari de iOS ignora. Por eso `body` es transparente y el color base va en `html`.
 - El color de fiabilidad de los macros (`macro_color`, de verde a rojo) es un dato, no decoración, y no se sustituye por los colores de la paleta.
-- Rendimiento: el desenfoque es caro. Si una lista larga va lenta en móvil, la primera medida es quitar el cristal de sus tarjetas, no de los elementos flotantes.
+- Rendimiento: el desenfoque es caro. Si una lista larga va lenta en móvil, la primera medida es quitar el cristal de sus tarjetas, no de los elementos flotantes. Aplicado el 2026-11-25: las filas de lista (`food_entry`) llevan el fondo del cristal, algo más blanco, sin `backdrop-filter`, y los botones de dentro no son `web_button`.
 
 ## 9. Estructura de las páginas
 
@@ -751,5 +751,6 @@ Decisión 2026-10-10. Animaciones pequeñas para que los cambios se perciban con
 - **La excepción se extiende al pop-up de acciones de una fila de Food** (§9.3.1; decisión 2026-10-27, pedida expresamente por el usuario). Al pulsar `Add to recipe`, `Make a copy` o "‹", la vista actual se desvanece en 150 ms mientras se pide la siguiente. La vista nueva no se muestra, y la tarjeta conserva su altura, hasta que termina el desvanecimiento. Después la tarjeta pasa a la altura nueva en 220 ms y la vista nueva entra subiendo (`static/js/food_actions.js`). Con movimiento reducido no hay animación ni espera.
 - **La excepción se extiende al bloque de preparación por confirmar** (§7.1 y §9.4; decisión del usuario del 2026-11-24, que pidió que desaparezca con una animación fluida). Al pulsar el tick, el bloque se desvanece y su altura baja a 0 en 220 ms. En el carrito, la tarjeta se repinta cuando acaban a la vez la animación y la respuesta, así que el plegado no se ve como un salto ni como el parpadeo de un repintado. Con movimiento reducido no hay animación ni espera.
 - Las utilidades de movimiento de los pop-ups (desvanecer, entrar subiendo, animar la altura de la tarjeta) están una sola vez en `static/js/modal.js` (`window.dbModalMotion`) y las usan el rescate y el menú de acciones. Un pop-up nuevo que se anime las reutiliza en vez de copiarlas.
+- **Respuesta al toque** (2026-11-25). Una fila pulsable (`food_entry` con `cursor-pointer`) se hunde y se atenúa al tocarla, salvo que lo tocado sea un control de dentro. El aviso `Loading...` a pantalla completa solo aparece si la respuesta tarda más de 400 ms (`page_loading.js`), y no desenfoca la página.
 - Los botones (`web_button`) se hunden un poco al pulsarlos (`active:scale-95`). En móvil se quita el resaltado azul del toque.
 - Los repintados parciales (una tarjeta del carrito tras cambiar un valor) **no** se animan: pasan a cada cambio y un parpadeo ahí molesta más de lo que ayuda.

@@ -18,13 +18,13 @@ def PageLoadingOverlay():
                 style="border:2px solid #d1d5db; border-top-color:#4b5563; animation: dbspin .8s linear infinite;",
             ),
             P("Loading...", cls="text-sm text-gray-700"),
-            cls="web_container px-4 py-3 rounded-2xl flex items-center gap-3"
+            cls="bg-surface border border-line shadow-lg px-4 py-3 rounded-2xl flex items-center gap-3"
         ),
         id="page_loading_overlay",
         cls="""
             fixed inset-0 z-40
             flex items-center justify-center
-            bg-page/35 backdrop-blur-[1px]
+            bg-page/35
             pointer-events-none opacity-0 invisible
             transition-opacity duration-200
         """

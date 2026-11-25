@@ -716,11 +716,10 @@ def FavoriteButton(entry_type: FoodEntryType, entry_id: int, favorite: bool):
         aria_label=label,
         title=label,
         cls="""
-            web_button p-2
-            bg-transparent border-transparent shadow-none
-            w-9 h-9
+            p-2 w-9 h-9 rounded-lg
+            bg-transparent hover:bg-control
             flex items-center justify-center
-            hover:bg-control
+            cursor-pointer active:scale-95 transition-transform duration-150
         """,
         hx_post=f"/food/favorite/{entry_type.value}/{entry_id}",
         hx_vals=json.dumps({"favorite": "false" if favorite else "true"}),

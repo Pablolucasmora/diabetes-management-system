@@ -25,6 +25,10 @@
 }
 
 @layer base {
+    /* A tap is never held back waiting for a double tap. */
+    a, button, label, summary, input, select, .food_entry {
+        touch-action: manipulation;
+    }
     /* Soft colour wash behind the glass surfaces (frontend_conventions.md §8).
        A fixed layer instead of background-attachment: fixed, which Safari on
        iOS ignores. */
@@ -236,14 +240,22 @@
     .web_section_label {
         @apply text-[11px] uppercase tracking-wide font-semibold text-muted;
     }
+    /* A row of a list: the glass without its blur, which phones pay once per row
+       while scrolling (frontend_conventions.md §8). A bit whiter to make up for it. */
     .food_entry {
         @apply border border-line-soft
         md:w-md lg:w-md
         rounded-2xl
         w-xs
-        transition-all
+        transition-[scale,opacity]
         px-4 py-3
         hover:scale-[101%]
+        ;
+        background:
+            linear-gradient(135deg, rgb(255 255 255 / 0.6) 0%, rgb(255 255 255 / 0) 38%, rgb(255 255 255 / 0) 70%, rgb(255 255 255 / 0.28) 100%),
+            rgb(255 255 255 / 0.5);
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
     }
     /* A container of the fridge as a glass tupper (frontend_conventions.md
        §9.8): the glass card is the body; on top, a lid with its seal and a
@@ -498,6 +510,13 @@
        (static/js/food_actions.js). */
     .food_entry[data-food-pressed] {
         scale: 0.97;
+    }
+
+    /* A row answers the finger at once, unless what is pressed is a button in it. */
+    .food_entry.cursor-pointer:active:not(:has(button:active, a:active, input:active, select:active)) {
+        scale: 0.98;
+        opacity: 0.85;
+        transition-duration: 60ms;
     }
 
     /* Food actions pop-up (static/js/food_actions.js): a new view rises in. */

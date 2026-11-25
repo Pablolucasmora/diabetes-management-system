@@ -7,17 +7,17 @@ presentation artifacts, not domain concepts.
 from pathlib import Path
 from DayBetes_food.domain.constants import InjectionZone
 
-BASE_INJECTION_ZONE_IMAGE = "/images/content/injection_zones/injection_zones.svg"
+BASE_INJECTION_ZONE_IMAGE = "/images/content/injection_zones/injection_zones.webp"
 
 # Enum → presentation mappings (typed dictionaries, code_conventions.md §3.2)
 INJECTION_ZONE_IMAGE_BY_ZONE: dict[InjectionZone, str] = {
-    InjectionZone.RIGHT_ARM: "/images/content/injection_zones/injection_zones_right_arm.svg",
-    InjectionZone.LEFT_ARM: "/images/content/injection_zones/injection_zones_left_arm.svg",
-    InjectionZone.RIGHT_THIGH: "/images/content/injection_zones/injection_zones_right_thigh.svg",
-    InjectionZone.LEFT_THIGH: "/images/content/injection_zones/injection_zones_left_thigh.svg",
-    InjectionZone.ABDOMEN: "/images/content/injection_zones/injection_zones_abdomen.svg",
-    InjectionZone.RIGHT_GLUTEUS: "/images/content/injection_zones/injection_zones_right_gluteus.svg",
-    InjectionZone.LEFT_GLUTEUS: "/images/content/injection_zones/injection_zones_left_gluteus.svg",
+    InjectionZone.RIGHT_ARM: "/images/content/injection_zones/injection_zones_right_arm.webp",
+    InjectionZone.LEFT_ARM: "/images/content/injection_zones/injection_zones_left_arm.webp",
+    InjectionZone.RIGHT_THIGH: "/images/content/injection_zones/injection_zones_right_thigh.webp",
+    InjectionZone.LEFT_THIGH: "/images/content/injection_zones/injection_zones_left_thigh.webp",
+    InjectionZone.ABDOMEN: "/images/content/injection_zones/injection_zones_abdomen.webp",
+    InjectionZone.RIGHT_GLUTEUS: "/images/content/injection_zones/injection_zones_right_gluteus.webp",
+    InjectionZone.LEFT_GLUTEUS: "/images/content/injection_zones/injection_zones_left_gluteus.webp",
 }
 
 INJECTION_ZONE_LABEL_BY_ZONE: dict[InjectionZone, str] = {

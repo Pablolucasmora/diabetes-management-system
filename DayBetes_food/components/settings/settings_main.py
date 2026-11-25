@@ -404,6 +404,8 @@ def _injection_edit_modal(injection, open_pens, pens_by_id):
                 Img(
                     src=image,
                     alt="Injection zones map",
+                    # Not downloaded until its pop-up opens.
+                    loading="lazy",
                     cls="w-full max-h-[38vh] md:max-h-[46vh] object-contain rounded-2xl border border-gray-200 bg-white",
                     data_settings_injection_image="true",
                 ),

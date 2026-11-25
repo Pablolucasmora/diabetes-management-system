@@ -150,7 +150,7 @@ def _open_injection_modal_js(modal_id: str) -> str:
         "const img=m.querySelector('[data-injection-image]');"
         "const hidden=m.querySelector('[data-injection-zone-input]');"
         "if(img){"
-        "const base=img.getAttribute('data-base-img')||'/images/content/injection_zones/injection_zones.svg';"
+        "const base=img.getAttribute('data-base-img')||'/images/content/injection_zones/injection_zones.webp';"
         "const zone=hidden&&hidden.value?hidden.value:'';"
         "const zoneBtn=zone?m.querySelector(\"[data-zone='\"+zone+\"']\"):null;"
         "const target=(zoneBtn&&zoneBtn.getAttribute('data-zone-img'))||base;"
@@ -1425,6 +1425,8 @@ def InjectionZoneModal(event):
             Img(
                 src=image,
                 alt="Injection zones map",
+                # Not downloaded until its pop-up opens.
+                loading="lazy",
                 cls="w-full max-h-[38vh] md:max-h-[46vh] object-contain rounded-2xl border border-gray-200 bg-white",
                 data_injection_image="true",
                 data_base_img=base_image,
