@@ -1247,7 +1247,7 @@ La decisión entre llamar directamente a CRUD o delegar en un servicio sigue la 
 
 ### 9.2 Métodos y rutas
 
-- `GET` solo realiza lecturas.
+- `GET` solo realiza lecturas. Única excepción (decisión del usuario del 2026-11-25): `assistant_turn.seen_at` (§11.2.11), que se escribe al mostrar el resultado de un turno. No es un dato del estudio, repetirlo deja la misma fila y solo afecta al dueño. Por eso las rutas de DiaBot que lo escriben no se precargan.
 - `POST` se utiliza para creaciones y acciones de negocio mutadoras.
 - `PUT` representa sustitución completa únicamente si el endpoint lo documenta.
 - `PATCH` representa actualización parcial únicamente si el endpoint lo documenta.
@@ -1800,7 +1800,7 @@ Decisión del usuario del 2026-11-21 (§8.12, **Turno en segundo plano**). Un me
 - **No es el historial.** La conversación sigue siendo `assistant_message`; esta tabla solo dice en qué está cada mensaje. `user_text` es una copia para la pantalla de espera.
 - **Propietario.** `users_id`, en el SQL de cada lectura y escritura. Es privada.
 - **Uno a la vez por usuario**, con el índice único parcial `uq_assistant_turn_users_id_pending` sobre los estados pendientes; otro envío mientras tanto es `409`.
-- **Visto.** `seen_at` se escribe cuando la página muestra el resultado. Un resultado sin ver es el que reabre su conversación al volver a la página.
+- **Visto.** `seen_at` se escribe cuando la página muestra el resultado, en el propio `GET` (excepción de §9.2). Un resultado sin ver es el que reabre su conversación al volver a la página.
 - **Reinicio.** Al arrancar, antes de servir, los turnos pendientes pasan a `failed` y no se repiten (§8.12).
 - **Timestamps.** `created_at`, `started_at` y `finished_at`; no tiene `updated_at` porque cada cambio tiene su propia columna.
 - **Retención.** Sin límite durante el TFG, como las conversaciones.
