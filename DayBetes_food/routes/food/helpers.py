@@ -89,7 +89,6 @@ from DayBetes_food.domain.catalog import (
     parse_catalog_name,
     parse_cooking_factor,
 )
-from DayBetes_food.domain.food_entry import EDIT_RETURN_ASSISTANT_PREFIX, EDIT_RETURN_REVIEW, edit_return_path, parse_edit_return
 from DayBetes_food.domain.food_entry import FoodEntrySummary
 from DayBetes_food.domain.food import (
     INITIAL_AMOUNT_WITHOUT_SERVING_G,
@@ -115,7 +114,6 @@ from DayBetes_food.domain.portion_detail import (
     PortionDetailCreate,
     default_final_state,
     one_click_portion_defaults,
-    portion_defaults,
     ripeness_applies,
 )
 from DayBetes_food.components.data_sources import ciqual_attribution, off_attribution

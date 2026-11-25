@@ -141,7 +141,7 @@ def make_quick_add(connection, user_id: int, entry_type: FoodEntryType, entry_id
     """
     with connection.transaction():
         item = _provisional(connection, user_id, entry_type, entry_id)
-        portions = list_entry_portions(connection, entry_type, entry_id)
+        portions = list_entry_portions(connection, user_id, entry_type, entry_id)
         if any(portion["intake_event_id"] is None for portion in portions):
             raise ConflictError("It is in a recipe or a tupper, where a quick add cannot be. Review it instead.")
         if any(portion["is_cooked_weight"] for portion in portions):
@@ -171,7 +171,7 @@ def make_quick_add(connection, user_id: int, entry_type: FoodEntryType, entry_id
                 ),
                 commit=False,
             )
-            point_portion_at_dish(connection, portion["id"], entry_type, quick_add_id)
+            point_portion_at_dish(connection, user_id, portion["id"], entry_type, quick_add_id)
         if not delete_provisional_entry(connection, user_id, entry_type, entry_id):
             raise ConflictError("Only a food to review can become a quick add.")
     return len(portions)

@@ -11,7 +11,8 @@ from DayBetes_food.components.settings.settings_main import (
     meal_type_schedule_row,
 )
 from DayBetes_food.components.food.tags import system_tag_for_label
-from DayBetes_food.components.guide import GuideModalBody, GuidePage, guide_topics_for
+from DayBetes_food.components.guide import GuideModalBody, GuidePage
+from DayBetes_food.domain.guide import guide_topics_for
 from DayBetes_food.components.settings.tags_settings import tag_settings_row, tags_settings_list, tags_settings_page
 from DayBetes_food.components.ui import render_page, render_fragment
 from DayBetes_food.database.connection import get_connection

@@ -1145,10 +1145,6 @@ def preparation_choices(turns: list["TurnView"]) -> dict[int, dict[str, tuple[st
     }
 
 
-# Days of confirmed meals read for the usual preparation of a food (§8.12).
-USUAL_PREPARATION_DAYS = 90
-
-
 def with_usual_first(options: tuple[str, ...], usual: str | None) -> tuple[str, ...]:
     """The values offered for one field with the user's usual one for that food
     first (§8.12, "Preparación con un toque"): DiaBot ranks by what the chat says,

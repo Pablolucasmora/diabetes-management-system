@@ -75,7 +75,6 @@ from DayBetes_food.domain.menu import (
     parse_menu_place,
 )
 from DayBetes_food.domain.assistant import (
-    USUAL_PREPARATION_DAYS,
     ASSISTANT_SEARCH_RESULTS_MAX,
     MANUAL_DRAFT_MACROS_SOURCES,
     MANUAL_INTAKE_DRAFT_SOURCE,
@@ -165,6 +164,7 @@ from DayBetes_food.domain.manual_intake import (
 )
 from DayBetes_food.domain.nutrition import nutrients_from_totals
 from DayBetes_food.domain.portion_detail import (
+    USUAL_PREPARATION_DAYS,
     PortionDetailCreate,
     PortionDetailUpdate,
     check_cooked_weight,

@@ -113,7 +113,7 @@ from DayBetes_food.database.queries.user_favorites import (
     set_user_favorite,
 )
 from DayBetes_food.database.queries.assistant import list_estimate_rows
-from DayBetes_food.database.queries.assistant import get_calibration_portions
+from DayBetes_food.database.queries.assistant import list_calibration_portions
 from DayBetes_food.database.queries.menu import (
     save_menu_items,
     search_menu_items,
@@ -132,7 +132,7 @@ from DayBetes_food.database.queries.entries import (
     get_time_weighted_food_usage,
     get_usual_amounts,
     get_usual_preparation,
-    get_preparation_counts,
+    list_preparation_counts,
     point_portion_at_dish,
     list_entry_portions,
     list_needs_review,
@@ -335,7 +335,7 @@ __all__ = [
     "get_consumed_food_usage_rankings",
     "get_usual_amounts",
     "get_usual_preparation",
-    "get_preparation_counts",
+    "list_preparation_counts",
     "point_portion_at_dish",
     "list_entry_portions",
     "list_needs_review",
@@ -441,7 +441,7 @@ __all__ = [
     "delete_menu_item",
     "delete_menu_place",
     "list_estimate_rows",
-    "get_calibration_portions",
+    "list_calibration_portions",
     "get_time_weighted_food_usage",
     "list_menu_dishes",
 ]
