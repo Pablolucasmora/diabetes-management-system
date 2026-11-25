@@ -171,7 +171,7 @@ def FloatingIsland():
             """ + (" island_glass" if ASSISTANT_ENABLED else " web_glass overflow-hidden")
         ),
         cls="""
-            fixed bottom-10 left-1/2 -translate-x-1/2
+            fixed bottom-[max(2.5rem,calc(env(safe-area-inset-bottom)+0.5rem))] left-1/2 -translate-x-1/2
             z-50
             island_bump
         """,
@@ -191,7 +191,7 @@ def IslandLogo():
             web_glass
             rounded-4xl
             px-10 py-3 md:mt-2 lg:mt-2 mt-0 m-6 z-50
-            fixed top-3
+            fixed top-[calc(env(safe-area-inset-top)+0.75rem)]
         """
     )
 

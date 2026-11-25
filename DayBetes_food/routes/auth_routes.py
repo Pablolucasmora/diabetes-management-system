@@ -4,6 +4,7 @@ import logging
 from fasthtml.common import *
 from html import escape
 from urllib.parse import quote_plus
+from DayBetes_food.components.app_head import APP_HEAD_HTML
 from DayBetes_food.database.queries import update_password_hash
 
 logger = logging.getLogger(__name__)
@@ -98,7 +99,7 @@ def _form_shell(title: str, action: str, csrf_token: str, fields_html: str, subm
     <html lang="en" style="background-color: var(--color-page);">
       <head>
         <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        {APP_HEAD_HTML}
         <title>{safe_title}</title>
         <link rel="icon" type="image/svg+xml" href="/images/ui/favicon.svg?v=2">
         <link rel="stylesheet" href="{asset_busted("/css/output.css")}">
@@ -106,7 +107,7 @@ def _form_shell(title: str, action: str, csrf_token: str, fields_html: str, subm
         <script src="{asset_busted("/js/timezone.js")}" defer></script>
       </head>
       <body>
-        <div class="min-h-screen flex flex-col items-center justify-center gap-4 px-4">
+        <div class="min-h-dvh flex flex-col items-center justify-center gap-4 px-4">
           <div class="flex flex-col items-center gap-1 text-center">
             <img src="{asset_busted("/images/ui/Logo_DayBetes.webp")}" alt="DayBetes logo" class="w-52 mb-4">
             <h1 class="text-2xl font-bold text-gray-800">{safe_title}</h1>

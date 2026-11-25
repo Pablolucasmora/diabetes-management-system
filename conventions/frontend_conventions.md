@@ -754,3 +754,14 @@ Decisión 2026-10-10. Animaciones pequeñas para que los cambios se perciban con
 - **Respuesta al toque** (2026-11-25). Una fila pulsable (`food_entry` con `cursor-pointer`) se hunde y se atenúa al tocarla, salvo que lo tocado sea un control de dentro. El aviso `Loading...` a pantalla completa solo aparece si la respuesta tarda más de 400 ms (`page_loading.js`), y no desenfoca la página.
 - Los botones (`web_button`) se hunden un poco al pulsarlos (`active:scale-95`). En móvil se quita el resaltado azul del toque.
 - Los repintados parciales (una tarjeta del carrito tras cambiar un valor) **no** se animan: pasan a cada cambio y un parpadeo ahí molesta más de lo que ayuda.
+
+## 11. App instalable
+
+Decisión del usuario del 2026-11-25. La web se puede instalar en el móvil y se abre a pantalla completa, sin la barra del navegador.
+
+- **Un solo sitio.** El manifest (`/manifest.webmanifest`, ruta pública porque el navegador lo pide sin cookies) y las etiquetas del `<head>` salen de `components/app_head.py`. Las dos plantillas de página (`components/ui.py` y la de acceso, `routes/auth_routes.py`) usan `APP_HEAD_HTML`; una plantilla nueva también.
+- **Iconos** `static/images/ui/app_icon_{180,192,512}.png`: la gota del favicon sobre el color `page`, con margen para que Android pueda recortarlo en círculo. Si cambia el logo, se regeneran los tres.
+- **Color.** `theme_color` y `background_color` son el token `page`, escrito en hexadecimal porque un manifest no puede leer el CSS (excepción a §8).
+- **Márgenes seguros.** La página ocupa la pantalla entera (`viewport-fit=cover`), así que un elemento fijo junto a un borde suma el `env(safe-area-inset-*)` de ese borde. La isla conserva sus 40 px mientras sean suficientes.
+- **Instalada**, tirar hacia abajo no recarga la página.
+- **Sin service worker.** Nada se guarda para usarse sin conexión: las páginas llevan datos de salud. Añadir uno exige acordar antes qué puede guardar y cómo se borra al cerrar la sesión.

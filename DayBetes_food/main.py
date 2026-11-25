@@ -12,6 +12,7 @@ from starlette.responses import JSONResponse
 from DayBetes_food.auth.context import reset_current_user_id, set_current_user_id
 from DayBetes_food.auth.security import generate_token
 from DayBetes_food.auth.service import get_session_with_user, is_csrf_valid, refresh_session
+from DayBetes_food.components.app_head import MANIFEST_PATH
 from DayBetes_food.config import (
     ASSISTANT_ENABLED,
     CSRF_COOKIE_NAME,
@@ -160,7 +161,7 @@ ASSET_PREFIXES = ("/css/", "/js/", "/images/")
 # Prefixes end in "/" so that a future route such as /authors or /images-admin
 # is not public by accident; the exact paths are listed apart.
 PUBLIC_PATH_PREFIXES = ("/auth/", "/css/", "/js/", "/images/")
-PUBLIC_EXACT_PATHS = {"/", "/auth", "/favicon.ico", "/robots.txt"}
+PUBLIC_EXACT_PATHS = {"/", "/auth", "/favicon.ico", "/robots.txt", MANIFEST_PATH}
 # Everything else needs the CSRF token, also a method nobody has thought of (§5.2).
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 # Forms sent before there is a session, with the page that shows each one. There is no
@@ -200,13 +201,14 @@ def _read_session(session_cookie: str):
 
 
 async def auth_security_middleware(request: Request, call_next):
-    # Static assets are cacheable (Cache-Control: public, see
+    # Static assets and the manifest are cacheable (Cache-Control: public, see
     # add_response_headers) and may be served from a CDN/edge. If this path
     # wrote a CSRF cookie here, that Set-Cookie header could be cached and
     # replayed to different visitors, poisoning their CSRF cookie with a token
     # that does not belong to their session. A GET for a public asset has
     # nothing to authenticate or CSRF-validate.
-    if request.method in SAFE_METHODS and request.url.path.startswith(ASSET_PREFIXES):
+    path = request.url.path
+    if request.method in SAFE_METHODS and (path.startswith(ASSET_PREFIXES) or path == MANIFEST_PATH):
         return await call_next(request)
 
     csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME) or generate_token()

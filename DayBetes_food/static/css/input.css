@@ -25,6 +25,16 @@
 }
 
 @layer base {
+    /* The notch on the side of a phone held sideways (frontend_conventions.md §11). */
+    body {
+        padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
+    }
+    /* Installed, the page is not pulled to refresh. */
+    @media (display-mode: standalone) {
+        html {
+            overscroll-behavior-y: none;
+        }
+    }
     /* A tap is never held back waiting for a double tap. */
     a, button, label, summary, input, select, .food_entry {
         touch-action: manipulation;
