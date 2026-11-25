@@ -13,6 +13,7 @@ sends it again (`fail_interrupted_turns`).
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from zoneinfo import ZoneInfo
 
 from DayBetes_food.database.connection import get_connection
 from DayBetes_food.database.queries import (
@@ -25,6 +26,7 @@ from DayBetes_food.database.queries import (
 from DayBetes_food.domain.assistant import AssistantTurnRequest
 from DayBetes_food.errors import ConflictError, ExternalServiceError, NotFoundError
 from DayBetes_food.services.assistant import send_assistant_message
+from DayBetes_food.time_utils import current_timezone, reset_request_timezone, set_request_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +61,10 @@ def submit_assistant_turn(
     turn_id = create_assistant_turn(
         connection, user_id, conversation_id, request.text or "", len(request.photos), commit=True
     )
-    _executor.submit(_run_turn, turn_id, user_id, conversation_id, event_id, without_meal, request)
+    # A thread does not inherit the zone of the request that sent the message.
+    _executor.submit(
+        _run_turn, turn_id, user_id, conversation_id, event_id, without_meal, request, current_timezone()
+    )
     return turn_id
 
 
@@ -70,8 +75,26 @@ def _run_turn(
     event_id: int | None,
     without_meal: bool,
     request: AssistantTurnRequest,
+    zone: ZoneInfo,
 ) -> None:
-    """The thread: the same answer as before, its outcome written on the turn.
+    """The thread, in the zone of the request that sent the message (measurement
+    §9.1): local times and `timezone_at_event` are the ones of the user's browser."""
+    token = set_request_timezone(zone)
+    try:
+        _answer_turn(turn_id, user_id, conversation_id, event_id, without_meal, request)
+    finally:
+        reset_request_timezone(token)
+
+
+def _answer_turn(
+    turn_id: int,
+    user_id: int,
+    conversation_id: int | None,
+    event_id: int | None,
+    without_meal: bool,
+    request: AssistantTurnRequest,
+) -> None:
+    """The same answer as before, its outcome written on the turn.
     Nothing raises out of here: an executor would keep the exception unseen."""
     try:
         with get_connection() as connection:

@@ -1,12 +1,15 @@
 """Messages answered in the background (code_conventions.md §8.12)."""
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from fasthtml.common import to_xml
 
 from DayBetes_food.components.assistant.assistant_page import FailedTurnBlock, PendingTurnBlock
 from DayBetes_food.domain.assistant import AssistantTurnRead
 from DayBetes_food.domain.constants import AssistantTurnStatus
+from DayBetes_food.services import assistant_turns
+from DayBetes_food.time_utils import DEFAULT_TIMEZONE, current_timezone
 
 
 def _turn(status, **fields):
@@ -49,3 +52,11 @@ def test_a_failed_turn_gives_its_text_back_and_says_why():
     assert 'data-assistant-failed-text="two eggs"' in html
     assert "Send it again." in html
     assert "hx-get" not in html
+
+
+def test_the_thread_answers_in_the_zone_of_the_request(monkeypatch):
+    seen = []
+    monkeypatch.setattr(assistant_turns, "_answer_turn", lambda *args: seen.append(current_timezone().key))
+    assistant_turns._run_turn(9, 1, None, None, False, None, ZoneInfo("America/New_York"))
+    assert seen == ["America/New_York"]
+    assert current_timezone() == DEFAULT_TIMEZONE
