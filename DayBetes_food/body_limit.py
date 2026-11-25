@@ -13,6 +13,7 @@ from starlette.requests import Request
 from DayBetes_food.domain.assistant import ASSISTANT_PHOTO_MAX_BYTES, ASSISTANT_PHOTOS_MAX
 from DayBetes_food.errors import MalformedRequestError
 from DayBetes_food.http_errors import app_error_response
+from DayBetes_food.security_headers import add_security_headers
 
 # Forms of the app: text fields only, far under this.
 DEFAULT_MAX_BODY_BYTES = 1_000_000
@@ -75,5 +76,6 @@ class BodySizeLimitMiddleware:
 
 
 async def _reject(scope, receive, send) -> None:
-    response = app_error_response(Request(scope), MalformedRequestError, TOO_LARGE_MESSAGE)
+    # Outside the middleware that adds the headers.
+    response = add_security_headers(app_error_response(Request(scope), MalformedRequestError, TOO_LARGE_MESSAGE))
     await response(scope, receive, send)

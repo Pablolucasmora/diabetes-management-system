@@ -31,6 +31,7 @@ from DayBetes_food.errors import (
     ValidationError,
 )
 from DayBetes_food.body_limit import BodySizeLimitMiddleware
+from DayBetes_food.security_headers import add_security_headers
 from DayBetes_food.time_utils import (
     TIMEZONE_COOKIE_NAME,
     parse_timezone,
@@ -144,7 +145,8 @@ async def _handle_unexpected_error(request: Request, error: Exception):
         exc_info=(type(error), error, error.__traceback__),
         extra={"error_code": "infrastructure_error", "request_id": request_id},
     )
-    return _error_response(request, InfrastructureError(), request_id)
+    # Starlette answers this one outside every middleware.
+    return add_security_headers(_error_response(request, InfrastructureError(), request_id))
 
 
 app.add_exception_handler(AppError, _handle_app_error)
@@ -158,27 +160,6 @@ ASSET_PREFIXES = ("/css/", "/js/", "/images/")
 # is not public by accident; the exact paths are listed apart.
 PUBLIC_PATH_PREFIXES = ("/auth/", "/css/", "/js/", "/images/")
 PUBLIC_EXACT_PATHS = {"/", "/auth", "/favicon.ico", "/robots.txt"}
-# Second barrier against injected markup (code_conventions.md §5.5). Scripts
-# still allow inline code and eval: the pages use inline handlers and hx-on,
-# which a nonce-based policy would block. The hosts are the CDNs the pages
-# load from (components/ui.py, tags_settings.py, static/js/scanner.js).
-_SCRIPT_HOSTS = "https://cdn.jsdelivr.net https://fastly.jsdelivr.net https://unpkg.com https://esm.sh"
-CONTENT_SECURITY_POLICY = "; ".join(
-    (
-        "default-src 'self'",
-        f"script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' {_SCRIPT_HOSTS}",
-        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
-        "img-src 'self' data: blob:",
-        "font-src 'self' data:",
-        f"connect-src 'self' {_SCRIPT_HOSTS}",
-        "worker-src 'self' blob:",
-        "media-src 'self' blob:",
-        "object-src 'none'",
-        "base-uri 'self'",
-        "form-action 'self'",
-        "frame-ancestors 'none'",
-    )
-)
 # Everything else needs the CSRF token, also a method nobody has thought of (§5.2).
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 # Forms sent before there is a session, with the page that shows each one. There is no
@@ -208,7 +189,7 @@ def _response_sets_cookie(response, cookie_name: str) -> bool:
 
 async def auth_security_middleware(request: Request, call_next):
     # Static assets are cacheable (Cache-Control: public, see
-    # add_asset_cache_headers) and may be served from a CDN/edge. If this path
+    # add_response_headers) and may be served from a CDN/edge. If this path
     # wrote a CSRF cookie here, that Set-Cookie header could be cached and
     # replayed to different visitors, poisoning their CSRF cookie with a token
     # that does not belong to their session. A GET for a public asset has
@@ -297,12 +278,6 @@ async def auth_security_middleware(request: Request, call_next):
         reset_request_timezone(tz_token)
         reset_current_user_id(ctx_token)
 
-    response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Frame-Options", "DENY")
-    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-    response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
-    response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
-
     # If the route itself (e.g. login/register) already set the CSRF cookie
     # bound to the session it just created, do not overwrite it with the
     # "orphan" token generated at the start of this function: doing so left the
@@ -319,8 +294,10 @@ async def auth_security_middleware(request: Request, call_next):
         )
     return response
 
-async def add_asset_cache_headers(request, call_next):
-    response = await call_next(request)
+async def add_response_headers(request, call_next):
+    """Security headers for every response, the ones the auth middleware answers by
+    itself included (§5.5), and the cache of the assets."""
+    response = add_security_headers(await call_next(request))
     path = request.url.path
     if path.startswith(ASSET_PREFIXES):
         response.headers.setdefault("Cache-Control", STATIC_CACHE_CONTROL)
@@ -331,7 +308,7 @@ async def add_asset_cache_headers(request, call_next):
 # wraps the previous ones, so the order of these lines sets the execution
 # order: the body limit is the outer layer and GZip the inner one.
 app.add_middleware(BaseHTTPMiddleware, dispatch=auth_security_middleware)
-app.add_middleware(BaseHTTPMiddleware, dispatch=add_asset_cache_headers)
+app.add_middleware(BaseHTTPMiddleware, dispatch=add_response_headers)
 # Outermost: a too large body is stopped before anything reads it (H-31).
 app.add_middleware(BodySizeLimitMiddleware)
 
