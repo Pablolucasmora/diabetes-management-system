@@ -9,6 +9,7 @@ from DayBetes_food.database.queries import update_password_hash
 
 logger = logging.getLogger(__name__)
 
+from DayBetes_food.auth.cookies import clear_auth_cookies, set_auth_cookies
 from DayBetes_food.auth.security import (
     generate_token,
     hash_password,
@@ -38,11 +39,8 @@ from DayBetes_food.auth.service import (
     rate_limit_login_allowed,
 )
 from DayBetes_food.config import (
-    CSRF_COOKIE_NAME,
     REGISTRATION_ENABLED,
     SESSION_COOKIE_NAME,
-    SESSION_COOKIE_SAMESITE,
-    SESSION_COOKIE_SECURE,
     TRUST_CF_CONNECTING_IP,
 )
 from DayBetes_food.database.connection import get_connection
@@ -105,6 +103,7 @@ def _form_shell(title: str, action: str, csrf_token: str, fields_html: str, subm
         <link rel="stylesheet" href="{asset_busted("/css/output.css")}">
         <script src="{asset_busted("/js/browser_tweaks.js")}" defer></script>
         <script src="{asset_busted("/js/timezone.js")}" defer></script>
+        <script src="{asset_busted("/js/last_page.js")}" defer></script>
       </head>
       <body>
         <div class="min-h-dvh flex flex-col items-center justify-center gap-4 px-4">
@@ -180,30 +179,6 @@ def _login_form(request: Request, error: str = "", status_code: int = 200):
         error=error,
         status_code=status_code,
     )
-
-
-def _set_auth_cookies(response, session_token: str, csrf_token: str):
-    response.set_cookie(
-        SESSION_COOKIE_NAME,
-        session_token,
-        httponly=True,
-        secure=SESSION_COOKIE_SECURE,
-        samesite=SESSION_COOKIE_SAMESITE,
-        path="/",
-    )
-    response.set_cookie(
-        CSRF_COOKIE_NAME,
-        csrf_token,
-        httponly=False,
-        secure=SESSION_COOKIE_SECURE,
-        samesite=SESSION_COOKIE_SAMESITE,
-        path="/",
-    )
-
-
-def _clear_auth_cookies(response):
-    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
-    response.delete_cookie(CSRF_COOKIE_NAME, path="/")
 
 
 def _setup_registration_routes(rt):
@@ -351,7 +326,7 @@ def setup_auth_routes(rt):
                 return _redirect_with_error("/auth/login", "Could not log in")
 
         response = RedirectResponse(url="/menu", status_code=303)
-        _set_auth_cookies(response, session_token=session_token, csrf_token=csrf_token)
+        set_auth_cookies(response, session_token=session_token, csrf_token=csrf_token)
         return response
 
     @rt("/auth/logout")
@@ -362,5 +337,5 @@ def setup_auth_routes(rt):
                 revoke_session(connection, session_token)
 
         response = RedirectResponse(url="/auth/login", status_code=303)
-        _clear_auth_cookies(response)
+        clear_auth_cookies(response)
         return response

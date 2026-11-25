@@ -856,6 +856,8 @@ Los secretos incluyen contraseñas, peppers, tokens, cookies, claves API, claves
 - `.env` se reserva para desarrollo local y permanece fuera del control de versiones.
 - Producción utiliza el mecanismo de secretos del entorno de despliegue.
 
+La cookie de sesión y la del token CSRF duran lo mismo que la sesión (`SESSION_TTL_SECONDS`) y se renuevan con ella (decisión del usuario del 2026-11-25), para que cerrar el navegador o la app instalada no obligue a entrar otra vez. Las escribe solo `auth/cookies.py`, siempre las dos juntas: una sesión con otro token CSRF respondería `403` a todo.
+
 La configuración de sesión centraliza nombre de cookie, `Secure`, `HttpOnly`, `SameSite`, `Path`, duración, refresco y revocación. Las cookies no contienen datos médicos ni datos de usuario en texto plano.
 
 ### 8.3 Logging
