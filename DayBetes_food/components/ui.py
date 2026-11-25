@@ -122,6 +122,7 @@ def _base_html_shell(content_html: str) -> str:
     <script src="{asset_busted("/js/guide.js")}" defer></script>
     <script src="{asset_busted("/js/cart_eaten.js")}" defer></script>
     <script src="{asset_busted("/js/assistant.js")}" defer></script>
+    <script src="{asset_busted("/js/last_page.js")}" defer></script>
     <style>
       html {{
         background-color: var(--color-page);

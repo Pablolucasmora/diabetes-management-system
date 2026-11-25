@@ -10,6 +10,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import JSONResponse
 
 from DayBetes_food.auth.context import reset_current_user_id, set_current_user_id
+from DayBetes_food.auth.cookies import set_auth_cookies
 from DayBetes_food.auth.security import generate_token
 from DayBetes_food.auth.service import get_session_with_user, is_csrf_valid, refresh_session
 from DayBetes_food.components.app_head import MANIFEST_PATH
@@ -190,14 +191,16 @@ def _response_sets_cookie(response, cookie_name: str) -> bool:
 
 
 def _read_session(session_cookie: str):
-    """The session and its user, refreshed when due; None without a valid one."""
+    """`(session, refreshed)`: the session and its user, or None without a valid one,
+    and whether it was due and has just been refreshed."""
+    refreshed = False
     with get_connection() as connection:
         session_row = get_session_with_user(connection, session_cookie)
         if session_row:
             last_seen = session_row.last_seen_at
             if last_seen and (datetime.now(timezone.utc) - last_seen).total_seconds() >= SESSION_REFRESH_SECONDS:
-                refresh_session(connection, session_row.id)
-        return session_row
+                refreshed = refresh_session(connection, session_row.id)
+        return session_row, refreshed
 
 
 async def auth_security_middleware(request: Request, call_next):
@@ -216,11 +219,11 @@ async def auth_security_middleware(request: Request, call_next):
     request.state.user = None
 
     session_cookie = request.cookies.get(SESSION_COOKIE_NAME, "")
-    session_row = None
+    session_row, session_refreshed = None, False
     if session_cookie:
         # In a thread: the driver is synchronous, and waiting for the database
         # here would stop every other request of the process.
-        session_row = await run_in_threadpool(_read_session, session_cookie)
+        session_row, session_refreshed = await run_in_threadpool(_read_session, session_cookie)
         if session_row:
             request.state.user = {
                 "id": session_row.user_id,
@@ -289,6 +292,16 @@ async def auth_security_middleware(request: Request, call_next):
     finally:
         reset_request_timezone(tz_token)
         reset_current_user_id(ctx_token)
+
+    # The cookies last what the session lasts, so they are renewed with it; not when
+    # the route just set or cleared them (login, logout), nor with a CSRF token that
+    # is not the session's.
+    if (
+        session_refreshed
+        and not _response_sets_cookie(response, SESSION_COOKIE_NAME)
+        and is_csrf_valid(session_row, csrf_cookie)
+    ):
+        set_auth_cookies(response, session_token=session_cookie, csrf_token=csrf_cookie)
 
     # If the route itself (e.g. login/register) already set the CSRF cookie
     # bound to the session it just created, do not overwrite it with the
