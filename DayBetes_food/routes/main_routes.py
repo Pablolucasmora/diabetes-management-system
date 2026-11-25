@@ -1,7 +1,9 @@
 from fasthtml.common import *
+from starlette.responses import JSONResponse
 import json
 from pathlib import Path
 from urllib.parse import quote_plus
+from DayBetes_food.components.app_head import MANIFEST_PATH, app_manifest
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.menu.layout import ReviewDot
 from DayBetes_food.components.menu.main_menu import main_menu
@@ -31,6 +33,14 @@ from DayBetes_food.time_utils import current_timezone, local_naive_to_utc_aware,
 
 
 def setup_main_routes(rt):
+    @rt(MANIFEST_PATH)
+    def get():
+        """The manifest of the installed app (frontend_conventions.md §11). Public: the
+        browser asks for it without cookies."""
+        return JSONResponse(
+            app_manifest(), media_type="application/manifest+json", headers={"Cache-Control": "public, max-age=86400"}
+        )
+
     @rt("/")
     def get():
         return RedirectResponse(url="/menu")

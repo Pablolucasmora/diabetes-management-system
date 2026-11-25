@@ -1,6 +1,7 @@
 from fasthtml.common import *
 from fastcore.xml import to_xml
 from starlette.responses import HTMLResponse
+from DayBetes_food.components.app_head import APP_HEAD_HTML
 from DayBetes_food.components.menu.layout import FloatingIsland, Cart
 from DayBetes_food.config import CSRF_COOKIE_NAME
 from DayBetes_food.components.injection_zone import asset_busted
@@ -94,7 +95,7 @@ def _base_html_shell(content_html: str) -> str:
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {APP_HEAD_HTML}
     <meta name="description" content="DayBetes Food: plan meals, track ingredients, and manage macros for diabetes nutrition.">
     <title>DayBetes</title>
     <link rel="icon" type="image/svg+xml" href="/images/ui/favicon.svg?v=2">

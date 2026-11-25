@@ -311,8 +311,8 @@
   .top-1\/2 {
     top: calc(1 / 2 * 100%);
   }
-  .top-3 {
-    top: calc(var(--spacing) * 3);
+  .top-\[calc\(env\(safe-area-inset-top\)\+0\.75rem\)\] {
+    top: calc(env(safe-area-inset-top) + 0.75rem);
   }
   .top-full {
     top: 100%;
@@ -346,6 +346,9 @@
   }
   .bottom-32 {
     bottom: calc(var(--spacing) * 32);
+  }
+  .bottom-\[max\(2\.5rem\,calc\(env\(safe-area-inset-bottom\)\+0\.5rem\)\)\] {
+    bottom: max(2.5rem, calc(env(safe-area-inset-bottom) + 0.5rem));
   }
   .bottom-\[var\(--island-reach\,119px\)\] {
     bottom: var(--island-reach,119px);
@@ -2221,6 +2224,14 @@
 }
 @layer theme, base, components, utilities;
 @layer base {
+  body {
+    padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
+  }
+  @media (display-mode: standalone) {
+    html {
+      overscroll-behavior-y: none;
+    }
+  }
   a, button, label, summary, input, select, .food_entry {
     touch-action: manipulation;
   }
