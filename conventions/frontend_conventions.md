@@ -765,5 +765,4 @@ Decisión del usuario del 2026-11-25. La web se puede instalar en el móvil y se
 - **Color.** `theme_color` y `background_color` son el token `page`, escrito en hexadecimal porque un manifest no puede leer el CSS (excepción a §8).
 - **Márgenes seguros.** La página ocupa la pantalla entera (`viewport-fit=cover`), así que un elemento fijo junto a un borde suma el `env(safe-area-inset-*)` de ese borde. La isla conserva sus 40 px mientras sean suficientes.
 - **Instalada**, tirar hacia abajo no recarga la página.
-- **Vuelve donde estaba** (decisión del usuario del 2026-11-25; `static/js/last_page.js`). Si el móvil cerró la app, al abrirla antes de 30 minutos se abre sobre el menú la página que se veía, y Atrás lleva al menú. Solo en la app instalada y solo páginas normales de una lista (ni formularios ni escáner). Se guarda en el móvil la dirección, nunca lo escrito; el login, al que lleva cerrar sesión, la borra. Si la página ya no existe, se queda el menú.
 - **Sin service worker.** Nada se guarda para usarse sin conexión: las páginas llevan datos de salud. Añadir uno exige acordar antes qué puede guardar y cómo se borra al cerrar la sesión.
