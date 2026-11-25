@@ -4,6 +4,7 @@ from html import escape
 import hmac
 import logging
 import secrets
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import JSONResponse
@@ -187,6 +188,17 @@ def _response_sets_cookie(response, cookie_name: str) -> bool:
     return any(key == b"set-cookie" and value.startswith(prefix) for key, value in response.raw_headers)
 
 
+def _read_session(session_cookie: str):
+    """The session and its user, refreshed when due; None without a valid one."""
+    with get_connection() as connection:
+        session_row = get_session_with_user(connection, session_cookie)
+        if session_row:
+            last_seen = session_row.last_seen_at
+            if last_seen and (datetime.now(timezone.utc) - last_seen).total_seconds() >= SESSION_REFRESH_SECONDS:
+                refresh_session(connection, session_row.id)
+        return session_row
+
+
 async def auth_security_middleware(request: Request, call_next):
     # Static assets are cacheable (Cache-Control: public, see
     # add_response_headers) and may be served from a CDN/edge. If this path
@@ -204,17 +216,15 @@ async def auth_security_middleware(request: Request, call_next):
     session_cookie = request.cookies.get(SESSION_COOKIE_NAME, "")
     session_row = None
     if session_cookie:
-        with get_connection() as connection:
-            session_row = get_session_with_user(connection, session_cookie)
-            if session_row:
-                request.state.user = {
-                    "id": session_row.user_id,
-                    "email": session_row.email,
-                    "username": session_row.username,
-                }
-                last_seen = session_row.last_seen_at
-                if last_seen and (datetime.now(timezone.utc) - last_seen).total_seconds() >= SESSION_REFRESH_SECONDS:
-                    refresh_session(connection, session_row.id)
+        # In a thread: the driver is synchronous, and waiting for the database
+        # here would stop every other request of the process.
+        session_row = await run_in_threadpool(_read_session, session_cookie)
+        if session_row:
+            request.state.user = {
+                "id": session_row.user_id,
+                "email": session_row.email,
+                "username": session_row.username,
+            }
 
     if request.method not in SAFE_METHODS:
         supplied_token = request.headers.get("X-CSRF-Token", "")
