@@ -82,7 +82,7 @@ def cart_main(
                 ),
                 cls="""
                     web_container p-6 rounded-3xl
-                    md:w-md lg:w-md w-[90vw]
+                    w-full
                     mt-5
                     flex flex-col items-center gap-3
                 """
@@ -92,6 +92,8 @@ def cart_main(
                 flex flex-col items-center
                 justify-center gap-6
                 md:mt-7 lg:mt-7 mt-2
+                md:w-md lg:w-md w-[90vw]
+                mx-auto
                 transition-[width,margin,padding] duration-150
             """,
             data_hide_cart="true",
