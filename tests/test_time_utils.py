@@ -1,6 +1,8 @@
 """Zone of the request (measurement_conventions.md §9.1, decision 2026-11-17)."""
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -9,6 +11,7 @@ from DayBetes_food.time_utils import (
     current_timezone,
     local_naive_to_utc_aware,
     parse_timezone,
+    request_timezone,
     reset_request_timezone,
     set_request_timezone,
 )
@@ -32,3 +35,15 @@ def test_typed_times_are_read_in_the_zone_of_the_request():
         reset_request_timezone(token)
     assert current_timezone() == DEFAULT_TIMEZONE
     assert local_naive_to_utc_aware(datetime(2026, 11, 17, 14, 0)) == datetime(2026, 11, 17, 13, 0, tzinfo=timezone.utc)
+
+
+def test_a_thread_works_in_the_zone_of_its_request():
+    def work(zone):
+        with request_timezone(zone):
+            inside = current_timezone()
+        return inside, current_timezone()
+
+    with ThreadPoolExecutor(1) as executor:
+        inside, after = executor.submit(work, ZoneInfo("America/New_York")).result()
+    assert inside == ZoneInfo("America/New_York")
+    assert after == DEFAULT_TIMEZONE

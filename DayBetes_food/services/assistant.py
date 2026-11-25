@@ -324,7 +324,7 @@ def apply_plus(connection, user_id: int, conversation_id: int, portion_id: int, 
     conversation = get_assistant_conversation(connection, user_id, conversation_id)
     if conversation is None or conversation.intake_event_id is None:
         raise NotFoundError("Conversation not found.")
-    get_planned_intake_event(connection, user_id, conversation.intake_event_id)
+    get_planned_intake_event(connection, user_id, conversation.intake_event_id, lock=True)
     button = next(
         (b for b in plus_buttons(connection, user_id, conversation) if b.portion_id == portion_id), None
     )
@@ -416,7 +416,7 @@ def apply_preparation(
     conversation = get_assistant_conversation(connection, user_id, conversation_id)
     if conversation is None or conversation.intake_event_id is None:
         raise NotFoundError("Conversation not found.")
-    get_planned_intake_event(connection, user_id, conversation.intake_event_id)
+    get_planned_intake_event(connection, user_id, conversation.intake_event_id, lock=True)
     offered = meal_preparation_choices(connection, user_id, conversation).get(portion_id, {})
     enum_cls = PREPARATION_OPTION_FIELDS.get(field_name)
     if enum_cls is None or field_name not in offered:
@@ -449,7 +449,7 @@ def remove_proposed_food(connection, user_id: int, conversation_id: int, portion
     conversation = get_assistant_conversation(connection, user_id, conversation_id)
     if conversation is None or conversation.intake_event_id is None:
         raise NotFoundError("Conversation not found.")
-    get_planned_intake_event(connection, user_id, conversation.intake_event_id)
+    get_planned_intake_event(connection, user_id, conversation.intake_event_id, lock=True)
     proposed = {
         card.portion_id for turn in conversation_turns(connection, user_id, conversation_id) for card in turn.removals
     }

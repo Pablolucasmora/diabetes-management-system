@@ -101,6 +101,7 @@ from DayBetes_food.services.intake_event import (
     delete_planned_event,
     delete_planned_portion,
     plate_event_id,
+    lock_planned_portion,
     portion_event_id,
     OFFSET_MODE_MINUTES,
     resolve_offset_input,
@@ -787,10 +788,9 @@ def setup_cart_routes(rt):
 
         with get_connection() as connection:
             try:
-                portion = get_portion_detail(connection, int(user_id), portion_id)
-                event_id = portion_event_id(connection, int(user_id), portion)
-                grams = amount_to_grams(value, unit, portion.source.unit_g)
                 with connection.transaction():
+                    portion, event_id = lock_planned_portion(connection, int(user_id), portion_id)
+                    grams = amount_to_grams(value, unit, portion.source.unit_g)
                     # update_portion_amount validates finiteness, > 0 and the upper
                     # bound (T2.7): a 0 or invalid amount is a 422 and deletes
                     # nothing (T0.7: deletion has its own route).
@@ -819,13 +819,12 @@ def setup_cart_routes(rt):
             return _error(request, AuthenticationError, _NO_SESSION)
         with get_connection() as connection:
             try:
-                portion = get_portion_detail(connection, int(user_id), portion_id)
-                event_id = portion_event_id(connection, int(user_id), portion)
-                event = get_intake_event(connection, int(user_id), event_id)
-                if event is None:
-                    raise NotFoundError("intake_event_not_found")
-                value, eaten_at = resolve_offset_input(event, offset_mode, offset_minutes, eaten_time)
                 with connection.transaction():
+                    portion, event_id = lock_planned_portion(connection, int(user_id), portion_id)
+                    event = get_intake_event(connection, int(user_id), event_id)
+                    if event is None:
+                        raise NotFoundError("intake_event_not_found")
+                    value, eaten_at = resolve_offset_input(event, offset_mode, offset_minutes, eaten_time)
                     update_portion_offset(
                         connection, int(user_id), portion_id, value, eaten_at=eaten_at, commit=False
                     )
@@ -846,9 +845,8 @@ def setup_cart_routes(rt):
             return _error(request, AuthenticationError, _NO_SESSION)
         with get_connection() as connection:
             try:
-                portion = get_portion_detail(connection, int(user_id), portion_id)
-                event_id = portion_event_id(connection, int(user_id), portion)
                 with connection.transaction():
+                    portion, event_id = lock_planned_portion(connection, int(user_id), portion_id)
                     delete_planned_portion(connection, int(user_id), portion)
             except NotFoundError:
                 return _error(request, NotFoundError, _INGREDIENT_GONE)
@@ -892,9 +890,8 @@ def setup_cart_routes(rt):
             return _error(request, ValidationError, str(error))
         with get_connection() as connection:
             try:
-                portion = get_portion_detail(connection, int(user_id), portion_id)
-                event_id = portion_event_id(connection, int(user_id), portion)
                 with connection.transaction():
+                    portion, event_id = lock_planned_portion(connection, int(user_id), portion_id)
                     keep_part_in_fridge(connection, int(user_id), portion, keep, storage, count)
             except NotFoundError:
                 return _error(request, NotFoundError, _INGREDIENT_GONE)
@@ -920,21 +917,19 @@ def setup_cart_routes(rt):
         if not user_id:
             return _error(request, AuthenticationError, _NO_SESSION)
 
+        try:
+            target_id = parse_optional_id(target_plate_id, "plate")
+        except ValidationError as error:
+            return _error(request, ValidationError, str(error))
         with get_connection() as connection:
             try:
-                portion = get_portion_detail(connection, int(user_id), portion_id)
-                event_id = portion_event_id(connection, int(user_id), portion)
-            except NotFoundError:
-                return _error(request, NotFoundError, _INGREDIENT_GONE)
-            except ConflictError:
-                return _error(request, ConflictError, _EVENT_NOT_PLANNED)
-
-            try:
-                target_id = parse_optional_id(target_plate_id, "plate")
-            except ValidationError as error:
-                return _error(request, ValidationError, str(error))
-            try:
                 with connection.transaction():
+                    try:
+                        portion, event_id = lock_planned_portion(connection, int(user_id), portion_id)
+                    except NotFoundError:
+                        return _error(request, NotFoundError, _INGREDIENT_GONE)
+                    except ConflictError:
+                        return _error(request, ConflictError, _EVENT_NOT_PLANNED)
                     if not target_id:
                         target_id = create_intake_plate(
                             connection,
@@ -1074,11 +1069,10 @@ def setup_cart_routes(rt):
             return _error(request, ValidationError, str(error))
         with get_connection() as connection:
             try:
-                portion = get_portion_detail(connection, int(user_id), portion_id)
-                # Only a fruit of a meal shows the field; elsewhere its absence touches nothing.
-                fruit = ripeness_applies(portion.destination, portion.source.category)
-                event_id = portion_event_id(connection, int(user_id), portion)
                 with connection.transaction():
+                    portion, event_id = lock_planned_portion(connection, int(user_id), portion_id)
+                    # Only a fruit of a meal shows the field; elsewhere its absence touches nothing.
+                    fruit = ripeness_applies(portion.destination, portion.source.category)
                     update_portion_detail_fields(
                         connection,
                         int(user_id),
@@ -1129,9 +1123,8 @@ def setup_cart_routes(rt):
         )
         with get_connection() as connection:
             try:
-                portion = get_portion_detail(connection, int(user_id), portion_id)
-                event_id = portion_event_id(connection, int(user_id), portion)
                 with connection.transaction():
+                    portion, event_id = lock_planned_portion(connection, int(user_id), portion_id)
                     update_portion_detail_fields(connection, int(user_id), portion_id, update, commit=False)
             except NotFoundError:
                 return _error(request, NotFoundError, _INGREDIENT_GONE)
@@ -1158,12 +1151,13 @@ def setup_cart_routes(rt):
             return _error(request, AuthenticationError, _NO_SESSION)
         with get_connection() as connection:
             try:
-                get_planned_intake_event(connection, int(user_id), event_id)
+                with connection.transaction():
+                    get_planned_intake_event(connection, int(user_id), event_id, lock=True)
+                    create_intake_plate(connection, IntakePlateCreate(intake_event_id=event_id), commit=False)
             except NotFoundError:
                 return _error(request, NotFoundError, _EVENT_GONE)
             except ConflictError:
                 return _error(request, ConflictError, _EVENT_NOT_PLANNED)
-            create_intake_plate(connection, IntakePlateCreate(intake_event_id=event_id))
             return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/plate/{plate_id}/name")

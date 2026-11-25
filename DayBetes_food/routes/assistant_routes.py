@@ -657,6 +657,9 @@ def setup_assistant_routes(rt):
                 return app_error_response(request, NotFoundError, str(error))
             except ConflictError:
                 return app_error_response(request, ConflictError, _MEAL_GONE)
+            except ValidationError as error:
+                # A merge over the limit (measurement §4.6.4).
+                return app_error_response(request, ValidationError, str(error))
             conversation = get_assistant_conversation(connection, int(user_id), chosen_conversation_id)
             bar = _meal_bar(
                 connection,
@@ -693,6 +696,9 @@ def setup_assistant_routes(rt):
                 return app_error_response(request, NotFoundError, _FOOD_GONE)
             except ConflictError:
                 return app_error_response(request, ConflictError, _MEAL_GONE)
+            except ValidationError:
+                # Giving it back leaves its container over the limit (measurement §4.8.6).
+                return app_error_response(request, ValidationError, "That food does not fit back in its container.")
             conversation = get_assistant_conversation(connection, int(user_id), chosen_conversation_id)
             card = next(
                 (

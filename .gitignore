@@ -42,7 +42,9 @@ error.txt
 
 .opencode/
 audit/
+informe_auditoria/
 entrevistas/
+video/
 
 # Study protocol: holds personal health data, never published in the public repository
 conventions/study_conventions.md
