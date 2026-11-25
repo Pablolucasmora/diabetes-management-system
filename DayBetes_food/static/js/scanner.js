@@ -26,7 +26,7 @@
   async function getDetectorCtor() {
     if ("BarcodeDetector" in window) return window.BarcodeDetector;
     try {
-      var mod = await import("https://esm.sh/barcode-detector/ponyfill");
+      var mod = await import("https://esm.sh/barcode-detector@3.2.3/ponyfill");
       return mod && mod.BarcodeDetector ? mod.BarcodeDetector : null;
     } catch (_) {
       return null;

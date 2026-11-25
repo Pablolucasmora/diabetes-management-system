@@ -102,8 +102,6 @@ def _base_html_shell(content_html: str) -> str:
     <meta name="csrf-cookie-name" content="{CSRF_COOKIE_NAME}">
     <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.7/dist/htmx.min.js" defer></script>
     <script src="https://cdn.jsdelivr.net/gh/answerdotai/fasthtml-js@1.0.12/fasthtml.js" defer></script>
-    <script src="https://cdn.jsdelivr.net/gh/answerdotai/surreal@main/surreal.js" defer></script>
-    <script src="https://cdn.jsdelivr.net/gh/gnat/css-scope-inline@main/script.js" defer></script>
     <script src="{asset_busted("/js/csrf.js")}" defer></script>
     <script src="{asset_busted("/js/page_loading.js")}" defer></script>
     <script src="{asset_busted("/js/app_toast.js")}" defer></script>
