@@ -101,8 +101,7 @@ def _base_html_shell(content_html: str) -> str:
     <link rel="icon" type="image/svg+xml" href="/images/ui/favicon.svg?v=2">
     <link rel="stylesheet" href="{asset_busted("/css/output.css")}">
     <meta name="csrf-cookie-name" content="{CSRF_COOKIE_NAME}">
-    <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.7/dist/htmx.min.js" defer></script>
-    <script src="https://cdn.jsdelivr.net/gh/answerdotai/fasthtml-js@1.0.12/fasthtml.js" defer></script>
+    <script src="/js/vendor/htmx-2.0.7.min.js" defer></script>
     <script src="{asset_busted("/js/csrf.js")}" defer></script>
     <script src="{asset_busted("/js/page_loading.js")}" defer></script>
     <script src="{asset_busted("/js/app_toast.js")}" defer></script>
@@ -119,12 +118,9 @@ def _base_html_shell(content_html: str) -> str:
     <script src="{asset_busted("/js/meal_selector.js")}" defer></script>
     <script src="{asset_busted("/js/insulin_pens.js")}" defer></script>
     <script src="{asset_busted("/js/form_drafts.js")}" defer></script>
-    <script src="{asset_busted("/js/cart_units.js")}" defer></script>
     <script src="{asset_busted("/js/preparation_confirm.js")}" defer></script>
     <script src="{asset_busted("/js/guide.js")}" defer></script>
     <script src="{asset_busted("/js/cart_eaten.js")}" defer></script>
-    <script src="{asset_busted("/js/food_detail.js")}" defer></script>
-    <script src="{asset_busted("/js/scanner.js")}" defer></script>
     <script src="{asset_busted("/js/assistant.js")}" defer></script>
     <style>
       html {{
