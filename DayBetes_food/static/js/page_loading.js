@@ -2,6 +2,10 @@
   var pendingRequests = 0;
   var overlayShownAt = 0;
   var hideTimer = null;
+  var showTimer = null;
+  // A quick answer shows no overlay at all: it is only for slow ones
+  // (frontend_conventions.md §10).
+  var SHOW_DELAY_MS = 400;
   var MIN_OVERLAY_MS = 140;
 
   function byId(id) {
@@ -45,7 +49,13 @@
     });
   }
 
+  function cancelShow() {
+    if (showTimer) window.clearTimeout(showTimer);
+    showTimer = null;
+  }
+
   function hideOverlay() {
+    cancelShow();
     var overlay = byId("page_loading_overlay");
     if (!overlay) return;
     var elapsed = Date.now() - overlayShownAt;
@@ -65,7 +75,12 @@
 
   function setLoading(active) {
     if (active) {
-      showOverlay();
+      if (!showTimer) {
+        showTimer = window.setTimeout(function () {
+          showTimer = null;
+          if (pendingRequests > 0) showOverlay();
+        }, SHOW_DELAY_MS);
+      }
       return;
     }
     if (canHideOverlay()) hideOverlay();
@@ -124,6 +139,7 @@
 
     // Safari BFCache can restore the page with overlay visible.
     window.addEventListener("pageshow", function () {
+      cancelShow();
       pendingRequests = 0;
       var overlay = byId("page_loading_overlay");
       if (!overlay) return;
