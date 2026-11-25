@@ -761,7 +761,7 @@ Decisión 2026-10-10. Animaciones pequeñas para que los cambios se perciban con
 Decisión del usuario del 2026-11-25. La web se puede instalar en el móvil y se abre a pantalla completa, sin la barra del navegador.
 
 - **Un solo sitio.** El manifest (`/manifest.webmanifest`, ruta pública porque el navegador lo pide sin cookies) y las etiquetas del `<head>` salen de `components/app_head.py`. Las dos plantillas de página (`components/ui.py` y la de acceso, `routes/auth_routes.py`) usan `APP_HEAD_HTML`; una plantilla nueva también.
-- **Iconos** `static/images/ui/app_icon_{180,192,512}.png`: la gota del favicon sobre el color `page`, con margen para que Android pueda recortarlo en círculo. Si cambia el logo, se regeneran los tres.
+- **Iconos** `static/images/ui/app_icon_{180,192,512}.png` (decisión del usuario del 2026-11-25, opción C entre cuatro): la gota del favicon sobre las manchas de color del fondo, con el 70 % del alto. `app_icon_maskable_512.png` es el mismo con la gota al 60 %, para que Android pueda recortarlo en círculo. Si cambia el dibujo se regeneran los cuatro y sube el `?v=` de `app_head.py`; el iPhone solo toma el icono nuevo al volver a añadir la app.
 - **Color.** `theme_color` y `background_color` son el token `page`, escrito en hexadecimal porque un manifest no puede leer el CSS (excepción a §8).
 - **Márgenes seguros.** La página ocupa la pantalla entera (`viewport-fit=cover`), así que un elemento fijo junto a un borde suma el `env(safe-area-inset-*)` de ese borde. La isla conserva sus 40 px mientras sean suficientes.
 - **Instalada**, tirar hacia abajo no recarga la página.
