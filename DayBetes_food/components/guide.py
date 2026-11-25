@@ -1,17 +1,14 @@
 """The guide of the data-quality fields (frontend_conventions.md §9.12): its page
 and its pop-ups. The text itself is in domain/guide.py."""
 
-from fasthtml.common import Button, Dd, Div, Dl, Dt, H1, H2, Input, Label, Li, Nav, NotStr, Ol, P, Section, Span, Ul
+from fasthtml.common import Button, Dd, Div, Dl, Dt, H2, Li, Nav, Ol, P, Section, Span, Ul
 
 from DayBetes_food.components.modal import ModalLayer, close_modal_js, modal_icon_button
 from DayBetes_food.components.settings.subpage import SUBPAGE_CLS, SearchField, SubpageHeader
 from DayBetes_food.domain.guide import (
-    GUIDE_GROUPS,
     GUIDE_TOPICS,
     PENDING_DEFINITION,
     GuideTopic,
-    GuideValue,
-    guide_topics_for,
 )
 
 GUIDE_MODAL_ID = "guide_modal"

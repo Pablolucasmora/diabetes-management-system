@@ -10,7 +10,7 @@ from DayBetes_food.components.ui import render_page
 from DayBetes_food.http_errors import app_error_response, request_id
 from DayBetes_food.config import ASSISTANT_ENABLED
 from DayBetes_food.domain.assistant import DRAFT_MACROS_SOURCE
-from DayBetes_food.domain.food_entry import EDIT_RETURN_REVIEW
+from DayBetes_food.domain.food_entry import EDIT_RETURN_REVIEW, edit_return_path, parse_edit_return
 from DayBetes_food.services.intake_event import add_quick_add_to_meal, resolve_target_event
 from DayBetes_food.database.queries import (
     create_catalog_item,
@@ -80,8 +80,6 @@ from DayBetes_food.errors import (
     ValidationError,
 )
 from DayBetes_food.routes.food.helpers import (
-    edit_return_path,
-    parse_edit_return,
     _ASSISTANT_DRAFT_NOTES,
     _UNKNOWN_ENTRY_TYPE,
     _add_ingredient,

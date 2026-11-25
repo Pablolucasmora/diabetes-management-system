@@ -30,13 +30,11 @@ _PEN_SELECT = """
     ) u
 """
 
-# The default pen of a meal's bolus (measurement §8.4): the open rapid pen used
-# most recently, else the one opened most recently. It is a subquery so that the
-# INSERT or UPDATE that writes it resolves it in the same statement. It needs
-# the parameters `user_id` and `exclude_pen_id` (None = exclude none).
 def _default_pen_sql(insulin_type: InsulinType) -> str:
     """The open pen of that type used most recently, else the one opened most
-    recently, as a subquery (measurement §8.4)."""
+    recently (measurement §8.4). It is a subquery so that the statement that uses it
+    resolves it at once; it needs the parameters `user_id` and `exclude_pen_id`
+    (None = exclude none)."""
     return f"""
     (SELECT dp.id
      FROM insulin_pen dp
@@ -55,6 +53,7 @@ def _default_pen_sql(insulin_type: InsulinType) -> str:
 """
 
 
+# The default pen of a meal's bolus.
 DEFAULT_RAPID_PEN_SQL = _default_pen_sql(InsulinType.RAPID)
 
 

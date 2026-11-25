@@ -21,8 +21,7 @@ from DayBetes_food.components.modal import (
 from DayBetes_food.components.food.recipe_add import recipe_add_open_attrs
 from DayBetes_food.components.stats.stats_shared import MEAL_TYPE_LABELS
 from DayBetes_food.domain.recipe import RECIPE_MEAL_TYPES
-from DayBetes_food.components.food.food_shared import MACROS_SOURCE_LABELS
-from DayBetes_food.domain.constants import FoodEntryType, MacrosSource
+from DayBetes_food.domain.constants import FoodEntryType
 from DayBetes_food.time_utils import to_local
 from DayBetes_food.components.food.food_widgets import (
     FILTER_ITEM_CLS,
