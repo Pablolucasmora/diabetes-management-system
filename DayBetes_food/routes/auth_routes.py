@@ -108,7 +108,7 @@ def _form_shell(title: str, action: str, csrf_token: str, fields_html: str, subm
       <body>
         <div class="min-h-screen flex flex-col items-center justify-center gap-4 px-4">
           <div class="flex flex-col items-center gap-1 text-center">
-            <img src="{asset_busted("/images/ui/Logo_DayBetes.png")}" alt="DayBetes logo" class="w-52 mb-4">
+            <img src="{asset_busted("/images/ui/Logo_DayBetes.webp")}" alt="DayBetes logo" class="w-52 mb-4">
             <h1 class="text-2xl font-bold text-gray-800">{safe_title}</h1>
             <p class="text-sm text-gray-600">Secure access to DayBetes</p>
           </div>

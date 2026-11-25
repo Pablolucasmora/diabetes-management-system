@@ -367,6 +367,8 @@ def quick_actions(
                 Img(
                     src=asset_busted(BASE_INJECTION_ZONE_IMAGE),
                     alt="Injection zones map",
+                    # Not downloaded until its pop-up opens.
+                    loading="lazy",
                     cls="w-full max-h-[38vh] md:max-h-[46vh] object-contain rounded-2xl border border-gray-200 bg-white",
                     data_menu_injection_image="true",
                 ),
