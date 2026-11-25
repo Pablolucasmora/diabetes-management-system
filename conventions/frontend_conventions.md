@@ -35,7 +35,8 @@ Los inputs cuyo control visual lo dibuja el navegador (`type="time"`, `type="dat
 - `inputmode="number"` **no es un valor válido** del atributo (los valores válidos son `none`, `text`, `decimal`, `numeric`, `tel`, `search`, `email`, `url`) y no debe usarse. Un input numérico tampoco debe quedarse con `inputmode="text"`.
 - Un input con `inputmode` incorrecto o ausente en un campo numérico se considera un defecto a corregir, no una variación de estilo aceptable.
 - **Un campo que admite decimales es `type="text"` con `inputmode="decimal"`, no `type="number"`** (decisión 2026-10-27). En los formularios de Food se construye con `_decimal_input` (`components/food/food_widgets.py`). En un móvil configurado en español, el teclado decimal escribe una coma, y un `type="number"` la rechaza: el valor llega vacío o el navegador no deja enviar el formulario. El servidor acepta tanto `12,5` como `12.5` y comprueba el rango, así que en estos campos no se ponen `step`, `min` ni `max`, porque solo valen para `type="number"`. Los campos enteros (NOVA, Yuka) siguen siendo `type="number"` con `inputmode="numeric"`.
-- **Excepción: un campo entero que admite negativos usa `inputmode="text"`** (decisión 2026-10-27, pedida por el usuario). El teclado numérico del iPhone no tiene la tecla "−", y así se puede escribir `-15` directamente. Hoy es el caso del offset del carrito (§7.9), que lleva además `pattern="-?[0-9]*"`.
+- **Excepción: un campo entero que admite negativos es `type="number"` sin `inputmode`** (decisión del usuario del 2026-11-25, que sustituye a la del 2026-10-27, `inputmode="text"`). El teclado de `inputmode="numeric"` del iPhone no tiene la tecla "−"; el de un `type="number"` a secas abre por los números y los signos, y el de Android también la tiene. Lleva `no_spinner`, que quita las flechas, y `step="any"`, para que un valor no válido lo rechace el servidor con su aviso. El navegador da como vacío lo que no es un número, así que el valor se envía como no válido en ese caso y no como vacío, que borraría el dato. Hoy es el caso del offset del carrito (§7.9).
+- **Un campo de hora que se guarda solo lo hace al salir de él** (`hx-trigger="blur"`), no con `change`: un `type="time"` avisa con cada cifra, y guardar repinta la tarjeta mientras se escribe. Si un vacío borra el dato, `blur changed`.
 
 ## 5. Posición del scroll al cambiar de página
 
@@ -196,7 +197,7 @@ La tarjeta del evento mide `w-[90vw]` en móvil (~325 px en un teléfono de 360 
 - El **título** es el único elemento elástico: `min-w-0` + `truncate`. Si el nombre derivado es largo, se corta con puntos suspensivos; no empuja a los controles fuera de la tarjeta.
 - El grupo **offset + `Apply all`** lleva `shrink-0`, con el input estrecho (signo y tres dígitos bastan por el rango `-300..300`) y el botón compacto.
 - Si en el ancho más estrecho aun así no entra, la cabecera **envuelve a dos líneas**: título arriba; offset, `Apply all` y acciones abajo. Nunca scroll horizontal, nunca botones recortados.
-- El input de offset es un entero que admite negativos: `type="text"` con `inputmode="text"` y `pattern="-?[0-9]*"`, por la excepción de §4 (decisión 2026-10-27; sustituye a `inputmode="numeric"`, con el que en el iPhone no se podía escribir el signo menos).
+- El offset en minutos es un entero que admite negativos: `type="number"` sin `inputmode`, por la excepción de §4. La hora exacta se guarda al salir del campo, como la hora de la comida (§4).
 
 Esto se verifica en el navegador en el ancho real, no por inspección del código.
 
