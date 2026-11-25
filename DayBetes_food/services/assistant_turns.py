@@ -26,7 +26,7 @@ from DayBetes_food.database.queries import (
 from DayBetes_food.domain.assistant import AssistantTurnRequest
 from DayBetes_food.errors import ConflictError, ExternalServiceError, NotFoundError
 from DayBetes_food.services.assistant import send_assistant_message
-from DayBetes_food.time_utils import current_timezone, reset_request_timezone, set_request_timezone
+from DayBetes_food.time_utils import current_timezone, request_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -79,11 +79,8 @@ def _run_turn(
 ) -> None:
     """The thread, in the zone of the request that sent the message (measurement
     §9.1): local times and `timezone_at_event` are the ones of the user's browser."""
-    token = set_request_timezone(zone)
-    try:
+    with request_timezone(zone):
         _answer_turn(turn_id, user_id, conversation_id, event_id, without_meal, request)
-    finally:
-        reset_request_timezone(token)
 
 
 def _answer_turn(

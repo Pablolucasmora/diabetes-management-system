@@ -1135,12 +1135,6 @@
   .bg-control {
     background-color: var(--color-control);
   }
-  .bg-control\/40 {
-    background-color: color-mix(in srgb, #f7f2ea 40%, transparent);
-    @supports (color: color-mix(in lab, red, red)) {
-      background-color: color-mix(in oklab, var(--color-control) 40%, transparent);
-    }
-  }
   .bg-cyan-50 {
     background-color: var(--color-cyan-50);
   }

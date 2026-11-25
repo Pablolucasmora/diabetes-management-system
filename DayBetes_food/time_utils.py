@@ -9,6 +9,7 @@ are shown, and the one stored as `timezone_at_event` of a new event.
 """
 
 import re
+from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -50,6 +51,17 @@ def set_request_timezone(zone: ZoneInfo | None) -> Token:
 
 def reset_request_timezone(token: Token) -> None:
     _request_timezone.reset(token)
+
+
+@contextmanager
+def request_timezone(zone: ZoneInfo | None):
+    """Work done outside the request, such as a thread, in the zone of the request
+    that asked for it: a thread does not inherit it."""
+    token = set_request_timezone(zone)
+    try:
+        yield
+    finally:
+        reset_request_timezone(token)
 
 
 def current_timezone() -> ZoneInfo:
