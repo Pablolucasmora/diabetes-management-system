@@ -252,7 +252,10 @@ def fuzzy_compact_sql(column: str) -> str:
 def _set_trgm_similarity_threshold(connection) -> None:
     """Make the `%` operator use TRGM_SIMILARITY_THRESHOLD instead of the
     pg_trgm default (0.3). Unlike `similarity(...) >= x`, `%` can use a
-    trigram index. Session scope: every request opens its own connection."""
+    trigram index. Session scope, so it stays on the pooled connection after
+    the request; that is harmless because it is always this same value and
+    every query that uses `%` sets it again first. Transaction scope would not
+    survive a commit between this call and the caller's query."""
     with connection.cursor() as cursor:
         cursor.execute(
             "SELECT set_config('pg_trgm.similarity_threshold', %(threshold)s, false);",

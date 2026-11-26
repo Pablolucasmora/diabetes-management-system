@@ -115,6 +115,26 @@ def list_recipe_plates(connection, user_id: int, recipe_id: int) -> list[RecipeP
     return [recipe_plate_read_from_row(row) for row in rows]
 
 
+def list_owned_recipe_ids_with_several_plates(connection, user_id: int) -> list[int]:
+    """Ids of the user's own recipes with two or more plates, in one query: the
+    Food row menu asks which plate only for those (frontend_conventions.md §9.3.1)."""
+    rows = _execute_query_many(
+        connection,
+        """
+        SELECT rp.recipe_id
+        FROM recipe_plate rp
+        JOIN recipe r ON r.id = rp.recipe_id
+        WHERE r.users_id = %(user_id)s
+        GROUP BY rp.recipe_id
+        HAVING COUNT(*) > 1
+        ORDER BY rp.recipe_id;
+        """,
+        {"user_id": user_id},
+        commit=False,
+    )
+    return [int(row["recipe_id"]) for row in rows]
+
+
 def update_recipe_plate_name(connection, user_id: int, plate_id: int, name: str | None, commit: bool = True) -> None:
     """Write the plate's own name, or clear it to go back to the derived one.
 

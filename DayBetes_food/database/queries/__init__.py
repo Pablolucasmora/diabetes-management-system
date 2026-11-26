@@ -92,6 +92,7 @@ from DayBetes_food.database.queries.recipe_plate import (
     ensure_default_recipe_plate,
     get_recipe_plate,
     list_recipe_plates,
+    list_owned_recipe_ids_with_several_plates,
     swap_recipe_plate_position,
     update_recipe_plate_name,
 )
@@ -317,6 +318,7 @@ __all__ = [
     "ensure_default_recipe_plate",
     "get_recipe_plate",
     "list_recipe_plates",
+    "list_owned_recipe_ids_with_several_plates",
     "swap_recipe_plate_position",
     "update_recipe_plate_name",
     "list_tags",
