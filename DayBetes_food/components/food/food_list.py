@@ -847,6 +847,8 @@ def FoodCard(food, open_url: str | None = None):
         hx_swap="innerHTML",
         hx_push_url="true",
         hx_trigger="click[!event.target.closest('[data-no-open]')]",
+        # Fetched while the finger rests on it (frontend_conventions.md §12).
+        data_preload="true",
         **{"hx-on:click": "window.scrollTo({ top: 0, behavior: 'auto' });"},
         # Long press or right click: actions pop-up (§9.3.1, static/js/food_actions.js).
         data_food_actions="true",

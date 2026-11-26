@@ -3,6 +3,7 @@ from starlette.responses import JSONResponse
 import json
 from pathlib import Path
 from urllib.parse import quote_plus
+from DayBetes_food.routes.navigation import hx_location
 from DayBetes_food.components.app_head import MANIFEST_PATH, app_manifest
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.menu.layout import ReviewDot
@@ -170,10 +171,4 @@ def setup_main_routes(rt):
                 existing_id = existing.id
         encoded = quote_plus(clean)
         existing_suffix = f"&existing_id={existing_id}" if existing_id else ""
-        location = {
-            "path": f"/food/create/catalog/form?barcode={encoded}{existing_suffix}",
-            "target": "#main_content",
-            "swap": "innerHTML",
-            "push": True,
-        }
-        return HTMLResponse("", headers={"HX-Location": json.dumps(location)})
+        return HTMLResponse("", headers=hx_location(f"/food/create/catalog/form?barcode={encoded}{existing_suffix}"))

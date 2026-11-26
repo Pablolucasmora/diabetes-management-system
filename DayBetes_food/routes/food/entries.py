@@ -1,9 +1,9 @@
 """Foods and dishes of the user (`catalog`, `manual_intake`): create, edit, copy, archive, publish and quick add (code_conventions.md §11.2.2, §11.2.3)."""
 
-import json
 from urllib.parse import urlencode
 
 from fasthtml.common import *
+from DayBetes_food.routes.navigation import hx_location
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.services.plate_selector import plate_selector_options
 from DayBetes_food.components.ui import render_page
@@ -309,7 +309,7 @@ def setup_entries_routes(rt):
                 return app_error_response(request, ConflictError, str(error))
             except ValidationError as error:
                 return app_error_response(request, error, str(error))
-        return HTMLResponse("", headers={"HX-Redirect": f"/food/edit/catalog/{created_id}/form"})
+        return HTMLResponse("", headers=hx_location(f"/food/edit/catalog/{created_id}/form"))
 
     def _copy_manual_intake(request: Request, user_id: int, manual_intake_id: int):
         """Editable copy of a visible dish (H16, §11.2.3): a new personal row in
@@ -358,7 +358,7 @@ def setup_entries_routes(rt):
                 return app_error_response(request, ConflictError, str(error))
             except ValidationError as error:
                 return app_error_response(request, error, str(error))
-        return HTMLResponse("", headers={"HX-Redirect": f"/food/edit/manual_intake/{created_id}/form"})
+        return HTMLResponse("", headers=hx_location(f"/food/edit/manual_intake/{created_id}/form"))
 
     @rt("/food/copy/{entry_type}/{entry_id}")
     def post(request: Request, entry_type: str, entry_id: PathId):
@@ -384,7 +384,7 @@ def setup_entries_routes(rt):
                 # uq_recipe_personal_name: only if another request took the copy's
                 # name between next_recipe_copy_name and the insert.
                 return app_error_response(request, error, str(error))
-        return HTMLResponse("", headers={"HX-Redirect": f"/food/edit/recipe/{created_id}/form"})
+        return HTMLResponse("", headers=hx_location(f"/food/edit/recipe/{created_id}/form"))
 
     @rt("/food/convert/{entry_type}/{entry_id}")
     def post(request: Request, entry_type: str, entry_id: PathId, category: str = "", return_to: str = ""):
@@ -412,7 +412,7 @@ def setup_entries_routes(rt):
         query = f"?{urlencode({'return_to': target})}" if target else ""
         return HTMLResponse(
             "",
-            headers={"HX-Redirect": f"/food/edit/{new_type.value}/{new_id}/form{query}", "HX-Trigger": "dbReviewChanged"},
+            headers={**hx_location(f"/food/edit/{new_type.value}/{new_id}/form{query}"), "HX-Trigger": "dbReviewChanged"},
         )
 
     @rt("/food/quick_add_from/{entry_type}/{entry_id}")
@@ -434,10 +434,7 @@ def setup_entries_routes(rt):
         # The entry is gone: back to where the user came from, by default the To
         # review list, never its own pages (a 404 now).
         path = edit_return_path(parse_edit_return(return_to)) or edit_return_path(EDIT_RETURN_REVIEW)
-        location = {"path": path, "target": "#main_content", "swap": "innerHTML", "push": True}
-        return HTMLResponse(
-            "", headers={"HX-Location": json.dumps(location), "HX-Trigger": "dbReviewChanged"}
-        )
+        return HTMLResponse("", headers={**hx_location(path), "HX-Trigger": "dbReviewChanged"})
 
     @rt("/food/edit/{entry_type}/{entry_id}/form")
     def get(request: Request, entry_type: str, entry_id: PathId, return_to: str = ""):
@@ -511,7 +508,7 @@ def setup_entries_routes(rt):
                     set_user_favorite(connection, user_id, FoodEntryType.CATALOG, catalog_id, False, commit=False)
             except NotFoundError:
                 return app_error_response(request, NotFoundError, "Food not found.")
-        return HTMLResponse("", headers={"HX-Redirect": "/food"})
+        return HTMLResponse("", headers=hx_location("/food"))
 
     @rt("/food/archive/catalog/{catalog_id}")
     def post(request: Request, catalog_id: PathId):
@@ -536,7 +533,7 @@ def setup_entries_routes(rt):
                 return app_error_response(request, NotFoundError, "Food not found.")
             except ConflictError as error:
                 return app_error_response(request, ConflictError, str(error))
-        return HTMLResponse("", headers={"HX-Redirect": f"/food/item/catalog/{catalog_id}"})
+        return HTMLResponse("", headers=hx_location(f"/food/item/catalog/{catalog_id}"))
 
     @rt("/food/unpublish/catalog/{catalog_id}")
     def post(request: Request, catalog_id: PathId):
@@ -552,7 +549,7 @@ def setup_entries_routes(rt):
                 return app_error_response(request, NotFoundError, "Food not found.")
             except ConflictError as error:
                 return app_error_response(request, ConflictError, str(error))
-        return HTMLResponse("", headers={"HX-Redirect": f"/food/item/catalog/{catalog_id}"})
+        return HTMLResponse("", headers=hx_location(f"/food/item/catalog/{catalog_id}"))
 
     def _archive_manual_intake(request: Request, user_id: int, manual_intake_id: int):
         """Archive with the catalog contract (§11.2.3): the route owns the
@@ -567,7 +564,7 @@ def setup_entries_routes(rt):
                     )
             except NotFoundError:
                 return app_error_response(request, NotFoundError, "Dish not found.")
-        return HTMLResponse("", headers={"HX-Redirect": "/food"})
+        return HTMLResponse("", headers=hx_location("/food"))
 
     @rt("/food/archive/manual_intake/{manual_intake_id}")
     def post(request: Request, manual_intake_id: PathId):
@@ -592,7 +589,7 @@ def setup_entries_routes(rt):
                 return app_error_response(request, NotFoundError, "Dish not found.")
             except ConflictError as error:
                 return app_error_response(request, ConflictError, str(error))
-        return HTMLResponse("", headers={"HX-Redirect": f"/food/item/manual_intake/{manual_intake_id}"})
+        return HTMLResponse("", headers=hx_location(f"/food/item/manual_intake/{manual_intake_id}"))
 
     @rt("/food/unpublish/manual_intake/{manual_intake_id}")
     def post(request: Request, manual_intake_id: PathId):
@@ -608,7 +605,7 @@ def setup_entries_routes(rt):
                 return app_error_response(request, NotFoundError, "Dish not found.")
             except ConflictError as error:
                 return app_error_response(request, ConflictError, str(error))
-        return HTMLResponse("", headers={"HX-Redirect": f"/food/item/manual_intake/{manual_intake_id}"})
+        return HTMLResponse("", headers=hx_location(f"/food/item/manual_intake/{manual_intake_id}"))
 
     @rt("/food/edit/catalog/{entry_id}")
     def post(
@@ -698,7 +695,7 @@ def setup_entries_routes(rt):
             except ConflictError as error:
                 return app_error_response(request, error, str(error))
         redirect = edit_return_path(parse_edit_return(return_to)) or f"/food/item/catalog/{entry_id}"
-        return HTMLResponse("", headers={"HX-Redirect": redirect})
+        return HTMLResponse("", headers=hx_location(redirect))
 
     @rt("/food/edit/manual_intake/{manual_intake_id}")
     def post(
@@ -781,7 +778,7 @@ def setup_entries_routes(rt):
             except ConflictError as error:
                 return app_error_response(request, error, str(error))
         redirect = edit_return_path(parse_edit_return(return_to)) or f"/food/item/manual_intake/{manual_intake_id}"
-        return HTMLResponse("", headers={"HX-Redirect": redirect})
+        return HTMLResponse("", headers=hx_location(redirect))
 
     @rt("/food/create/catalog")
     def post(
@@ -887,14 +884,14 @@ def setup_entries_routes(rt):
         if target_recipe_id is not None:
             query = f"?recipe_plate_id={target_plate_id}" if target_plate_id else ""
             return HTMLResponse(
-                "", headers={"HX-Redirect": f"/food/recipe/{target_recipe_id}/ingredients/form{query}"}
+                "", headers=hx_location(f"/food/recipe/{target_recipe_id}/ingredients/form{query}")
             )
         if assistant_conversation_id:
             # Back to the conversation that drafted it (frontend §9.11).
             return HTMLResponse(
-                "", headers={"HX-Redirect": f"/assistant?conversation_id={assistant_conversation_id}"}
+                "", headers=hx_location(f"/assistant?conversation_id={assistant_conversation_id}")
             )
-        return HTMLResponse("", headers={"HX-Redirect": "/food"})
+        return HTMLResponse("", headers=hx_location("/food"))
 
     @rt("/food/create/manual_intake")
     def post(
@@ -970,9 +967,9 @@ def setup_entries_routes(rt):
         if assistant_conversation_id:
             # Back to the conversation that drafted it (frontend §9.11).
             return HTMLResponse(
-                "", headers={"HX-Redirect": f"/assistant?conversation_id={assistant_conversation_id}"}
+                "", headers=hx_location(f"/assistant?conversation_id={assistant_conversation_id}")
             )
-        return HTMLResponse("", headers={"HX-Redirect": "/food"})
+        return HTMLResponse("", headers=hx_location("/food"))
 
     @rt("/food/quick_add/form")
     def get(request: Request):
@@ -1043,4 +1040,4 @@ def setup_entries_routes(rt):
             except ValidationError as error:
                 return app_error_response(request, ValidationError, str(error))
         # Same pattern as "Log food" (§9.5).
-        return HTMLResponse("", headers={"HX-Redirect": "/food"})
+        return HTMLResponse("", headers=hx_location("/food"))

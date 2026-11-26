@@ -5,7 +5,7 @@ def BlockIsland(text, icon="/images/ui/menu.svg", name="nav", value="home", **hx
     # Put network-triggering htmx attrs on the radio input to avoid
     # duplicate requests caused by label click forwarding to its control.
     input_hx = {}
-    for key in ("hx_get", "hx_target", "hx_swap", "hx_push_url", "hx_trigger"):
+    for key in ("hx_get", "hx_target", "hx_swap", "hx_push_url", "hx_trigger", "data_preload"):
         if key in hx:
             input_hx[key] = hx.pop(key)
     input_hx.setdefault("hx_trigger", "click")
@@ -145,11 +145,11 @@ def FloatingIsland():
                     opacity-0
                 """,
             ),
-            BlockIsland("Menu", icon="/images/ui/menu.svg", value="menu", hx_get="/menu", hx_target="#main_content", hx_swap="innerHTML", hx_push_url="true", **{"hx-on:click": show_cart_js}),
-            BlockIsland("Stats", icon="/images/ui/stats.svg", value="stats", hx_get="/stats", hx_target="#main_content", hx_push_url="true", **{"hx-on:click": scroll_top_js}),
+            BlockIsland("Menu", icon="/images/ui/menu.svg", value="menu", hx_get="/menu", data_preload="true", hx_target="#main_content", hx_swap="innerHTML", hx_push_url="true", **{"hx-on:click": show_cart_js}),
+            BlockIsland("Stats", icon="/images/ui/stats.svg", value="stats", hx_get="/stats", data_preload="true", hx_target="#main_content", hx_push_url="true", **{"hx-on:click": scroll_top_js}),
             DiaBotIsland() if ASSISTANT_ENABLED else "",
             Div(
-                BlockIsland("Food", icon="/images/ui/food.svg", value="food", hx_get="/food", hx_target="#main_content", hx_push_url="true", **{"hx-on:click": show_cart_js}),
+                BlockIsland("Food", icon="/images/ui/food.svg", value="food", hx_get="/food", data_preload="true", hx_target="#main_content", hx_push_url="true", **{"hx-on:click": show_cart_js}),
                 # Asked for apart: render_page never reads the database (§1.4).
                 Div(
                     id="island_review_dot",

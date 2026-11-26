@@ -95,7 +95,10 @@
       if (!xhr || xhr.status >= 400) return;
       var doneEvent = form.getAttribute("data-draft-done-event");
       var trigger = xhr.getResponseHeader("HX-Trigger") || "";
-      var done = !!xhr.getResponseHeader("HX-Redirect") || (!!doneEvent && trigger.indexOf(doneEvent) !== -1);
+      // A redirect is HX-Location now and HX-Redirect only when the session
+      // changes (code_conventions.md §9.4): either means it was saved.
+      var redirected = !!xhr.getResponseHeader("HX-Location") || !!xhr.getResponseHeader("HX-Redirect");
+      var done = redirected || (!!doneEvent && trigger.indexOf(doneEvent) !== -1);
       if (!done) return;
       try { window.localStorage.removeItem(form.getAttribute("data-draft-key")); } catch (_) {}
     });
