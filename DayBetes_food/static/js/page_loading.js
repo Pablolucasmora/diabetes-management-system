@@ -91,6 +91,10 @@
       var elt = event && event.detail ? event.detail.elt : null;
       var xhr = event && event.detail ? event.detail.xhr : null;
       var target = event && event.detail ? event.detail.target : null;
+      // A preload is never shown: the extension stops it here and sends it
+      // itself, so no afterRequest would close the loading state (§12).
+      var config = event && event.detail ? event.detail.requestConfig : null;
+      if (config && config.headers && config.headers["HX-Preloaded"] === "true") return;
       if (isFoodListTarget(target)) setFoodListLoading(true);
       var skip = !!(elt && elt.closest && elt.closest("[data-skip-page-loading='true']"));
       if (xhr) xhr.__skipPageLoading = skip;

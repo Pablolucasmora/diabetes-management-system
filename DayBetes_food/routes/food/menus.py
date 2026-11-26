@@ -1,10 +1,10 @@
 """The saved restaurant menus, `Menus` (frontend_conventions.md §9.13;
 code_conventions.md §11.2.12): read and delete, never edited by hand."""
 
-import json
 
 from fasthtml.common import *
 
+from DayBetes_food.routes.navigation import hx_location
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.food.menus import MENUS_PATH, MenusPage
 from DayBetes_food.components.ui import render_page
@@ -26,8 +26,7 @@ _MENU_NOT_FOUND = "Menu not found."
 
 
 def _back_to_menus() -> dict:
-    location = {"path": MENUS_PATH, "target": "#main_content", "swap": "innerHTML", "push": True}
-    return {"HX-Location": json.dumps(location)}
+    return hx_location(MENUS_PATH)
 
 
 def _user_id() -> int:

@@ -1266,8 +1266,8 @@ Un endpoint debe declarar si devuelve HTML completo, fragmento HTML o JSON. No s
 
 | Situación | HTML tradicional | HTMX | JSON |
 |---|---|---|---|
-| Navegación correcta | HTML completo | fragmento o `HX-Redirect` | no aplica |
-| Creación correcta | `303` o HTML según contrato | fragmento, evento o `HX-Redirect` | `201` o `200` |
+| Navegación correcta | HTML completo | fragmento o `HX-Location` (§9.4) | no aplica |
+| Creación correcta | `303` o HTML según contrato | fragmento, evento o `HX-Location` (§9.4) | `201` o `200` |
 | Validación visual | página/formulario según contrato | `200` + fragmento mínimo de error | `422` estructurado |
 | Error no visual | según `error_conventions.md` | según `error_conventions.md` | según `error_conventions.md` |
 
@@ -1279,7 +1279,7 @@ Todos los errores y sus formatos se definen en `conventions/error_conventions.md
 - `201` indica creación correcta en una API HTTP convencional.
 - `204` indica éxito sin cuerpo cuando el cliente no necesita fragmento, evento ni mensaje.
 - `303` se utiliza después de un `POST` tradicional cuando la operación termina en navegación.
-- Una petición HTMX que termina en navegación utiliza `HX-Redirect`.
+- Una petición HTMX que termina en navegación utiliza `HX-Location` (decisión del usuario del 2026-11-26, que sustituye a `HX-Redirect`): cambia de página como el resto de la navegación, sin recargarla, y deja la página anterior en el historial, así que `Back` sigue funcionando (`frontend_conventions.md` §5). `HX-Redirect`, que recarga la página entera, queda solo para cuando hace falta empezar de cero: entrar, salir o cambiar de sesión. `static/js/form_drafts.js` da por guardado un formulario con cualquiera de las dos cabeceras.
 
 Los códigos de error no se redefinen aquí; se aplican desde `error_conventions.md`.
 

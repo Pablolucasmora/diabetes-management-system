@@ -364,6 +364,7 @@ def intake_event_read_from_row(row: dict) -> IntakeEventRead:
         deleted_at=row.get("deleted_at"),
         insulin_pen_id=row.get("insulin_pen_id"),
         insulin_units=float(row["insulin_units"]) if row.get("insulin_units") is not None else None,
+        ended_at=row.get("ended_at"),
     )
 
 
@@ -372,8 +373,9 @@ def intake_plate_read_from_row(row: dict) -> IntakePlateRead:
 
     Required columns: id, intake_event_id, created_at, updated_at.
     Nullable columns: name (NULL = derived name, measurement §4.6.3) and
-    offset_minutes (NULL = the plate has no offset template yet) and eaten_at
-    (NULL = the offset was written in minutes, measurement §4.5.1).
+    offset_minutes (NULL = the plate has no offset template yet), eaten_at
+    (NULL = the offset was written in minutes, measurement §4.5.1) and ended_at
+    (NULL = end not recorded, study §6.3).
     """
     try:
         return IntakePlateRead(
@@ -386,6 +388,7 @@ def intake_plate_read_from_row(row: dict) -> IntakePlateRead:
             updated_at=row["updated_at"],
             eaten_fraction=row.get("eaten_fraction"),
             eaten_fraction_method=_enum_from_row(row, "eaten_fraction_method", FractionMethod),
+            ended_at=row.get("ended_at"),
         )
     except KeyError as exc:
         raise InfrastructureError(f"Missing required field {exc} in intake plate row") from exc

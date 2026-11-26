@@ -4,6 +4,7 @@ from fasthtml.common import *
 from datetime import datetime
 from datetime import date
 import json
+from DayBetes_food.routes.navigation import hx_location
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.ui import render_fragment
 from DayBetes_food.http_errors import app_error_response
@@ -462,7 +463,7 @@ def setup_adding_routes(rt):
                 if "ripeness" in error.fields:
                     return render_fragment(P(str(error), cls="text-red-700"))
                 return render_fragment(P("Could not log this food: check the amounts.", cls="text-red-700"))
-            return HTMLResponse("", headers={"HX-Redirect": "/food"})
+            return HTMLResponse("", headers=hx_location("/food"))
 
     @rt("/food/fridge/store/{entry_type}/{entry_id}")
     def post(

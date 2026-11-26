@@ -28,6 +28,7 @@ _INTAKE_PLATE_COLUMNS = """
     ip.eaten_at,
     ip.eaten_fraction,
     ip.eaten_fraction_method,
+    ip.ended_at,
     ip.created_at,
     ip.updated_at
 """
@@ -195,6 +196,35 @@ def update_intake_plate_offset(
     )
     if row is None:
         raise NotFoundError(f"Intake plate {plate_id} not found")
+
+
+def update_intake_plate_ended_at(
+    connection, user_id: int, plate_id: int, ended_at: datetime | None, *, commit: bool = True
+) -> None:
+    """Write when a plate of the user was finished, or clear it with None
+    (study_conventions.md §6.3). Ownership is checked in the SQL (§5.3).
+
+    Raises:
+        NotFoundError: the plate does not exist or is not the user's.
+    """
+    row = _execute_query(
+        connection,
+        """
+        UPDATE intake_plate ip
+        SET ended_at = %(ended_at)s,
+            updated_at = NOW()
+        FROM intake_event ie
+        WHERE ip.id = %(plate_id)s
+          AND ie.id = ip.intake_event_id
+          AND ie.users_id = %(user_id)s
+          AND ie.deleted_at IS NULL
+        RETURNING ip.id;
+        """,
+        {"plate_id": plate_id, "user_id": user_id, "ended_at": ended_at},
+        commit=commit,
+    )
+    if row is None:
+        raise NotFoundError("intake_plate_not_found")
 
 
 def list_event_exact_times(connection, event_id: int) -> list[tuple[str, int, datetime]]:

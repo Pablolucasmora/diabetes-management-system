@@ -1016,6 +1016,7 @@ class DBSchema:
         -- the food's macros and macros_source, so they are computed live from the
         -- portions (measurement_conventions.md §6.9.4).
 
+        ended_at TIMESTAMPTZ, -- When the meal was finished, typed or set with `Now`; NULL = not recorded. After meal_time and not in the future, checked when written (study_conventions.md 6.3)
         notes TEXT, -- Free-text note about the meal, edited from the cart card (input above "Confirm meal"). No physical limit: the 500-character cap is a domain rule (INTAKE_EVENT_NOTES_MAX_LENGTH in domain/intake_event.py), enforced at the boundary with 422 and never truncated (decision 2026-09-10, §7.3)
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1041,6 +1042,7 @@ class DBSchema:
         eaten_fraction_method VARCHAR(50)
             CONSTRAINT ck_intake_plate_eaten_fraction_method
             CHECK (eaten_fraction_method IS NULL OR eaten_fraction_method IN ({sql_in_list(FractionMethod)})), -- How eaten_fraction was obtained, marked by the user; NULL = eaten whole or not recorded (study_conventions.md 6.3)
+        ended_at TIMESTAMPTZ, -- When this plate was finished; NULL = not recorded. Not shown on the last plate, which ends with its meal (study_conventions.md 6.3)
 
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP

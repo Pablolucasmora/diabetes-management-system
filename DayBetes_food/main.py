@@ -158,6 +158,7 @@ app.add_exception_handler(Exception, _handle_unexpected_error)
 app.add_middleware(GZipMiddleware, minimum_size=512)
 
 STATIC_CACHE_CONTROL = "public, max-age=604800"
+PRELOAD_CACHE_CONTROL = "private, max-age=10"
 ASSET_PREFIXES = ("/css/", "/js/", "/images/")
 # Prefixes end in "/" so that a future route such as /authors or /images-admin
 # is not public by accident; the exact paths are listed apart.
@@ -326,6 +327,12 @@ async def add_response_headers(request, call_next):
     path = request.url.path
     if path.startswith(ASSET_PREFIXES):
         response.headers.setdefault("Cache-Control", STATIC_CACHE_CONTROL)
+    elif request.headers.get("HX-Preloaded") == "true" and request.method == "GET" and response.status_code == 200:
+        # A preload is kept 10 s in this browser only, so the tap that follows
+        # finds it (frontend_conventions.md §12). It varies on X-Data-Version,
+        # which preload.js raises after every save, so it never outlives a change.
+        response.headers["Cache-Control"] = PRELOAD_CACHE_CONTROL
+        response.headers["Vary"] = "HX-Request, X-Data-Version"
     return response
 
 

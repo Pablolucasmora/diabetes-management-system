@@ -184,6 +184,7 @@ intake_plate
   name             VARCHAR(255)   -- NULL = nombre derivado (4.6.3)
   offset_minutes   INTEGER        -- plantilla heredada por las filas nuevas (4.6.2)
   eaten_at         TIMESTAMPTZ    -- plantilla de hora exacta; NULL = offset en minutos (4.5.1)
+  ended_at         TIMESTAMPTZ    -- fin de la tanda; NULL = no registrado (study_conventions.md 6.3)
   created_at / updated_at
 
 portion_detail

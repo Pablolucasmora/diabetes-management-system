@@ -290,6 +290,10 @@ def _ensure_intake_event_schema(cursor):
         "CHECK (ingested_amount IS NULL OR (ingested_amount >= 0 AND ingested_amount <= 100000));"
     )
 
+    # ---- End of a meal (study §6.3, decision 2026-11-26) ----
+    # NULL in every existing row: past ends were not recorded.
+    cursor.execute("ALTER TABLE intake_event ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ;")
+
 
 def _ensure_portion_detail_schema(cursor):
     """portion_detail: evolutionary table hook (§12.1).
@@ -697,6 +701,9 @@ def _ensure_portion_detail_schema(cursor):
             "ALTER TABLE intake_plate ADD CONSTRAINT ck_intake_plate_eaten_fraction_method "
             "CHECK (eaten_fraction_method IS NULL OR eaten_fraction_method IN (" + sql_in_list(FractionMethod) + "));"
         )
+    # ---- End of a plate (study §6.3, decision 2026-11-26) ----
+    # NULL in every existing row: past ends were not recorded.
+    cursor.execute("ALTER TABLE intake_plate ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ;")
     cursor.execute("ALTER TABLE portion_detail ADD COLUMN IF NOT EXISTS split_method VARCHAR(50);")
     if not _constraint_exists(cursor, "portion_detail", "ck_portion_detail_split_method"):
         cursor.execute(

@@ -106,6 +106,9 @@ from DayBetes_food.services.intake_event import (
     OFFSET_MODE_MINUTES,
     resolve_offset_input,
     update_meal_time,
+    END_MODE_TIME,
+    set_event_end,
+    set_plate_end,
 )
 from DayBetes_food.domain.recipe import parse_recipe_name
 from DayBetes_food.services.fridge import keep_part_in_fridge
@@ -462,6 +465,24 @@ def setup_cart_routes(rt):
             except ValidationError:
                 return _error(request, ValidationError, "The meal time is not valid.")
             return _events_list_response(connection, int(user_id))
+
+    @rt("/cart/event/{event_id}/end")
+    def post(request: Request, event_id: PathId, end_mode: str = END_MODE_TIME, ended_time: str = ""):
+        """When the meal ended: a typed time, or this minute with `Now`
+        (study_conventions.md §6.3). An empty time clears it."""
+        if request.headers.get("HX-Request") != "true":
+            return _error(request, AuthorizationError, _NOT_HTMX)
+        user_id = get_current_user_id()
+        if not user_id:
+            return _error(request, AuthenticationError, _NO_SESSION)
+        with get_connection() as connection:
+            try:
+                set_event_end(connection, int(user_id), event_id, end_mode, ended_time)
+            except NotFoundError:
+                return _error(request, NotFoundError, _EVENT_GONE)
+            except ValidationError as error:
+                return _error(request, ValidationError, str(error))
+            return _card_response(request, connection, int(user_id), event_id)
 
     @rt("/cart/event/{event_id}/meal_type")
     def post(request: Request, event_id: PathId, meal_type: str = ""):
@@ -1210,6 +1231,23 @@ def setup_cart_routes(rt):
                     raise NotFoundError("intake_event_not_found")
                 value, eaten_at = resolve_offset_input(event, offset_mode, offset_minutes, eaten_time)
                 update_intake_plate_offset(connection, plate_id, value, eaten_at=eaten_at)
+            except NotFoundError:
+                return _error(request, NotFoundError, _PLATE_GONE)
+            except ValidationError as error:
+                return _error(request, ValidationError, str(error))
+            return _card_response(request, connection, int(user_id), event_id)
+
+    @rt("/cart/plate/{plate_id}/end")
+    def post(request: Request, plate_id: PathId, end_mode: str = END_MODE_TIME, ended_time: str = ""):
+        """When the plate was finished, as the meal's end (§6.3)."""
+        if request.headers.get("HX-Request") != "true":
+            return _error(request, AuthorizationError, _NOT_HTMX)
+        user_id = get_current_user_id()
+        if not user_id:
+            return _error(request, AuthenticationError, _NO_SESSION)
+        with get_connection() as connection:
+            try:
+                event_id = set_plate_end(connection, int(user_id), plate_id, end_mode, ended_time)
             except NotFoundError:
                 return _error(request, NotFoundError, _PLATE_GONE)
             except ValidationError as error:

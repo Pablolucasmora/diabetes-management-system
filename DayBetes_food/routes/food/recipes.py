@@ -1,6 +1,7 @@
 """Recipes: create, edit, delete, and their plates and ingredients (code_conventions.md §11.2.4, measurement_conventions.md §4.7)."""
 
 from fasthtml.common import *
+from DayBetes_food.routes.navigation import hx_location
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.ui import render_fragment, render_page
 from DayBetes_food.http_errors import app_error_response
@@ -451,7 +452,7 @@ def setup_recipes_routes(rt):
                 delete_recipe(connection, int(user_id), recipe_id)
             except NotFoundError:
                 return app_error_response(request, NotFoundError, "Recipe not found.")
-            return HTMLResponse("", headers={"HX-Redirect": "/food"})
+            return HTMLResponse("", headers=hx_location("/food"))
 
     @rt("/food/edit/recipe/{recipe_id}")
     def post(
@@ -506,7 +507,7 @@ def setup_recipes_routes(rt):
                 return app_error_response(request, NotFoundError, "Recipe not found.")
             except ConflictError as error:
                 return app_error_response(request, error, str(error))
-        return HTMLResponse("", headers={"HX-Redirect": f"/food/item/recipe/{recipe_id}"})
+        return HTMLResponse("", headers=hx_location(f"/food/item/recipe/{recipe_id}"))
 
     @rt("/food/create/recipe")
     def post(
@@ -567,4 +568,4 @@ def setup_recipes_routes(rt):
                         )
             except ConflictError as error:
                 return app_error_response(request, error, str(error))
-        return HTMLResponse("", headers={"HX-Redirect": f"/food/item/recipe/{created_id}"})
+        return HTMLResponse("", headers=hx_location(f"/food/item/recipe/{created_id}"))

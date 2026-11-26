@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 from fasthtml.common import *
 from starlette.datastructures import UploadFile
 
+from DayBetes_food.routes.navigation import hx_location
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.assistant.assistant_page import (
     AssistantPage,
@@ -347,9 +348,7 @@ def setup_assistant_routes(rt):
                     event_id = repeat_meal(connection, int(user_id), conversation.intake_event_id)
             except NotFoundError as error:
                 return app_error_response(request, NotFoundError, str(error))
-        response = HTMLResponse("")
-        response.headers["HX-Redirect"] = f"/assistant?{urlencode({'intake_event_id': event_id})}"
-        return response
+        return HTMLResponse("", headers=hx_location(f"/assistant?{urlencode({'intake_event_id': event_id})}"))
 
     @rt("/assistant/conversations/{conversation_id}/hide")
     def post(request: Request, conversation_id: PathId):

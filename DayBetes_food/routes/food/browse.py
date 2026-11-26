@@ -1,5 +1,7 @@
 """Browsing Food: the page, its list, the detail of an entry, its actions, tags and favorite, and the meal and plate selectors (frontend_conventions.md §9.3, §9.4)."""
 
+from urllib.parse import urlencode
+
 from fasthtml.common import *
 from DayBetes_food.auth.context import get_current_user_id
 from DayBetes_food.components.food.food_main import food_main
@@ -15,6 +17,7 @@ from DayBetes_food.database.queries import (
     get_manual_intake,
     get_recipe,
     list_recipe_plates,
+    list_owned_recipe_ids_with_several_plates,
     list_viewable_recipe_portions,
     get_user_favorite_access,
     set_user_favorite,
@@ -164,36 +167,26 @@ def _food_list_content(connection, view: FoodView, recipe_meal_types, *, search:
             entry_type=selected_entry_type,
         )
     # Only with the first page, after its load-more node: the user's next
-    # pages replace that node, so they stay above this section (§12.2).
+    # pages replace that node, so they stay above this section (§12.2). The
+    # menus, Ciqual and Open Food Facts come in a request of their own, so the
+    # user's results do not wait for them (frontend_conventions.md §9.3).
     off_nodes = []
-    user_id = get_current_user_id()
     if (
         page == 1
         and clean_search
-        and user_id
+        and get_current_user_id()
         and (view.filter == "all" or (view.filter == "food" and food_mode_norm == "catalog"))
     ):
-        # The user's menus, after their own results (frontend §9.13): a few
-        # rows, the rest in Menus.
-        menu_items = (
-            search_menu_items(connection, int(user_id), clean_search, None, MENU_FOOD_SEARCH_ROWS + 1)
-            if view.filter == "all"
-            else []
-        )
+        query = urlencode({"search": clean_search, "filter": view.filter, "own_empty": "" if entries else "1"})
         off_nodes = [
-            *FoodMenuResults(
-                menu_items[:MENU_FOOD_SEARCH_ROWS], clean_search, len(menu_items) > MENU_FOOD_SEARCH_ROWS
-            ),
-            *ExternalFoodSection(
-                "From Ciqual",
-                *_external_page(connection, int(user_id), PrefillSource.CIQUAL, clean_search, 1),
-                ciqual_attribution(),
-            ),
-            *ExternalFoodSection(
-                "From Open Food Facts",
-                *_external_page(connection, int(user_id), PrefillSource.OPEN_FOOD_FACTS, clean_search, 1),
-                off_attribution(),
-            ),
+            Div(
+                id="food_other_sources",
+                hx_get=f"/food/list/sources?{query}",
+                hx_trigger="load",
+                hx_swap="outerHTML",
+                data_skip_page_loading="true",
+                cls="hidden",
+            )
         ]
 
     if not entries and not off_nodes:
@@ -347,9 +340,7 @@ def setup_browse_routes(rt):
                 return app_error_response(request, NotFoundError, "Food not found.")
             # Only the user's own recipes: the only ones they can edit.
             recipes = list_recipes(connection, int(user_id), owned_only=True)
-            several_plates = {
-                recipe.id for recipe in recipes if len(list_recipe_plates(connection, int(user_id), recipe.id)) > 1
-            }
+            several_plates = set(list_owned_recipe_ids_with_several_plates(connection, int(user_id)))
         return render_fragment(FoodActionsRecipes(kind, entry_id, entry, recipes, several_plates))
 
     @rt("/food/actions/{entry_type}/{entry_id}/recipes/{recipe_id}/plates")
@@ -555,6 +546,38 @@ def setup_browse_routes(rt):
         with get_connection() as connection:
             view = FoodView(filter, search_mode, food_mode, favs_mode, recipes_mode, meal_type)
             return render_fragment(_food_list_content(connection, view, recipe_meal_types, search=search, page=page))
+
+    @rt("/food/list/sources")
+    def get(request: Request, search: str = "", filter: str = "all", own_empty: str = ""):
+        """The user's menus, Ciqual and Open Food Facts under the first page of a
+        search, asked for after it (frontend_conventions.md §9.3, §9.13). With
+        nothing here and nothing of the user's, it says there are no items."""
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        clean_search = (search or "").strip()
+        if not clean_search:
+            return render_fragment(())
+        with get_connection() as connection:
+            # A few menu rows, the rest in Menus; only in the general search.
+            menu_items = (
+                search_menu_items(connection, int(user_id), clean_search, None, MENU_FOOD_SEARCH_ROWS + 1)
+                if filter == "all"
+                else []
+            )
+            ciqual = _external_page(connection, int(user_id), PrefillSource.CIQUAL, clean_search, 1)
+            off = _external_page(connection, int(user_id), PrefillSource.OPEN_FOOD_FACTS, clean_search, 1)
+        if own_empty and not menu_items and not ciqual[0] and not off[0]:
+            return render_fragment((H2("No items", cls="text-gray-600"),))
+        return render_fragment((
+            *FoodMenuResults(
+                menu_items[:MENU_FOOD_SEARCH_ROWS], clean_search, len(menu_items) > MENU_FOOD_SEARCH_ROWS
+            ),
+            *ExternalFoodSection("From Ciqual", *ciqual, ciqual_attribution()),
+            *ExternalFoodSection("From Open Food Facts", *off, off_attribution()),
+        ))
 
     @rt("/food/list/external")
     def get(
