@@ -31,6 +31,8 @@ from DayBetes_food.database.queries import (
     set_intake_plate_eaten_fraction,
     set_exact_time,
     update_intake_event,
+    update_intake_event_ended_at,
+    update_intake_plate_ended_at,
 )
 from DayBetes_food.domain.constants import FractionMethod, IntakeEventState, MealType, PortionDestination, PortionOrigin
 from DayBetes_food.domain.fridge import LeftoverPlan
@@ -44,11 +46,14 @@ from DayBetes_food.domain.intake_plate import (
     IntakePlateCreate,
     PlateEaten,
     auto_offset_minutes,
+    check_ended_at,
     eaten_fraction,
     offset_from_eaten_at,
     parse_eaten_time,
     parse_offset_minutes,
+    plate_start,
     resolve_eaten_at,
+    resolve_ended_at,
 )
 from DayBetes_food.domain.manual_intake import ManualIntakeCreate, QuickAddRequest
 from DayBetes_food.domain.nutrition import NutrientValues
@@ -308,6 +313,7 @@ def update_meal_time(
         commit=False,
     )
     refresh_exact_time_offsets(connection, user_id, event_id)
+    refresh_end_times(connection, user_id, event_id)
     if commit:
         connection.commit()
 
@@ -328,6 +334,89 @@ def refresh_exact_time_offsets(connection, user_id: int, event_id: int) -> None:
         local_time = eaten_at.astimezone(zone).time()
         moved = resolve_eaten_at(event.meal_time, event.timezone_at_event, local_time, utc_now())
         set_exact_time(connection, table, row_id, moved, offset_from_eaten_at(event.meal_time, moved))
+
+
+def refresh_end_times(connection, user_id: int, event_id: int) -> None:
+    """After a meal's `meal_time` changes, place its end and its plates' ends
+    again (study_conventions.md §6.3), like the exact times (§4.5.1): each keeps
+    its local `HH:MM` and moves to the first such instant from its new start.
+    One that would fall on its start is cleared. Runs inside the caller's
+    transaction, after `refresh_exact_time_offsets`."""
+    event = get_intake_event(connection, user_id, event_id)
+    if event is None or event.meal_time is None:
+        raise NotFoundError("intake_event_not_found")
+    zone = ZoneInfo(event.timezone_at_event)
+
+    def _moved(start, ended_at):
+        moved = resolve_ended_at(start, event.timezone_at_event, ended_at.astimezone(zone).time())
+        return moved if moved > start.replace(second=0, microsecond=0) else None
+
+    if event.ended_at is not None:
+        update_intake_event_ended_at(
+            connection, user_id, event_id, _moved(event.meal_time, event.ended_at), commit=False
+        )
+    for plate in list_intake_plates(connection, user_id, event_id):
+        if plate.ended_at is not None:
+            start = plate_start(event.meal_time, plate)
+            update_intake_plate_ended_at(connection, user_id, plate.id, _moved(start, plate.ended_at), commit=False)
+
+
+# How the end of a meal or a plate is written in the cart (study_conventions.md §6.3).
+END_MODE_TIME = "time"
+END_MODE_NOW = "now"
+
+
+def _resolve_end_input(start: datetime | None, timezone_name: str, mode: str, time_raw: str) -> datetime | None:
+    """The end to store: the typed `HH:MM` from `start`, or this minute with
+    `Now`. An empty time clears it.
+
+    Raises:
+        ValidationError: unknown mode, a time that does not parse, an end not
+            after its start or in the future.
+    """
+    now = utc_now()
+    if mode == END_MODE_NOW:
+        ended_at = now.replace(second=0, microsecond=0)
+    elif mode == END_MODE_TIME:
+        ended_time = parse_eaten_time(time_raw)
+        if ended_time is None:
+            return None
+        ended_at = resolve_ended_at(start or now, timezone_name, ended_time)
+    else:
+        raise ValidationError("The end mode is not valid.")
+    check_ended_at(start, ended_at, now)
+    return ended_at
+
+
+def set_event_end(connection, user_id: int, event_id: int, mode: str, time_raw: str) -> None:
+    """Write or clear when a meal ended (study_conventions.md §6.3).
+
+    Raises:
+        NotFoundError: the meal does not exist or is not the user's.
+        ValidationError: see `_resolve_end_input`.
+    """
+    event = get_intake_event(connection, user_id, event_id)
+    if event is None:
+        raise NotFoundError("intake_event_not_found")
+    ended_at = _resolve_end_input(event.meal_time, event.timezone_at_event, mode, time_raw)
+    update_intake_event_ended_at(connection, user_id, event_id, ended_at)
+
+
+def set_plate_end(connection, user_id: int, plate_id: int, mode: str, time_raw: str) -> int:
+    """Write or clear when a plate was finished (study_conventions.md §6.3), and
+    return its meal's id. Its start is its exact time or `meal_time + offset`.
+
+    Raises:
+        NotFoundError: the plate does not exist or is not the user's.
+        ValidationError: see `_resolve_end_input`.
+    """
+    plate = get_intake_plate(connection, user_id, plate_id)
+    event = get_intake_event(connection, user_id, plate.intake_event_id)
+    if event is None:
+        raise NotFoundError("intake_event_not_found")
+    ended_at = _resolve_end_input(plate_start(event.meal_time, plate), event.timezone_at_event, mode, time_raw)
+    update_intake_plate_ended_at(connection, user_id, plate_id, ended_at)
+    return event.id
 
 
 # Where a food added to the cart goes (measurement_conventions.md §4.6.1, §7.7).

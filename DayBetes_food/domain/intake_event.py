@@ -91,6 +91,8 @@ class IntakeEventRead:
     # injection on confirm, like injection_zone (measurement §8.2, §8.4).
     insulin_pen_id: int | None = None
     insulin_units: float | None = None
+    # When the meal was finished; None = not recorded (study §6.3).
+    ended_at: datetime | None = None
 
 
 @dataclass(frozen=True)

@@ -104,6 +104,7 @@ Plates
   │ Offset [ +45 ] min [Apply all]               │
   │   IngredientRow                              │
   └──────────────────────────────────────────────┘
+Meal ended [ --:-- ] [Now]   (cada tanda menos la última lleva al pie Plate ended, §7.16)
 [ + Add plate ]
 Before you confirm: Eating out | Insulin (+ zona) | NotesSection
 ConfirmSection (Eaten + Confirm meal)
@@ -272,6 +273,14 @@ Para lo que se cocina de golpe (pasta, quinoa): se añade al carrito con lo pesa
 - No se guarda como borrador: el reparto se decide en el momento (decisión del usuario, 2026-11-07).
 - Es una acción en línea del carrito: un error sale en el aviso global (`code_conventions.md` §9.5).
 - Borrar después la comida no deshace el reparto: lo guardado ya está en la nevera.
+
+### 7.16 Hora de fin (decisión del usuario del 2026-11-26)
+
+El dato y sus reglas están en `study_conventions.md` §6.3.
+
+- **Dónde.** Al pie de cada tanda menos la última, `Plate ended`; y debajo de la última tanda, antes de `+ Add plate`, `Meal ended`, que es el fin de la comida y de su última tanda.
+- **Cómo.** Una etiqueta, un `<input type="time">` y, justo al lado, un botón `Now` (`EndControl`, `components/cart/cart_components.py`). El campo guarda al salir de él si cambió (`blur changed`, §4), y vaciarlo borra el fin. `Now` guarda el minuto actual de un toque; los dos comparten la cola del contenedor (`hx-sync`, §7.10), así que pulsar `Now` mientras se escribía sustituye a lo escrito.
+- Un error (antes del inicio o en el futuro) sale en el aviso global, como el resto de acciones del carrito.
 
 ## 8. Superficies, contraste y colores
 

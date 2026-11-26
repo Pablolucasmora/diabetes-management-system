@@ -100,6 +100,8 @@ class IntakePlateRead:
     eaten_at: datetime | None  # exact-time template; None = offset in minutes (§4.5.1)
     created_at: datetime
     updated_at: datetime
+    # When the plate was finished; None = not recorded (study §6.3).
+    ended_at: datetime | None = None
     # Share eaten, (0, 1], stored at confirm; None = not recorded (study §6.3).
     eaten_fraction: float | None = None
     # How that fraction was obtained; None = eaten whole or not recorded (study §6.3).
@@ -183,6 +185,51 @@ def eaten_time_text(meal_time: datetime | None, timezone_name: str, eaten_at: da
     if meal_time is None or offset_minutes is None:
         return ""
     return (meal_time + timedelta(minutes=offset_minutes)).astimezone(zone).strftime("%H:%M")
+
+
+def plate_start(meal_time: datetime | None, plate) -> datetime | None:
+    """When a plate starts: its exact time, else `meal_time + offset`, else
+    `meal_time` (study_conventions.md §6.3, end of a meal or a plate)."""
+    if plate.eaten_at is not None:
+        return plate.eaten_at
+    if meal_time is None:
+        return None
+    return meal_time + timedelta(minutes=plate.offset_minutes or 0)
+
+
+def resolve_ended_at(start: datetime, timezone_name: str, ended_time: time) -> datetime:
+    """The first instant with the local time `ended_time`, in the meal's zone, at
+    or after `start` (the meal's or the plate's): a dinner at 23:00 that ends
+    at 00:30 ends the next day (study_conventions.md §6.3)."""
+    zone = ZoneInfo(timezone_name)
+    start = start.replace(second=0, microsecond=0)
+    local_day = start.astimezone(zone).date()
+    candidates = [
+        datetime.combine(local_day + timedelta(days=shift), ended_time, tzinfo=zone)
+        for shift in (-1, 0, 1, 2)
+    ]
+    return min(candidate for candidate in candidates if candidate >= start)
+
+
+def check_ended_at(start: datetime | None, ended_at: datetime, now: datetime) -> None:
+    """An end comes after its start and is not in the future (§6.3). Both are
+    taken to the minute, as the time is typed.
+
+    Raises:
+        ValidationError: it is not after the start, or it is in the future.
+    """
+    # One message for both: a time typed before the start resolves to the next
+    # day, which is in the future, so "in the future" would mislead.
+    too_early = start is not None and ended_at <= start.replace(second=0, microsecond=0)
+    if too_early or ended_at > now:
+        raise ValidationError("The end must be between the start and now.")
+
+
+def ended_time_text(ended_at: datetime | None, timezone_name: str) -> str:
+    """`HH:MM` of an end in the meal's zone; empty when not recorded."""
+    if ended_at is None:
+        return ""
+    return ended_at.astimezone(ZoneInfo(timezone_name)).strftime("%H:%M")
 
 
 def plate_label(plate, plate_portions) -> str:

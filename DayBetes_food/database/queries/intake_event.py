@@ -48,7 +48,8 @@ _INTAKE_EVENT_COLUMNS = """
     updated_at,
     deleted_at,
     insulin_pen_id,
-    insulin_units
+    insulin_units,
+    ended_at
 """
 
 
@@ -660,6 +661,34 @@ def update_intake_event_name(
         if commit:
             connection.rollback()
         raise
+
+
+def update_intake_event_ended_at(
+    connection, user_id: int, event_id: int, ended_at: datetime | None, *, commit: bool = True
+) -> None:
+    """Write when an active meal of the user ended, or clear it with None
+    (study_conventions.md §6.3). A dedicated function, like
+    update_intake_event_name: IntakeEventUpdate reads None as "leave untouched".
+
+    Raises:
+        NotFoundError: the event does not exist, is not the user's or is archived.
+    """
+    row = _execute_query(
+        connection,
+        """
+        UPDATE intake_event
+        SET ended_at = %(ended_at)s,
+            updated_at = NOW()
+        WHERE id = %(event_id)s
+          AND users_id = %(user_id)s
+          AND deleted_at IS NULL
+        RETURNING id;
+        """,
+        {"event_id": event_id, "user_id": user_id, "ended_at": ended_at},
+        commit=commit,
+    )
+    if row is None:
+        raise NotFoundError(f"Intake event {event_id} not found or not owned by user {user_id}")
 
 
 def update_intake_event_notes(

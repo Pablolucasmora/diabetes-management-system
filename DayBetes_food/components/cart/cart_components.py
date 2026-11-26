@@ -51,6 +51,7 @@ from DayBetes_food.domain.intake_plate import (
     INTAKE_PLATE_NAME_MAX_LENGTH,
     plate_label,
     eaten_time_text,
+    ended_time_text,
 )
 from DayBetes_food.components.modal import (
     close_modal_js,
@@ -629,6 +630,42 @@ def OffsetControl(event, control_id, offset_minutes, eaten_at, post_url, card_ta
     )
 
 
+def EndControl(control_id, ended_at, timezone_name, post_url, card_target, label, aria_name):
+    """When a meal or a plate ended (study_conventions.md §6.3,
+    frontend_conventions.md §7.16): a time field and, next to it, `Now`, which
+    stores this minute with one touch. Emptying the field clears the end."""
+    # `Now` joins the field's queue: its click comes after the blur that saves
+    # what was being typed, and replaces it (§7.10).
+    common = dict(hx_post=post_url, hx_target=card_target, hx_swap="outerHTML", hx_sync=f"#{control_id}:replace")
+    time_id = f"{control_id}_time"
+    return Div(
+        Label(label, cls="text-xs text-gray-600", **{"for": time_id}),
+        Input(
+            type="time",
+            id=time_id,
+            name="ended_time",
+            value=ended_time_text(ended_at, timezone_name),
+            aria_label=f"{aria_name} end time",
+            cls="web_input border border-line rounded-xl px-2 py-1.5 text-sm w-auto",
+            hx_vals=json.dumps({"end_mode": "time"}),
+            # On leaving the field, as the offset's time (§4); not if it did not change.
+            hx_trigger="blur changed",
+            **common,
+        ),
+        Button(
+            "Now",
+            type="button",
+            aria_label=f"Set the {aria_name.lower()} end to now",
+            title="Set to now",
+            cls=f"{_SOFT_BUTTON_CLS} px-3 py-1.5 text-xs font-semibold shrink-0",
+            hx_vals=json.dumps({"end_mode": "now"}),
+            **common,
+        ),
+        id=control_id,
+        cls="flex items-center gap-2",
+    )
+
+
 def _ApplyAllButton(plate, offset_input_id, card_target):
     """`Apply all`: propagate an offset to the whole plate (§4.6.2, §7.3/§7.4).
 
@@ -837,11 +874,13 @@ def PlateHeader(event, plate, display_name, card_target, has_portions=False):
     )
 
 
-def PlateBlock(event, plate, plate_portions, plates, plate_labels, preparation=None):
+def PlateBlock(event, plate, plate_portions, plates, plate_labels, preparation=None, *, with_end=False):
     """A plate inside the event card: its header and its rows.
 
     The header is always drawn, also for a single unnamed plate (§7.2,
     decision 2026-10-10): the plate's offset and `Apply all` live there.
+    `with_end` adds the plate's end at the bottom; the last plate has none,
+    because it ends with its meal (§7.16).
     """
     card_target = f"#cart_card_event_{event.id}"
     grouped = group_portions(plate_portions)
@@ -886,6 +925,15 @@ def PlateBlock(event, plate, plate_portions, plates, plate_labels, preparation=N
             )
             for item in grouped
         ],
+        EndControl(
+            f"plate_end_{plate.id}",
+            plate.ended_at,
+            event.timezone_at_event,
+            f"/cart/plate/{plate.id}/end",
+            card_target,
+            "Plate ended",
+            "Plate",
+        ) if with_end else "",
         cls="flex flex-col gap-2 border border-line rounded-2xl p-2.5 bg-white/30",
     )
 
@@ -1565,9 +1613,19 @@ def CartCard(event, portions, plates=(), rapid_pens=(), preparation=None):
                     plates,
                     plate_labels,
                     preparation,
+                    with_end=index < len(plates) - 1,
                 )
-                for plate in plates
+                for index, plate in enumerate(plates)
             ],
+            EndControl(
+                f"meal_end_{event.id}",
+                event.ended_at,
+                event.timezone_at_event,
+                f"/cart/event/{event.id}/end",
+                card_target,
+                "Meal ended",
+                "Meal",
+            ),
             Button(
                 "+ Add plate",
                 type="button",
