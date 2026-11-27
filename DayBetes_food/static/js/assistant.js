@@ -185,11 +185,14 @@
     updateSend();
   }
 
-  function scrollToLatest() {
+  // A new turn glides into view; a conversation that is opened or reloaded
+  // shows its end at once, with no scrolling down to it (frontend §9.11,
+  // user's request of 2026-11-27).
+  function scrollToLatest(instant) {
     var thread = byId("assistant_thread");
     var last = thread && thread.lastElementChild;
     while (last && last.tagName === "INPUT") last = last.previousElementSibling;
-    if (last) last.scrollIntoView({ block: "start", behavior: "smooth" });
+    if (last) last.scrollIntoView({ block: "start", behavior: instant ? "auto" : "smooth" });
   }
 
   // ---- Query under the caret ----
@@ -659,7 +662,7 @@
 
   // A reloaded conversation shows its end.
   document.addEventListener("htmx:afterSwap", function (event) {
-    if (event.detail && event.detail.target && event.detail.target.id === "assistant_thread_box") scrollToLatest();
+    if (event.detail && event.detail.target && event.detail.target.id === "assistant_thread_box") scrollToLatest(true);
   });
 
   document.addEventListener("keydown", function (event) {
@@ -751,7 +754,7 @@
     restoreFailedText(document);
     autoGrow();
     updateSend();
-    scrollToLatest();
+    scrollToLatest(true);
   });
 
   // A new page of the assistant starts with no mentions.
@@ -764,7 +767,7 @@
       mealExpanded = false;
       autoGrow();
       updateSend();
-      scrollToLatest();
+      scrollToLatest(true);
     }
   });
 

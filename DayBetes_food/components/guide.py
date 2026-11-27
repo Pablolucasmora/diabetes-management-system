@@ -213,5 +213,6 @@ def GuidePage():
         *[Div(_section(topic, number), cls="web_container w-full px-4 pb-2") for number, topic in enumerate(topics, start=1)],
         P("Nothing matches. Try another word.", id="guide_empty", hidden=True, cls="web_container w-full text-sm text-gray-500 p-4"),
         id="guide_page",
+        data_hide_cart="true",
         cls=SUBPAGE_CLS,
     )

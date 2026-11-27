@@ -3,9 +3,6 @@
     if (typeof window.dbFoodDetailBindAll === "function") {
       window.dbFoodDetailBindAll(document);
     }
-    if (typeof window.dbFoodDetailSyncCart === "function") {
-      window.dbFoodDetailSyncCart(document);
-    }
     return;
   }
   window.__dbFoodDetailBootstrapped = true;
@@ -51,36 +48,6 @@
     if (!opt) return "serving";
     return opt.getAttribute("data-unit-label") || "serving";
   }
-
-  function setCartVisible(visible) {
-    var cart = byId("cart_button");
-    if (!cart) return;
-    if (cart.__hideTimer) {
-      window.clearTimeout(cart.__hideTimer);
-      cart.__hideTimer = null;
-    }
-    if (visible) {
-      cart.style.visibility = "";
-      cart.style.opacity = "";
-      cart.style.pointerEvents = "";
-      cart.classList.remove("invisible", "opacity-0", "pointer-events-none");
-      cart.classList.add("opacity-100");
-      return;
-    }
-    cart.style.visibility = "";
-    cart.classList.remove("opacity-100");
-    cart.classList.add("opacity-0", "pointer-events-none");
-    cart.__hideTimer = window.setTimeout(function () {
-      cart.classList.add("invisible");
-      cart.__hideTimer = null;
-    }, 110);
-  }
-
-  function syncCartVisibility() {
-    var hideCart = !!document.querySelector("[data-hide-cart='true']");
-    setCartVisible(!hideCart);
-  }
-  window.dbFoodDetailSyncCart = syncCartVisibility;
 
   // Catalog macros are per 100 g of RAW food, so a weight taken already cooked
   // is converted back with cooking_factor = cooked/raw, same as
@@ -397,17 +364,14 @@
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", function () {
       bindAll(document);
-      syncCartVisibility();
     });
   } else {
     bindAll(document);
-    syncCartVisibility();
   }
 
   document.body.addEventListener("htmx:afterSwap", function (event) {
     var target = event && event.detail ? event.detail.target : null;
     bindAll(target || document);
-    syncCartVisibility();
   });
 
 })();
