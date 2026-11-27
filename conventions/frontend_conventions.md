@@ -591,6 +591,7 @@ Después, los mensajes de la conversación y, fijo abajo, el compositor: el bot�
 **Una conversación por comida** (decisión del usuario, 2026-11-12; lista de chats, 2026-11-21).
 
 - Al abrir la página se abre la conversación de la comida planificada más reciente, como en Food, o una comida nueva si no hay ninguna (decisión del usuario del 2026-11-21: ya no se recuerda la última elección en `sessionStorage`). `?conversation_id=` abre esa conversación; `?intake_event_id=` la de esa comida; `?new_meal=1` una comida nueva; `?intake_event_id=none` el último chat sin comida.
+- **Al abrir o recargar una conversación**, la vista aparece directamente en su último turno, sin bajar hasta él con una animación (decisión del usuario del 2026-11-27). Solo un turno nuevo, al enviar o al llegar la respuesta, se desplaza suavemente hasta quedar a la vista.
 - **Lista de chats**: la píldora abre un pop-up (§8) con, de arriba abajo:
   - `Planned meals`: una fila por comida planificada, con su texto de §7.7 y sus hidratos; la del chat abierto, marcada. Abre la conversación de esa comida (la última, si tuviera varias), o la vacía con la introducción.
   - `+ New meal`: un chat vacío para una comida nueva.
