@@ -85,6 +85,16 @@
     if (input) input.checked = true;
   }
 
+  // A swipe chooses the item on release, before its page is drawn
+  // (swipe_nav.js, frontend §13): the same as tapping it, without its request.
+  window.dbIslandSelect = function (value) {
+    var item = document.querySelector("label[data-nav-item='" + value + "']");
+    var input = item ? item.querySelector("input[type='radio']") : null;
+    if (!input) return;
+    input.checked = true;
+    moveIndicatorTo(item);
+  };
+
   function bind() {
     setCheckedByRoute();
 

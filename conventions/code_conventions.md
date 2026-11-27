@@ -1249,7 +1249,7 @@ La decisión entre llamar directamente a CRUD o delegar en un servicio sigue la 
 
 ### 9.2 Métodos y rutas
 
-- `GET` solo realiza lecturas. Única excepción (decisión del usuario del 2026-11-25): `assistant_turn.seen_at` (§11.2.11), que se escribe al mostrar el resultado de un turno. No es un dato del estudio, repetirlo deja la misma fila y solo afecta al dueño. Por eso las rutas de DiaBot que lo escriben no se precargan.
+- `GET` solo realiza lecturas. Única excepción (decisión del usuario del 2026-11-25): `assistant_turn.seen_at` (§11.2.11), que se escribe al mostrar el resultado de un turno. No es un dato del estudio, repetirlo deja la misma fila y solo afecta al dueño. Una petición de precarga (`HX-Preloaded: true`, `frontend_conventions.md` §12) no lo escribe, porque puede no mostrarse nunca (decisión del usuario del 2026-11-27): la página lleva los turnos que habría marcado en `data-mark-seen`, y `static/js/assistant.js` los marca con `POST /assistant/turn/{turn_id}/seen` cuando la página se muestra.
 - `POST` se utiliza para creaciones y acciones de negocio mutadoras.
 - `PUT` representa sustitución completa únicamente si el endpoint lo documenta.
 - `PATCH` representa actualización parcial únicamente si el endpoint lo documenta.

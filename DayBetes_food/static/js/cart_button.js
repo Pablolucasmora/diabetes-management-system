@@ -27,11 +27,13 @@
     }, 110);
   }
 
-  function sync() {
+  // `root`: the content that decides, the page shown by default; a swipe
+  // passes the page it is about to show (swipe_nav.js, §13).
+  function sync(root) {
     var cart = document.getElementById("cart_button");
     if (!cart) return;
-    var main = document.getElementById("main_content");
-    var hide = !!(main && main.querySelector("[data-hide-cart='true']"));
+    var content = root && root.querySelector ? root : document.getElementById("main_content");
+    var hide = !!(content && content.querySelector("[data-hide-cart='true']"));
     setVisible(cart, !hide);
   }
 
@@ -39,8 +41,8 @@
 
   function bind() {
     sync();
-    document.body.addEventListener("htmx:afterSwap", sync);
-    document.body.addEventListener("htmx:historyRestore", sync);
+    document.body.addEventListener("htmx:afterSwap", function () { sync(); });
+    document.body.addEventListener("htmx:historyRestore", function () { sync(); });
   }
 
   if (document.readyState === "loading") {

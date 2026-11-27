@@ -114,6 +114,7 @@ def _base_html_shell(content_html: str) -> str:
     <script src="{asset_busted("/js/modal.js")}" defer></script>
     <script src="{asset_busted("/js/navigation.js")}" defer></script>
     <script src="{asset_busted("/js/cart_button.js")}" defer></script>
+    <script src="{asset_busted("/js/page_cache.js")}" defer></script>
     <script src="{asset_busted("/js/swipe_nav.js")}" defer></script>
     <script src="{asset_busted("/js/food_quick_create.js")}" defer></script>
     <script src="{asset_busted("/js/rescue.js")}" defer></script>
@@ -167,5 +168,9 @@ def render_page(request, content, show_cart=True):
         AppToast(),
         # Outside #main_content, so a page swap never removes it (frontend §9.12).
         GuideModal(),
+        # A page swiped off to one side never makes the document wider (frontend
+        # §13): a phone's browser would zoom out to fit it. `clip` makes no scroll
+        # container, so sticky bars keep working; fixed children are not clipped.
+        cls="overflow-x-clip",
     )
     return HTMLResponse(_base_html_shell(_safe_fragment_to_html(page_fragment)))

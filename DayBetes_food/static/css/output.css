@@ -931,6 +931,9 @@
   .overflow-x-auto {
     overflow-x: auto;
   }
+  .overflow-x-clip {
+    overflow-x: clip;
+  }
   .overflow-y-auto {
     overflow-y: auto;
   }
@@ -2254,9 +2257,22 @@
 body {
   overflow-x: clip;
 }
-.db_swipe_ghost, .db_swipe_ghost * {
-  animation: none !important;
-  transition: none !important;
+.db_swipe_frame {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 0;
+  overflow: clip;
+  pointer-events: none;
+  visibility: hidden;
+}
+.db_swipe_frame[data-shown] {
+  visibility: visible;
+}
+.db_swipe_preview {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
 }
 @property --bump-d {
   syntax: "<length>";
@@ -2597,14 +2613,6 @@ body {
     transform: none;
   }
 }
-@keyframes db-slide-from-right {
-  from {
-    transform: translateX(100vw);
-  }
-  to {
-    transform: none;
-  }
-}
 @keyframes db-slide-from-left {
   from {
     transform: translateX(-100vw);
@@ -2689,9 +2697,6 @@ body {
   }
   #main_content > * {
     animation: db-page-in 240ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
-  }
-  #main_content[data-swipe="next"] > * {
-    animation: db-slide-from-right 260ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
   }
   #main_content[data-swipe="prev"] > * {
     animation: db-slide-from-left 260ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;

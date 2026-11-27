@@ -188,12 +188,31 @@
   // A new turn glides into view; a conversation that is opened or reloaded
   // shows its end at once, with no scrolling down to it (frontend §9.11,
   // user's request of 2026-11-27).
-  function scrollToLatest(instant) {
-    var thread = byId("assistant_thread");
+  function latestTurn(thread) {
     var last = thread && thread.lastElementChild;
     while (last && last.tagName === "INPUT") last = last.previousElementSibling;
+    return last;
+  }
+
+  function scrollToLatest(instant) {
+    var last = latestTurn(byId("assistant_thread"));
     if (last) last.scrollIntoView({ block: "start", behavior: instant ? "auto" : "smooth" });
   }
+
+  // The page previewed beside the current one during a swipe (swipe_nav.js,
+  // frontend §13) shows what the real one will once open: its meal's foods
+  // folded as they will be (a new page starts folded), and at its last turn,
+  // as above. Otherwise it would change once it lands.
+  document.addEventListener("db:swipe-preview", function (event) {
+    var detail = event.detail || {};
+    var root = detail.root;
+    var scroller = detail.scroller;
+    if (root && root.querySelector) fitMealFoods(root, false);
+    var thread = root && root.getElementById ? root.getElementById("assistant_thread") : null;
+    var last = latestTurn(thread);
+    if (!last || !scroller) return;
+    scroller.scrollTop += last.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+  });
 
   // ---- Query under the caret ----
 
@@ -757,8 +776,41 @@
     scrollToLatest(true);
   });
 
+  // A preloaded page (frontend §12, §13) drew turns without marking them seen:
+  // it does so now that it is shown (code_conventions.md §9.2).
+  function csrfToken() {
+    var meta = document.querySelector('meta[name="csrf-cookie-name"]');
+    var name = ((meta && meta.content) || "daybetes_csrf") + "=";
+    var cookies = document.cookie ? document.cookie.split(";") : [];
+    for (var i = 0; i < cookies.length; i += 1) {
+      var cookie = cookies[i].trim();
+      if (cookie.indexOf(name) === 0) return decodeURIComponent(cookie.slice(name.length));
+    }
+    return "";
+  }
+
+  function markShownSeen(root) {
+    if (!root || !root.querySelectorAll) return;
+    var pages = root.matches && root.matches("[data-mark-seen]") ? [root] : root.querySelectorAll("[data-mark-seen]");
+    for (var i = 0; i < pages.length; i += 1) {
+      var page = pages[i];
+      if (!document.body.contains(page) || page.closest(".db_swipe_ghost")) continue;
+      var ids = (page.getAttribute("data-mark-seen") || "").split(",");
+      page.removeAttribute("data-mark-seen");
+      for (var j = 0; j < ids.length; j += 1) {
+        if (!/^[0-9]+$/.test(ids[j])) continue;
+        fetch("/assistant/turn/" + ids[j] + "/seen", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "HX-Request": "true", "X-CSRF-Token": csrfToken() },
+        }).catch(function () {});
+      }
+    }
+  }
+
   // A new page of the assistant starts with no mentions.
   document.addEventListener("htmx:load", function (event) {
+    markShownSeen(event.detail && event.detail.elt);
     if (event.detail && event.detail.elt && event.detail.elt.querySelector && event.detail.elt.querySelector("#assistant_input")) {
       mentions = [];
       activeSlash = -1;
@@ -777,21 +829,24 @@
   // wants, also across the bar's swaps after each message.
   var mealExpanded = false;
 
-  function fitMealFoods() {
-    var details = document.querySelector("[data-meal-fold]");
+  // `root`: the page shown by default, or the preview of a swipe (below), which
+  // opens folded as the page does.
+  function fitMealFoods(root, expanded) {
+    var scope = root && root.querySelector ? root : document;
+    var details = scope.querySelector("[data-meal-fold]");
     if (!details) return;
     var rows = details.querySelector("[data-meal-rows]");
     if (!rows) return;
     var share = parseFloat(details.getAttribute("data-meal-fold")) || 0.1;
     // Measuring it unfolded loses the scroll of the box.
-    var scroll = mealScroll();
+    var scroll = mealScroll(scope);
     details.removeAttribute("data-foldable");
     details.open = true;
     var count = parseInt(rows.getAttribute("data-meal-count"), 10) || 0;
     var foldable = count > 1 && rows.offsetHeight > window.innerHeight * share;
     if (foldable) details.setAttribute("data-foldable", "");
-    details.open = !foldable || mealExpanded;
-    setMealScroll(scroll);
+    details.open = !foldable || (expanded === undefined ? mealExpanded : expanded);
+    setMealScroll(scroll, scope);
   }
 
   // A repaint of the bar keeps where its foods were scrolled to and which plates
@@ -799,13 +854,13 @@
   var MEAL_BAR_ID = "assistant_meal_bar";
   var mealView = null;
 
-  function mealScroll() {
-    var box = document.querySelector("[data-meal-scroll]");
+  function mealScroll(scope) {
+    var box = (scope || document).querySelector("[data-meal-scroll]");
     return box ? box.scrollTop : 0;
   }
 
-  function setMealScroll(top) {
-    var box = document.querySelector("[data-meal-scroll]");
+  function setMealScroll(top, scope) {
+    var box = (scope || document).querySelector("[data-meal-scroll]");
     if (box) box.scrollTop = top;
   }
 

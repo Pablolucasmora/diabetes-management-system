@@ -194,15 +194,21 @@ def _pending_since(pending, conversation_id: int | None):
     return pending.created_at
 
 
-def _turn_tail(connection, user_id: int, conversation_id: int | None, unseen) -> list:
+def _turn_tail(
+    connection, user_id: int, conversation_id: int | None, unseen, deferred_seen: list[int] | None = None
+) -> list:
     """What the thread of `conversation_id` draws after its turns (§8.12): a message
     of this conversation still being answered, or a failed one the page never
     showed. A new chat has no conversation until its answer: its pending message
-    belongs to the thread without one."""
+    belongs to the thread without one. With `deferred_seen` (a preload), the
+    failed turn shown is listed there instead of marked seen now."""
     tail = []
     if unseen is not None and unseen.status is AssistantTurnStatus.FAILED and unseen.conversation_id == conversation_id:
         tail.append(FailedTurnBlock(unseen))
-        mark_assistant_turn_seen(connection, user_id, unseen.id)
+        if deferred_seen is not None:
+            deferred_seen.append(unseen.id)
+        else:
+            mark_assistant_turn_seen(connection, user_id, unseen.id)
     pending = get_pending_assistant_turn(connection, user_id)
     if pending is not None and pending.conversation_id == conversation_id:
         tail.append(PendingTurnBlock(pending))
@@ -222,6 +228,10 @@ def setup_assistant_routes(rt):
             raise AuthenticationError("Your session has expired.")
         chosen_conversation = parse_optional_id(conversation_id, "conversation")
         chosen_event, without_meal = parse_meal_choice(intake_event_id)
+        # A preload (frontend §12, §13) may never be shown: it writes nothing,
+        # and the page marks its turns seen when it is shown
+        # (POST /assistant/turn/{id}/seen; code_conventions.md §9.2).
+        deferred_seen = [] if request.headers.get("HX-Preloaded") == "true" else None
 
         with get_connection() as connection:
             events = list_planned_intake_events(connection, int(user_id))
@@ -272,8 +282,11 @@ def setup_assistant_routes(rt):
                 and unseen.conversation_id == conversation_key
             ):
                 # Its answer is one of the turns drawn now.
-                mark_assistant_turn_seen(connection, int(user_id), unseen.id)
-            tail = _turn_tail(connection, int(user_id), conversation_key, unseen)
+                if deferred_seen is not None:
+                    deferred_seen.append(unseen.id)
+                else:
+                    mark_assistant_turn_seen(connection, int(user_id), unseen.id)
+            tail = _turn_tail(connection, int(user_id), conversation_key, unseen, deferred_seen)
             pending = _pending_review(connection, int(user_id))
             buttons = plus_buttons(connection, int(user_id), conversation)
             chats = _chats(connection, int(user_id), selected, conversation_key)
@@ -293,8 +306,23 @@ def setup_assistant_routes(rt):
             usual=usual,
             plates=plates,
             tail=tail,
+            mark_seen=tuple(deferred_seen or ()),
         )
         return render_page(request, content, show_cart=False)
+
+    @rt("/assistant/turn/{turn_id}/seen")
+    def post(request: Request, turn_id: PathId):
+        """A preloaded page of DiaBot, shown (code_conventions.md §9.2): marks the
+        turn it drew seen, as showing it does without a preload. Not the user's,
+        or already seen: nothing changes. Answers nothing."""
+        if request.headers.get("HX-Request") != "true":
+            return HTMLResponse(status_code=403)
+        user_id = get_current_user_id()
+        if not user_id:
+            return app_error_response(request, AuthenticationError, "Your session has expired.")
+        with get_connection() as connection:
+            mark_assistant_turn_seen(connection, int(user_id), turn_id)
+        return HTMLResponse(status_code=204)
 
     @rt("/assistant/history")
     def get(request: Request, q: str = ""):

@@ -84,12 +84,28 @@ body {
     overflow-x: clip;
 }
 
-/* The copy of the page being left by a swipe (§13, swipe_nav.js): it only
-   moves out, so nothing inside it plays an entry or a transition again. */
-.db_swipe_ghost,
-.db_swipe_ghost * {
-    animation: none !important;
-    transition: none !important;
+/* The page next door, ready beside the current one for a swipe (§13,
+   swipe_nav.js), right after #main_content: above it and under the island
+   and the cart button. Part of the document, not fixed, so Safari draws it
+   where it draws the page; swipe_nav.js gives the frame its top and height.
+   The preview moves sideways inside the frame, which stays put and clips it,
+   so it never makes the document wider. Shown only while a swipe moves it. */
+.db_swipe_frame {
+    position: absolute;
+    left: 0;
+    right: 0;
+    z-index: 0;
+    overflow: clip;
+    pointer-events: none;
+    visibility: hidden;
+}
+.db_swipe_frame[data-shown] {
+    visibility: visible;
+}
+.db_swipe_preview {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
 }
 
 /* Liquid glass: frosted, translucent surface with a bright rim and a
@@ -432,10 +448,6 @@ body {
     from { transform: translateY(6px); }
     to { transform: none; }
 }
-@keyframes db-slide-from-right {
-    from { transform: translateX(100vw); }
-    to { transform: none; }
-}
 @keyframes db-slide-from-left {
     from { transform: translateX(-100vw); }
     to { transform: none; }
@@ -516,11 +528,8 @@ body {
     #main_content > * {
         animation: db-page-in 240ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
     }
-    /* A page reached by a swipe comes in from beyond the side the finger
-       left (§13, static/js/swipe_nav.js) instead of rising. */
-    #main_content[data-swipe="next"] > * {
-        animation: db-slide-from-right 260ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
-    }
+    /* The page reached by a swipe Back comes in from the left (§13,
+       static/js/swipe_nav.js) instead of rising. */
     #main_content[data-swipe="prev"] > * {
         animation: db-slide-from-left 260ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
     }
