@@ -49,3 +49,30 @@ def test_a_failed_turn_gives_its_text_back_and_says_why():
     assert 'data-assistant-failed-text="two eggs"' in html
     assert "Send it again." in html
     assert "hx-get" not in html
+
+
+def test_a_preload_lists_a_failed_turn_instead_of_marking_it_seen(monkeypatch):
+    """code_conventions.md §9.2: a preload writes nothing; the page marks it once shown."""
+    from DayBetes_food.routes import assistant_routes
+
+    marked = []
+    monkeypatch.setattr(assistant_routes, "mark_assistant_turn_seen", lambda c, u, t: marked.append(t))
+    monkeypatch.setattr(assistant_routes, "get_pending_assistant_turn", lambda c, u: None)
+    failed = _turn(AssistantTurnStatus.FAILED, conversation_id=4, error_message="x")
+
+    deferred = []
+    tail = assistant_routes._turn_tail(None, 1, 4, failed, deferred)
+    assert len(tail) == 1 and deferred == [9] and marked == []
+
+    tail = assistant_routes._turn_tail(None, 1, 4, failed)
+    assert len(tail) == 1 and marked == [9]
+
+
+def test_a_preloaded_page_carries_the_turns_to_mark_seen():
+    from fasthtml.common import Div
+
+    from DayBetes_food.components.assistant.assistant_page import AssistantPage
+
+    html = to_xml(AssistantPage(None, [], None, [], Div(), mark_seen=(9, 12)))
+    assert 'data-mark-seen="9,12"' in html
+    assert "data-mark-seen" not in to_xml(AssistantPage(None, [], None, [], Div()))

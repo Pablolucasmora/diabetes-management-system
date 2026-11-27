@@ -74,6 +74,9 @@ def _diabot_item():
             hx_push_url="true",
             hx_trigger="click",
             hx_params="none",
+            # A preload writes nothing (code_conventions.md §9.2): the page marks
+            # its turns seen once shown.
+            data_preload="true",
         ),
         Img(
             src="/images/diabot/diabot_island.svg",

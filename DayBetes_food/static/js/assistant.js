@@ -757,8 +757,41 @@
     scrollToLatest(true);
   });
 
+  // A preloaded page (frontend §12, §13) drew turns without marking them seen:
+  // it does so now that it is shown (code_conventions.md §9.2).
+  function csrfToken() {
+    var meta = document.querySelector('meta[name="csrf-cookie-name"]');
+    var name = ((meta && meta.content) || "daybetes_csrf") + "=";
+    var cookies = document.cookie ? document.cookie.split(";") : [];
+    for (var i = 0; i < cookies.length; i += 1) {
+      var cookie = cookies[i].trim();
+      if (cookie.indexOf(name) === 0) return decodeURIComponent(cookie.slice(name.length));
+    }
+    return "";
+  }
+
+  function markShownSeen(root) {
+    if (!root || !root.querySelectorAll) return;
+    var pages = root.matches && root.matches("[data-mark-seen]") ? [root] : root.querySelectorAll("[data-mark-seen]");
+    for (var i = 0; i < pages.length; i += 1) {
+      var page = pages[i];
+      if (!document.body.contains(page) || page.closest(".db_swipe_ghost")) continue;
+      var ids = (page.getAttribute("data-mark-seen") || "").split(",");
+      page.removeAttribute("data-mark-seen");
+      for (var j = 0; j < ids.length; j += 1) {
+        if (!/^[0-9]+$/.test(ids[j])) continue;
+        fetch("/assistant/turn/" + ids[j] + "/seen", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "HX-Request": "true", "X-CSRF-Token": csrfToken() },
+        }).catch(function () {});
+      }
+    }
+  }
+
   // A new page of the assistant starts with no mentions.
   document.addEventListener("htmx:load", function (event) {
+    markShownSeen(event.detail && event.detail.elt);
     if (event.detail && event.detail.elt && event.detail.elt.querySelector && event.detail.elt.querySelector("#assistant_input")) {
       mentions = [];
       activeSlash = -1;

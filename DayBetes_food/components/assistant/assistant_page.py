@@ -1302,9 +1302,12 @@ def AssistantPage(
     usual: list | None = None,
     plates: list | None = None,
     tail=(),
+    mark_seen: tuple[int, ...] = (),
 ):
     """`chats`: the list of chats (ChatsModal), drawn with the page. `preparation`:
-    the values offered per row of the meal and field. `usual`: "Usual now"."""
+    the values offered per row of the meal and field. `usual`: "Usual now".
+    `mark_seen`: the turns a preloaded page drew, marked seen once it is shown
+    (static/js/assistant.js)."""
     return Div(
         _top_bar(
             MealBar(event, portions, without_meal=without_meal, pending=pending, preparation=preparation, plates=plates)
@@ -1334,6 +1337,7 @@ def AssistantPage(
         ),
         chats,
         data_hide_cart="true",
+        data_mark_seen=",".join(str(turn_id) for turn_id in mark_seen) or None,
         # Asked for again on coming back, with the conversation of its URL
         # (frontend_conventions.md §5).
         hx_history="false",
