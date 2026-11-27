@@ -56,7 +56,7 @@ def cart_main(
 
     if not events:
         return Div(
-            _cart_back_button(),
+            #_cart_back_button(),
             Div(
                 Img(src="/images/ui/cart.svg", alt="", cls="w-10 h-10 opacity-70"),
                 H1("Your cart is empty", cls="text-lg font-semibold text-gray-700"),

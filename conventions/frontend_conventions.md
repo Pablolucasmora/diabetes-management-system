@@ -793,6 +793,20 @@ Decisiones del usuario del 2026-11-26.
   - **Caché** (decisión del usuario del 2026-11-26). Solo la respuesta a una precarga lleva `Cache-Control: private, max-age=10` (`main.py`); el resto de páginas, ninguna, como hasta ahora. `private` impide que la guarde Cloudflare. Lleva `Vary: HX-Request, X-Data-Version`: lo primero, para que recargar la página no reciba el fragmento; lo segundo es un número que `preload.js` envía en cada petición y sube tras cada guardado correcto (una petición que no es `GET`), de modo que lo precargado antes de un cambio nunca se muestra después. Lo que puede verse viejo es solo lo que cambie por otro lado (otra pestaña, DiaBot) en esos 10 s.
 - **Sin paso de build del JavaScript.** Los archivos de `static/js/` se sirven tal cual, cada uno con su versión en la URL, una semana de caché y gzip (`main.py`): solo pesan en la primera carga. No se empaquetan ni se minifican, para no añadir una herramienta más a la imagen. Se reabre si la primera carga se nota lenta o el JavaScript crece mucho.
 
+## 13. Deslizar entre páginas
+
+Decisión del usuario del 2026-11-27. En el móvil (sobre todo en la app instalada, §11) se cambia de página deslizando el dedo a izquierda o derecha. Es un atajo: la isla y los botones `Back` siguen siendo la forma principal y hacen lo mismo. Está en `static/js/swipe_nav.js`.
+
+- **Páginas de la isla** (`/menu`, `/stats`, `/assistant`, `/food`, `/settings`; `/` cuenta como `/menu`). Deslizar hacia la izquierda abre la pestaña siguiente de la isla y hacia la derecha la anterior, en el orden en que aparecen en la isla (DiaBot solo si está activo). No hay vuelta: desde la última no se pasa a la primera. El gesto pulsa el botón de la isla, así que hace exactamente lo mismo que tocarlo: indicador, historial, precarga y scroll arriba (§5).
+- **Subpáginas** (cualquier otra: detalle, edición, carrito, subpáginas de ajustes, chats pasados…). Deslizar hacia la derecha es `Back`: pulsa el botón de vuelta de la página (el que lleva `back_js`, §5), y si la página no tiene uno, llama a `dbBack()`. Deslizar hacia la izquierda no hace nada.
+- **Cuándo cuenta como gesto**: un solo dedo, al menos 70 px en horizontal, al menos el doble en horizontal que en vertical y en menos de 600 ms. Se decide al levantar el dedo; la página no sigue al dedo.
+- **Dónde no se activa**:
+  - si el gesto empieza a menos de 24 px de un borde lateral, que en Android es el gesto de volver del sistema;
+  - si empieza dentro de algo que ya se desplaza en horizontal (`overflow-x` con contenido más ancho que el elemento), de un campo de texto, `select`, `range` o un elemento editable, o dentro de un elemento marcado con `data-no-swipe`. Un componente nuevo que use el arrastre horizontal lleva `data-no-swipe`;
+  - con un pop-up abierto (un `<dialog>` abierto, que es lo que monta `ModalLayer`) o con texto seleccionado;
+  - en los 500 ms siguientes a otro gesto, para que un segundo deslizamiento rápido no salte dos páginas.
+- **Movimiento** (§10). La página nueva entra desde el lado hacia el que se desliza: hacia la izquierda, entra por la derecha, y hacia la derecha, por la izquierda. Usa `transform` y `opacity` en 240 ms, en lugar de subir. Con movimiento reducido no hay animación, pero el gesto funciona.
+
 ## 14. Botón flotante del carrito
 
 Decisión del usuario del 2026-11-27. El botón flotante del carrito (`#cart_button`, `components/menu/layout.py`) no se muestra en las páginas cuyo contenido lleva `data-hide-cart="true"`: el carrito, DiaBot, el detalle y los formularios de alimentos, el escáner y las subpáginas de ajustes. La comprobación se hace en cada página nueva, por cualquier camino (isla, enlace, Atrás, gesto o recarga), desde `static/js/cart_button.js`, que se carga en todas las páginas. Una página nueva que no deba mostrar el botón lleva el atributo en su elemento raíz; no se oculta a mano desde un `hx-on`.
