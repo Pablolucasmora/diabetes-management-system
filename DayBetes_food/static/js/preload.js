@@ -41,10 +41,10 @@
     window.htmx.ajax("GET", elt.getAttribute("hx-get"), { source: elt, headers: { "HX-Preloaded": "true" } });
   }
 
-  // A swipe preloads the page it is heading to while the finger moves
-  // (swipe_nav.js, frontend §13): only an element marked for it.
-  window.dbPreload = function (elt) {
-    if (elt && elt.matches && elt.matches("[data-preload][hx-get]")) preload(elt);
+  // The number below, for the pages swipe_nav.js keeps in memory (§13): one
+  // kept under an older number is never shown.
+  window.dbDataVersion = function () {
+    return dataVersion;
   };
 
   var pending = null;

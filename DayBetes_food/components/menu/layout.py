@@ -164,7 +164,7 @@ def FloatingIsland():
                 ),
                 cls="relative",
             ),
-            BlockIsland("Settings", icon="/images/ui/settings.svg", value="settings", hx_get="/settings", hx_target="#main_content", hx_push_url="true", **{"hx-on:click": scroll_top_js}),
+            BlockIsland("Settings", icon="/images/ui/settings.svg", value="settings", hx_get="/settings", data_preload="true", hx_target="#main_content", hx_push_url="true", **{"hx-on:click": scroll_top_js}),
             cls="""
                 relative
                 flex items-center justify-center
