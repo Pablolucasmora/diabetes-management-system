@@ -1,19 +1,30 @@
 // Swipe left or right to change page (frontend_conventions.md §13).
 //
 // On a page of the island, a swipe taps the next or previous island item, so it
-// does exactly what tapping it does (indicator, history, preload, scroll). On
-// any other page, a swipe to the right is Back: it taps the page's Back button
-// (the one with back_js), or calls dbBack() when the page has none.
-// Decided on lifting the finger; the page does not follow it.
+// does exactly what tapping it does (indicator, history). On any other page, a
+// swipe to the right is Back: it taps the page's Back button (the one with
+// back_js), or calls dbBack() when the page has none.
+//
+// One continuous movement: while the finger moves across, the page follows it
+// and the page it heads to is preloaded; on release the page slides out on
+// that side and only then is the next one asked for, which comes in from the
+// other side. A short or undecided swipe springs back.
 (function () {
   if (window.__dbSwipeNav) return;
   window.__dbSwipeNav = true;
 
-  var MIN_DX = 70;          // px across
-  var RATIO = 2;            // at least twice as much across as down
-  var MAX_MS = 600;         // a swipe, not a slow drag
+  var LOCK_PX = 10;         // movement before deciding across or down
+  var RATIO = 1.5;          // across must beat down by this much
+  var COMMIT_PX = 90;       // released this far, it changes page
+  var FLICK_PX = 50;        // or this far, if fast
+  var FLICK_SPEED = 0.35;   // px per ms
+  var FOLLOW = 0.5;         // how much of the finger the page follows
+  var RESIST = 0.15;        // the same, with no page on that side
+  var EXIT_PX = 70;
+  var EXIT_MS = 120;
+  var SPRING_MS = 180;
   var EDGE = 24;            // px from a side edge: the system's own Back gesture
-  var COOLDOWN_MS = 500;    // a second quick swipe does not skip two pages
+  var COOLDOWN_MS = 500;
 
   var ISLAND_ROOTS = {
     "/": "menu",
@@ -24,9 +35,20 @@
     "/settings": "settings",
   };
 
-  var start = null;
+  var gesture = null;
+  var busy = false;
   var lastSwipe = 0;
-  var clearTimer = null;
+  var safetyTimer = null;
+  var pendingDirection = false;
+  var baseTransition = "";
+
+  function main() {
+    return document.getElementById("main_content");
+  }
+
+  function reducedMotion() {
+    return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  }
 
   function islandValue() {
     var path = window.location.pathname.replace(/\/+$/, "") || "/";
@@ -59,119 +81,197 @@
     return !!(selection && String(selection).length);
   }
 
-  // The new page slides in from the side the finger moved away from.
-  //
-  // data-swipe stays on #main_content while the page it brought is shown:
-  // removing it changes the children's animation-name, and the browser then
-  // plays the usual rise-in once more, a flash after the page had settled. It
-  // is only dropped when the next page comes in without a swipe, before that
-  // page is painted (a MutationObserver runs before the next frame).
-  var pending = false;
-
-  function markDirection(direction) {
-    var main = document.getElementById("main_content");
-    if (!main) return;
-    main.setAttribute("data-swipe", direction);
-    pending = true;
-    if (clearTimer) window.clearTimeout(clearTimer);
-    // No page came (an error, a Back with nothing behind): the next one
-    // comes in as usual.
-    clearTimer = window.setTimeout(clearDirection, 3000);
+  // What a swipe of the finger towards `step` (+1 left, -1 right) does here,
+  // or null when there is nothing on that side.
+  function actionFor(step) {
+    var current = islandValue();
+    if (current) {
+      var items = Array.prototype.slice.call(
+        document.querySelectorAll("#floating_island label[data-nav-item]")
+      );
+      var index = -1;
+      for (var i = 0; i < items.length; i += 1) {
+        if (items[i].getAttribute("data-nav-item") === current) index = i;
+      }
+      var next = index < 0 ? null : items[index + step];  // no wrap-around
+      var input = next ? next.querySelector("input[type='radio']") : null;
+      return input ? { input: input } : null;
+    }
+    if (step > 0) return null;
+    var root = main();
+    var button = root ? root.querySelector("[onclick*='dbBack(']") : null;
+    if (button) return { button: button };
+    return typeof window.dbBack === "function" ? { back: true } : null;
   }
 
-  function clearDirection() {
-    pending = false;
-    if (clearTimer) window.clearTimeout(clearTimer);
-    clearTimer = null;
+  function run(action) {
+    if (action.input) action.input.click();
+    else if (action.button) action.button.click();
+    else window.dbBack();
   }
 
+  // ---- The page under the finger ----
+
+  function setMain(transform, opacity, transition) {
+    var el = main();
+    if (!el) return;
+    el.style.transition = transition || "none";
+    el.style.transform = transform;
+    el.style.opacity = opacity;
+  }
+
+  // Back at rest at once, with no transition: a transform left on the page
+  // would trap its fixed children (§10).
+  function resetMain() {
+    var el = main();
+    if (!el) return;
+    el.style.transition = "none";
+    el.style.transform = "";
+    el.style.opacity = "";
+    void el.offsetWidth;  // applied before the page's own transition is back
+    el.style.transition = baseTransition;
+  }
+
+  function follow(dx, action) {
+    var shift = dx * (action ? FOLLOW : RESIST);
+    var fade = action ? 1 - Math.min(Math.abs(dx) / 400, 0.3) : 1;
+    setMain("translateX(" + shift.toFixed(1) + "px)", String(fade));
+  }
+
+  function springBack() {
+    setMain("", "", "transform " + SPRING_MS + "ms ease-out, opacity " + SPRING_MS + "ms ease-out");
+    window.setTimeout(function () {
+      if (!busy) resetMain();
+    }, SPRING_MS + 20);
+  }
+
+  // ---- Changing page ----
+
+  // The new page comes in from the side the finger moved away from
+  // (input.css). data-swipe stays while that page is shown: removing it
+  // would play the page's entry once more. It goes when the next page comes
+  // in without a swipe.
   function onPageReplaced() {
-    if (pending) {
-      clearDirection();
+    if (busy) {
+      busy = false;
+      if (safetyTimer) window.clearTimeout(safetyTimer);
+      safetyTimer = null;
+      resetMain();
+    }
+    if (pendingDirection) {
+      pendingDirection = false;
       return;
     }
-    var main = document.getElementById("main_content");
-    if (main) main.removeAttribute("data-swipe");
+    var el = main();
+    if (el) el.removeAttribute("data-swipe");
   }
 
-  function goIsland(current, step) {
-    var items = Array.prototype.slice.call(
-      document.querySelectorAll("#floating_island label[data-nav-item]")
+  function go(action, step) {
+    busy = true;
+    lastSwipe = Date.now();
+    var el = main();
+    var animate = !reducedMotion();
+
+    function change() {
+      // Hidden by now, so going to the top is not seen.
+      window.scrollTo({ top: 0, behavior: "auto" });
+      if (el) el.setAttribute("data-swipe", step > 0 ? "next" : "prev");
+      pendingDirection = true;
+      run(action);
+    }
+
+    // No page came (an error, nothing behind): the page shows again.
+    safetyTimer = window.setTimeout(function () {
+      busy = false;
+      pendingDirection = false;
+      resetMain();
+    }, 3000);
+
+    if (!animate) {
+      change();
+      return;
+    }
+    setMain(
+      "translateX(" + (-step * EXIT_PX) + "px)",
+      "0",
+      "transform " + EXIT_MS + "ms ease-in, opacity " + EXIT_MS + "ms ease-in"
     );
-    var index = -1;
-    for (var i = 0; i < items.length; i += 1) {
-      if (items[i].getAttribute("data-nav-item") === current) index = i;
-    }
-    if (index < 0) return false;
-    var next = items[index + step];
-    if (!next) return false;  // no wrap-around
-    var input = next.querySelector("input[type='radio']");
-    if (!input) return false;
-    markDirection(step > 0 ? "next" : "prev");
-    input.click();
-    return true;
+    window.setTimeout(change, EXIT_MS);
   }
 
-  function goBack() {
-    markDirection("prev");
-    var main = document.getElementById("main_content");
-    var button = main ? main.querySelector("[onclick*='dbBack(']") : null;
-    if (button) {
-      button.click();
-    } else if (typeof window.dbBack === "function") {
-      window.dbBack();
-    } else {
-      clearDirection();
-      return false;
-    }
-    return true;
-  }
+  // ---- Touch ----
 
   function onStart(event) {
-    start = null;
-    if (event.touches.length !== 1) return;
+    gesture = null;
+    if (busy || event.touches.length !== 1) return;
     var touch = event.touches[0];
     if (touch.clientX < EDGE || touch.clientX > window.innerWidth - EDGE) return;
     if (isExcluded(event.target)) return;
-    start = { x: touch.clientX, y: touch.clientY, t: Date.now() };
+    gesture = { x: touch.clientX, y: touch.clientY, t: Date.now(), mode: null, dx: 0, dy: 0 };
   }
 
   function onMove(event) {
-    // A second finger turns it into something else (a pinch).
-    if (start && event.touches.length !== 1) start = null;
+    if (!gesture) return;
+    if (event.touches.length !== 1) {
+      // A second finger turns it into something else (a pinch).
+      if (gesture.mode === "across") springBack();
+      gesture = null;
+      return;
+    }
+    var touch = event.touches[0];
+    gesture.dx = touch.clientX - gesture.x;
+    gesture.dy = touch.clientY - gesture.y;
+    if (!gesture.mode) {
+      if (Math.max(Math.abs(gesture.dx), Math.abs(gesture.dy)) < LOCK_PX) return;
+      if (Math.abs(gesture.dx) <= RATIO * Math.abs(gesture.dy) || blocked()) {
+        gesture.mode = "down";
+        return;
+      }
+      gesture.mode = "across";
+      // The page it is heading to starts coming now (preload.js, §12).
+      var ahead = actionFor(gesture.dx < 0 ? 1 : -1);
+      if (ahead && ahead.input && typeof window.dbPreload === "function") window.dbPreload(ahead.input);
+    }
+    if (gesture.mode !== "across" || reducedMotion()) return;
+    follow(gesture.dx, actionFor(gesture.dx < 0 ? 1 : -1));
   }
 
-  function onEnd(event) {
-    if (!start) return;
-    var begin = start;
-    start = null;
-    var touch = event.changedTouches[0];
-    if (!touch) return;
-    var dx = touch.clientX - begin.x;
-    var dy = touch.clientY - begin.y;
-    var now = Date.now();
-    if (now - begin.t > MAX_MS) return;
-    if (Math.abs(dx) < MIN_DX || Math.abs(dx) < RATIO * Math.abs(dy)) return;
-    if (now - lastSwipe < COOLDOWN_MS || blocked()) return;
-
-    // Finger to the left: the next page comes in from the right.
+  function onEnd() {
+    if (!gesture) return;
+    var g = gesture;
+    gesture = null;
+    if (g.mode !== "across") return;
+    var dx = g.dx;
+    var speed = Math.abs(dx) / Math.max(1, Date.now() - g.t);
     var step = dx < 0 ? 1 : -1;
-    var current = islandValue();
-    var done = current ? goIsland(current, step) : step < 0 && goBack();
-    if (done) lastSwipe = now;
+    var action = actionFor(step);
+    var far = Math.abs(dx) >= COMMIT_PX || (Math.abs(dx) >= FLICK_PX && speed >= FLICK_SPEED);
+    var across = Math.abs(dx) > RATIO * Math.abs(g.dy);
+    if (action && far && across && Date.now() - lastSwipe >= COOLDOWN_MS && !blocked()) {
+      go(action, step);
+      return;
+    }
+    if (!reducedMotion()) springBack();
   }
 
   function bind() {
+    var el = main();
+    baseTransition = el ? el.style.transition : "";
+
     document.addEventListener("touchstart", onStart, { passive: true });
     document.addEventListener("touchmove", onMove, { passive: true });
     document.addEventListener("touchend", onEnd, { passive: true });
-    document.addEventListener("touchcancel", function () { start = null; }, { passive: true });
+    document.addEventListener("touchcancel", function () {
+      if (gesture && gesture.mode === "across") springBack();
+      gesture = null;
+    }, { passive: true });
 
     // Every way a page arrives (a swap, a history restore) replaces the
-    // children of #main_content; a refresh inside a page does not.
-    var main = document.getElementById("main_content");
-    if (main && window.MutationObserver) {
-      new MutationObserver(onPageReplaced).observe(main, { childList: true });
+    // children of #main_content; a refresh inside a page does not. The
+    // observer runs before the next frame, so the new page is never painted
+    // shifted or faded.
+    if (el && window.MutationObserver) {
+      new MutationObserver(onPageReplaced).observe(el, { childList: true });
     }
   }
 
