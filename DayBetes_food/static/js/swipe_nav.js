@@ -6,9 +6,11 @@
 // back_js), or calls dbBack() when the page has none.
 //
 // One continuous movement: while the finger moves across, the page follows it
-// and the page it heads to is preloaded; on release the page slides out on
-// that side and only then is the next one asked for, which comes in from the
-// other side. A short or undecided swipe springs back.
+// and the page it heads to is preloaded; on release the page slides out
+// beyond that side and only then is the next one asked for, which comes in
+// from beyond the other side. A short or undecided swipe springs back.
+// Only transform, never opacity: a faded ancestor cuts the glass inside it
+// off the page background (frontend §10).
 (function () {
   if (window.__dbSwipeNav) return;
   window.__dbSwipeNav = true;
@@ -18,10 +20,9 @@
   var COMMIT_PX = 90;       // released this far, it changes page
   var FLICK_PX = 50;        // or this far, if fast
   var FLICK_SPEED = 0.35;   // px per ms
-  var FOLLOW = 0.5;         // how much of the finger the page follows
+  var FOLLOW = 1;           // the page stays under the finger
   var RESIST = 0.15;        // the same, with no page on that side
-  var EXIT_PX = 70;
-  var EXIT_MS = 120;
+  var EXIT_MS = 160;        // out beyond the side of the screen
   var SPRING_MS = 180;
   var EDGE = 24;            // px from a side edge: the system's own Back gesture
   var COOLDOWN_MS = 500;
@@ -112,12 +113,11 @@
 
   // ---- The page under the finger ----
 
-  function setMain(transform, opacity, transition) {
+  function setMain(transform, transition) {
     var el = main();
     if (!el) return;
     el.style.transition = transition || "none";
     el.style.transform = transform;
-    el.style.opacity = opacity;
   }
 
   // Back at rest at once, with no transition: a transform left on the page
@@ -127,19 +127,17 @@
     if (!el) return;
     el.style.transition = "none";
     el.style.transform = "";
-    el.style.opacity = "";
     void el.offsetWidth;  // applied before the page's own transition is back
     el.style.transition = baseTransition;
   }
 
   function follow(dx, action) {
     var shift = dx * (action ? FOLLOW : RESIST);
-    var fade = action ? 1 - Math.min(Math.abs(dx) / 400, 0.3) : 1;
-    setMain("translateX(" + shift.toFixed(1) + "px)", String(fade));
+    setMain("translateX(" + shift.toFixed(1) + "px)");
   }
 
   function springBack() {
-    setMain("", "", "transform " + SPRING_MS + "ms ease-out, opacity " + SPRING_MS + "ms ease-out");
+    setMain("", "transform " + SPRING_MS + "ms ease-out");
     window.setTimeout(function () {
       if (!busy) resetMain();
     }, SPRING_MS + 20);
@@ -173,7 +171,7 @@
     var animate = !reducedMotion();
 
     function change() {
-      // Hidden by now, so going to the top is not seen.
+      // Off the screen by now, so going to the top is not seen.
       window.scrollTo({ top: 0, behavior: "auto" });
       if (el) el.setAttribute("data-swipe", step > 0 ? "next" : "prev");
       pendingDirection = true;
@@ -191,11 +189,7 @@
       change();
       return;
     }
-    setMain(
-      "translateX(" + (-step * EXIT_PX) + "px)",
-      "0",
-      "transform " + EXIT_MS + "ms ease-in, opacity " + EXIT_MS + "ms ease-in"
-    );
+    setMain("translateX(" + (-step * 100) + "vw)", "transform " + EXIT_MS + "ms ease-in");
     window.setTimeout(change, EXIT_MS);
   }
 
