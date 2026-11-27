@@ -6,9 +6,10 @@
 // back_js), or calls dbBack() when the page has none.
 //
 // One continuous movement: while the finger moves across, the page follows it
-// and the page it heads to is preloaded; on release the page slides out
-// beyond that side and only then is the next one asked for, which comes in
-// from beyond the other side. A short or undecided swipe springs back.
+// and the page it heads to is preloaded. On release the next page is asked
+// for at once, and the page being left waits where the finger left it; when
+// the next one arrives, it pushes the old one out, like a carousel. A short
+// or undecided swipe springs back.
 // Only transform, never opacity: a faded ancestor cuts the glass inside it
 // off the page background (frontend §10).
 (function () {
@@ -22,7 +23,8 @@
   var FLICK_SPEED = 0.35;   // px per ms
   var FOLLOW = 1;           // the page stays under the finger
   var RESIST = 0.15;        // the same, with no page on that side
-  var EXIT_MS = 160;        // out beyond the side of the screen
+  var PUSH_MS = 260;        // the page out and the next one in, together
+  var PUSH_EASING = "cubic-bezier(0.2, 0.7, 0.2, 1)";
   var SPRING_MS = 180;
   var EDGE = 24;            // px from a side edge: the system's own Back gesture
   var COOLDOWN_MS = 500;
@@ -145,7 +147,68 @@
 
   // ---- Changing page ----
 
-  // The new page comes in from the side the finger moved away from
+  // The page being left stays on screen, as a copy, until the next one has
+  // arrived; then both move at once, the copy out beyond one side and the
+  // new page in from beyond the other (input.css, same duration and easing).
+  // Leaving first and waiting for the new page in between showed an empty
+  // screen. The copy is inert: no ids, no scripts, no pointer, hidden from
+  // assistive tech, and fixed, so going to the top under it is not seen.
+  var ghost = null;
+
+  function makeGhost(shift) {
+    var el = main();
+    if (!el) return;
+    var rect = el.getBoundingClientRect();
+    var layer = document.createElement("div");
+    layer.setAttribute("aria-hidden", "true");
+    layer.setAttribute("inert", "");
+    layer.style.cssText =
+      "position:fixed;inset:0;overflow:hidden;pointer-events:none;z-index:40;" +
+      "transform:translateX(" + shift.toFixed(1) + "px)";
+    var page = document.createElement("div");
+    page.style.cssText =
+      "position:absolute;top:" + rect.top + "px;left:" + rect.left + "px;width:" + rect.width + "px";
+    for (var child = el.firstElementChild; child; child = child.nextElementSibling) {
+      page.appendChild(child.cloneNode(true));
+    }
+    var nodes = page.querySelectorAll("[id], script, dialog");
+    for (var i = 0; i < nodes.length; i += 1) {
+      var node = nodes[i];
+      if (node.tagName === "SCRIPT" || node.tagName === "DIALOG") node.remove();
+      else node.removeAttribute("id");
+    }
+    // A copied element never plays its entry again (input.css).
+    layer.className = "db_swipe_ghost";
+    layer.appendChild(page);
+    document.body.appendChild(layer);
+    ghost = layer;
+  }
+
+  function pushGhostOut(step) {
+    var layer = ghost;
+    ghost = null;
+    if (!layer) return;
+    var to = "translateX(" + (-step * 100) + "vw)";
+    if (reducedMotion() || !layer.animate) {
+      layer.remove();
+      return;
+    }
+    var from = layer.style.transform || "none";
+    var motion = layer.animate([{ transform: from }, { transform: to }], {
+      duration: PUSH_MS,
+      easing: PUSH_EASING,
+      fill: "forwards",
+    });
+    motion.onfinish = function () { layer.remove(); };
+    motion.oncancel = function () { layer.remove(); };
+  }
+
+  function dropGhost() {
+    if (ghost) ghost.remove();
+    ghost = null;
+  }
+
+  // The new page comes in from beyond the side the finger moved away from
   // (input.css). data-swipe stays while that page is shown: removing it
   // would play the page's entry once more. It goes when the next page comes
   // in without a swipe.
@@ -154,43 +217,47 @@
       busy = false;
       if (safetyTimer) window.clearTimeout(safetyTimer);
       safetyTimer = null;
-      resetMain();
+      var el = main();
+      if (el) el.style.visibility = "";
+      pushGhostOut(busyStep);
     }
     if (pendingDirection) {
       pendingDirection = false;
       return;
     }
-    var el = main();
-    if (el) el.removeAttribute("data-swipe");
+    var root = main();
+    if (root) root.removeAttribute("data-swipe");
   }
 
-  function go(action, step) {
+  var busyStep = 1;
+
+  function go(action, step, shift) {
     busy = true;
+    busyStep = step;
     lastSwipe = Date.now();
     var el = main();
-    var animate = !reducedMotion();
 
-    function change() {
-      // Off the screen by now, so going to the top is not seen.
-      window.scrollTo({ top: 0, behavior: "auto" });
-      if (el) el.setAttribute("data-swipe", step > 0 ? "next" : "prev");
-      pendingDirection = true;
-      run(action);
+    if (!reducedMotion()) {
+      // The copy stands where the finger left the page; the page itself is
+      // back at rest and hidden until the next one replaces its content.
+      makeGhost(shift);
+      resetMain();
+      if (el) el.style.visibility = "hidden";
     }
+    window.scrollTo({ top: 0, behavior: "auto" });
+    if (el) el.setAttribute("data-swipe", step > 0 ? "next" : "prev");
+    pendingDirection = true;
 
     // No page came (an error, nothing behind): the page shows again.
     safetyTimer = window.setTimeout(function () {
       busy = false;
       pendingDirection = false;
-      resetMain();
+      dropGhost();
+      var root = main();
+      if (root) root.style.visibility = "";
     }, 3000);
 
-    if (!animate) {
-      change();
-      return;
-    }
-    setMain("translateX(" + (-step * 100) + "vw)", "transform " + EXIT_MS + "ms ease-in");
-    window.setTimeout(change, EXIT_MS);
+    run(action);
   }
 
   // ---- Touch ----
@@ -242,7 +309,7 @@
     var far = Math.abs(dx) >= COMMIT_PX || (Math.abs(dx) >= FLICK_PX && speed >= FLICK_SPEED);
     var across = Math.abs(dx) > RATIO * Math.abs(g.dy);
     if (action && far && across && Date.now() - lastSwipe >= COOLDOWN_MS && !blocked()) {
-      go(action, step);
+      go(action, step, dx * FOLLOW);
       return;
     }
     if (!reducedMotion()) springBack();

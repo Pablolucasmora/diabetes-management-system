@@ -76,7 +76,6 @@
     --radius-2xl: 1rem;
     --radius-3xl: 1.5rem;
     --radius-4xl: 2rem;
-    --ease-in: cubic-bezier(0.4, 0, 1, 1);
     --ease-out: cubic-bezier(0, 0, 0.2, 1);
     --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
     --blur-md: 12px;
@@ -1741,10 +1740,6 @@
     --tw-duration: 100ms;
     transition-duration: 100ms;
   }
-  .ease-in {
-    --tw-ease: var(--ease-in);
-    transition-timing-function: var(--ease-in);
-  }
   .ease-in-out {
     --tw-ease: var(--ease-in-out);
     transition-timing-function: var(--ease-in-out);
@@ -2258,6 +2253,10 @@
 }
 body {
   overflow-x: clip;
+}
+.db_swipe_ghost, .db_swipe_ghost * {
+  animation: none !important;
+  transition: none !important;
 }
 @property --bump-d {
   syntax: "<length>";
