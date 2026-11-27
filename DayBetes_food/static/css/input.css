@@ -84,6 +84,14 @@ body {
     overflow-x: clip;
 }
 
+/* The copy of the page being left by a swipe (§13, swipe_nav.js): it only
+   moves out, so nothing inside it plays an entry or a transition again. */
+.db_swipe_ghost,
+.db_swipe_ghost * {
+    animation: none !important;
+    transition: none !important;
+}
+
 /* Liquid glass: frosted, translucent surface with a bright rim and a
    diagonal highlight. */
 @utility web_glass {
