@@ -87,31 +87,41 @@
   }
 
   function bindListeners() {
-    document.body.addEventListener("htmx:beforeRequest", function (event) {
-      var elt = event && event.detail ? event.detail.elt : null;
-      var xhr = event && event.detail ? event.detail.xhr : null;
-      var target = event && event.detail ? event.detail.target : null;
-      // A preload is never shown: the extension stops it here and sends it
-      // itself, so no afterRequest would close the loading state (§12).
-      var config = event && event.detail ? event.detail.requestConfig : null;
+    // A request counts from the moment it is sent (htmx:beforeSend) until the
+    // browser ends it (loadend, which also comes after an error, an abort or a
+    // timeout). htmx's beforeRequest/afterRequest pair is not enough: a request
+    // cancelled at beforeRequest (a swipe answering it with the page in memory,
+    // frontend_conventions.md §13; the preload extension, §12) never gets its
+    // afterRequest, nor one whose element is gone by the time it is answered
+    // (a cart card repainted meanwhile), and Loading... then stayed on.
+    var listRequests = 0;
+
+    document.body.addEventListener("htmx:beforeSend", function (event) {
+      var detail = event && event.detail ? event.detail : {};
+      var xhr = detail.xhr;
+      if (!xhr) return;
+      var config = detail.requestConfig;
       if (config && config.headers && config.headers["HX-Preloaded"] === "true") return;
-      if (isFoodListTarget(target)) setFoodListLoading(true);
+      var forList = isFoodListTarget(detail.target);
+      if (forList) {
+        listRequests += 1;
+        setFoodListLoading(true);
+      }
+      var elt = detail.elt;
       var skip = !!(elt && elt.closest && elt.closest("[data-skip-page-loading='true']"));
-      if (xhr) xhr.__skipPageLoading = skip;
-      if (skip) return;
-      pendingRequests += 1;
-      setLoading(true);
-    });
-
-    function maybeStopLoading(event) {
-      var xhr = event && event.detail ? event.detail.xhr : null;
-      if (xhr && xhr.__skipPageLoading) return;
-      pendingRequests = Math.max(0, pendingRequests - 1);
-      if (pendingRequests === 0) setLoading(false);
-    }
-
-    document.body.addEventListener("htmx:afterRequest", function (event) {
-      maybeStopLoading(event);
+      if (!skip) {
+        pendingRequests += 1;
+        setLoading(true);
+      }
+      xhr.addEventListener("loadend", function () {
+        if (forList) {
+          listRequests = Math.max(0, listRequests - 1);
+          if (listRequests === 0) setFoodListLoading(false);
+        }
+        if (skip) return;
+        pendingRequests = Math.max(0, pendingRequests - 1);
+        if (pendingRequests === 0) setLoading(false);
+      });
     });
 
     document.body.addEventListener("htmx:afterSwap", function (event) {
