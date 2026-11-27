@@ -755,7 +755,8 @@ Decisión 2026-10-10. Animaciones pequeñas para que los cambios se perciban con
 
 - Solo se animan `transform` y `opacity`, con duraciones de 150 a 260 ms. Ninguna animación retrasa una acción ni oculta información.
 - Todo va dentro de `@media (prefers-reduced-motion: no-preference)`: si el sistema pide reducir movimiento, no hay animaciones.
-- Una página nueva sube y aparece (`#main_content > *`). La animación usa `backwards`, así que al acabar no deja ningún `transform` puesto: un `transform` permanente convertiría el elemento en contenedor de sus hijos `fixed` (§8).
+- **Lo que contiene cristal se mueve, pero no se desvanece** (decisión del usuario del 2026-11-27). Si un elemento tiene opacidad menor que 1, el `backdrop-filter` de los cristales (`web_glass`) que contiene deja de ver el fondo de colores, y esos cristales se ven planos hasta que acaba la animación. Por eso una animación de un contenedor con cristal dentro solo usa `transform`. Un cristal sí puede desvanecerse él mismo, como las tarjetas de Food.
+- Una página nueva sube un poco (`#main_content > *`, `db-page-in`), sin desvanecerse. La animación usa `backwards`, así que al acabar no deja ningún `transform` puesto: un `transform` permanente convertiría el elemento en contenedor de sus hijos `fixed` (§8).
 - La lista de alimentos entra tarjeta a tarjeta, con un retraso corto y con tope a partir de la sexta.
 - La página de detalle de un alimento, un plato o una receta entra bloque a bloque, de arriba abajo, y las tarjetas de macros también (`data-stagger="true"`). Cada bloque se retrasa 40 ms respecto al anterior, con tope a partir del séptimo. El atributo sirve para cualquier página o rejilla que deba entrar así.
 - Lo que muestra una sección plegable (`<details>`) aparece al abrirse.
@@ -803,16 +804,16 @@ Decisión del usuario del 2026-11-27. En el móvil (sobre todo en la app instala
 - **Subpáginas** (cualquier otra: detalle, edición, carrito, subpáginas de ajustes, chats pasados…). Deslizar hacia la derecha es `Back`: pulsa el botón de vuelta de la página (el que lleva `back_js`, §5), y si la página no tiene uno, llama a `dbBack()`. Deslizar hacia la izquierda no hace nada.
 - **Cuándo cuenta como gesto** (decisión del usuario del 2026-11-27, que sustituye a "se decide al levantar el dedo; la página no sigue al dedo"). Tras 10 px de movimiento se decide si el gesto va de lado (al menos 1,5 veces más en horizontal que en vertical) o es un scroll normal, y ya no cambia. Cambia de página si al soltar se ha deslizado al menos 90 px, o 50 px con un gesto rápido (0,35 px/ms o más). Si no, la página vuelve a su sitio en 180 ms.
 - **Un solo movimiento continuo**, para que el cambio no se note en dos tiempos:
-  - Mientras el dedo se desliza, el contenido de la página (`#main_content`; la isla y el botón del carrito no) lo sigue a la mitad de su recorrido y se atenúa un poco. Si no hay página por ese lado, se mueve muy poco, como un tope.
+  - Mientras el dedo se desliza, el contenido de la página (`#main_content`; la isla y el botón del carrito no) lo sigue, siempre bajo el dedo y sin atenuarse (§10). Si no hay página por ese lado, se mueve muy poco, como un tope.
   - En cuanto el gesto va de lado, se precarga la página de destino si su botón de la isla lleva `data-preload` (§12). DiaBot no se precarga.
-  - Al soltar, la página sale hacia ese lado en 120 ms. Cuando ya no se ve, se sube el scroll arriba (§5) y se pide la nueva, que entra desde el lado contrario. Si no llega en 3 s, la página vuelve a verse.
+  - Al soltar, la página sale entera de la pantalla por ese lado en 160 ms. Cuando ya no se ve, se sube el scroll arriba (§5) y se pide la nueva, que entra desde fuera de la pantalla por el lado contrario. Mientras una página está fuera, la página no se desplaza de lado (`body` con `overflow-x: clip`, que no crea un contenedor de scroll y deja funcionar las barras `sticky`). Si no llega en 3 s, la página vuelve a verse.
   - El `transform` del contenido solo dura el gesto: se quita sin transición antes de pintar la página nueva (§10).
 - **Dónde no se activa**:
   - si el gesto empieza a menos de 24 px de un borde lateral, que en Android es el gesto de volver del sistema;
   - si empieza dentro de algo que ya se desplaza en horizontal (`overflow-x` con contenido más ancho que el elemento), de un campo de texto, `select`, `range` o un elemento editable, o dentro de un elemento marcado con `data-no-swipe`. Un componente nuevo que use el arrastre horizontal lleva `data-no-swipe`;
   - con un pop-up abierto (un `<dialog>` abierto, que es lo que monta `ModalLayer`) o con texto seleccionado;
   - en los 500 ms siguientes a otro gesto, para que un segundo deslizamiento rápido no salte dos páginas.
-- **Movimiento** (§10). La página nueva entra desde el lado hacia el que se desliza: hacia la izquierda, entra por la derecha, y hacia la derecha, por la izquierda. Usa `transform` y `opacity` en 240 ms, en lugar de subir. Con movimiento reducido no hay seguimiento ni animación, pero el gesto funciona.
+- **Movimiento** (§10). La página nueva entra desde el lado hacia el que se desliza: hacia la izquierda, entra por la derecha, y hacia la derecha, por la izquierda. Usa solo `transform`, desde fuera de la pantalla, en 260 ms, en lugar de subir. Con movimiento reducido no hay seguimiento ni animación, pero el gesto funciona.
 
 ## 14. Botón flotante del carrito
 

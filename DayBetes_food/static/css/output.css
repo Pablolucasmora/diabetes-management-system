@@ -2256,6 +2256,9 @@
     opacity: 0.6;
   }
 }
+body {
+  overflow-x: clip;
+}
 @property --bump-d {
   syntax: "<length>";
   inherits: true;
@@ -2587,23 +2590,27 @@
     transform: none;
   }
 }
-@keyframes db-slide-from-right {
+@keyframes db-page-in {
   from {
-    opacity: 0;
-    transform: translateX(28px);
+    transform: translateY(6px);
   }
   to {
-    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes db-slide-from-right {
+  from {
+    transform: translateX(100vw);
+  }
+  to {
     transform: none;
   }
 }
 @keyframes db-slide-from-left {
   from {
-    opacity: 0;
-    transform: translateX(-28px);
+    transform: translateX(-100vw);
   }
   to {
-    opacity: 1;
     transform: none;
   }
 }
@@ -2682,13 +2689,13 @@
     transform: none;
   }
   #main_content > * {
-    animation: db-rise-in 240ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+    animation: db-page-in 240ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
   }
   #main_content[data-swipe="next"] > * {
-    animation-name: db-slide-from-right;
+    animation: db-slide-from-right 260ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
   }
   #main_content[data-swipe="prev"] > * {
-    animation-name: db-slide-from-left;
+    animation: db-slide-from-left 260ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
   }
   #food-list > .food_entry {
     animation: db-rise-in 260ms ease-out backwards;

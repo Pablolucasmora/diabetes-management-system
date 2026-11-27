@@ -77,6 +77,13 @@
     }
 }
 
+/* A page swiped out, or coming in, sits beyond a side of the screen for a
+   moment (§13): that never makes the page scroll sideways. `clip`, unlike
+   `hidden`, makes no scroll container, so sticky bars still work. */
+body {
+    overflow-x: clip;
+}
+
 /* Liquid glass: frosted, translucent surface with a bright rim and a
    diagonal highlight. */
 @utility web_glass {
@@ -410,13 +417,20 @@
     from { opacity: 0; transform: translateY(6px); }
     to { opacity: 1; transform: none; }
 }
+/* What holds glass moves but never fades (frontend_conventions.md §10): an
+   ancestor below full opacity cuts the backdrop-filter of the glass inside
+   it off the page background, so it looked flat until the fade ended. */
+@keyframes db-page-in {
+    from { transform: translateY(6px); }
+    to { transform: none; }
+}
 @keyframes db-slide-from-right {
-    from { opacity: 0; transform: translateX(28px); }
-    to { opacity: 1; transform: none; }
+    from { transform: translateX(100vw); }
+    to { transform: none; }
 }
 @keyframes db-slide-from-left {
-    from { opacity: 0; transform: translateX(-28px); }
-    to { opacity: 1; transform: none; }
+    from { transform: translateX(-100vw); }
+    to { transform: none; }
 }
 /* The assistant is thinking (frontend_conventions.md §9.11): three dots that
    rise one after another. Without motion they stay still, half visible. */
@@ -492,15 +506,15 @@
     /* A new page rises in. `backwards` drops the animation once it ends, so
        no transform is left on the page (it would trap fixed children). */
     #main_content > * {
-        animation: db-rise-in 240ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+        animation: db-page-in 240ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
     }
-    /* A page reached by a swipe comes in from the side the finger left
-       (§13, static/js/swipe_nav.js) instead of rising. */
+    /* A page reached by a swipe comes in from beyond the side the finger
+       left (§13, static/js/swipe_nav.js) instead of rising. */
     #main_content[data-swipe="next"] > * {
-        animation-name: db-slide-from-right;
+        animation: db-slide-from-right 260ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
     }
     #main_content[data-swipe="prev"] > * {
-        animation-name: db-slide-from-left;
+        animation: db-slide-from-left 260ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
     }
 
     /* The food list comes in one card after another. */
