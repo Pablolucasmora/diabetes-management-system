@@ -1462,6 +1462,7 @@ def PastChatsPage(days: list, query: str = ""):
             ),
         ),
         Div(*listing, id=PAST_CHATS_LIST_ID, cls="flex flex-col gap-4"),
+        data_hide_cart="true",
         cls="w-full max-w-2xl mx-auto px-4 pb-40 min-h-dvh flex flex-col gap-4",
     )
 
