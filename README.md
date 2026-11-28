@@ -42,8 +42,8 @@ Cada uno acaba construyendo su propio conocimiento a base de prueba y error. Las
 
 DayBetes parte de la idea contraria a "las mismas reglas para todos": **cada persona necesita su propio modelo**, y para construirlo hacen falta datos buenos de esa persona. Lo que se registra habitualmente no lo es por dos razones: registrar con detalle cuesta demasiado tiempo, y los registros no dicen cuánto se puede confiar en cada dato. La aplicación ataca las dos:
 
-- **Baja el esfuerzo de registrar**, con recetas reutilizables, un escáner de códigos de barras, una nevera de sobras reutilizables y un asistente de IA (DiaBot) que convierte una frase o una foto en una comida lista para revisar.
-- **Guarda la fiabilidad con el dato**: cómo se obtuvo cada cantidad (báscula, envase, medida casera, a ojo o estimación de la IA), de dónde salen los macros de cada alimento, si se pesó crudo o cocinado y qué parte de cada plato se comió de verdad.
+- **Baja el esfuerzo de registrar**, con recetas reutilizables, un escáner de códigos de barras, una nevera de sobras reutilizables, las cartas de los restaurantes habituales y un asistente de IA (DiaBot) que convierte una frase o una foto en una comida lista para revisar.
+- **Guarda la fiabilidad con el dato**: cómo se obtuvo cada cantidad (báscula, envase, cantidad habitual, medida casera, a ojo o estimación de la IA), de dónde salen los macros de cada alimento, si se pesó crudo o cocinado y qué parte de cada plato se comió de verdad, y cómo se midió esa parte.
 
 ---
 
@@ -67,7 +67,7 @@ El estudio une cuatro fuentes en una misma línea de tiempo:
 
 | Fuente | Qué aporta | Situación |
 |---|---|---|
-| DayBetes | Comidas, macros y su fiabilidad, insulina y contexto | Comidas e insulina, hecho; contexto, pendiente |
+| DayBetes | Comidas, macros y su fiabilidad, insulina, contexto y fotos enviadas a DiaBot | Comidas, insulina y fotos, hecho; contexto, pendiente |
 | Sensor continuo (LibreView) | Glucosa cada pocos minutos | Se cruza en el análisis, fuera de la app |
 | Boli de insulina con memoria | Hora y unidades exactas de cada dosis | Pendiente de importar |
 | Reloj (Apple Health) | Ejercicio, frecuencia cardiaca, sueño, pasos | Se cruza en el análisis, fuera de la app |
@@ -100,39 +100,48 @@ Si el estudio demuestra que el planteamiento funciona, la idea es abrir la aplic
 
 ## 4. Estado actual
 
-La aplicación está **en producción** y se usa a diario desde el móvil y el ordenador. Es de acceso privado y el registro de usuarios está cerrado. La interfaz está en inglés.
+La aplicación está **en producción** y se usa a diario desde el móvil y el ordenador; en el móvil se instala como una app. Es de acceso privado y el registro de usuarios está cerrado. La interfaz está en inglés.
 
 | Área | Estado |
 |---|---|
 | Alimentos, recetas y platos preparados por otros, con origen de los macros | ✅ Construido |
 | Comidas por platos: planificar, ajustar, confirmar lo comido de cada plato | ✅ Construido |
 | Método de cada cantidad, confianza y cobertura de los macros | ✅ Construido |
-| Fracción comida de cada plato, guardada al confirmar | ✅ Construido |
+| Fracción comida de cada plato y cómo se midió, guardadas al confirmar | ✅ Construido |
+| Hora de fin de la comida y de cada plato | ✅ Construido |
 | Insulina: inyecciones con dosis, hora, zona y boli; historial de cambios | ✅ Construido |
 | Bolis de insulina: apertura, caducidad y lo que queda | ✅ Construido |
 | Nevera y congelador: sobras reutilizables con su origen | ✅ Construido |
 | Escáner de código de barras, Open Food Facts y Ciqual | ✅ Construido |
+| Cartas de restaurante guardadas desde una foto | ✅ Construido |
+| Alimentos provisionales creados por DiaBot, pendientes de revisar | ✅ Construido |
+| Guía de criterios para los campos de calidad del dato | ✅ Construido |
+| Web instalable como app, con navegación deslizando | ✅ Construido |
 | Rescate de hipoglucemias y registro durante el ejercicio | ✅ Construido |
 | Asistente DiaBot (texto y fotos) | 🟡 Funcional, en fase preliminar |
 | Estadísticas | 🟡 Versión básica, por pulir |
-| Campos del estudio (objetivo del bolo, hora de fin, diario, periodos, contexto…) | ⏳ En definición (fase 4) |
+| Campos del estudio (objetivo del bolo, diario, periodos, contexto…) | ⏳ En definición (fase 4) |
 | Versionado de los alimentos | ⏳ Diseñado, sin construir |
 | Glucosa y Apple Health | ⏳ Se cruzan en el análisis del TFG, fuera de la app |
 | Modelo predictivo y recomendaciones | ⏳ Fase 2 |
 
-En cifras: unas 39 000 líneas de Python y 4 100 de JavaScript; 25 tablas; 136 rutas; 64 pruebas automáticas de la lógica de dominio; seis documentos de convenciones versionados más el protocolo del estudio; y 86 decisiones de arquitectura registradas.
+En cifras: unas 48 500 líneas de Python y 6 100 de JavaScript; 28 tablas; 159 rutas; 90 pruebas automáticas de la lógica de dominio; seis documentos de convenciones versionados más el protocolo del estudio; y 86 decisiones de arquitectura registradas.
 
 ---
 
 ## 5. Funcionalidades
 
-La interfaz se organiza en cuatro secciones, accesibles desde una barra de navegación flotante (**Menu, Stats, Food, Settings**), más un **carrito** siempre accesible con las comidas en curso y el asistente **DiaBot**.
+La interfaz se organiza en cuatro secciones, accesibles desde una barra de navegación flotante (**Menu, Stats, Food, Settings**), más un **carrito** siempre accesible con las comidas en curso y el asistente **DiaBot**, en el centro de la barra.
+
+Se puede **instalar como app** en el móvil (sin modo sin conexión: nada privado se guarda en el dispositivo), la sesión se mantiene al cerrarla, y se cambia de sección o se vuelve atrás **deslizando** el dedo, con la página siguiente ya preparada.
 
 ### 5.1 Alimentos (Food)
 
 - **Biblioteca personal** con tres tipos de entrada: alimentos con sus valores por 100 g, **recetas** que combinan ingredientes por platos, y **platos preparados por otros** (un bar, un familiar).
 - **Origen de los macros** de cada alimento: etiqueta, web oficial, Open Food Facts, tabla de composición, calculado de sus ingredientes, estimación de la IA o propia.
-- **Búsqueda en tiempo real**, filtros, favoritos y etiquetas.
+- **Búsqueda en tiempo real**, filtros, favoritos y etiquetas. Cada alimento puede decir cuál es su **ración** (la del envase o la cantidad habitual), y el botón + la añade directamente.
+- **Cartas de restaurante**: DiaBot guarda los platos de una carta a partir de su foto (local, nombre, ingredientes principales, sección y precio). Se consultan en la página *Menus*, filtrando por local y sección, y aparecen también en la búsqueda de Food.
+- **Alimentos provisionales**: lo que DiaBot crea queda marcado para revisar, con un aviso en Food y en el inicio. Al revisarlo se puede guardar, cambiar entre alimento y plato preparado, o convertir en añadidos rápidos si no merece la pena conservarlo.
 - **Smart macros**: se escribe `120kcal 30hc 12az 20prot` y se rellenan los campos, con una gramática estricta que rechaza lo que no entiende en vez de adivinar.
 - **Escáner de código de barras** contra una copia local de **Open Food Facts** y, si no está, su API. **Alimentos genéricos de Ciqual**, la tabla de composición de la agencia francesa de seguridad alimentaria.
 - **Rescate**: registro rápido de lo que se toma para tratar una bajada o haciendo deporte.
@@ -142,9 +151,9 @@ La interfaz se organiza en cuatro secciones, accesibles desde una barra de naveg
 Cada comida se **planifica**, se ajusta y se **confirma**. Dentro de ella:
 
 - **Platos (tandas)** servidos en momentos distintos, cada uno con su desfase o su hora exacta.
-- **Porciones** con su cantidad, **cómo se obtuvo** (báscula de cocina o de mano, peso del envase, medida casera, a ojo, estimación de la IA), cocción, conservación, estado final, madurez en la fruta y si se pesó ya cocinado.
-- **Datos de la comida**: tipo (propuesto según el horario), hora, si se comió fuera, notas y el borrador de la insulina (dosis, zona y boli).
-- **Confirmación**: se indica cuánto se comió de cada plato, en % o en gramos. La fracción se **guarda** para recuperar después lo servido (con lo que se decidió la dosis) y saber qué platos no se acabaron. Lo que sobra se puede guardar en la nevera.
+- **Porciones** con su cantidad, **cómo se obtuvo** (báscula de cocina o de mano, peso del envase, cantidad habitual, medida casera, a ojo, estimación de la IA), cocción, conservación, estado final, madurez en la fruta y si se pesó ya cocinado. Si falta la preparación, se propone la habitual de ese alimento y se confirma con un toque; nunca se rellena sola.
+- **Datos de la comida**: tipo (propuesto según el horario), hora de inicio y de fin (también por plato, con un botón *Now*), si se comió fuera, notas y el borrador de la insulina (dosis, zona y boli).
+- **Confirmación**: se indica cuánto se comió de cada plato, en % o en gramos, y si se pesó o se calculó a ojo. Antes de confirmar, el resumen muestra junto a lo servido lo que se va a comer, para ajustar la dosis. La fracción se **guarda** para recuperar después lo servido (con lo que se decidió la dosis) y saber qué platos no se acabaron. Lo que sobra se puede guardar en la nevera; cada reparto entre plato y nevera guarda también cómo se midió.
 - **Nevera y congelador**: tuppers con su contenido, su fecha y sus movimientos, que se usan en comidas posteriores sin perder de dónde venían.
 
 ### 5.3 Confianza y cobertura
@@ -159,33 +168,38 @@ Las reglas exactas están en [`measurement_conventions.md`](conventions/measurem
 
 ### 5.4 Asistente DiaBot
 
-El usuario escribe lo que ha comido, o adjunta hasta cuatro fotos, y DiaBot lo deja en el carrito para revisarlo. Busca primero entre los alimentos del usuario, después en Ciqual y Open Food Facts, y solo estima cuando no encuentra nada, marcándolo como estimación de la IA. También lee etiquetas nutricionales y prepara borradores de alimentos, platos y recetas, que el usuario revisa en el formulario antes de guardar.
+El usuario escribe lo que ha comido, o adjunta hasta cuatro fotos, y DiaBot lo deja en el carrito para revisarlo. Busca primero entre los alimentos del usuario (dando más peso a los que suele comer a esa hora), después en las cartas guardadas, en Ciqual y en Open Food Facts, y solo estima cuando no encuentra nada, marcándolo como estimación de la IA. Lo que no existe lo crea como **alimento provisional** y lo añade a la comida a la vez, para revisarlo después. También lee etiquetas nutricionales y cartas de restaurante, consulta la nevera y usa sus tuppers.
 
-Sus límites son estructurales, no instrucciones del prompt: tiene un conjunto fijo de herramientas y **ninguna borra, confirma comidas, edita la biblioteca ni calcula dosis**. La insulina de la comida solo la anota cuando el usuario la indica expresamente. Cada conversación se guarda para medir sus errores; las fotos no se guardan. Usa la API de Claude (por defecto, Claude Haiku con esfuerzo alto), con un tiempo máximo por mensaje por debajo del de Cloudflare.
+- **Modo rápido**: un mensaje que es solo una lista de alimentos con cantidades se detecta antes de llamar al modelo, se procesa con menos esfuerzo y DiaBot añade todo sin preguntar.
+- **Botones +1**: repiten lo último que añadió (o la mitad, el doble, uno menos) sin llamar al modelo.
+- **Aprende de las correcciones**: compara sus estimaciones con lo que acabó en las comidas confirmadas y, con muestras suficientes, ajusta sus estimaciones y lo dice.
+- **Respuesta en segundo plano**: el mensaje se encola y el servidor lo responde aunque el usuario salga de la página; al volver, la respuesta está ahí.
+
+Sus límites son estructurales, no instrucciones del prompt: tiene un conjunto fijo de herramientas y **ninguna confirma comidas ni calcula dosis**. Puede proponer quitar algo, pero solo el toque del usuario lo borra. La insulina de la comida solo la anota cuando el usuario la indica expresamente. Cada conversación se guarda para medir sus errores, y **las fotos también**, tal como las recibió el modelo (JPEG reducido, sin metadatos), para medir su error frente a las comidas pesadas. Usa la API de Claude (por defecto, Claude Haiku con esfuerzo alto).
 
 ### 5.5 Insulina, ajustes y estadísticas
 
-- **Inyecciones** rápidas y basales con dosis, hora, zona y boli. Cada cambio o borrado guarda la versión anterior.
+- **Inyecciones** rápidas y basales con dosis, hora, zona y boli. Mientras no se ha puesto la basal del día, se propone primero su boli. Cada cambio o borrado guarda la versión anterior.
 - **Bolis**: marcas, apertura, caducidad, capacidad y motivo de retirada.
-- **Ajustes**: horario de los tipos de comida, etiquetas, bolis e inyecciones.
+- **Ajustes**: horario de los tipos de comida, etiquetas, bolis e inyecciones, y una **guía de criterios** que define cada valor de los campos de calidad del dato; un botón ? junto a cada selector la abre, para que los criterios sean siempre los mismos.
 - **Estadísticas**: totales y promedios diarios de macronutrientes y su reparto por tipo de comida.
 
 ---
 
 ## 6. Modelo de datos
 
-PostgreSQL 17, con **25 tablas**. Las restricciones de integridad, los valores de los enumerados (generados desde el código) y la propiedad de cada fila se garantizan **también en SQL**, no solo en la aplicación.
+PostgreSQL 17, con **28 tablas**. Las restricciones de integridad, los valores de los enumerados (generados desde el código) y la propiedad de cada fila se garantizan **también en SQL**, no solo en la aplicación.
 
 | Grupo | Tablas | Para qué |
 |---|---|---|
 | Usuarios y seguridad | `users`, `auth_sessions`, `auth_rate_limits` | Cuentas, sesiones revocables y límite de intentos |
-| Alimentos | `catalog`, `manual_intake`, `recipe`, `recipe_plate`, `food_brands` | Alimentos, platos preparados, recetas con sus platos y marcas |
+| Alimentos | `catalog`, `manual_intake`, `recipe`, `recipe_plate`, `food_brands`, `menu_item` | Alimentos, platos preparados, recetas con sus platos, marcas y cartas de restaurante |
 | Referencia | `off_product`, `ciqual_food` | Copias de Open Food Facts y Ciqual, de solo lectura para la app |
 | Comidas | `intake_event`, `intake_plate`, `portion_detail`, `meal_type_schedule` | Comidas, sus platos, sus porciones y el horario de los tipos de comida |
 | Sobras | `fridge`, `fridge_move` | Tuppers y su historial de movimientos (solo inserción) |
 | Insulina | `insulin_injections`, `insulin_injection_history`, `insulin_brand`, `insulin_pen` | Inyecciones, su historial de cambios, marcas y bolis |
 | Organización | `tags`, `linked_tags`, `user_favorites` | Etiquetas y favoritos |
-| Asistente | `assistant_conversation`, `assistant_message` | Conversaciones con DiaBot (solo inserción) |
+| Asistente | `assistant_conversation`, `assistant_message`, `assistant_photo`, `assistant_turn` | Conversaciones, mensajes y fotos de DiaBot (solo inserción) y la cola de mensajes por responder |
 
 `portion_detail` usa un **patrón de arco**: cada porción tiene un único origen (alimento o plato preparado) y un único destino (una comida, una receta o un tupper). Cada instante se guarda en UTC con la **zona horaria del navegador** en la que se registró.
 
@@ -234,7 +248,7 @@ tests/                   # Pruebas automáticas de la lógica de domain/
 - **Capas con responsabilidades claras.** Las rutas validan y autorizan; los servicios coordinan; `domain/` es lógica pura; `queries/` contiene el SQL; los componentes solo pintan lo que la ruta les pasa.
 - **Dos identidades de base de datos.** La app trabaja con un rol sin permisos para modificar el esquema; el esquema lo cambia una identidad de migraciones que nunca se usa en ejecución.
 - **La propiedad de los datos se comprueba en SQL.** Cada consulta filtra por usuario dentro del propio SQL.
-- **Historiales que la app no puede reescribir.** Los movimientos de la nevera, los mensajes del asistente y el historial de inyecciones son de solo inserción, también por permisos.
+- **Historiales que la app no puede reescribir.** Los movimientos de la nevera, los mensajes y las fotos del asistente y el historial de inyecciones son de solo inserción, también por permisos.
 - **Errores tipados y uniformes**, con códigos HTTP con significado y mensajes que no revelan información interna.
 
 ### 7.4 Datos de terceros
@@ -285,6 +299,7 @@ rama ─▶ Pull Request ─▶ pip-audit + pruebas + imágenes ─▶ merge en 
 
 - Volcado nocturno de la base, **cifrado con `age` en el propio servidor** (que solo tiene la clave pública).
 - Copias en Cloudflare R2, jurisdicción UE, durante 90 días, y localmente durante 7 días.
+- Las fotos de DiaBot, que ocupan mucho más que el resto, van aparte: una copia completa cada 10 días.
 - Un vigilante externo avisa si una copia falla **o si no llega a ejecutarse**, y la restauración se prueba cada mes.
 
 El detalle está en [`infra_conventions.md`](conventions/infra_conventions.md).
@@ -303,7 +318,7 @@ El código se revisa **tabla a tabla** contra las convenciones (esquema, restric
 
 ### 9.3 Pruebas
 
-Un conjunto mínimo de pruebas automáticas (`tests/`, con `pytest`) cubre la lógica de la que depende el estudio: cantidades y unidades, factor de cocción, fracción comida, confianza y cobertura, smart macros, hora exacta, zona horaria e historial del asistente. Se ejecutan en cada Pull Request y bloquean el despliegue si fallan. El resto se verifica a mano.
+Un conjunto mínimo de pruebas automáticas (`tests/`, con `pytest`) cubre la lógica de la que depende el estudio: cantidades y unidades, factor de cocción, fracción comida, confianza y cobertura, smart macros, hora exacta, zona horaria, preparación habitual, día de insulina, cartas de restaurante y el asistente (historial, fotos, alimentos provisionales y cola de mensajes). Se ejecutan en cada Pull Request y bloquean el despliegue si fallan. El resto se verifica a mano.
 
 ### 9.4 Flujo de trabajo
 
@@ -338,7 +353,7 @@ Desarrollo y producción usan **archivos de Compose separados** y **volúmenes d
 
 **Antes del piloto (fases 3 y 4)**
 - Cerrar el protocolo: preguntas, variables, pautas de registro, reglas de calidad y métricas.
-- Añadir los campos del estudio: objetivo del bolo y "qué tuve en cuenta", hora de fin de la comida, comida sin detalle, estimaciones previas al pesado.
+- Añadir los campos del estudio: objetivo del bolo y "qué tuve en cuenta", comida sin detalle, estimaciones previas al pesado.
 - Registros de contexto: diario del día, periodos especiales, eventos, peso, medicación, cambios de sensor.
 - Importación de las dosis del boli con memoria.
 - Versionado de los alimentos e historial formal de migraciones.
@@ -361,7 +376,7 @@ Desarrollo y producción usan **archivos de Compose separados** y **volúmenes d
 | [`code_conventions.md`](conventions/code_conventions.md) | Capas, transacciones, tipado, seguridad, configuración, asistente y esquema |
 | [`measurement_conventions.md`](conventions/measurement_conventions.md) | Unidades, cantidades, porciones, platos, nevera, confianza, insulina y tiempo |
 | [`error_conventions.md`](conventions/error_conventions.md) | Tipos de error, códigos HTTP, mensajes y registros |
-| [`frontend_conventions.md`](conventions/frontend_conventions.md) | Componentes, HTMX, páginas e idioma |
+| [`frontend_conventions.md`](conventions/frontend_conventions.md) | Componentes, HTMX, páginas, movimiento, app instalable y navegación deslizando |
 | [`infra_conventions.md`](conventions/infra_conventions.md) | Entornos, despliegue, servidor, copias de seguridad y dependencias |
 | [`decisions.md`](conventions/decisions.md) | Registro histórico de decisiones de arquitectura |
 | `study_conventions.md` | Protocolo del estudio (privado, fuera de git) |
